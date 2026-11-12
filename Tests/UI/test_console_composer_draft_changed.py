@@ -65,6 +65,7 @@ def _send_action(console) -> Button:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("seed", "keys", "expected_draft"),
     [
@@ -95,6 +96,7 @@ async def test_a_draft_emptying_key_disables_the_workbench_send_action(
         assert _send_action(console).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_printable_key_enables_the_workbench_send_action():
     """A printable key that adds text must enable the Workbench Send action."""
@@ -110,6 +112,7 @@ async def test_a_printable_key_enables_the_workbench_send_action():
         assert _send_action(console).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("key", ["shift+enter", "ctrl+j"])
 @pytest.mark.asyncio
 async def test_a_newline_key_resyncs_the_send_action_without_enabling_it(key):
@@ -132,6 +135,7 @@ async def test_a_newline_key_resyncs_the_send_action_without_enabling_it(key):
         assert _send_action(console).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("key", ["shift+enter", "ctrl+j"])
 @pytest.mark.asyncio
 async def test_a_newline_after_real_text_leaves_the_send_action_enabled(key):
@@ -148,6 +152,7 @@ async def test_a_newline_after_real_text_leaves_the_send_action_enabled(key):
         assert _send_action(console).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_partial_deletion_leaves_the_send_action_enabled():
     """The sync is not just an empty/non-empty flip -- it runs every edit."""
@@ -167,6 +172,7 @@ async def test_a_partial_deletion_leaves_the_send_action_enabled():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_a_slash_opens_the_command_popup():
     """A lone '/' opens the slash-command popup once its DraftChanged lands."""
@@ -183,6 +189,7 @@ async def test_typing_a_slash_opens_the_command_popup():
         assert popup.is_open is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_arrow_queued_behind_the_slash_still_navigates_the_popup():
     """The popup must be open by the time the NEXT key is handled.
@@ -236,6 +243,7 @@ async def test_an_arrow_queued_behind_the_slash_still_navigates_the_popup():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("keys", [("a",), ("shift+enter",), ("ctrl+j",)])
 @pytest.mark.asyncio
 async def test_an_insertion_key_dismisses_the_first_run_guidance(keys):
@@ -251,6 +259,7 @@ async def test_an_insertion_key_dismisses_the_first_run_guidance(keys):
         assert console._console_guidance_dismissed is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("seed", "keys"),
     [
@@ -278,6 +287,7 @@ async def test_a_deletion_key_leaves_the_first_run_guidance_alone(seed, keys):
         assert console._console_guidance_dismissed is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_dismissal_survives_a_following_arrow_key():
     """An Escape-dismissed popup must NOT be re-opened by mere navigation.
@@ -316,6 +326,7 @@ async def test_escape_dismissal_survives_a_following_arrow_key():
         assert composer.draft_text() == "/"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deferred_draft_changed_does_not_yank_the_moved_highlight():
     """The queued `DraftChanged` must not reset a highlight Down just moved.

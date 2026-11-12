@@ -1,0 +1,7 @@
+{
+  "all_original_definitions_equal": true,
+  "added_definitions": [
+    "test_fixture_failure_retires_held_transport"
+  ],
+  "new_test_format_unchanged": true
+}

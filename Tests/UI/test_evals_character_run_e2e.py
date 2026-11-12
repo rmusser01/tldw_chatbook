@@ -28,8 +28,15 @@ import pytest
 from textual.widgets import Button, Input
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.Evals.character_probe.models import CharacterProbeConfig, Probe, ProbeSet
-from tldw_chatbook.Evals.character_probe.storage import save_character_bench, save_probe_set
+from tldw_chatbook.Evals.character_probe.models import (
+    CharacterProbeConfig,
+    Probe,
+    ProbeSet,
+)
+from tldw_chatbook.Evals.character_probe.storage import (
+    save_character_bench,
+    save_probe_set,
+)
 
 from .test_evals_screen import EvalsHarness, _FakeAppInstance
 
@@ -126,7 +133,9 @@ def failing_once_chat():
     return _chat
 
 
-async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0.02) -> None:
+async def _wait_until(
+    pilot, predicate, *, tries: int = 300, interval: float = 0.02
+) -> None:
     for _ in range(tries):
         if predicate():
             return
@@ -134,6 +143,7 @@ async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0
     raise AssertionError("condition never became true")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_estimate_counts_cards_probes_targets_samples_and_turns(
     evals_app, runnable_character_bench
@@ -152,10 +162,13 @@ async def test_the_estimate_counts_cards_probes_targets_samples_and_turns(
     async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
         pilot.app.screen.select(kind="character_bench", id=runnable_character_bench)
         await pilot.pause()
-        estimate = pilot.app.screen.query_one("#evals-inspector-estimate-calls").render()
+        estimate = pilot.app.screen.query_one(
+            "#evals-inspector-estimate-calls"
+        ).render()
         assert str(estimate).startswith("6 calls")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_running_a_character_bench_persists_conversations(
     evals_app, runnable_character_bench, evals_db, succeeding_chat
@@ -180,7 +193,9 @@ async def test_running_a_character_bench_persists_conversations(
         pilot.app.screen.select(kind="character_bench", id=runnable_character_bench)
         await pilot.pause()
         await pilot.click("#evals-primary-action")
-        await _wait_until(pilot, lambda: pilot.app.screen._selection.kind == "run_group")
+        await _wait_until(
+            pilot, lambda: pilot.app.screen._selection.kind == "run_group"
+        )
         from tldw_chatbook.Evals.character_probe.storage import load_conversations
 
         conversations = load_conversations(evals_db, pilot.app.screen._selection.id)
@@ -194,6 +209,7 @@ async def test_running_a_character_bench_persists_conversations(
         assert run_groups[0]["status"] == "completed"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failing_provider_leaves_the_rest_of_the_grid_intact(
     evals_app, runnable_character_bench, evals_db, failing_once_chat
@@ -203,7 +219,9 @@ async def test_a_failing_provider_leaves_the_rest_of_the_grid_intact(
         pilot.app.screen.select(kind="character_bench", id=runnable_character_bench)
         await pilot.pause()
         await pilot.click("#evals-primary-action")
-        await _wait_until(pilot, lambda: pilot.app.screen._selection.kind == "run_group")
+        await _wait_until(
+            pilot, lambda: pilot.app.screen._selection.kind == "run_group"
+        )
         from tldw_chatbook.Evals.character_probe.storage import load_conversations
 
         conversations = load_conversations(evals_db, pilot.app.screen._selection.id)
@@ -212,6 +230,7 @@ async def test_a_failing_provider_leaves_the_rest_of_the_grid_intact(
         assert any(not c.error and c.turns for c in conversations)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_run_snapshot_records_card_text_and_sampler(
     evals_app, runnable_character_bench, evals_db, succeeding_chat
@@ -221,7 +240,9 @@ async def test_the_run_snapshot_records_card_text_and_sampler(
         pilot.app.screen.select(kind="character_bench", id=runnable_character_bench)
         await pilot.pause()
         await pilot.click("#evals-primary-action")
-        await _wait_until(pilot, lambda: pilot.app.screen._selection.kind == "run_group")
+        await _wait_until(
+            pilot, lambda: pilot.app.screen._selection.kind == "run_group"
+        )
         from tldw_chatbook.Evals.character_probe.storage import load_probe_run_snapshot
 
         snapshot = load_probe_run_snapshot(evals_db, pilot.app.screen._selection.id)
@@ -233,6 +254,7 @@ async def test_the_run_snapshot_records_card_text_and_sampler(
         assert snapshot["composed_system_prompts"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_bench_with_no_resolvable_target_row_fails_loudly_instead_of_silently(
     evals_app, evals_db, chachanotes_db, succeeding_chat
@@ -288,6 +310,7 @@ async def test_a_bench_with_no_resolvable_target_row_fails_loudly_instead_of_sil
         assert pilot.app.screen._selection.kind == "character_bench"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_worker_names_the_missing_character_database_if_reached_by_any_path(
     evals_db, chachanotes_db, runnable_character_bench, succeeding_chat
@@ -351,6 +374,7 @@ async def test_the_worker_names_the_missing_character_database_if_reached_by_any
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_running_a_character_bench_does_not_yank_a_dirty_editor(
     evals_app, runnable_character_bench, evals_db
@@ -419,6 +443,7 @@ async def test_running_a_character_bench_does_not_yank_a_dirty_editor(
         assert len(load_conversations(evals_db, run_groups[0]["id"])) == 4
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_in_flight_character_bench_run_reads_as_running_not_completed(
     evals_app, runnable_character_bench
@@ -468,6 +493,7 @@ async def test_an_in_flight_character_bench_run_reads_as_running_not_completed(
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_hard_cancelled_character_bench_run_does_not_read_as_completed(
     evals_app, runnable_character_bench
@@ -503,9 +529,7 @@ async def test_a_hard_cancelled_character_bench_run_does_not_read_as_completed(
         await _wait_until(pilot, lambda: screen._character_bench_run_running)
         await pilot.pause()
 
-        cancelled = pilot.app.workers.cancel_group(
-            screen, "evals-run-character-bench"
-        )
+        cancelled = pilot.app.workers.cancel_group(screen, "evals-run-character-bench")
         assert cancelled, "expected an in-flight character-bench run worker to cancel"
 
         await _wait_until(pilot, lambda: not screen._character_bench_run_running)
@@ -522,6 +546,7 @@ async def test_a_hard_cancelled_character_bench_run_does_not_read_as_completed(
         release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_character_bench_run_that_errors_ordinarily_does_not_read_as_completed(
     evals_app, runnable_character_bench

@@ -1,0 +1,217 @@
+"""TASK-33560 actual-app boot and settled idle; fresh profile, unchanged timers."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from collections import Counter
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[4]
+PYTHON = "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python"
+IDLE_SECONDS = 10.0
+
+
+def launch(label):
+    root = Path(tempfile.mkdtemp(prefix="task33560-app-" + label + "-")).resolve()
+    root.chmod(0o700)
+    for leaf in ("home", "config", "data", "cache"):
+        (root / leaf).mkdir(mode=0o700)
+    selected = root / "config" / "config.toml"
+    selected.write_text(
+        '[general]\nusers_name = "task33560"\n'
+        f'[paths]\ndata_dir = "{(root / "data").as_posix()}"\n'
+        "[first_run]\nsetup_completed = true\n"
+        "[_first_run]\nsetup_completed = true\n"
+        "[splash_screen]\nenabled = false\n"
+        "[model_catalog]\nauto_refresh_enabled = false\n"
+    )
+    selected.chmod(0o600)
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if not any(
+            word in name.upper() for word in ("KEY", "TOKEN", "SECRET", "PASSWORD")
+        )
+    }
+    env.update(
+        HOME=str(root / "home"),
+        USERPROFILE=str(root / "home"),
+        XDG_CONFIG_HOME=str(root / "config"),
+        XDG_DATA_HOME=str(root / "data"),
+        XDG_CACHE_HOME=str(root / "cache"),
+        TLDW_CONFIG_PATH=str(selected),
+        TLDW_TEST_CONFIG_ROOT=str(root),
+        TLDW_TEST_MODE="1",
+        PYTHONPATH=str(REPO),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+    )
+    print(root, flush=True)
+    started = time.monotonic()
+    with (root / "raw.log").open("w") as output:
+        result = subprocess.run(
+            [PYTHON, __file__, "--child", str(root)],
+            cwd=REPO,
+            env=env,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+    receipt = {
+        "label": label,
+        "root": str(root),
+        "cwd": str(REPO),
+        "exit_code": result.returncode,
+        "seconds": time.monotonic() - started,
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+    }
+    for name in ("raw.log", "measurement.json"):
+        path = root / name
+        if path.exists():
+            receipt[name + "_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (root / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print(json.dumps(receipt), flush=True)
+    print((root / "raw.log").read_text(errors="replace")[-8000:], flush=True)
+    return result.returncode
+
+
+async def measure(root):
+    phase = ["imports"]
+    counts = {
+        name: Counter() for name in ("imports", "boot", "settle", "idle", "shutdown")
+    }
+    attribution = Counter()
+    probes = []
+
+    def audit(event, args):
+        if event == "socket.connect":
+            raise RuntimeError("TASK-33560 probe forbids network connections")
+        if event != "open":
+            return
+        kind = "native_opens" if args[1] is None else "python_opens"
+        counts[phase[0]][kind] += 1
+        if phase[0] == "idle" and kind == "native_opens":
+            frame = sys._getframe(1)
+            while frame is not None:
+                if "tldw_chatbook" in frame.f_code.co_filename:
+                    attribution[
+                        Path(frame.f_code.co_filename).name + ":" + frame.f_code.co_name
+                    ] += 1
+                    break
+                frame = frame.f_back
+
+    sys.addaudithook(audit)
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    # Use normal enrollment before importing the app/config. The app itself
+    # retains its startup owner and installed repository leases throughout idle.
+    from tldw_chatbook.Backup_Recovery.control_records import (
+        admission_authority,
+        bind_profile,
+    )
+
+    selected = Path(os.environ["TLDW_CONFIG_PATH"])
+    data = root / "data"
+    (data / "task33560").mkdir(mode=0o700)
+    bootstrap_root = storage.bootstrap.default_bootstrap_root()
+    admission_authority(bootstrap_root).register("profile", (selected, data))
+    bind_profile(bootstrap_root, selected, ("profile",), bootstrap_root / "admission")
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen  # noqa: I001
+    from tldw_chatbook.app import TldwCli
+
+    def observe(owner, name):
+        original = getattr(owner, name)
+
+        def wrapped(*args, **kwargs):
+            started = time.monotonic()
+            counts[phase[0]][name] += 1
+            result = original(*args, **kwargs)
+            if name == "_local_pause_requested":
+                probes.append(
+                    {
+                        "started": started,
+                        "finished": time.monotonic(),
+                        "phase": phase[0],
+                        "requested": result,
+                    }
+                )
+            return result
+
+        setattr(owner, name, wrapped)
+
+    observe(storage, "_local_pause_requested")
+    observe(ChatScreen, "_poll_console_credential_readiness")
+    phase[0] = "boot"
+    boot_started = time.monotonic()
+    app = TldwCli()
+    async with app.run_test(size=(170, 48)) as pilot:
+        deadline = time.monotonic() + 90
+        while not app._ui_ready:
+            assert time.monotonic() < deadline, "actual app never reached UI readiness"
+            await asyncio.sleep(0.05)
+        boot_seconds = time.monotonic() - boot_started
+        phase[0] = "settle"
+        while app._boot_worker_gate is None or not app._boot_worker_gate.is_drained:
+            assert time.monotonic() < deadline, "actual boot worker fleet did not drain"
+            await asyncio.sleep(0.05)
+        await pilot.pause()
+        # Keep the real timers running; settle their cold work and the normal
+        # one-second evidence margin before measuring the actual idle app.
+        await asyncio.sleep(2)
+        assert app._boot_worker_gate.is_drained
+        assert not app._boot_worker_handles
+        with storage._lock:
+            owners_before = {
+                str(key): {
+                    "names": hold.names,
+                    "count": hold.count,
+                    "ready": storage._hold_serving(hold),
+                }
+                for key, hold in storage._holds.items()
+            }
+            assert storage._startups and owners_before
+            assert all(row["ready"] for row in owners_before.values())
+        phase[0] = "idle"
+        idle_started = time.monotonic()
+        await asyncio.sleep(IDLE_SECONDS)
+        idle_seconds = time.monotonic() - idle_started
+        with storage._lock:
+            owners_after = {
+                str(key): {
+                    "names": hold.names,
+                    "count": hold.count,
+                    "ready": storage._hold_serving(hold),
+                }
+                for key, hold in storage._holds.items()
+            }
+            assert owners_after == owners_before, "idle lost its actual app owners"
+        phase[0] = "shutdown"
+        result = {
+            "root": str(root),
+            "screen": type(app.screen).__name__,
+            "boot_seconds": boot_seconds,
+            "idle_seconds": idle_seconds,
+            "boot_worker_gate_drained": app._boot_worker_gate.is_drained,
+            "admission_owners_before": owners_before,
+            "admission_owners_after": owners_after,
+            "counts": counts,
+            "idle_native_attribution": attribution,
+            "native_probes": probes,
+            "idle_native_opens_per_second": counts["idle"]["native_opens"]
+            / idle_seconds,
+        }
+    (root / "measurement.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps(result, indent=2), flush=True)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--child":
+        asyncio.run(measure(Path(sys.argv[2])))
+    else:
+        raise SystemExit(launch(sys.argv[1] if len(sys.argv) > 1 else "baseline"))

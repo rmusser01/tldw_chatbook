@@ -22,7 +22,7 @@ def test_memory_schema_pagination_and_rollback():
     from tldw_chatbook.Plugins.registry import PluginRegistry
 
     with PluginRegistry(Path(":memory:")) as registry:
-        assert registry.schema_version == 4
+        assert registry.schema_version == 5
         with registry.transaction() as cursor:
             cursor.executemany(
                 "INSERT INTO installations(installation_id) VALUES (?)",
@@ -200,7 +200,7 @@ def test_failed_schema_creation_rolls_back_all_ddl(tmp_path, monkeypatch):
         with module.PluginRegistry(
             tmp_path / "registry.sqlite3", owner=owner
         ) as registry:
-            assert registry.schema_version == 4
+            assert registry.schema_version == 5
     finally:
         owner.close()
 
@@ -409,7 +409,7 @@ def test_v1_upgrade_retains_rows_and_adds_independent_trust_and_tombstones(tmp_p
     assert owner.try_acquire()
     try:
         with PluginRegistry(path, owner=owner) as registry:
-            assert registry.schema_version == 4
+            assert registry.schema_version == 5
             with registry.transaction() as cursor:
                 assert (
                     cursor.execute("SELECT COUNT(*) FROM revision_trust").fetchone()[0]
@@ -434,7 +434,7 @@ def test_v1_upgrade_retains_rows_and_adds_independent_trust_and_tombstones(tmp_p
                 }
             ]
         with PluginRegistry(path) as registry:
-            assert registry.schema_version == 4
+            assert registry.schema_version == 5
             assert registry.authority_projection(operation_result=None) == snapshot
     finally:
         owner.close()
@@ -630,7 +630,7 @@ def test_v2_alias_migration_preserves_legacy_projection_and_digest(tmp_path):
     try:
         with PluginRegistry(path, owner=owner) as registry:
             actual = registry.authority_projection(operation_result=None)
-            assert registry.schema_version == 4
+            assert registry.schema_version == 5
             assert actual == expected
             assert snapshot_digest(actual) == snapshot_digest(expected)
     finally:
@@ -752,6 +752,104 @@ def test_v3_root_user_migration_failure_rolls_back_columns(tmp_path, monkeypatch
                 "SELECT 1 FROM sqlite_master WHERE name='root_users'"
             ).fetchone()
         with module.PluginRegistry(path, owner=owner) as registry:
-            assert registry.schema_version == 4
+            assert registry.schema_version == 5
     finally:
         owner.close()
+
+
+def test_schema_four_upgrade_preserves_independent_discovery_on_reopen(tmp_path):
+    from tldw_chatbook.Plugins.registry import PluginRegistry
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    owner = PluginRuntimeOwner(tmp_path / "plugins")
+    assert owner.try_acquire()
+    path = owner.root / "registry.sqlite3"
+    try:
+        with (
+            PluginRegistry(path, owner=owner) as registry,
+            registry.transaction() as cursor,
+        ):
+            cursor.execute("DROP TABLE marketplace_sources")
+            cursor.execute("PRAGMA user_version=4")
+        with PluginRegistry(path, owner=owner) as registry:
+            assert registry.schema_version == 5
+            registry.write_marketplace_source("selected", "{}", "a" * 64, None, None)
+            assert registry.list_installations(limit=50, offset=0) == ()
+        with PluginRegistry(path, owner=owner) as registry:
+            assert registry.list_marketplace_sources()[0]["source_id"] == "selected"
+    finally:
+        owner.close()
+
+
+def test_source_publication_compares_binding_without_recreating_removed_row(tmp_path):
+    from tldw_chatbook.Plugins.registry import PluginRegistry
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    owner = PluginRuntimeOwner(tmp_path / "plugins")
+    assert owner.try_acquire()
+    try:
+        with PluginRegistry(owner.root / "registry.sqlite3", owner=owner) as registry:
+            registry.write_marketplace_source("selected", "old", "a" * 64, None, None)
+            registry.write_marketplace_source(
+                "selected",
+                "new",
+                "b" * 64,
+                "cache",
+                None,
+                expected_binding=("old", "a" * 64),
+            )
+            with pytest.raises(ValueError, match="source_changed"):
+                registry.write_marketplace_source(
+                    "selected",
+                    "old",
+                    "a" * 64,
+                    "stale",
+                    "error",
+                    expected_binding=("old", "a" * 64),
+                )
+            assert registry.list_marketplace_sources()[0]["snapshot_json"] == "cache"
+            registry.remove_marketplace_source("selected")
+            with pytest.raises(ValueError, match="source_changed"):
+                registry.write_marketplace_source(
+                    "selected",
+                    "new",
+                    "b" * 64,
+                    "cache",
+                    None,
+                    expected_binding=("new", "b" * 64),
+                )
+            assert registry.list_marketplace_sources() == ()
+    finally:
+        owner.close()
+
+
+def test_recorded_collector_uses_same_projection_and_only_requested_revision(
+    plugin_stack, native_package, monkeypatch
+):
+    from Tests.Plugins.test_admission import install
+    from tldw_chatbook.Plugins import package_files
+
+    stack = plugin_stack
+    identity = install(stack, native_package())
+    authority = stack.call(stack.coordinator.published_snapshot)
+    revision = authority["installations"][0]["revision_digest"]
+    expected = (identity, revision)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("recorded projection read package bodies")
+
+    monkeypatch.setattr(package_files, "capture_package", forbidden)
+    collector = {expected: None}
+    projection = stack.call(
+        lambda: stack.registry.authority_projection(
+            operation_result=authority["operation_result"],
+            _recorded_inspections=collector,
+        )
+    )
+    assert projection == authority
+    assert set(collector) == {expected}
+    assert collector[expected].effective_digest == revision
+    assert stack.call(lambda: stack.coordinator.recorded_inspections(())) == (
+        authority,
+        {},
+    )

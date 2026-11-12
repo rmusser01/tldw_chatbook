@@ -1,0 +1,81 @@
+{
+  "totals": {
+    "before": 275,
+    "after": 275
+  },
+  "new": [],
+  "per_file": {
+    "Tests/Performance/test_boot_worker_census.py": {
+      "before": 3,
+      "after": 3
+    },
+    "Tests/Performance/test_textual_css_fastpath.py": {
+      "before": 1,
+      "after": 1
+    },
+    "Tests/Performance/test_ui_ready_module_census.py": {
+      "before": 0,
+      "after": 0
+    },
+    "Tests/Tools/test_remote_session_registry.py": {
+      "before": 1,
+      "after": 1
+    },
+    "Tests/UI/test_console_first_send_preimport.py": {
+      "before": 0,
+      "after": 0
+    },
+    "Tests/UI/test_console_preparing_current_sources.py": {
+      "before": 0,
+      "after": 0
+    },
+    "Tests/UI/test_console_recovered_image_shutdown.py": {
+      "before": 1,
+      "after": 1
+    },
+    "tldw_chatbook/Chat/console_first_send_modules.py": {
+      "before": 0,
+      "after": 0
+    },
+    "tldw_chatbook/Tools/remote_session_registry.py": {
+      "before": 2,
+      "after": 2
+    },
+    "tldw_chatbook/UI/Console_Modules/image.py": {
+      "before": 3,
+      "after": 3
+    },
+    "tldw_chatbook/UI/Console_Modules/prompts.py": {
+      "before": 28,
+      "after": 28
+    },
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": {
+      "before": 17,
+      "after": 17
+    },
+    "tldw_chatbook/UI/Screens/library_screen.py": {
+      "before": 195,
+      "after": 195
+    },
+    "tldw_chatbook/Widgets/Console/__init__.py": {
+      "before": 2,
+      "after": 2
+    },
+    "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py": {
+      "before": 14,
+      "after": 14
+    },
+    "tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py": {
+      "before": 5,
+      "after": 5
+    },
+    "tldw_chatbook/Widgets/Console/console_prompt_mixins_view.py": {
+      "before": 0,
+      "after": 0
+    },
+    "tldw_chatbook/Widgets/Console/trace_export_dialog.py": {
+      "before": 3,
+      "after": 3
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "head": "f70eb635f5991d25b7cd5d32d789406d837be32b",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_library_note_links_picker_and_preview.py::test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+    "-q",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/private/tmp/mixins-f70-ui19-local-tmp"
+  ],
+  "exit_code": 0,
+  "result": "1 passed in30.81s",
+  "sha256": "be7c228885d5de0712bea0482f8486d1a9b97264ad5861c15773e83d53e1d4e8",
+  "log": "/private/tmp/mixins-f70-ui19-local.log",
+  "qualification": "Exact ordinary native test pass, original wait/source/errors/deadline unchanged. Does not establish hosted startup trigger."
+}

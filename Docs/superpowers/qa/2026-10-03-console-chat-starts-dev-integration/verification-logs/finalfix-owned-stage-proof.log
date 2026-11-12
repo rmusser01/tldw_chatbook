@@ -1,0 +1,8 @@
+Tests/Chat/test_console_chat_create_integration.py
+Tests/Chat/test_console_chat_start.py
+Tests/UI/test_console_runtime_ownership.py
+Tests/UI/test_console_session_controller.py
+tldw_chatbook/Chat/console_agent_bridge.py
+tldw_chatbook/Chat/console_chat_controller.py
+tldw_chatbook/Chat/console_chat_store.py
+tldw_chatbook/UI/Console_Modules/session.py

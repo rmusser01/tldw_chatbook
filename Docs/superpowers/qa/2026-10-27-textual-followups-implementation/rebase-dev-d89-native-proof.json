@@ -1,0 +1,29 @@
+{
+  "parent": {
+    "cases": 1,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0
+  },
+  "actual_child": {
+    "cases": 1,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0
+  },
+  "child_time": "91.164",
+  "xml_sha256": "00d943df76b0b92bbb0bdb00a379d9c2458a536edd0bcb0682d2eda7eea2ae59",
+  "properties": {
+    "controlled_pause_census": "{\"cleanup_candidate_queries_completed\": 0, \"context_estimate_max_rows\": 0, \"context_rows\": 0, \"cost_projection_estimate_rows\": 0, \"cost_rows\": 0, \"cost_snapshot_rows\": 0, \"messages_for_session\": 0, \"pause:cleanup_candidate_queries_completed\": 0, \"pause:context_estimate_max_rows\": 1, \"pause:context_rows\": 0, \"pause:cost_projection_estimate_rows\": 0, \"pause:cost_rows\": 0, \"pause:cost_snapshot_rows\": 0, \"pause:messages_for_session\": 0, \"pause:settings_readiness_builds\": 3, \"pause:snapshot_rows\": 0, \"pause:snapshots\": 0, \"pause:spend_history_rows\": 0, \"pause:template_default_builds\": 0, \"settings_readiness_builds\": 25, \"snapshot_rows\": 0, \"snapshots\": 0, \"spend_history_rows\": 0, \"template_default_builds\": 0}",
+    "native_timer_count": "24",
+    "delivered_pause_count": "0",
+    "runtime_sources": "{\"tldw_chatbook.UI.Console_Modules.console_spend_projection\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Console_Modules\\\\console_spend_projection.py\", \"tldw_chatbook.UI.Screens.chat_screen\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Screens\\\\chat_screen.py\", \"tldw_chatbook.app\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\app.py\"}"
+  },
+  "production_tree": "16b0c4d5601f440abda9105365685fe46ea70833",
+  "source_sha256": {
+    "Tests/Performance/test_console_keystroke_work_census.py": "b27168b66459d914167c87f4c6c42edf9e6d521e7b96e16f25676b3f7f9bc773",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "6c1906d84bfacc5a3b18ffdc4e2f1d62da46da862617f8e296a95bca537b488a",
+    "tldw_chatbook/Widgets/Console/console_inspector_section.py": "19bbf23b04e58329c6aa1339c2c62a1b26cc390dde03eaa0dd30d04538c3ed71",
+    "tldw_chatbook/Widgets/Console/console_run_inspector.py": "660d1a0b39270e8165f6757f15f6d857228cfa83fc943c55816663bedf697608"
+  }
+}

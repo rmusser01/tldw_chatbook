@@ -1,0 +1,12 @@
+import collections,difflib,hashlib,json,subprocess,re
+from pathlib import Path
+p=Path('/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-core-extract-i4xaa7gn');old_files=json.loads((p/'files.json').read_text());new_files=['tldw_chatbook/Chat/'+f+'.py' for f in ['console_agent_reply','console_settings_persistence','console_memory_banner']];files=old_files+new_files+['Tests/Tools/test_admitted_root_consumer_census.py','Tests/Chat/test_console_auxiliary_routing.py','Tests/Chat/test_console_chat_fork_persistence.py','Tests/Chat/test_console_chat_controller.py','Tests/Chat/test_console_prompt_mixin_retry.py'];exe='/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff';out={};before_total=collections.Counter();after_total=collections.Counter()
+for f in files:
+ if f in old_files:old=(p/f'before-{old_files.index(f)}.py').read_text()
+ elif f in new_files:old=''
+ else:old=subprocess.check_output(['git','show','HEAD:'+f],text=True)
+ new=Path(f).read_text()
+ def check(s):
+  r=subprocess.run([exe,'check','--no-cache','--output-format','json','--stdin-filename',f,'-'],input=s,text=True,capture_output=True);fmt=subprocess.run([exe,'format','--no-cache','--stdin-filename',f,'-'],input=s,text=True,capture_output=True);assert fmt.returncode==0,fmt.stderr;a=s.splitlines();b=fmt.stdout.splitlines();return {'sha256':hashlib.sha256(s.encode()).hexdigest(),'lint':json.loads(r.stdout),'format':[{'before':a[i:j],'after':b[k:l]} for tag,i,j,k,l in difflib.SequenceMatcher(None,a,b,autojunk=False).get_opcodes() if tag!='equal']}
+ a,b=check(old),check(new);aa=collections.Counter((x['code'],re.sub(r'from line \d+', 'from line <location>', x['message'])) for x in a['lint']);bb=collections.Counter((x['code'],re.sub(r'from line \d+', 'from line <location>', x['message'])) for x in b['lint']);before_total+=aa;after_total+=bb;fa=collections.Counter(json.dumps(x,sort_keys=True) for x in a['format']);fb=collections.Counter(json.dumps(x,sort_keys=True) for x in b['format']);out[f]={'before':a,'after':b,'added_lint':list((bb-aa).elements()),'new_format':[json.loads(x) for x in (fb-fa).elements()]};print(f,'addedlint',out[f]['added_lint'],'newfmt',len(out[f]['new_format']))
+(p/'lint.json').write_text(json.dumps(out,indent=2)+'\n');(p/'lint-total.json').write_text(json.dumps({'before':sum(before_total.values()),'after':sum(after_total.values()),'added':list((after_total-before_total).elements()),'removed':list((before_total-after_total).elements())},indent=2)+'\n');print('TOTAL ADDED',list((after_total-before_total).elements()))

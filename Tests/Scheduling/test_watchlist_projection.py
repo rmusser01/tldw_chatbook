@@ -1,10 +1,13 @@
 """Tests for the watchlist projection service."""
 
+import pytest
+
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlist_projection_from_subscriptions_db(tmp_path):
     """Subscriptions_DB rows are projected into ScheduledTask objects."""
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
@@ -31,6 +34,7 @@ def test_watchlist_projection_from_subscriptions_db(tmp_path):
     assert task.next_run_at is not None
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlist_projection_waiting_after_successful_check(tmp_path):
     """A successfully checked subscription remains WAITING in the projection."""
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
@@ -50,6 +54,7 @@ def test_watchlist_projection_waiting_after_successful_check(tmp_path):
     assert tasks[0].next_run_at is not None
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlist_projection_paused_subscription(tmp_path):
     """Paused subscriptions map to PAUSED."""
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
@@ -68,6 +73,7 @@ def test_watchlist_projection_paused_subscription(tmp_path):
     assert tasks[0].status is TaskStatus.PAUSED
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlist_projection_inactive_subscription(tmp_path):
     """Inactive subscriptions map to DISABLED."""
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
@@ -86,6 +92,7 @@ def test_watchlist_projection_inactive_subscription(tmp_path):
     assert tasks[0].status is TaskStatus.DISABLED
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlist_projection_error_needs_attention(tmp_path):
     """Subscriptions with an error and no successful check map to NEEDS_ATTENTION."""
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
@@ -104,6 +111,7 @@ def test_watchlist_projection_error_needs_attention(tmp_path):
     assert tasks[0].status is TaskStatus.NEEDS_ATTENTION
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlist_projection_error_with_successful_check_is_waiting(tmp_path):
     """A subscription that had at least one successful check stays WAITING despite later errors."""
     subs_db = SubscriptionsDB(tmp_path / "subs.db")
@@ -123,6 +131,7 @@ def test_watchlist_projection_error_with_successful_check_is_waiting(tmp_path):
     assert tasks[0].status is TaskStatus.WAITING
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlist_projection_source_fallback(tmp_path):
     """When source is missing, the projection falls back to the subscription type."""
     subs_db = SubscriptionsDB(tmp_path / "subs.db")

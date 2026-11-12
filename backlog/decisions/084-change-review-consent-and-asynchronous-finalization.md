@@ -182,6 +182,6 @@ and lifecycle facts.
 
 - [Approved recovery design](../../Docs/superpowers/specs/2026-08-21-console-file-review-performance-recovery-design.md)
 - [Original Agent Change Review design](../../Docs/superpowers/specs/2026-08-02-agent-change-review-design.md)
-- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
 - [ADR-046: Visible bounded Console prompt queue](046-visible-bounded-console-prompt-queue.md)
-- [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)

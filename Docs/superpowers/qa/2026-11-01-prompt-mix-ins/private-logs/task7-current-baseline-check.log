@@ -1,0 +1,118 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+______ test_improvement_target_is_pinned_once_and_shared_across_callbacks ______
+Tests/UI/test_console_prompts_controller.py:519: in test_improvement_target_is_pinned_once_and_shared_across_callbacks
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+Tests/UI/test_destination_shells.py:1106: in _wait_for_selector
+    raise AssertionError(
+E   AssertionError: Timed out waiting for #console-native-composer. Visible text:
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_console_prompts_controller.py:517: in test_improvement_target_is_pinned_once_and_shared_across_callbacks
+    async with host.run_test(size=(140, 40)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:21573: in _adapt_console_workspace_to_width
+    left_rail = self.query_one("#console-left-rail")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#console-left-rail' on ChatScreen()
+__________ test_improvement_activation_refuses_a_moved_system_prompt ___________
+Tests/UI/test_console_prompts_controller.py:548: in test_improvement_activation_refuses_a_moved_system_prompt
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+Tests/UI/test_destination_shells.py:1106: in _wait_for_selector
+    raise AssertionError(
+E   AssertionError: Timed out waiting for #console-native-composer. Visible text:
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_console_prompts_controller.py:546: in test_improvement_activation_refuses_a_moved_system_prompt
+    async with host.run_test(size=(140, 40)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:21573: in _adapt_console_workspace_to_width
+    left_rail = self.query_one("#console-left-rail")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#console-left-rail' on ChatScreen()
+________ test_improvement_snapshot_refuses_an_unpinned_provider_target _________
+Tests/UI/test_console_prompts_controller.py:572: in test_improvement_snapshot_refuses_an_unpinned_provider_target
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+Tests/UI/test_destination_shells.py:1106: in _wait_for_selector
+    raise AssertionError(
+E   AssertionError: Timed out waiting for #console-native-composer. Visible text:
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_console_prompts_controller.py:570: in test_improvement_snapshot_refuses_an_unpinned_provider_target
+    async with host.run_test(size=(140, 40)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:21573: in _adapt_console_workspace_to_width
+    left_rail = self.query_one("#console-left-rail")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#console-left-rail' on ChatScreen()
+============================= slowest 25 durations =============================
+5.72s call     Tests/UI/test_console_prompts_controller.py::test_improvement_target_is_pinned_once_and_shared_across_callbacks
+4.48s call     Tests/UI/test_console_prompts_controller.py::test_improvement_activation_refuses_a_moved_system_prompt
+4.43s call     Tests/UI/test_console_prompts_controller.py::test_improvement_snapshot_refuses_an_unpinned_provider_target
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_prompts_controller.py::test_improvement_target_is_pinned_once_and_shared_across_callbacks
+FAILED Tests/UI/test_console_prompts_controller.py::test_improvement_activation_refuses_a_moved_system_prompt
+FAILED Tests/UI/test_console_prompts_controller.py::test_improvement_snapshot_refuses_an_unpinned_provider_target
+3 failed in 17.94s

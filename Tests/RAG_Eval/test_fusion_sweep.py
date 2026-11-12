@@ -16,6 +16,7 @@ the task report and the PR.
 Skipped unless `RAG_EVAL=1` plus the embeddings extras plus a warm model
 cache — the same gate every harness module uses, never a new one.
 """
+
 from __future__ import annotations
 
 from Tests.RAG_Eval.harness.environment import harness_gate
@@ -210,8 +211,7 @@ def test_the_match_construction_matrix_over_the_real_fixtures(tmp_path, capsys):
     # beat is a rescue count over those same queries — never a row's full
     # census, which carries the control's own ~20 hits no probe was run over.
     best_rescues = max(
-        len(rescued_zero_row_queries(entry, control.census))
-        for entry in report.entries
+        len(rescued_zero_row_queries(entry, control.census)) for entry in report.entries
     )
     with capsys.disabled():
         print("\n" + format_construction_matrix(report))
@@ -255,8 +255,7 @@ def test_the_match_construction_matrix_over_the_real_fixtures(tmp_path, capsys):
             )
         )
         assert backends == ("rag-hybrid",), (
-            f"{label}: expected every query to route to 'rag-hybrid', got "
-            f"{backends}"
+            f"{label}: expected every query to route to 'rag-hybrid', got {backends}"
         )
         assert len(entry.hybrid.queries) == len(golden), (
             f"{label}: ran {len(entry.hybrid.queries)} of {len(golden)} queries"

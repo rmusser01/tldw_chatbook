@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N   Saved · Next: Keep editing; changes save automatically.
+  a    o
+  v    t    ‹ Back to list     ‹ Advisor meeting …    Thesis… Library notes
+       e   In the Library database only — no file on disk
+       s   Saved
+              Edit     Preview     Info
+--->          Save     Use in Console
+           Title     Thesis outline — retrieval-augmented tutoring
+     --->  Keywords  thesis
+           Body
+          ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+--->      ┃ # Outline                                                          ┃
+          ┃                                                                    ┃
+          ┃ 1. Intro                                                        ▁▁ ┃
+          ┃ 2. Background                                                      ┃
+          ┃                                                                    ┃
+          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                                                                 14 words · 1:1
+  typing in field | esc notes | ctrl+end end | F1 · F6 · Ctrl+P · Ctrl+Q

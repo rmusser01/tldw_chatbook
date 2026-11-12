@@ -297,6 +297,70 @@ def test_fs_write_dry_run_preview_stays_stampless(tmp_path: Path) -> None:
     assert json.loads(result["result"] or "")["target_state"] == "absent"
 
 
+def test_fs_mkdir_roundtrip_creates_with_parents_and_retries(tmp_path: Path) -> None:
+    """TASK-35081 review follow-up: fs_mkdir through the real remote bundle.
+
+    The remote admission path differs most from the local one (lexical
+    normalization, no laptop chain guard), so the create + no-op-retry
+    contract gets pinned here against the regenerated artifact.
+    """
+    root = _workspace(tmp_path)
+    chain = _ping_chain(root)
+
+    created = run_bundle_loopback(
+        root,
+        _request(
+            root,
+            "fs_mkdir",
+            {"path": "reports/2026/oct", "sensitive_exclusions": []},
+            chain=chain,
+            intent="write",
+        ),
+    )
+    assert created["outcome"] == "success", created
+    assert "created directory" in (created["result"] or "")
+    assert (root / "reports" / "2026" / "oct").is_dir()
+
+    retried = run_bundle_loopback(
+        root,
+        _request(
+            root,
+            "fs_mkdir",
+            {"path": "reports/2026/oct", "sensitive_exclusions": []},
+            chain=chain,
+            intent="write",
+        ),
+    )
+    assert retried["outcome"] == "success", retried
+    assert "already exists" in (retried["result"] or "")
+
+
+def test_fs_mkdir_refuses_a_serialized_excluded_subtree(tmp_path: Path) -> None:
+    """A binding-excluded subtree cannot be planted worker-side, either."""
+    root = _workspace(tmp_path)
+    chain = _ping_chain(root)
+
+    result = run_bundle_loopback(
+        root,
+        _request(
+            root,
+            "fs_mkdir",
+            {
+                "path": "secrets/new",
+                "sensitive_exclusions": [
+                    {"kind": "subtree", "value": "secrets"}
+                ],
+            },
+            chain=chain,
+            intent="write",
+        ),
+    )
+
+    assert result["outcome"] == "failure", result
+    assert result["code"] == "invalid_request"
+    assert not (root / "secrets").exists()
+
+
 def test_fs_edit_result_carries_written_content_stamps(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     chain = _ping_chain(root)
@@ -815,3 +879,36 @@ def test_loopback_spawns_isolated_interpreter(
     assert argv[1] == "-I"
     assert argv[2] == "-c"
     assert argv[3].startswith("import sys,zlib;exec(compile(")
+
+
+def test_fs_list_long_roundtrip_retains_exclusions_and_plain_output(tmp_path: Path) -> None:
+    """Dropping long_format in the shipped decoder or dispatch loses metadata."""
+    import stat
+
+    root = tmp_path / "long-workspace"
+    root.mkdir()
+    visible = root / ".visible"
+    visible.write_bytes(b"twelve bytes")
+    (root / "private.txt").write_text("private", encoding="utf-8")
+    (root / "docs").mkdir()
+    chain = _ping_chain(root)
+    arguments = {
+        "path": ".",
+        "sensitive_exclusions": [{"kind": "subtree", "value": "private.txt"}],
+    }
+    plain = run_bundle_loopback(root, _request(root, "fs_list", arguments, chain=chain))
+    assert plain["outcome"] == "success", plain
+    assert plain["result"] == "docs/\n.visible"
+    disabled = run_bundle_loopback(
+        root, _request(root, "fs_list", {**arguments, "long_format": False}, chain=chain)
+    )
+    assert disabled["outcome"] == "success", disabled
+    assert disabled["result"] == plain["result"]
+    result = run_bundle_loopback(
+        root, _request(root, "fs_list", {**arguments, "long_format": True}, chain=chain)
+    )
+    assert result["outcome"] == "success", result
+    assert result["result"].splitlines() == [
+        f"{stat.filemode((root / 'docs').lstat().st_mode)} {(root / 'docs').lstat().st_size} docs/",
+        f"{stat.filemode(visible.lstat().st_mode)} 12 .visible",
+    ]

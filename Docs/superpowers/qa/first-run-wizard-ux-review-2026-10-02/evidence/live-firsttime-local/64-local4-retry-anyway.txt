@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                            Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Hello Ollama                                                                                                                              │
+                       Context ◂  │      Hello Ollama      ✕    New tab     Temporary                                                                                                        │
+   Terminal                       │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Workspaces                  ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Conversations               ▾    │                                                                                                                                                          │
+   New conversation               │                                                                                                                                                          │
+       Archive this chat          │                                                                                                                                                          │
+         Archived chats           │                                                                                                                                                          │
+       Search all chats…          │                                                                                                                                                          │
+   Hello Ollama                   │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                          │
+  ▊  Filter visible   ▎           │                                                                                                                                                          │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  Chats                      ▾    │                                                                                                                                                          │
+   Hello Ollama             💬    │                                                                                                                                                          │◂ Inspect
+                                  │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Character · No chats        ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Model                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Agent                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Details                     ▸    │                                                                                                                                                          │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │   User                                                                                                                                                   │
+                                  │   Hello Ollama                                                                                                                                           │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │  ▊ Assistant                                                                                                                                             │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊  Hello from the fake local server! Everything stays on your machine.                                                                                  │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Ollama     Model: llama3.1:8b     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                          Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

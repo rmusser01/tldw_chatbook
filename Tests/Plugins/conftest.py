@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Plugins.platform_support import require_managed_runtime
+
 
 @pytest.fixture
 def native_package(tmp_path):
@@ -31,6 +33,7 @@ class PluginStack:
     """Exercise the real stack on its one persistent storage-worker event loop."""
 
     def __init__(self, root):
+        require_managed_runtime()
         import asyncio
         import threading
         from concurrent.futures import Future
@@ -109,6 +112,9 @@ def plugin_stack(tmp_path):
 @pytest.fixture
 async def native_console(tmp_path, native_package):
     """Actual services and persisted Console; only provider transport is a double."""
+    from Tests.Plugins.platform_support import require_managed_runtime
+
+    require_managed_runtime()
     from types import SimpleNamespace
 
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
@@ -128,7 +134,7 @@ async def native_console(tmp_path, native_package):
     registry.create_workspace(workspace_id="workspace-a", name="A")
     registry.create_workspace(workspace_id="workspace-b", name="B")
     service = PluginService(
-        tmp_path / "profile",
+        tmp_path / "console-profile",
         workspace_lookup=registry.get_workspace,
         marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "marker"),
         accept_reduced_protection=True,
@@ -141,7 +147,9 @@ async def native_console(tmp_path, native_package):
     )
     skills = SkillsScopeService(local_service=local)
     gateway = _RecordingGateway()
-    store = persisted_console_store(workspace_registry=registry)
+    store = persisted_console_store(
+        workspace_registry=registry, db_path=tmp_path / "console.sqlite"
+    )
     session = store.create_session(workspace_id="workspace-a")
     controller = ConsoleChatController(
         store=store,

@@ -7,7 +7,6 @@ from dataclasses import dataclass, fields, replace
 import inspect
 import json
 import sqlite3
-import threading
 from typing import cast
 
 import pytest
@@ -58,11 +57,9 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     CharactersRAGDBError,
-    TransactionContextManager,
 )
 from tldw_chatbook.DB.transaction_observer import (
     active_managed_transaction_count,
-    begin_managed_transaction,
     current_managed_transaction,
     register_transaction_completion,
 )
@@ -2609,37 +2606,38 @@ def test_repeated_same_head_requests_keep_one_parent_capability(
 
 @pytest.mark.parametrize("commit_fails", [False, True])
 def test_failed_rollback_releases_observers_and_reports_ambiguous_outcome(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
     commit_fails: bool,
 ) -> None:
-    class FailingConnection:
-        def commit(self) -> None:
-            if commit_fails:
-                raise sqlite3.OperationalError("commit failed")
+    def fail_commit() -> None:
+        raise sqlite3.OperationalError("commit failed")
 
-        def rollback(self) -> None:
-            raise sqlite3.OperationalError("rollback failed")
+    def fail_rollback() -> None:
+        raise sqlite3.OperationalError("rollback failed")
 
-    class FakeDB:
-        def __init__(self) -> None:
-            self._local = threading.local()
-            self._local.transaction_depth = 1
-
-    connection = cast(sqlite3.Connection, FailingConnection())
-    manager = TransactionContextManager(cast(CharactersRAGDB, FakeDB()))
-    manager.conn = connection
-    manager.is_outermost_transaction = True
-    token = begin_managed_transaction(connection)
-    manager.transaction_observer_token = token
+    connection = db.get_connection()
     outcomes: list[bool | None] = []
-    register_transaction_completion(connection, token, outcomes.append)
-
-    if commit_fails:
-        with pytest.raises(CharactersRAGDBError, match="Commit failed"):
-            manager.__exit__(None, None, None)
-    else:
-        failure = RuntimeError("block failed")
-        with pytest.raises(CharactersRAGDBError, match="Rollback failed"):
-            manager.__exit__(RuntimeError, failure, failure.__traceback__)
+    try:
+        with (
+            monkeypatch.context() as fault,
+            pytest.raises(
+                CharactersRAGDBError,
+                match="Commit failed" if commit_fails else "Rollback failed",
+            ),
+            db.transaction(),
+        ):
+            token = current_managed_transaction(connection)
+            assert token is not None
+            register_transaction_completion(connection, token, outcomes.append)
+            fault.setattr(connection, "rollback", fail_rollback)
+            if commit_fails:
+                fault.setattr(connection, "commit", fail_commit)
+            else:
+                raise RuntimeError("block failed")
+        assert connection.in_transaction
+    finally:
+        connection.rollback()
 
     assert outcomes == [None]
     assert active_managed_transaction_count() == 0
@@ -4944,3 +4942,88 @@ def test_verified_secret_canaries_are_absent_from_every_trace_owned_cell(
     )
     assert secret.encode("utf-8") not in serialized
     assert b"[credential omitted]" in serialized
+
+
+@pytest.mark.parametrize(
+    "source", [TraceProvenanceSource.TOOL_CALL, TraceProvenanceSource.ACTIVE_REQUEST]
+)
+def test_thinking_tool_call_reference_identity_and_legacy_refusal(
+    db, repository, source
+):
+    owner_id, segment_id = _owned_segment(db, repository)
+    policy = _policy()
+    original = ProviderArtifactTraceProvenance(source, policy)
+    thinking = ProviderArtifactTraceProvenance(TraceProvenanceSource.THINKING, policy)
+    attachment = DerivedTraceProvenance(
+        TraceTransformKind.THINKING_ATTACHMENT, (original,), artifact=thinking
+    )
+    rewritten = DerivedTraceProvenance(
+        TraceTransformKind.MESSAGE_REWRITE, (original, attachment), artifact=thinking
+    )
+    value = {"role": "assistant", "content": "<think>private</think>\nanswer"}
+    if source is TraceProvenanceSource.TOOL_CALL:
+        value["tool_calls"] = [
+            {
+                "id": "native-call",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": "{}"},
+            }
+        ]
+    provenance = _provenance((rewritten,))
+    service = ConsoleTraceService(repository)
+    expected = "tool_call" if source is TraceProvenanceSource.TOOL_CALL else "thinking"
+    with db.transaction() as cursor:
+        _persist(
+            service,
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            provenance=provenance,
+            bundle=_available_bundle(provenance, messages=[value]),
+        )
+        node = repository.get_surface_tail(cursor, segment_id)
+        assert node.component_kind == expected
+        key = service._node_reference_key(node)
+        values = service._resolve_reference_values(cursor, (key,), owner_id=owner_id)
+        for observer in (service, ConsoleTraceService(repository)):
+            assert observer._reference_key(cursor, rewritten, value) == key
+            assert observer._surface_reference_matches(cursor, node, rewritten, value)
+            assert observer._durable_reference_matches(
+                cursor, rewritten, value, key, values, owner_id=owner_id
+            )
+            admission, _boundary = observer.prepare_current_surface_delta(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                route_identity=ConsoleRequestRoute.FRESH.value,
+                preparation_identity=new_opaque_id(),
+                provenance=provenance,
+                values=(value,),
+            )
+            assert admission.descriptors == ()
+        assert (
+            service._reference(
+                cursor, owner_id=owner_id, descriptor=thinking, value=value
+            )[0]
+            == "thinking"
+        )
+        if source is TraceProvenanceSource.TOOL_CALL:
+            legacy = repository.append_surface_node(
+                cursor,
+                segment_id=segment_id,
+                sequence=node.sequence + 1,
+                predecessor_node_id=node.node_id,
+                component_kind="thinking",
+                reference=TraceContentRef(node.artifact_id, "thinking"),
+            )
+            legacy_key = service._node_reference_key(legacy)
+            legacy_values = service._resolve_reference_values(
+                cursor, (legacy_key,), owner_id=owner_id
+            )
+            assert not service._surface_reference_matches(
+                cursor, legacy, rewritten, value
+            )
+            assert not service._durable_reference_matches(
+                cursor, rewritten, value, legacy_key, legacy_values, owner_id=owner_id
+            )
+            assert repository.get_surface_node(cursor, legacy.node_id) == legacy

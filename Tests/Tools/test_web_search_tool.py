@@ -44,7 +44,9 @@ def test_snippet_falls_back_to_content(monkeypatch: pytest.MonkeyPatch) -> None:
     assert snippets == ["the actual body text", "body two"]
 
 
-def test_empty_content_falls_through_to_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_empty_content_falls_through_to_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """An empty-string content must not become a blank snippet."""
     tool = WebSearchTool()
     payload = {"results": [{"title": "T", "url": "https://x/", "content": ""}]}

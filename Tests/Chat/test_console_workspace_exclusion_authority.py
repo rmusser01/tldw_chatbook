@@ -116,45 +116,69 @@ def test_provider_skips_unresolvable_entry_and_keeps_rest(tmp_path: Path):
     assert paths == ((root / "secrets").resolve(strict=False),)
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_refuses_excluded_path_end_to_end(tmp_path: Path):
     root = (tmp_path / "repo").resolve()
     root.mkdir()
     (root / "secrets").mkdir()
     (root / "secrets" / "key.pem").write_text("k")
     registry = _FakeRegistry([_FakeBinding("ws", "folder-1", root, ("secrets",))])
-    roots = capture_run_admitted_workspace_roots(session=_FakeSession("ws"), registry=registry)
+    roots = capture_run_admitted_workspace_roots(
+        session=_FakeSession("ws"), registry=registry
+    )
     from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
     from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
     provider = LocalToolProvider(
         workspace_root=tmp_path,
-        resolve_state=lambda hub: EffectiveToolState.ALLOW,
+        resolve_state=lambda hub: EffectiveToolState(
+            state="allow", origin="tool_override"
+        ),
         admitted_roots=roots,
     )
-    result = provider._invoke_detailed("local:fs_read", {"path": "secrets/key.pem", "root_alias": "folder-1"})
+    result = provider._invoke_detailed(
+        "local:fs_read", {"path": "secrets/key.pem", "root_alias": "folder-1"}
+    )
+    assert result.final_gate == "allow"
+    assert result.dispatch_started is True
     assert result.result.ok is False
     # Controller ruling: parent-side denials wrap as an opaque executor code,
     # so the refusal text must leak neither the exclusion mechanism nor the
     # excluded path itself.
     assert "exclud" not in result.result.error.lower()
     assert "secrets" not in result.result.error
+    (root / "visible.txt").write_text("allowed sibling sentinel")
+    allowed = provider._invoke_detailed(
+        "local:fs_read", {"path": "visible.txt", "root_alias": "folder-1"}
+    )
+    assert allowed.final_gate == "allow"
+    assert allowed.dispatch_started is True
+    assert allowed.result.ok, allowed.result
+    assert "allowed sibling sentinel" in allowed.result.content
 
 
+@pytest.mark.bootstrap_profile
 def test_path_targets_preflight_refuses_excluded_target(tmp_path: Path):
     root = (tmp_path / "repo").resolve()
     root.mkdir()
     (root / "secrets").mkdir()
     (root / "secrets" / "key.pem").write_text("k")
     registry = _FakeRegistry([_FakeBinding("ws", "folder-1", root, ("secrets",))])
-    roots = capture_run_admitted_workspace_roots(session=_FakeSession("ws"), registry=registry)
+    roots = capture_run_admitted_workspace_roots(
+        session=_FakeSession("ws"), registry=registry
+    )
     from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
     from tldw_chatbook.MCP.permission_store import EffectiveToolState
     from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 
     provider = LocalToolProvider(
         workspace_root=tmp_path,
-        resolve_state=lambda hub: EffectiveToolState.ALLOW,
+        resolve_state=lambda hub: EffectiveToolState(
+            state="allow", origin="tool_override"
+        ),
         admitted_roots=roots,
     )
     with pytest.raises(LocalToolError):
-        provider.path_targets("local:fs_read", {"path": "secrets/key.pem", "root_alias": "folder-1"})
+        provider.path_targets(
+            "local:fs_read", {"path": "secrets/key.pem", "root_alias": "folder-1"}
+        )

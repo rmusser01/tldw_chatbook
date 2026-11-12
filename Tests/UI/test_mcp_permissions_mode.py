@@ -21,6 +21,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     PermissionProfileContext,
     PermRow,
     ToolPolicyProfileOption,
+    _GATE_VS_PERMISSION_EXPLAINER,
     format_tool_state_label,
     state_text,
     tool_state_kind,
@@ -172,6 +173,20 @@ class PermissionsModeApp(ConsolidatedCSSApp):
         self.events.append(event)
 
     def on_mcp_permissions_mode_kill_switch_toggled(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_permissions_mode_suggestion_accept_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_permissions_mode_suggestion_dismiss_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_permissions_mode_suggestion_restore_requested(self, event) -> None:
+        self.events.append(event)
+
+    def on_mcp_permissions_mode_suggestion_dismissals_clear_requested(
+        self, event
+    ) -> None:
         self.events.append(event)
 
     def on_mcp_permissions_mode_row_selected(self, event) -> None:
@@ -381,6 +396,25 @@ async def test_kill_switch_scope_hint_states_built_in_blast_radius(request):
             "Also blocks the app's own built-in tools (calculator, "
             "date/time, file and note tools)."
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_gate_vs_permission_explainer_renders_at_top_of_mode(request):
+    """task-35154 (spec amendment A7 item 2): users flip a tool gate in
+    Servers, watch this matrix not change, and conclude it is broken --
+    because the two layers do different jobs. The mode must open with ONE
+    plain-language sentence stating the split: a tool whose Servers gate is
+    off does not exist for Console agents, so its Allow/Ask/Off here
+    governs nothing. Pinned verbatim (same discipline as the kill-switch
+    hint above); it renders as the canvas's FIRST child, above the
+    profile selector, so it is read before the matrix."""
+    app = PermissionsModeApp()
+    async with app.run_test():
+        canvas = app.query_one(MCPPermissionsMode)
+        explainer = app.query_one("#mcp-perm-explainer", Static)
+        assert str(explainer.renderable) == _GATE_VS_PERMISSION_EXPLAINER
+        assert canvas.children[0] is explainer
 
 
 @pytest.mark.asyncio
@@ -685,7 +719,10 @@ async def test_update_matrix_with_echo_prefixes_preview(request):
         canvas = app.query_one(MCPPermissionsMode)
         preview = "global default: ask"
         await canvas.update_matrix(
-            [_global_row()], kill_switch=False, preview=preview, echo="search → Allow · "
+            [_global_row()],
+            kill_switch=False,
+            preview=preview,
+            echo="search → Allow · ",
         )
         await pilot.pause()
         assert (
@@ -705,15 +742,23 @@ async def test_update_matrix_echo_none_clears_a_previously_shown_echo(request):
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
         await canvas.update_matrix(
-            [_global_row()], kill_switch=False, preview="global default: ask",
+            [_global_row()],
+            kill_switch=False,
+            preview="global default: ask",
             echo="search → Allow · ",
         )
         await pilot.pause()
         await canvas.update_matrix(
-            [_global_row()], kill_switch=False, preview="global default: ask", echo=None,
+            [_global_row()],
+            kill_switch=False,
+            preview="global default: ask",
+            echo=None,
         )
         await pilot.pause()
-        assert str(app.query_one("#mcp-perm-preview", Static).renderable) == "global default: ask"
+        assert (
+            str(app.query_one("#mcp-perm-preview", Static).renderable)
+            == "global default: ask"
+        )
 
 
 # -- UX batch item 4: marker legend ------------------------------------------
@@ -807,7 +852,8 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
         breadcrumb = (
             "3 tool gate(s) are off. Configure the workspace, web, and "
             "Watchlists master switch in Tools mode; other registration "
-            "gates are under MCP ▸ Servers ▸ built-in row ▸ Tool gates."
+            "gates are under Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ "
+            "Tool gates."
         )
         await canvas.update_matrix(
             [_global_row()],
@@ -818,7 +864,7 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
         await pilot.pause()
 
         legend = app.query_one("#mcp-perm-legend", Static)
-        # At 100 columns each line (161 and 175 chars) needs its own wrap,
+        # At 100 columns each line (161 and 194 chars) needs its own wrap,
         # so a correctly-sized Static is at least 2 lines tall -- a
         # height-1 cap would silently truncate mid-sentence instead.
         assert legend.size.height >= 2, (
@@ -826,8 +872,9 @@ async def test_legend_and_breadcrumb_are_fully_readable_at_100_columns(request):
             "-- text is being clipped, not wrapped"
         )
         rendered = str(legend.renderable)
+        # TASK-36387, rewritten on purpose: MCP is a Settings category.
         assert rendered.endswith(
-            "are under MCP ▸ Servers ▸ built-in row ▸ Tool gates."
+            "are under Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates."
         )
 
 
@@ -934,7 +981,9 @@ def test_format_tool_state_label_gate_error_reads_unknown_not_off(request):
     assert tool_state_kind(gate_error) == "error"
     # A genuine deny keeps its honest "Off" on the same surface.
     assert (
-        format_tool_state_label(EffectiveToolState(state="deny", origin="tool_override"))
+        format_tool_state_label(
+            EffectiveToolState(state="deny", origin="tool_override")
+        )
         == "Off •"
     )
 
@@ -1235,8 +1284,12 @@ async def test_filter_text_input_has_nonzero_geometry_with_bundled_css(request):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         filter_input = app.query_one("#mcp-perm-filter-text", Input)
-        assert filter_input.size.width > 0, "filter Input collapsed to zero width under bundled CSS"
-        assert filter_input.size.height > 0, "filter Input collapsed to zero height under bundled CSS"
+        assert filter_input.size.width > 0, (
+            "filter Input collapsed to zero width under bundled CSS"
+        )
+        assert filter_input.size.height > 0, (
+            "filter Input collapsed to zero height under bundled CSS"
+        )
         # The single-line bordered box Input's own DEFAULT_CSS/comment
         # promises (region includes the border, hence 3 not 1).
         assert filter_input.region.height == 3, (
@@ -1274,9 +1327,18 @@ def test_tool_state_kind_maps_allow_ask_deny_to_ready_warning_error(request):
     themselves (see `permission_store.resolve_effective_state()`), so a
     downgraded verdict still lands on `warning`, matching its `ui_label`
     ("Ask ⚠"/"Ask ⚑")."""
-    assert tool_state_kind(EffectiveToolState(state="allow", origin="tool_override")) == "ready"
-    assert tool_state_kind(EffectiveToolState(state="ask", origin="global_default")) == "warning"
-    assert tool_state_kind(EffectiveToolState(state="deny", origin="tool_override")) == "error"
+    assert (
+        tool_state_kind(EffectiveToolState(state="allow", origin="tool_override"))
+        == "ready"
+    )
+    assert (
+        tool_state_kind(EffectiveToolState(state="ask", origin="global_default"))
+        == "warning"
+    )
+    assert (
+        tool_state_kind(EffectiveToolState(state="deny", origin="tool_override"))
+        == "error"
+    )
     assert (
         tool_state_kind(
             EffectiveToolState(state="ask", origin="tool_override", config_changed=True)
@@ -1305,13 +1367,19 @@ async def test_state_column_cells_carry_semantic_color_by_resolved_word(request)
         canvas = app.query_one(MCPPermissionsMode)
         rows = [
             _global_row(state_label="Allow", cycle_current="allow"),
-            _server_row(server_key="local:docs", server_label="docs", state_label="Ask"),
+            _server_row(
+                server_key="local:docs", server_label="docs", state_label="Ask"
+            ),
             _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="search",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="search",
                 state_label="Off •",
             ),
             _tool_row(
-                server_key="local:docs", server_label="docs", tool_name="rug_pulled",
+                server_key="local:docs",
+                server_label="docs",
+                tool_name="rug_pulled",
                 state_label="Ask ⚠",
             ),
         ]
@@ -1340,20 +1408,30 @@ def _two_server_rows() -> list[PermRow]:
         _global_row(state_label="Ask", cycle_current="ask"),
         _server_row(server_key="local:docs", server_label="docs", state_label="Ask"),
         _tool_row(
-            server_key="local:docs", server_label="docs", tool_name="alpha_tool",
+            server_key="local:docs",
+            server_label="docs",
+            tool_name="alpha_tool",
             state_label="Ask",
         ),
         _tool_row(
-            server_key="local:docs", server_label="docs", tool_name="beta_tool",
+            server_key="local:docs",
+            server_label="docs",
+            tool_name="beta_tool",
             state_label="Allow •",
         ),
-        _server_row(server_key="local:notes", server_label="notes", state_label="Off •"),
+        _server_row(
+            server_key="local:notes", server_label="notes", state_label="Off •"
+        ),
         _tool_row(
-            server_key="local:notes", server_label="notes", tool_name="beta_other",
+            server_key="local:notes",
+            server_label="notes",
+            tool_name="beta_other",
             state_label="Off •",
         ),
         _tool_row(
-            server_key="local:notes", server_label="notes", tool_name="gamma_tool",
+            server_key="local:notes",
+            server_label="notes",
+            tool_name="gamma_tool",
             state_label="Off •",
         ),
     ]
@@ -1412,7 +1490,8 @@ async def test_filter_narrows_to_matching_tool_rows_and_hides_unrelated_pinned_r
         assert _row_texts(table, 2) == ["  alpha_tool", "Ask"]
 
         rendered_keys = {
-            table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+            table.coordinate_to_cell_key((i, 0))[0].value
+            for i in range(table.row_count)
         }
         assert "__server__::local:notes" not in rendered_keys
         assert "local:notes::beta_other" not in rendered_keys
@@ -1440,7 +1519,8 @@ async def test_filter_matches_server_label_reveals_every_tool_under_that_server(
         # global + docs server-default + alpha_tool + beta_tool
         assert table.row_count == 4
         rendered_keys = [
-            table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+            table.coordinate_to_cell_key((i, 0))[0].value
+            for i in range(table.row_count)
         ]
         assert rendered_keys == [
             "__global__",
@@ -1480,7 +1560,8 @@ async def test_filter_matching_across_two_servers_keeps_both_pinned_server_rows(
 
         table = app.query_one("#mcp-perm-table", DataTable)
         rendered_keys = [
-            table.coordinate_to_cell_key((i, 0))[0].value for i in range(table.row_count)
+            table.coordinate_to_cell_key((i, 0))[0].value
+            for i in range(table.row_count)
         ]
         assert rendered_keys == [
             "__global__",
@@ -1595,7 +1676,9 @@ async def test_echo_prefixed_preview_survives_a_refilter(request):
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPPermissionsMode)
         await canvas.update_matrix(
-            _two_server_rows(), kill_switch=False, preview="global default: ask",
+            _two_server_rows(),
+            kill_switch=False,
+            preview="global default: ask",
             echo="beta_tool → Allow · ",
         )
         await pilot.pause()
@@ -1748,3 +1831,197 @@ async def test_update_matrix_renders_discovery_hint_line(request):
         await pilot.pause()
         legend = str(app.query_one("#mcp-perm-legend", Static).renderable)
         assert "no tools yet" not in legend
+
+
+def _recommendation(
+    server_key: str = "local:docs",
+    tool_name: str = "search",
+    approved_count: int = 3,
+) -> object:
+    from tldw_chatbook.MCP.permission_prompt_reducer import (
+        PermissionPromptRecommendation,
+    )
+
+    return PermissionPromptRecommendation(
+        server_key=server_key,
+        server_label=server_key.removeprefix("local:"),
+        tool_name=tool_name,
+        approved_count=approved_count,
+        first_seen="2026-08-01T20:00:00+00:00",
+        last_seen="2026-08-01T20:05:00+00:00",
+        current_state="ask",
+        reason="Repeatedly approved while still ask-gated.",
+    )
+
+
+async def _mounted_suggestions_canvas(pilot, app):
+    canvas = app.query_one(MCPPermissionsMode)
+    canvas.populate_suggestions(
+        [_recommendation(), _recommendation(tool_name="purge", approved_count=2)],
+        {"local:docs::erase": "2026-08-02T10:00:00Z"},
+    )
+    await pilot.pause()
+    return canvas
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_suggestions_section_lists_recommendations_and_dismissed(request):
+    from textual.widgets import DataTable as _DT
+
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        await _mounted_suggestions_canvas(pilot, app)
+        table = app.query_one("#mcp-perm-suggestions-table", _DT)
+        assert table.display
+        row_keys = [str(key.value) for key in table.rows]
+        assert row_keys == [
+            "sugg:local:docs::search",
+            "sugg:local:docs::purge",
+            "dismissed:local:docs::erase",
+        ]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_suggestions_section_hides_when_nothing_to_review(request):
+    from textual.widgets import DataTable as _DT
+
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        canvas.populate_suggestions([], {})
+        await pilot.pause()
+        assert not app.query_one("#mcp-perm-suggestions-table", _DT).display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_accept_and_dismiss_keys_post_requests_for_focused_suggestion(request):
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = await _mounted_suggestions_canvas(pilot, app)
+        table = app.query_one("#mcp-perm-suggestions-table", DataTable)
+        table.focus()
+        await pilot.pause()
+        messages: list[object] = []
+        original_post_message = canvas.post_message
+        canvas.post_message = messages.append
+        try:
+            canvas.action_accept_suggestion()
+            canvas.action_dismiss_suggestion()
+        finally:
+            canvas.post_message = original_post_message
+        assert [
+            (type(m).__name__, m.server_key, m.tool_name) for m in messages
+        ] == [
+            ("SuggestionAcceptRequested", "local:docs", "search"),
+            ("SuggestionDismissRequested", "local:docs", "search"),
+        ]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_restore_key_only_acts_on_a_dismissed_row(request):
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = await _mounted_suggestions_canvas(pilot, app)
+        table = app.query_one("#mcp-perm-suggestions-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)  # a live suggestion, not a dismissed row
+        await pilot.pause()
+        messages: list[object] = []
+        original_post_message = canvas.post_message
+        canvas.post_message = messages.append
+        try:
+            canvas.action_restore_suggestion()
+            table.move_cursor(row=2)  # the dismissed row
+            canvas.action_restore_suggestion()
+            canvas.action_clear_suggestion_dismissals()
+        finally:
+            canvas.post_message = original_post_message
+        assert [type(m).__name__ for m in messages] == [
+            "SuggestionRestoreRequested",
+            "SuggestionDismissalsClearRequested",
+        ]
+        assert messages[0].server_key == "local:docs"
+        assert messages[0].tool_name == "erase"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_suggestion_keys_do_not_fire_from_the_matrix_and_vice_versa(request):
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = await _mounted_suggestions_canvas(pilot, app)
+        matrix = app.query_one("#mcp-perm-table", DataTable)
+        matrix.focus()
+        await pilot.pause()
+        messages: list[object] = []
+        original_post_message = canvas.post_message
+        canvas.post_message = messages.append
+        try:
+            canvas.action_accept_suggestion()
+            canvas.action_restore_suggestion()
+            canvas.action_clear_suggestion_dismissals()
+        finally:
+            canvas.post_message = original_post_message
+        assert messages == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_real_keypresses_route_suggestion_actions_by_focus(request):
+    """The a/d/r/c bindings fire only from the suggestions table's focus,
+    and Space never cycles the matrix while it holds focus -- proven with
+    real key presses, not direct action calls."""
+    app = PermissionsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPPermissionsMode)
+        canvas.populate_suggestions(
+            [_recommendation(), _recommendation(tool_name="purge", approved_count=2)],
+            {"local:docs::erase": "2026-08-02T10:00:00Z"},
+        )
+        # Seed the matrix with one tool row so a stray Space cycle would be
+        # observable (it would post StateCycleRequested).
+        await canvas.update_matrix(
+            [
+                _row(
+                    kind="tool",
+                    server_key="local:docs",
+                    server_label="docs",
+                    tool_name="search",
+                    state_label="Ask",
+                    cycle_current="ask",
+                )
+            ],
+            kill_switch=False,
+            preview="",
+        )
+        await pilot.pause()
+        events: list[object] = []
+        app.events = events
+
+        # Focus the suggestions table: a posts accept for the cursor row.
+        table = app.query_one("#mcp-perm-suggestions-table", DataTable)
+        table.focus()
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert [type(e).__name__ for e in events] == ["SuggestionAcceptRequested"]
+        assert events[0].server_key == "local:docs"
+        assert events[0].tool_name == "search"
+
+        # Focus the MATRIX instead: the same key is inert (no suggestion
+        # event fires), and Space posts the matrix's own cycle instead of
+        # touching suggestions.
+        events.clear()
+        matrix = app.query_one("#mcp-perm-table", DataTable)
+        matrix.focus()
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert events == []
+        await pilot.press("space")
+        await pilot.pause()
+        assert [type(e).__name__ for e in events] == ["StateCycleRequested"]

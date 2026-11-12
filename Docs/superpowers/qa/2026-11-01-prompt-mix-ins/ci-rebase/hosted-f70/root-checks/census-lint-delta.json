@@ -1,0 +1,11 @@
+{
+  "base": "f70eb635f5991d25b7cd5d32d789406d837be32b",
+  "baseline": 2,
+  "current": 2,
+  "added": [],
+  "codes": {
+    "EXE001": 1,
+    "PIE810": 1
+  },
+  "qualification": "Original Git bytes in non-executable private baseline file and current actual file; same explicit pyproject config. New code values only censusfloor/comment; existing EXE001/PIE810 retained."
+}

@@ -65,9 +65,7 @@ def test_a_binding_exists_for_the_inspect_rail():
 def test_a_binding_exists_for_the_context_rail():
     """TASK-32320: the Context rail gets the keyboard dignity alt+i gave
     the Inspector."""
-    assert "alt+c" in _binding_keys(), (
-        "no Binding opens or closes the Context rail"
-    )
+    assert "alt+c" in _binding_keys(), "no Binding opens or closes the Context rail"
 
 
 def test_the_context_shortcut_is_advertised():
@@ -135,6 +133,7 @@ def test_the_collapsed_rail_keeps_its_f6_pane_stop():
     ), "the handle must still resolve to its logical pane (TASK-2154.11)"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f6_reaches_the_inspector_pane_while_the_rail_is_collapsed():
     """The behavioural half of the above: the pane cycle must still contain
@@ -164,6 +163,7 @@ async def test_f6_reaches_the_inspector_pane_while_the_rail_is_collapsed():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_i_opens_and_focuses_the_rail_then_closes_it():
     """TASK-24604: Alt+I is a round trip, not just an open.
@@ -202,6 +202,7 @@ async def test_alt_i_opens_and_focuses_the_rail_then_closes_it():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_collapsing_below_84_columns_leaves_a_way_back():
     """TASK-24600: the P0. At 80x24 a collapsed rail left nothing on screen
@@ -238,6 +239,7 @@ async def test_collapsing_below_84_columns_leaves_a_way_back():
 # --- TASK-24703 -------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_shortcut_does_not_land_focus_on_the_close_control():
     """TASK-24703: opening a pane must not put the caret on its own closer.
@@ -313,7 +315,8 @@ def test_the_inspect_route_is_in_the_f1_reference_not_only_the_footer():
     assert any(key == "Alt+I" for key, _ in CONSOLE_WORKBENCH_SHORTCUTS)
 
     panes = next(
-        entries for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        entries
+        for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
         if title == "Panes"
     )
     inspect = [entry for entry in panes if entry[0] == "Alt+I"]
@@ -342,7 +345,8 @@ def test_the_approval_route_is_in_the_f1_reference_not_only_the_footer():
     assert any(key == "Alt+A" for key, _ in CONSOLE_WORKBENCH_SHORTCUTS)
 
     panes = next(
-        entries for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        entries
+        for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
         if title == "Panes"
     )
     approval = [entry for entry in panes if entry[0] == "Alt+A"]
@@ -356,6 +360,7 @@ def test_the_approval_route_is_in_the_f1_reference_not_only_the_footer():
 # --- TASK-32320: the left rail gets the same keyboard dignity -----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_c_toggles_the_context_rail_from_any_focus():
     """TASK-32320: the Context rail had no keyboard toggle at all -- the
@@ -398,6 +403,7 @@ async def test_alt_c_toggles_the_context_rail_from_any_focus():
 # --- Qodo 2614 #3/#4: the Context toggle's state derivation -------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_c_below_the_width_budget_is_the_way_back_not_a_flip():
     """Qodo 2614 #4: below the responsive width budget the rail is hidden
@@ -444,6 +450,7 @@ async def test_alt_c_below_the_width_budget_is_the_way_back_not_a_flip():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_c_opening_resolves_the_compact_inspector_conflict():
     """Qodo 2614 #3: opening Context in the 100-150 band must route through

@@ -143,7 +143,9 @@ class ChangeReviewConsentService:
     """
 
     _PREPARING_REASON = "Preparing change history; this turn continues without it."
-    _FAILED_REASON = "Change history preparation failed; this turn continues without it."
+    _FAILED_REASON = (
+        "Change history preparation failed; this turn continues without it."
+    )
     _QUEUE_FULL_REASON = "Change history preparation is busy; retry from Settings."
 
     def __init__(
@@ -166,6 +168,9 @@ class ChangeReviewConsentService:
         self._queue: Queue[_InitializationWork] = Queue(maxsize=queue_capacity)
         self._readiness: dict[tuple[str, str], _ReadinessEntry] = {}
         self._generation = 0
+        # Moves whenever an in-app change may alter what ``admit_turn``
+        # answers; see ``admission_revision``.
+        self._admission_revision = 0
         self._disposed = False
         self._workers = tuple(
             Thread(
@@ -176,6 +181,24 @@ class ChangeReviewConsentService:
             for index in range(worker_count)
         )
         self._workers_started = False
+
+    @property
+    def admission_revision(self) -> int:
+        """A number that moves whenever ``admit_turn``'s answer may change.
+
+        It moves when consent is toggled, when a root finishes (or fails)
+        preparation, when readiness is discarded or a ready root is
+        rescheduled, and at shutdown -- never on a read that changes nothing,
+        including the first read that only schedules preparation. Reading it
+        takes no lock and touches no database, so the UI loop can use it
+        where ``admit_turn`` (a registry read) is too slow: the Console
+        Environment panel compares it to drop a landing whose root changed
+        after its worker read the root (TASK-33620.15.1.6). Folder-binding
+        changes are the registry's ``mutation_generation``; a consent change
+        written by another process, or a folder removed on disk, moves
+        neither.
+        """
+        return self._admission_revision
 
     def admit_turn(self, workspace_id: str) -> ChangeReviewAdmission:
         """Capture ready roots without waiting for filesystem initialization."""
@@ -245,6 +268,7 @@ class ChangeReviewConsentService:
                 enabled=enabled,
             )
             self._discard_workspace_readiness_locked(workspace_id)
+            self._admission_revision += 1
             if enabled:
                 self._admit_enabled_locked(workspace_id, committed)
             return committed
@@ -293,6 +317,7 @@ class ChangeReviewConsentService:
             if not self._disposed:
                 self._disposed = True
                 self._generation += 1
+                self._admission_revision += 1
                 self._readiness.clear()
             while True:
                 try:
@@ -359,6 +384,9 @@ class ChangeReviewConsentService:
             for worker in self._workers:
                 worker.start()
             self._workers_started = True
+        previous = self._readiness.get((workspace_id, root))
+        if previous is not None and previous.state is RootReadinessState.READY:
+            self._admission_revision += 1  # a ready root goes back to preparing
         work = _InitializationWork(
             workspace_id=workspace_id,
             root=root,
@@ -419,6 +447,7 @@ class ChangeReviewConsentService:
                 current = self._readiness.get(key)
                 if current is not None and current.revision == work.revision:
                     self._readiness.pop(key, None)
+                    self._admission_revision += 1
                 return
             current = self._readiness.get((work.workspace_id, work.root))
             if (
@@ -441,8 +470,10 @@ class ChangeReviewConsentService:
                     reason=self._FAILED_REASON,
                 )
             self._readiness[(work.workspace_id, work.root)] = replacement
+            self._admission_revision += 1
 
     def _discard_workspace_readiness_locked(self, workspace_id: str) -> None:
         for key in tuple(self._readiness):
             if key[0] == workspace_id:
                 self._readiness.pop(key, None)
+                self._admission_revision += 1

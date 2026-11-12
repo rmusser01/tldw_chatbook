@@ -1,0 +1,216 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "profiled": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "attach_poll": true,
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-sdb2imrb",
+  "import_ms": 3112.4359000095865,
+  "construct_ms": 15424.223499998334,
+  "mount_ready_ms": 25660.543499994674,
+  "startup_phases": {
+    "basic_init": 0.9688539000053424,
+    "attribute_init": 9.60000033956021e-06,
+    "parallel_init": 7.023440000004484,
+    "total_init": 15.423667699986254
+  },
+  "console_resume": [],
+  "input_timeout": {
+    "iteration": 0,
+    "screen": "ChatScreen",
+    "focused": "ConsoleComposerBar(id='console-native-composer', classes='ds-panel console-composer-focused')",
+    "composer_can_focus": true,
+    "composer_disabled": false,
+    "draft_before": "",
+    "draft_after": "",
+    "attach_reconciled": false,
+    "sync_in_progress": true,
+    "workers": [
+      "<Worker RUNNING name='run' group='scheduling' description='<coroutine object SchedulerLoop.run at 0x0000025B040DB010>'>",
+      "<Worker RUNNING name='_refresh_home_chatbook_artifact_snapshot' group='home-refresh-chatbook-artifact-snapshot' description='_refresh_home_chatbook_artifact_snapshot()'>",
+      "<Worker RUNNING name='_refresh_home_content_snapshot' group='home-content-snapshot' description='_refresh_home_content_snapshot()'>",
+      "<Worker RUNNING name='_refresh_console_hooks' group='console-hook-refresh' description=\"<bound method ChatScreen._refresh_console_hooks of ChatScreen(classes='shell-header-normal')>\">"
+    ],
+    "projection_pending": false,
+    "projection_reads": "set()",
+    "projection_settled": true,
+    "tasks": [
+      [
+        [
+          "message_pump.py",
+          "_process_messages",
+          571
+        ],
+        [
+          "message_pump.py",
+          "_process_messages_loop",
+          663
+        ],
+        [
+          "message_pump.py",
+          "_dispatch_message",
+          741
+        ],
+        [
+          "message_pump.py",
+          "_flush_next_callbacks",
+          702
+        ],
+        [
+          "_callback.py",
+          "invoke",
+          96
+        ],
+        [
+          "_callback.py",
+          "_invoke",
+          58
+        ],
+        [
+          "screen.py",
+          "_invoke_and_clear_callbacks",
+          1272
+        ],
+        [
+          "_callback.py",
+          "invoke",
+          96
+        ],
+        [
+          "_callback.py",
+          "_invoke",
+          58
+        ],
+        [
+          "chat_screen.py",
+          "_reconcile_console_after_attach",
+          15384
+        ],
+        [
+          "chat_screen.py",
+          "_sync_native_console_chat_ui",
+          17699
+        ],
+        [
+          "character_context.py",
+          "refresh_presentation_if_scope_changed",
+          994
+        ],
+        [
+          "character_context.py",
+          "_capture_scope",
+          784
+        ],
+        [
+          "character_context.py",
+          "_await_database_work",
+          738
+        ],
+        [
+          "console_preparation_reads.py",
+          "run_preparation_read",
+          226
+        ]
+      ],
+      [
+        [
+          "worker.py",
+          "_run",
+          370
+        ],
+        [
+          "worker.py",
+          "run",
+          354
+        ],
+        [
+          "worker.py",
+          "_run_async",
+          339
+        ],
+        [
+          "chat_screen.py",
+          "_refresh_console_hooks",
+          18345
+        ],
+        [
+          "hooks.py",
+          "refresh",
+          243
+        ],
+        [
+          "hooks.py",
+          "_owned_result",
+          281
+        ]
+      ],
+      [
+        [
+          "console_runtime.py",
+          "refresh",
+          1674
+        ],
+        [
+          "console_preparation_reads.py",
+          "run_preparation_read",
+          226
+        ]
+      ],
+      [
+        [
+          "console_runtime.py",
+          "run",
+          4371
+        ],
+        [
+          "base_db.py",
+          "run_owned_db_call",
+          126
+        ],
+        [
+          "threads.py",
+          "to_thread",
+          25
+        ]
+      ],
+      [
+        [
+          "hooks.py",
+          "_read_native",
+          313
+        ],
+        [
+          "console_preparation_reads.py",
+          "run_preparation_read",
+          226
+        ]
+      ],
+      [
+        [
+          "console_runtime.py",
+          "_watch_canvas_policy",
+          4100
+        ],
+        [
+          "tasks.py",
+          "sleep",
+          665
+        ]
+      ]
+    ]
+  },
+  "failure": {
+    "stage": "console-resume-0",
+    "type": "TimeoutError",
+    "message": "diagnostic condition did not arrive"
+  },
+  "final_screen": null,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0
+}

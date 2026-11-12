@@ -1,0 +1,13 @@
+{
+  "HEAD": "749e7540affab2b543f472fcf6fae6bff34d8122",
+  "all_owned_subprocesses_closed": true,
+  "branch": "codex/console-chat-starts-dev",
+  "no_external_PR_push_arm_merge": true,
+  "no_gc_log_prune_or_cleanup": true,
+  "owned_live_pytest_workers": 0,
+  "rebase_in_progress": false,
+  "root_next_gate": "Root plan/Backlog scope amendment for exact two-node canonical profile marker proposal, then resume same implementer; independent scoped integration review remains root next gate after qualified source.",
+  "source_index_clean": true,
+  "source_overlay_commits": 0,
+  "tracked_source_edits": 0
+}

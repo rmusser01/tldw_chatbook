@@ -1,0 +1,93 @@
+# Review package: bc2be106f1cc0409ef283c60c6778ff12c972d7a..1c1a7e3566a01b2d0b963673272eae562025ef25
+
+## Commits
+1c1a7e3566 test: restore Console budget and fork fixture contracts
+
+## Files changed
+ Tests/Chat/test_console_agent_project_instructions.py | 4 ++--
+ Tests/Chat/test_console_chat_fork.py                  | 4 +++-
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/Tests/Chat/test_console_agent_project_instructions.py b/Tests/Chat/test_console_agent_project_instructions.py
+index 797970e54a..5ebab3d798 100644
+--- a/Tests/Chat/test_console_agent_project_instructions.py
++++ b/Tests/Chat/test_console_agent_project_instructions.py
+@@ -434,21 +434,21 @@ def test_child_chain_uses_its_own_exact_first_request_budget(monkeypatch, tmp_pa
+         [spawn, "child done", "parent done"],
+         startup_instruction_candidate=_candidate(tmp_path),
+         confirm_project_instruction_dispatch=lambda _snapshot: "proceed",
+     )
+     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
+     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+     monkeypatch.setattr(
+         agent_service,
+         "_count_model_messages",
+-        lambda messages, *_a: (
++        lambda messages, *_a, reasoning_replay=None, tokenizer_model=None: (
+             95 if "sub-agent" in str(messages[0].get("content", "")).lower() else 10
+         ),
+     )
+
+     _run_id, outcome = service.run_turn(
+         conversation_id="c",
+         messages=[{"role": "user", "content": "question"}],
+         config=_cfg(
+             native_tools=True,
+             allowed_tools=(SPAWN_TOOL_NAME,),
+@@ -497,21 +497,21 @@ def test_primary_token_omission_is_delivery_local_when_child_admits(
+         confirm_project_instruction_dispatch=lambda snapshot: (
+             snapshots.append(snapshot) or "proceed"
+         ),
+     )
+     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
+     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+     monkeypatch.setattr(
+         agent_service,
+         "_count_model_messages",
+-        lambda messages, *_a: (
++        lambda messages, *_a, reasoning_replay=None, tokenizer_model=None: (
+             10 if "sub-agent" in str(messages[0].get("content", "")).lower() else 95
+         ),
+     )
+
+     _run_id, outcome = service.run_turn(
+         conversation_id="c",
+         messages=[{"role": "user", "content": "question"}],
+         config=_cfg(
+             native_tools=True,
+             allowed_tools=(SPAWN_TOOL_NAME,),
+diff --git a/Tests/Chat/test_console_chat_fork.py b/Tests/Chat/test_console_chat_fork.py
+index 02997fb664..c0fc4b22e8 100644
+--- a/Tests/Chat/test_console_chat_fork.py
++++ b/Tests/Chat/test_console_chat_fork.py
+@@ -1819,24 +1819,26 @@ def test_configuration_and_leaf_writers_block_fork_through_live_publication(
+     route,
+ ) -> None:
+     store, persistence, session, _, first_answer, _, selected, _ = _fork_store(
+         durable=True
+     )
+     entered = Event()
+     release = Event()
+     failures: list[BaseException] = []
+
+     if route == "active_leaf":
++        persist_leaf = store._persist_active_leaf
+
+-        def blocking_leaf(_session_id, _message_id):
++        def blocking_leaf(session_id, message_id):
+             entered.set()
+             assert release.wait(2)
++            return persist_leaf(session_id, message_id)
+
+         monkeypatch.setattr(store, "_persist_active_leaf", blocking_leaf)
+
+         def mutate() -> None:
+             store.set_active_leaf(session.id, first_answer.id)
+     else:
+
+         def blocking_prompt(**_kwargs):
+             entered.set()
+             assert release.wait(2)

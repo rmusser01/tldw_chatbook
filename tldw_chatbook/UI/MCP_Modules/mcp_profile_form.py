@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from textual.app import ComposeResult
@@ -71,6 +72,16 @@ class MCPProfileForm(Vertical):
             self.warning = warning
             self.connect_after = connect_after
 
+    class ManagePluginRequested(Message, namespace="mcp_profile_form"):
+        def __init__(self, owner: dict[str, Any]) -> None:
+            super().__init__()
+            self.owner = dict(owner)
+
+    @property
+    def plugin_owner(self) -> dict[str, Any] | None:
+        owner = (self._profile or {}).get("plugin_owner")
+        return dict(owner) if isinstance(owner, dict) else None
+
     class Cancelled(Message, namespace="mcp_profile_form"):
         pass
 
@@ -87,6 +98,17 @@ class MCPProfileForm(Vertical):
         return self._profile is not None
 
     def compose(self) -> ComposeResult:
+        if self.plugin_owner is not None:
+            owner = self.plugin_owner
+            yield Static(
+                f"Managed plugin: {owner.get('installation_id', 'unknown')}\n"
+                f"Component: {owner.get('component_id', 'unknown')}\n"
+                "Configuration, discovery and removal are reviewed in Plugins.",
+                markup=False,
+            )
+            yield Button("Manage in Plugins…", id="mcp-form-manage-plugin")
+            yield Button("Back", id="mcp-form-cancel")
+            return
         title = "Edit server" if self.is_edit else "Add local server (stdio)"
         yield Static(title, classes="destination-section", markup=False)
         profile = self._profile or {}
@@ -168,6 +190,11 @@ class MCPProfileForm(Vertical):
             )
 
     def on_mount(self) -> None:
+        if self.plugin_owner is not None:
+            self.call_after_refresh(
+                self.query_one("#mcp-form-manage-plugin", Button).focus
+            )
+            return
         # A4: `self.watch(...)` (not the `on_input_changed` message handler)
         # deliberately -- Reactive watchers registered this way run
         # SYNCHRONOUSLY inside the Input's own `value` setter (see
@@ -260,6 +287,8 @@ class MCPProfileForm(Vertical):
         Raises:
             ValueError: A malformed env line (with its 1-based line number).
         """
+        if self.plugin_owner is not None:
+            raise ValueError("plugin_owned_profile_use_plugins")
         placeholders: dict[str, str] = {}
         literals: dict[str, str] = {}
         env_text = self.query_one("#mcp-form-env", TextArea).text
@@ -336,6 +365,13 @@ class MCPProfileForm(Vertical):
         return ""
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if self.plugin_owner is not None:
+            event.stop()
+            if event.button.id == "mcp-form-manage-plugin":
+                self.post_message(self.ManagePluginRequested(self.plugin_owner))
+            elif event.button.id == "mcp-form-cancel":
+                self.post_message(self.Cancelled())
+            return
         if event.button.id in ("mcp-form-save", "mcp-form-save-connect"):
             event.stop()
             try:
@@ -372,6 +408,18 @@ class MCPProfileForm(Vertical):
             self.post_message(self.Cancelled())
 
 
+class _ImportTextArea(DetachSafeTextArea):
+    """Count accepted edits before Changed reaches the import panel's queue."""
+
+    draft_revision = 0
+
+    def post_message(self, message: Message) -> bool:
+        posted = super().post_message(message)
+        if posted and isinstance(message, TextArea.Changed):
+            self.draft_revision += 1
+        return posted
+
+
 class MCPImportPanel(Vertical):
     """Paste-or-file import of Claude-Desktop-style `mcpServers` JSON.
 
@@ -390,7 +438,9 @@ class MCPImportPanel(Vertical):
     """
 
     class FileRequested(Message, namespace="mcp_import_panel"):
-        pass
+        def __init__(self, panel: MCPImportPanel) -> None:
+            super().__init__()
+            self.panel = panel
 
     class ImportRequested(Message, namespace="mcp_import_panel"):
         def __init__(self, candidates: list[ImportCandidate]) -> None:
@@ -404,6 +454,7 @@ class MCPImportPanel(Vertical):
         super().__init__(**kwargs)
         self._existing_ids = set(existing_ids or ())
         self._candidates: list[ImportCandidate] = []
+        self._file_read_revision = 0
 
     # F-056: Escape mirrors the Cancel button (same `Cancelled` message the
     # `mcp-import-cancel` press posts -- one path, no drift).
@@ -414,6 +465,29 @@ class MCPImportPanel(Vertical):
         # TextArea -- `call_after_refresh` so this lands after Textual's own
         # mount-time focus settling instead of racing it.
         self.call_after_refresh(self.query_one("#mcp-import-text", TextArea).focus)
+
+    def post_message(self, message: Message) -> bool:
+        if isinstance(message, self.Cancelled):
+            self._file_read_revision += 1
+        return super().post_message(message)
+
+    def file_text_receiver(self) -> Callable[[str], None]:
+        """Bind a selected file to this panel and its current accepted draft."""
+        self._file_read_revision += 1
+        request_revision = self._file_read_revision
+        editor = self.query_one("#mcp-import-text", _ImportTextArea)
+        draft_revision = editor.draft_revision
+
+        def receive(text: str) -> None:
+            if (
+                self.is_attached
+                and not self._pruning
+                and request_revision == self._file_read_revision
+                and draft_revision == editor.draft_revision
+            ):
+                self.set_file_text(text)
+
+        return receive
 
     def action_cancel_import(self) -> None:
         """F-056: Escape -- same path as the Cancel button."""
@@ -430,7 +504,7 @@ class MCPImportPanel(Vertical):
             classes="ds-field-row",
             markup=False,
         )
-        yield DetachSafeTextArea("", id="mcp-import-text")
+        yield _ImportTextArea("", id="mcp-import-text")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "From file…",
@@ -514,7 +588,7 @@ class MCPImportPanel(Vertical):
         button_id = event.button.id or ""
         if button_id == "mcp-import-file":
             event.stop()
-            self.post_message(self.FileRequested())
+            self.post_message(self.FileRequested(self))
         elif button_id == "mcp-import-preview":
             event.stop()
             await self._preview()

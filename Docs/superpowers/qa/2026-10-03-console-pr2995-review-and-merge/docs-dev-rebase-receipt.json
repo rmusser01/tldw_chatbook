@@ -1,0 +1,19 @@
+{
+  "pre_docs_rebase_head": "7d083e855aa6117b3acf8f2fb50c5ad280e02f93",
+  "new_head": "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+  "dev": "0001eba40419859ce39ed4952f0f8df7b40639bd",
+  "task1_source_git_blobs": {
+    "Tests/Chat/test_console_hook_admission.py": "9751b337f9eb95dfcc4d8184240b00d83b28a781",
+    "Tests/Packaging/test_console_interaction_boot_closure.py": "2040df0a709317133086c488a4895c958977fa80",
+    "Tests/Performance/test_ui_ready_module_census.py": "aa80b71b21f1d7bab1a5d6e70ece7775c2807b72",
+    "Tests/UI/test_console_composer_cursor.py": "ff60e514bcd1ab33b1b8f0b2f0a3de53a561738f",
+    "Tests/UI/test_console_environment_controller.py": "e22ace3f5372bac59ea46f0438e302129718c547",
+    "Tests/UI/test_console_native_chat_flow.py": "01d505bf6b36a534265d6f95443fa2e251ca3648",
+    "Tests/UI/test_console_runtime_ownership.py": "02747cf0e01c24fb387da22f7a4ae45e4008d228",
+    "Tests/UI/test_console_send_draft_snapshot.py": "83899575bb06f65e5d70be5241ad3beb7756fa48",
+    "tldw_chatbook/Chat/console_chat_controller.py": "5ecf36d7e0b54085fa7ebbbaec8fe9bf02d56b84",
+    "tldw_chatbook/UI/Console_Modules/session.py": "fc89f7ed5a09a46de737e5e89d39f6b6b31b3c41"
+  },
+  "source_identity": true,
+  "historical_qa_unchanged": true
+}

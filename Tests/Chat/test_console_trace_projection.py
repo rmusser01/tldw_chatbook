@@ -1142,7 +1142,7 @@ async def test_runtime_runs_gc_then_physical_maintenance_after_normalization(
     module.PhysicalTraceCompactor = _Compactor  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(
-        "tldw_chatbook.config.resolve_trace_compaction_policy",
+        "tldw_chatbook.Chat.console_capture_policy.resolve_trace_compaction_policy",
         lambda _config: object(),
     )
     monkeypatch.setattr(
@@ -1222,7 +1222,7 @@ async def test_runtime_rechecks_thresholds_without_creating_another_gc_run(
     module.PhysicalTraceCompactor = _Compactor  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(
-        "tldw_chatbook.config.resolve_trace_compaction_policy",
+        "tldw_chatbook.Chat.console_capture_policy.resolve_trace_compaction_policy",
         lambda _config: object(),
     )
     monkeypatch.setattr(

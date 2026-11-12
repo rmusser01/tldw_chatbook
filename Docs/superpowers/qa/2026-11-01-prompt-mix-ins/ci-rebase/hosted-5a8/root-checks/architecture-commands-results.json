@@ -1,0 +1,32 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/private/tmp/mixins-reader-final-architecture-tmp",
+      "Tests/Architecture/test_module_size_ratchet.py",
+      "Tests/Architecture/test_screen_size_ratchet.py",
+      "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompts_controller.py]",
+      "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_prompts_controller.py]",
+      "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]",
+      "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]",
+      "Tests/Architecture/test_library_modules_size_ratchet.py::test_every_controller_file_has_a_budget_row",
+      "Tests/Architecture/test_library_prompts_wiring.py",
+      "Tests/Architecture/test_layer_direction.py",
+      "Tests/Architecture/test_app_string_lookup_census.py",
+      "Tests/Architecture/test_agent_runtime_import_footprint.py",
+      "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_media_controller.py]",
+      "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_media_controller.py]",
+      "Tests/Architecture/test_library_media_wiring.py",
+      "Tests/Architecture/test_console_controllers_define_their_self_attributes.py",
+      "-q"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "exit_code": 0,
+    "seconds": 36.235,
+    "log": "/private/tmp/mixins-reader-root-final/architecture-0.log"
+  }
+]

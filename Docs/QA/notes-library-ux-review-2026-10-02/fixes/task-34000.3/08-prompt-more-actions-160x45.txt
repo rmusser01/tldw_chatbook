@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                            │
+│   a  │ Library notes · Ready                                        │  o      ‹ Notes      Index — start here                                                │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     S                                    ┃              ┃                              │
+│      │                                                              │              Edit           Preview      ┃     Info     ┃         Save         Use in  │
+│      │ Filter                                                       │                                          ┃              ┃                              │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                              │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Index — start here                                                             ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Select                           │                                                                                        │
+│ ---> │    Add from files…     Export                                │     Keywords                                                                           │
+│      │ Folders & placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     Move note                │     ▊ moc                                                                            ▎ │
+│      │    ○ Remove placement                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │                                                                                        │
+│      │                                                              │<--- Body                                                                               │
+│      │  ▸ Agent_Lessons                                             │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │  ▸ Journal                                                   │     ▊ # Index                                                                        ▎ │
+│      │  ▸ Meetings                                                  │     ▊                                                                                ▎ │
+│      │  ▸ Projects                                                  │     ▊ ## Thesis                                                                      ▎ │
+│ ---> │  ▸ Recipes                                                   │     ▊ - [[Thesis outline — retrieval-augmented                                       ▎ │
+│      │  ▸ Research                                                  │     ▊ tutoring]](note://758cf130-57f7-401a-8e1a-be5c521b51e1)                        ▎ │
+│      │  ▸ Study                                                     │     ▊ - [[Literature review: RAG for                                                 ▎ │
+│      │  ▾ Unfiled                                                   │     ▊ education]](note://230ecd91-8bcc-4a78-97d4-13c1e31c322e)                       ▎ │
+│      │    Ideas inbox · 23h                                         │     ▊ - [[Experiment log: chunk size                                                 ▎ │
+│      │    Reading list · 1d                                         │     ▊ sweep]](note://04f6652a-2102-4b5b-91cc-ea6180bc98c9)                           ▎ │
+│      │    Index — start here · 2d                                   │     ▊                                                                             ▁▁ ▎ │
+│      │    Meeting Notes 2026-09-30 · 3d                             │     ▊ ## Work                                                                        ▎ │
+│      │    Gardening log · 5d                                        │     ▊ - [[App launch checklist]](note://e0c066b3-3139-45ab-9fa3-5207346c7894)        ▎ │
+│      │    📚 Reading queue 2026 ✨ · 1w                             │     ▊ - [[Competitive analysis — note-taking                                         ▎ │
+│      │    A very long note title that keeps going so we can test …  │     ▊ apps]](note://da17b853-82ef-4bda-a775-827c3f539aa4)                            ▎ │
+│      │    Daily log 2026-09-21 · 1w                                 │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    Daily log 2026-09-20 · 1w                                 │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                        45 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | enter show info | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

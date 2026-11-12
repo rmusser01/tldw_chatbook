@@ -24,6 +24,7 @@ render. In the Watchlists workbench the Sources table is three rows tall
 The scrape backend was never at fault: driven directly it fetched a real feed
 and ingested 10 items in 268ms.
 """
+
 from __future__ import annotations
 
 from types import MethodType, SimpleNamespace
@@ -51,10 +52,20 @@ from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 # even if click-to-select regressed entirely -- the default selection would
 # stand in for the click. Row 1 can only be selected by the click itself.
 SOURCES = [
-    {"id": "local:subscription:1", "source_id": 1, "name": "Summit Route",
-     "source_type": "rss", "active": True},
-    {"id": "local:subscription:2", "source_id": 2, "name": "Darknet Diaries",
-     "source_type": "rss", "active": True},
+    {
+        "id": "local:subscription:1",
+        "source_id": 1,
+        "name": "Summit Route",
+        "source_type": "rss",
+        "active": True,
+    },
+    {
+        "id": "local:subscription:2",
+        "source_id": 2,
+        "name": "Darknet Diaries",
+        "source_type": "rss",
+        "active": True,
+    },
 ]
 SECOND = SOURCES[1]
 
@@ -72,6 +83,7 @@ async def _sources_pane(pilot, host):
     return screen, pane
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_a_source_row_selects_that_row():
     app = _build_test_app()
@@ -100,6 +112,7 @@ async def test_clicking_a_source_row_selects_that_row():
         assert not pane.query_one("#sources-check-now-button", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_acts_on_the_clicked_source():
     """The whole point: a click must make Check now run against THAT source."""
@@ -131,6 +144,7 @@ async def test_check_now_acts_on_the_clicked_source():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_acts_on_the_clicked_source():
     app = _build_test_app()
@@ -159,6 +173,7 @@ async def test_preview_acts_on_the_clicked_source():
         assert calls[0] == SECOND["id"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_acts_on_the_clicked_source():
     """`Delete` lives on the Inspector, which is fed by the same selection."""
@@ -173,11 +188,11 @@ async def test_delete_acts_on_the_clicked_source():
 
         assert screen.selected_entity is not None
         assert screen.selected_entity["id"] == SECOND["id"], (
-            "the Inspector -- and therefore Delete -- must target the clicked "
-            "source"
+            "the Inspector -- and therefore Delete -- must target the clicked source"
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyboard_cursor_movement_selects_the_row_it_lands_on():
     """AC#4: arrowing onto a row selects it the same way a click does."""
@@ -201,6 +216,7 @@ async def test_keyboard_cursor_movement_selects_the_row_it_lands_on():
         assert pane.selected_source["id"] == SOURCES[0]["id"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_table_keeps_click_metadata_on_its_last_row():
     """The root cause, asserted directly.
@@ -248,10 +264,20 @@ OTHER_TABLES = (
         "#runs-table",
         "selected_run",
         [
-            {"id": "local:run:1", "source_title": "Summit Route", "status": "completed",
-             "found_count": 1, "processed_count": 1},
-            {"id": "local:run:2", "source_title": "Darknet Diaries", "status": "completed",
-             "found_count": 2, "processed_count": 2},
+            {
+                "id": "local:run:1",
+                "source_title": "Summit Route",
+                "status": "completed",
+                "found_count": 1,
+                "processed_count": 1,
+            },
+            {
+                "id": "local:run:2",
+                "source_title": "Darknet Diaries",
+                "status": "completed",
+                "found_count": 2,
+                "processed_count": 2,
+            },
         ],
     ),
     (
@@ -262,10 +288,22 @@ OTHER_TABLES = (
         "#rules-table",
         "selected_rule",
         [
-            {"id": "local:rule:1", "rule_id": 1, "name": "Keyword",
-             "condition_type": "keyword", "severity": "info", "enabled": True},
-            {"id": "local:rule:2", "rule_id": 2, "name": "Volume",
-             "condition_type": "volume", "severity": "warning", "enabled": True},
+            {
+                "id": "local:rule:1",
+                "rule_id": 1,
+                "name": "Keyword",
+                "condition_type": "keyword",
+                "severity": "info",
+                "enabled": True,
+            },
+            {
+                "id": "local:rule:2",
+                "rule_id": 2,
+                "name": "Volume",
+                "condition_type": "volume",
+                "severity": "warning",
+                "enabled": True,
+            },
         ],
     ),
     (
@@ -276,10 +314,22 @@ OTHER_TABLES = (
         "#notifications-table",
         "selected_notification",
         [
-            {"id": 1, "entity_kind": "client_notification", "title": "First alert",
-             "category": "watchlist", "severity": "info", "is_read": False},
-            {"id": 2, "entity_kind": "client_notification", "title": "Second alert",
-             "category": "watchlist", "severity": "info", "is_read": False},
+            {
+                "id": 1,
+                "entity_kind": "client_notification",
+                "title": "First alert",
+                "category": "watchlist",
+                "severity": "info",
+                "is_read": False,
+            },
+            {
+                "id": 2,
+                "entity_kind": "client_notification",
+                "title": "Second alert",
+                "category": "watchlist",
+                "severity": "info",
+                "is_read": False,
+            },
         ],
     ),
 )
@@ -326,10 +376,20 @@ def test_every_watchlists_highlight_handler_selects_requested_row(
 
 
 ITEM_ROWS = [
-    {"id": "local:watchlist_item:1", "item_id": 1, "title": "First post",
-     "source_name": "Summit Route", "status": "new"},
-    {"id": "local:watchlist_item:2", "item_id": 2, "title": "Second post",
-     "source_name": "Summit Route", "status": "new"},
+    {
+        "id": "local:watchlist_item:1",
+        "item_id": 1,
+        "title": "First post",
+        "source_name": "Summit Route",
+        "status": "new",
+    },
+    {
+        "id": "local:watchlist_item:2",
+        "item_id": 2,
+        "title": "Second post",
+        "source_name": "Summit Route",
+        "status": "new",
+    },
 ]
 
 

@@ -1,0 +1,33 @@
+FF...                                                                    [100%]
+=================================== FAILURES ===================================
+_ test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size0] _
+Tests/UI/test_console_character_activation_presentation.py:384: in test_character_open_under_quit_question_explains_only_owned_interruption
+    assert (
+E   AssertionError: assert 'Could not open chat' == 'Open interru... confirmation'
+E
+E     - Open interrupted by quit confirmation
+E     + Could not open chat
+_ test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size1] _
+Tests/UI/test_console_character_activation_presentation.py:384: in test_character_open_under_quit_question_explains_only_owned_interruption
+    assert (
+E   AssertionError: assert 'Could not open chat' == 'Open interru... confirmation'
+E
+E     - Open interrupted by quit confirmation
+E     + Could not open chat
+============================= slowest 25 durations =============================
+7.28s call     Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[open-failure-size3]
+6.73s call     Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[stale-owner-size4]
+6.50s call     Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size0]
+6.48s call     Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[foreign-question-size2]
+5.68s call     Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size1]
+1.99s setup    Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size0]
+1.79s setup    Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size1]
+1.50s setup    Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[stale-owner-size4]
+1.43s setup    Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[open-failure-size3]
+1.38s setup    Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[foreign-question-size2]
+
+(5 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size0]
+FAILED Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-quit-size1]
+2 failed, 3 passed, 14 deselected in 45.30s

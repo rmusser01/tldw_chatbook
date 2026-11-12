@@ -123,15 +123,33 @@ class WorkflowsScreen(BaseAppScreen):
             return None
         return tuple(selection) if selection else None
 
-    async def on_mount(self):
+    def on_mount(self):
+        # TASK-34964: authoring init (store init + a full recompose),
+        # document load, and session attach all await I/O. Awaiting them
+        # inline in on_mount ran the whole sequence on the App's message
+        # pump -- the trap personas_screen documents ("awaiting here ...
+        # the app stopped responding") -- so first navigation to Workflows
+        # froze the TUI until the load finished. One exclusive worker owns
+        # the sequence; every step after an await re-checks mounting, and
+        # the render callbacks already guard on is_mounted.
+        self.run_worker(
+            self._load_authoring_after_mount(),
+            group="workflows-mount-load",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _load_authoring_after_mount(self):
         if self.controller is None:
             await self._initialize_authoring()
-        if self.controller is None:
+        if self.controller is None or not self.is_mounted:
             return
         self._recovery_was_locked = self.controller.drafts.editing_locked
         self._release = self.controller.drafts.subscribe(self._owner_changed)
         try:
             await self.controller.load(self._saved_selection())
+            if not self.is_mounted:
+                return
             self.controller.section = self.state_data.get("section", "overview")
             self._workflow_views = self.state_data.get("workflow_views", {})
             self.query_one(WorkflowEditor).views = self.state_data.get("views", {})
@@ -447,6 +465,14 @@ class WorkflowsScreen(BaseAppScreen):
             )
         self.query_one("#workflow-readiness", Static).update(readiness)
 
+    def _authoring_view_attached(self) -> bool:
+        return (
+            self.is_mounted
+            and self.is_attached
+            and not (self._pruning or self._closing)
+            and bool(self.query(WorkflowLibrary))
+        )
+
     async def _refresh_authoring(self, *, rebuild=True, focus=False):
         # Owner callbacks and control workers can arrive during awaited mounts.
         # Serialize only widget reconciliation, never storage or execution.
@@ -455,7 +481,7 @@ class WorkflowsScreen(BaseAppScreen):
 
     async def _render_authoring(self, *, rebuild=True, focus=False):
         controller = self.controller
-        if controller is None or not self.is_mounted:
+        if controller is None or not self._authoring_view_attached():
             return
         self._notice = ""
         if rebuild:
@@ -498,15 +524,16 @@ class WorkflowsScreen(BaseAppScreen):
             self.query_one("#workflow-editor-heading", Static).update(
                 "No workflows yet · New workflow opens a named draft"
             )
-        self._show_status()
-        self.call_after_refresh(self._layout_panes)
+        if self._authoring_view_attached():
+            self._show_status()
+            self.call_after_refresh(self._layout_panes)
 
     def on_resize(self):
         self.call_after_refresh(self._layout_panes)
 
     async def _show_library(self):
         controller = self.controller
-        if self.is_mounted:
+        if controller is not None and self._authoring_view_attached():
             self.query_one(WorkflowLibrary).show_rows(
                 controller.library_rows,
                 offset=controller.library_offset,
@@ -534,7 +561,7 @@ class WorkflowsScreen(BaseAppScreen):
             self._show_status()
 
     def _layout_panes(self):
-        if not self.is_mounted or self.controller is None:
+        if self.controller is None or not self._authoring_view_attached():
             return
         self.set_class(self.size.height < 30, "workflow-short")
         visible = visible_pane_ids(self.query_one("#workflow-panes").content_size.width)

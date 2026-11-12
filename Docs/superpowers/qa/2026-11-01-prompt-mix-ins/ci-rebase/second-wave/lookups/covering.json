@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_optional_app_services.py",
+    "Tests/Architecture/test_app_string_lookup_census.py::test_app_string_lookups_match_their_pin[Agents]",
+    "Tests/Architecture/test_app_string_lookup_census.py::test_app_string_lookups_match_their_pin[Chat]",
+    "Tests/Architecture/test_app_string_lookup_census.py::test_app_string_lookups_match_their_pin[Event_Handlers]",
+    "Tests/Architecture/test_app_string_lookup_census.py::test_app_string_lookups_match_their_pin[Widgets]",
+    "Tests/Chat/test_console_agent_swap.py::test_compose_mcp_provider_publishes_none_counts_when_no_service",
+    "Tests/Chat/test_console_agent_swap.py::test_compose_mcp_provider_publishes_none_counts_when_kill_switch_on",
+    "Tests/Chat/test_console_light_surface_context_meter.py::test_with_the_tool_kill_switch_on_the_meter_counts_no_local_tools",
+    "Tests/Chat/test_archive_recovery_operations.py::test_exact_scopes_and_availability",
+    "Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[scope-manual]",
+    "Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[scope-queue]",
+    "Tests/RAG/test_local_citation_capture.py::test_console_staged_local_evidence_records_exact_prompt_capture",
+    "Tests/UI/test_plugin_review.py::test_profile_save_prefills_only_fresh_empty_unchanged_draft[empty]",
+    "Tests/UI/test_plugin_review.py::test_confirmed_explicit_test_survives_close_during_child_prune[success]",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-lookups-ca26gp6e/covering-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-lookups-ca26gp6e/covering.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 4,
+  "elapsed": 14.428955792
+}

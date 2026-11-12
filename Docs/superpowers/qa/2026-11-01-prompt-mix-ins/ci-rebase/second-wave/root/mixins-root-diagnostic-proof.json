@@ -1,0 +1,110 @@
+{
+  "base": "ba1cafc55dd5ac9b6b1f066c936206e652ed6b65",
+  "owners": {
+    "tldw_chatbook/Agents/agent_service.py": {
+      "before": 53,
+      "after": 53
+    },
+    "tldw_chatbook/Chat/chat_persistence_service.py": {
+      "before": 4,
+      "after": 4
+    },
+    "tldw_chatbook/Chat/console_agent_reply.py": {
+      "before": 0,
+      "after": 3
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "before": 73,
+      "after": 70
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+      "before": 86,
+      "after": 86
+    },
+    "tldw_chatbook/Chat/console_first_send_modules.py": {
+      "before": 3,
+      "after": 3
+    },
+    "tldw_chatbook/Chat/console_provider_gateway.py": {
+      "before": 21,
+      "after": 21
+    },
+    "tldw_chatbook/Chat/console_runtime.py": {
+      "before": 43,
+      "after": 41
+    },
+    "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": {
+      "before": 0,
+      "after": 2
+    },
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+      "before": 367,
+      "after": 367
+    },
+    "tldw_chatbook/DB/Prompts_DB.py": {
+      "before": 115,
+      "after": 111
+    },
+    "tldw_chatbook/DB/prompt_export.py": {
+      "before": 0,
+      "after": 4
+    },
+    "tldw_chatbook/DB/sql_validation.py": {
+      "before": 9,
+      "after": 9
+    },
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": {
+      "before": 135,
+      "after": 134
+    },
+    "tldw_chatbook/LLM_Calls/openai_protocol.py": {
+      "before": 0,
+      "after": 1
+    },
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": {
+      "before": 2,
+      "after": 2
+    },
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+      "before": 30,
+      "after": 30
+    },
+    "tldw_chatbook/UI/Console_Modules/workspace.py": {
+      "before": 55,
+      "after": 55
+    },
+    "tldw_chatbook/UI/Screens/personas_screen.py": {
+      "before": 186,
+      "after": 186
+    },
+    "tldw_chatbook/Widgets/Console/console_transcript.py": {
+      "before": 10,
+      "after": 10
+    },
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": {
+      "before": 1,
+      "after": 1
+    },
+    "tldw_chatbook/Workspaces/display_state.py": {
+      "before": 6,
+      "after": 6
+    },
+    "tldw_chatbook/app.py": {
+      "before": 116,
+      "after": 116
+    },
+    "tldw_chatbook/app_command_providers.py": {
+      "before": 1,
+      "after": 1
+    },
+    "tldw_chatbook/app_service_wiring.py": {
+      "before": 24,
+      "after": 24
+    }
+  },
+  "before_calls": 1340,
+  "after_calls": 1340,
+  "removed": [],
+  "added": [],
+  "qualification": "AST call multiset after replacing only actual defining-module qualifiers with original global names. Location and raw-format hashes may change; call arguments, levels and messages must remain identical."
+}

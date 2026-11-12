@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌───────────────┌─ Export Prompt as Markdown ──────────────────────────────────────────────────────────────────────────────────────────────────┐───────────────┐
+│ ┌─────────────│ /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/9a6612d8-88a3-469a-a5da-1307bdff44b8/scratchpad/n… │               │
+│ │ Navigation  │                                                                                                                              │               │
+│ │     Import… │                                                                                                                              │               │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔│   /   / …   w1-t3-1   /   home   /   exp                                                                                     │             ┃ │
+│ │ ▊ Search Lib│                                                                                                                              │               │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁│                                                                                                                              │               │
+│ │             │      Name                                                                                       Size            Modified     │               │
+│ │ ────────────│ Sort Discovery order                                           ▼ Ascending                                                 ▼ │               │
+│ │ Browse      │Loaded · 2 entries                                                                                                            │               │
+│ │    Media (23│                                                                                                                              │               │
+│ │    Conversat│   📁 ..                                                                                                                —     │               │
+│ │    Notes (12│   📄 precious.md                                                                               780 B    2026-10-03 18:57     │               │
+│ │  ▸ Prompts (│   📄 Weekly review coach.md                                                                     21 B    2026-10-03 18:51     │               │
+│ │    Skills (4│                                                                                                                              │               │
+│ │    Collectio│                                                                                                                              │               │
+│ │    Search / │                                                                                                                              │               │
+│ │ ────────────│                                                                                                                              │               │
+│ │ Artifacts   │                                                                                                                              │               │
+│ │    All artif│                                                                                                                              │               │
+│ │    Chatbooks│                                                                                                                              │               │
+│ │    Reports  │                                                                                                                              │               │
+│ │ ────────────│                                                                                                                              │               │
+│ │ Create      │                                                                                                                              │               │
+│ │    New note │                                                                                                                              │               │
+│ │    New promp│                                                                                                                              │               │
+│ │    New skill│                                                                                                                              │               │
+│ │ ────────────│                                                                                                                              │               │
+│ │ Study       │                                                                                                                              │               │
+│ │    Study dec│                                                                                                                              │               │
+│ │    Flashcard│File name: ┌──────────────────────────────────────────────────────────────────────────────┐       Save            Cancel      │               │
+│ │    Quizzes (│           │  Weekly review coach.md                                                      │                                   │               │
+│ │ ────────────│           └──────────────────────────────────────────────────────────────────────────────┘                                   │               │
+│ │ Import / Exp│                                                                                                                              │               │
+│ │    Import…  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘               │
+│ │    Export                      │     │                                                │                                                                    │
+│ │ ────────────────────────────── │     │                                                │                                                                    │
+│ │ Details                    ▸   │     │                                                │                                                                    │
+│ └────────────────────────────────┘     └────────────────────────────────────────────────┘                                                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ esc Cancel  ^l Edit path directly  ^f Search in directory  ^h Toggle hidden files  f5 Refresh directory  ^r Show recent locations  ^s Select this folder

@@ -1,0 +1,40 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.       Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | READTEST please read my not...                                 │
+                  Context ◂  │     Second message     ✕ ◆ READTEST please re… ✕    New tab     Temporary     │
+   Terminal                  │                                                                               │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings >    ✕  │
+ Workspaces             ▸    │ █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█ │
+ ──────────────────────────  │ █                                                                           █ │
+ Conversations          ▾    │ █  Approval required                                                        █ │
+   New conversation          │ █  Built-in · read_file (high risk)                                         █ │
+     Archive this chat       │ █  High risk: this tool reads local data and always asks first.             █ │
+      Archived chats         │ █  {"path":"/Users/macbook-dev/Documents/Git…}                              █ │
+     Search all chats…       │ █  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Approve once      Deny                       █ │
+   READTEST please read      │ █  ▊  Once                ▼  ▎                                              █ │
+   my not...                 │ █  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                              █ │
+                             │ █  This call only.                                                          █ │◂ Inspect
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │ █   ▶ Reason if denied (optional)                                           █ │
+  ▊  Filter      ▎           │ █    Approve all        Submit         Deny all                             █ │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │ █                                                                           █ │
+                             │ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ │
+  Chats                 ▾    │  ──────────────────────────────────────────────────────────────────────────   │
+   READTEST please r…  ✋    │  ▊ Assistant  Waiting for your approval · 4s                                  │
+   Approval required         │  ▊   ▸ load_tools                                     · Succeeded · 0.0s   ▆  │
+   Second message      💬  ▆ │  ▊   loaded: read_file                                                        │
+   Reply with just: …  💬    │  ▊   ▸ read_file                                     · Awaiting approval      │
+                             │  ▊     Review approval                                                        │
+ ──────────────────────────  │  ▊                                                                            │
+ Character · No chats   ▸    │  ▊                                                                            │
+ ▼ Model · Agent · Details   │  ▊                                                                            │
+                             │  ──────────────────────────────────────────────────────────────────────────   │  1 appr
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Waiting for your approva…     Library · Auto off · Agent blocked     Provider: llama.cpp     Model: ll
+
+█  Composer ▾  Menu   Ask, command, or paste task...                   Type to queue      Queue         Dictate   Stop
+
+  Ctrl+G stop run | Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+P · Ctrl+Q

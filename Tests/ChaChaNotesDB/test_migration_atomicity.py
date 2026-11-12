@@ -419,8 +419,7 @@ class TestFailingStepRollsBack:
         finally:
             connection.close()
         assert not leftovers, (
-            f"an interrupted base-schema apply left objects behind: "
-            f"{sorted(leftovers)}"
+            f"an interrupted base-schema apply left objects behind: {sorted(leftovers)}"
         )
 
         monkeypatch.undo()
@@ -651,15 +650,22 @@ class TestStatementSplitting:
         ``sqlite3_stmt``-level count below is what actually closes that trap;
         it holds for all statements shipped today, base script included.
         """
-        scripts = [
-            name
+        scripts = {
+            name: getattr(CharactersRAGDB, name)
             for name in dir(CharactersRAGDB)
             if re.fullmatch(r"_MIGRATE_V\d+_TO_V\d+_SQL", name)
-        ] + ["_FULL_SCHEMA_SQL_V4"]
-        assert len(scripts) > 20, scripts
+        }
+        scripts["_FULL_SCHEMA_SQL_V4"] = CharactersRAGDB._FULL_SCHEMA_SQL_V4
+        # ADR-208: a file-backed step executes its ``.sql`` file through this
+        # same splitter, so the files ARE shipped migration scripts. Without
+        # them the corpus shrank to the 14 embedded constants that remain.
+        migrations = Path(inspect.getfile(CharactersRAGDB)).parent / "migrations"
+        for path in sorted(migrations.glob("chachanotes_*.sql")):
+            scripts[path.name] = path.read_text(encoding="utf-8")
+        assert len(scripts) > 20, sorted(scripts)
         checked = 0
-        for name in scripts:
-            statements = _split_sql_statements(getattr(CharactersRAGDB, name))
+        for name, script in scripts.items():
+            statements = _split_sql_statements(script)
             assert statements, name
             for index, statement in enumerate(statements):
                 head = _strip_leading_sql_noise(statement)

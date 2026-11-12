@@ -1,0 +1,172 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="0" skipped="0" tests="167" time="27.739" timestamp="2026-10-25T11:16:09.797076-07:00" hostname="DESKTOP-BISU2HE">
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_valid_census_passes" time="0.859" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_comments_and_blank_lines_are_not_counted_as_entries" time="0.021" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_duplicate_entry_is_rejected" time="0.019" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_path_outside_tests_ui_is_rejected" time="0.018" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_censused_file_that_no_longer_exists_is_rejected" time="0.012" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_shrunk_census_is_rejected" time="0.011" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_missing_census_file_is_rejected" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_the_committed_census_is_currently_valid" time="16.028" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_node_id_entries_for_defined_tests_pass" time="0.020" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_node_id_naming_a_renamed_test_is_rejected" time="0.020" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_node_id_naming_a_method_on_the_wrong_class_is_rejected" time="0.023" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_node_id_in_a_missing_file_is_rejected" time="0.014" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_node_id_beside_its_whole_file_is_rejected" time="0.024" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_an_entry_with_whitespace_is_rejected" time="0.013" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_stacked[escape-enter]]" time="0.017" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_stacked[not-now-send-button]]" time="0.010" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_scalars[1]]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_scalars[True]]" time="0.010" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_scalars[None]]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_scalars[2.5]]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_tuple_values[enter-size0]]" time="0.010" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_named_ids[wide]]" time="0.011" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_dict_keys[image-only]]" time="0.013" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_param_ids[one]]" time="0.011" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_param_ids[2]]" time="0.094" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_callable_ids]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_resolvable_parametrize_ids_pass[test_computed]" time="0.007" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_unresolvable_or_renamed_parametrize_ids_are_refused[test_stacked[enter-escape]-no parametrize id]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_unresolvable_or_renamed_parametrize_ids_are_refused[test_named_ids[narrow-ish]-no parametrize id]" time="0.010" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_unresolvable_or_renamed_parametrize_ids_are_refused[test_dict_keys[system-prompt-renamed]-no parametrize id]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_unresolvable_or_renamed_parametrize_ids_are_refused[test_callable_ids[80x24]-cannot be resolved statically]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_unresolvable_or_renamed_parametrize_ids_are_refused[test_computed[save-markdown]-cannot be resolved statically]" time="0.010" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_unresolvable_or_renamed_parametrize_ids_are_refused[test_missing[x]-does not define]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_renamed_parametrize_id_fails_the_census" time="0.014" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_disjoint_pytest_targets_have_no_overlap" time="0.007" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_overlapping_pytest_targets_are_named[targets0]" time="0.006" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_overlapping_pytest_targets_are_named[targets1]" time="0.007" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_overlapping_pytest_targets_are_named[targets2]" time="0.006" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_overlapping_pytest_targets_are_named[targets3]" time="0.007" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_overlapping_pytest_targets_are_named[targets4]" time="0.006" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_precedence[p]]" time="0.015" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_precedence[L2]]" time="0.013" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_bytes[ab]]" time="0.013" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_bytes[\\xc3\\xa9]]" time="0.010" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_bytes[a\\nb]]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_complex[1j]]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_complex[(2+3j)]]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_unicode_values[\\xe9]]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_unicode_values[tab\\there]]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_unicode_list_ids[\\xfc]]" time="0.064" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_unicode_list_ids[plain]]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_unicode_param_id[\\xf1]]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_duplicates[a0]]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_duplicates[a1]]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_duplicates[x1_0]]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_match_what_pytest_generates[test_duplicates[x1_1]]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_pytest_never_generates_are_refused[test_precedence[L1]-no parametrize id]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_pytest_never_generates_are_refused[test_complex[c0]-no parametrize id]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_pytest_never_generates_are_refused[test_unicode_values[\xe9]-no parametrize id]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_pytest_never_generates_are_refused[test_duplicates[a]-no parametrize id]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_pytest_never_generates_are_refused[test_uses_param_fixture[vanilla-1]-parametrized fixture]" time="0.008" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_ids_pytest_never_generates_are_refused[test_uses_param_fixture[1]-parametrized fixture]" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_target_inside_another_listed_target_is_named[targets0]" time="0.006" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_target_inside_another_listed_target_is_named[targets1]" time="0.006" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_target_inside_another_listed_target_is_named[targets2]" time="0.006" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_prefix_without_a_node_boundary_is_not_an_overlap" time="0.009" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_dead_defines_test_is_gone" time="0.010" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_schedules_reminder_edit_identity.py]" time="0.213" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_study_quiz_start_responsiveness.py]" time="0.371" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_image_gen_demo_request_lifetime.py]" time="0.279" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_mcp_import_validation_recovery.py]" time="0.110" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_mcp_import_pending_file_drafts.py]" time="0.326" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_chunking_lab_sample_import_drafts.py]" time="0.522" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_dictation_button_delivery.py]" time="0.311" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_dictation_view_retirement.py]" time="0.226" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_settings_model_defaults_rows.py]" time="0.063" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_settings_connect_rows.py]" time="0.059" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_settings_connect_tab_budget.py]" time="0.058" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_settings_default_model_picker.py]" time="0.084" />
+    <testcase classname="Tests.CI.test_ui_pr_gate_census_checker" name="test_a_split_census_file_keeps_every_test_gated_once[Tests/UI/test_mcp_permissions_handoff.py]" time="0.218" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_heavy_tests_run_only_on_main_push_or_manual_dispatch" time="0.034" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix" time="0.017" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_is_one_serial_minimal_python_312_job[pr-fast-lane-PR Fast Lane-Run fast PR contract]" time="0.065" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_is_one_serial_minimal_python_312_job[pr-fast-lane-admission-PR Fast Lane (admission-sensitive)-Run admission-sensitive suites]" time="0.077" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_is_one_serial_minimal_python_312_job[pr-fast-lane-admission-2-PR Fast Lane (admission-sensitive 2)-Run admission-sensitive suites 2]" time="0.059" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_console_p0_gate_is_one_serial_minimal_python_312_job" time="0.137" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_tracking_lane_is_one_serial_minimal_python_312_job" time="0.052" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_target_set_is_exact_and_non_overlapping" time="0.313" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_admission_target_set_is_exact" time="0.040" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_second_admission_target_set_is_exact" time="0.048" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_admission_sensitive_step_gates_the_notes_sync_real_stack_files" time="0.044" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_context_fails_closed_and_keeps_artifact_checks_install_free" time="0.047" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_missing_prerequisite" time="0.047" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_partial_failure_check" time="0.046" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_a_dropped_admission_lane[pr-fast-lane-admission]" time="0.046" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_a_dropped_admission_lane[pr-fast-lane-admission-2]" time="0.050" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[pr-fast-lane-None]" time="0.091" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[pr-fast-lane-admission-None]" time="0.088" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[pr-fast-lane-admission-Run admission-sensitive suites]" time="0.063" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-Require successful PR fast lane (admission-sensitive)]" time="0.188" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[pr-fast-lane-admission-2-None]" time="0.044" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[pr-fast-lane-admission-2-Run admission-sensitive suites 2]" time="0.043" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-Require successful PR fast lane (admission-sensitive 2)]" time="0.043" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[dreams-tracking-None]" time="0.046" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[dreams-tracking-Run the Dreams tracking tests]" time="0.047" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-Require successful Dreams tracking tests]" time="0.047" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[console-p0-gate-None]" time="0.045" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[console-p0-gate-Run the admission-sensitive Console P0 regression tests]" time="0.043" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[dreams-boundary-None]" time="0.059" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[dreams-boundary-Run Dreams admission-sensitive contracts]" time="0.043" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-Require successful Dreams and Guardian boundary contracts]" time="0.042" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-None]" time="0.047" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-Require successful PR fast lane]" time="0.064" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-Require successful Console P0 regression gate]" time="0.056" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-Generated stylesheets reproduce from their sources]" time="0.055" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[sandboxed---collect-only]" time="0.050" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[sandboxed--k smoke]" time="0.069" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[sandboxed---ignore=Tests/CI]" time="0.058" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[sandboxed---deselect=Tests/test_smoke.py]" time="0.056" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[admission-sensitive---collect-only]" time="0.049" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[admission-sensitive--k smoke]" time="0.044" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[admission-sensitive---ignore=Tests/CI]" time="0.041" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[admission-sensitive---deselect=Tests/test_smoke.py]" time="0.044" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[admission-sensitive 2---collect-only]" time="0.043" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[admission-sensitive 2--k smoke]" time="0.096" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[admission-sensitive 2---ignore=Tests/CI]" time="0.051" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_selection_suppressing_flags[admission-sensitive 2---deselect=Tests/test_smoke.py]" time="0.057" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_a_shorter_test_limit[sandboxed]" time="0.048" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_a_shorter_test_limit[admission-sensitive]" time="0.045" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_fast_lane_contract_rejects_a_shorter_test_limit[admission-sensitive 2]" time="0.047" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_focused_guards_keep_dev_pr_and_dev_main_push_coverage" time="0.049" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_pull_request_workflows_are_never_cancelled_in_progress" time="0.071" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_bundle_and_backlog_checks_run_on_push_events" time="0.048" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_exact_targets_and_invocation_reject_missing_executable_target[False-sandboxed]" time="0.065" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_exact_targets_and_invocation_reject_missing_executable_target[False-admission-sensitive]" time="0.057" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_exact_targets_and_invocation_reject_missing_executable_target[False-admission-sensitive 2]" time="0.063" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_exact_targets_and_invocation_reject_missing_executable_target[True-sandboxed]" time="0.062" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_exact_targets_and_invocation_reject_missing_executable_target[True-admission-sensitive]" time="0.074" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_exact_targets_and_invocation_reject_missing_executable_target[True-admission-sensitive 2]" time="0.080" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_target_parser_preserves_quoted_hash_and_continuation" time="0.008" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_exact_invocation_accepts_comments_without_changing_executable_argv" time="0.075" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_critical_boundaries_are_executable_required_lane_members" time="0.063" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_membership_cannot_be_satisfied_by_comments[Run Dreams and Guardian boundary contracts-targets0]" time="0.059" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_membership_cannot_be_satisfied_by_comments[Run Dreams admission-sensitive contracts-targets1]" time="0.053" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[missing-Run Dreams and Guardian boundary contracts]" time="0.050" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[missing-Run Dreams admission-sensitive contracts]" time="0.058" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[order-Run Dreams and Guardian boundary contracts]" time="0.058" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[order-Run Dreams admission-sensitive contracts]" time="0.054" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[duplicate-Run Dreams and Guardian boundary contracts]" time="0.059" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[duplicate-Run Dreams admission-sensitive contracts]" time="0.131" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[wrong-job-Run Dreams and Guardian boundary contracts]" time="0.043" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[wrong-job-Run Dreams admission-sensitive contracts]" time="0.042" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[moved-back-Run Dreams and Guardian boundary contracts]" time="0.043" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[moved-back-Run Dreams admission-sensitive contracts]" time="0.047" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[suppression-Run Dreams and Guardian boundary contracts]" time="0.050" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[suppression-Run Dreams admission-sensitive contracts]" time="0.053" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[conditional-Run Dreams and Guardian boundary contracts]" time="0.055" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[conditional-Run Dreams admission-sensitive contracts]" time="0.044" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[continue-on-error-Run Dreams and Guardian boundary contracts]" time="0.060" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[continue-on-error-Run Dreams admission-sensitive contracts]" time="0.073" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[job-budget-Run Dreams and Guardian boundary contracts]" time="0.063" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[job-budget-Run Dreams admission-sensitive contracts]" time="0.053" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[test-budget-Run Dreams and Guardian boundary contracts]" time="0.054" />
+    <testcase classname="Tests.CI.test_ci_queue_pressure_contract" name="test_dreams_required_placement_rejects_drift[test-budget-Run Dreams admission-sensitive contracts]" time="0.070" />
+    <testcase classname="Tests.CI.test_backlog_task_id_uniqueness" name="test_no_duplicate_task_ids_in_filenames" time="0.058" />
+    <testcase classname="Tests.CI.test_backlog_task_id_uniqueness" name="test_no_duplicate_task_ids_in_frontmatter" time="0.761" />
+    <testcase classname="Tests.CI.test_backlog_task_id_uniqueness" name="test_every_task_file_declares_a_frontmatter_id" time="0.840" />
+  </testsuite>
+</testsuites>

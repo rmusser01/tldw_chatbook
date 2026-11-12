@@ -60,6 +60,7 @@ _GUIDE = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_more_strip_paints_every_label_at_the_narrowest_stage():
     """task-32237 AC#1: the 60x24 stage, where the strip wraps to two rows.
@@ -125,6 +126,7 @@ def test_the_rendered_view_rule_reads_content_not_the_media_type():
     assert _is_markdown_media("plaintext", "Just a line.\n") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_document_with_real_markdown_renders_and_drops_the_false_note():
     """task-32234 AC#1/#2: a `document` with Markdown renders it.
@@ -184,10 +186,20 @@ def test_the_escape_chip_and_the_guide_quote_the_same_words():
     assert LibraryScreen._library_media_escape_label(more_fake) == "close"
     assert "`esc close`" in guide
 
-    for sub_state in ("editing", "confirming_delete", "editing_analysis"):
+    for sub_state in ("editing", "editing_analysis"):
         sub_fake, _calls, _shell, _find = _escape_fake(region="reader")
         setattr(sub_fake._media_state, sub_state, True)
         assert LibraryScreen._library_media_escape_label(sub_fake) == "close", sub_state
+    # TASK-34000.22 fix round 2 (R2-5): an armed delete confirm is the one
+    # sub-state with its own word -- Escape cancels the confirm FIRST, before
+    # the dirty-form veto, so the chip says "cancel" and the guide quotes it.
+    confirm_fake, _calls, _shell, _find = _escape_fake(region="reader")
+    confirm_fake._media_state.confirming_delete = True
+    confirm_label = LibraryScreen._library_media_escape_label(confirm_fake)
+    assert confirm_label == "cancel"
+    # The guide quotes the chip EXACTLY as the footer paints it (fix round 3).
+    assert f"**`esc {confirm_label}`** over" in guide
+    assert "has five readings" in guide
 
     # The contradicting claims are gone.
     assert "Escape never leaves the Reader at all" not in guide
@@ -288,6 +300,7 @@ async def _open_analysis_tab(screen, pilot):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "size", [(235, 52), (100, 30), (60, 24)], ids=["wide", "mid", "narrow"]
 )
@@ -325,6 +338,7 @@ async def test_analysis_actions_sit_directly_under_a_short_analysis(size):
         assert edit.region.y < viewer.region.bottom - 8, (edit.region, viewer.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_long_analysis_scrolls_its_pane_with_the_actions_at_the_end():
     """The long-document half: actions ride the scroll, and stay REACHABLE.

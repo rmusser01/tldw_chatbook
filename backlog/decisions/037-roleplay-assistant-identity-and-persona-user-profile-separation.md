@@ -3,8 +3,8 @@
 Status: Accepted
 Date: 2026-07-28
 Related Tasks: TASK-617, TASK-763, TASK-951
-Extends: ADR-028
-Clarifies: ADR-004, ADR-007, ADR-033
+Extends: ADR-294
+Clarifies: ADR-287, ADR-007, ADR-033
 Supersedes: N/A
 
 ## Decision
@@ -119,7 +119,7 @@ features. This amendment is owned by
 
 ## Context
 
-ADR-028 requires character assignments to use full source-aware authority.
+ADR-294 requires character assignments to use full source-aware authority.
 Bare local IDs collide across character databases, and server character IDs
 can collide across authenticated users. Chatbook's existing persisted
 conversation validator also requires numeric character IDs, preventing opaque
@@ -127,7 +127,7 @@ server IDs.
 
 The current server-event helper can derive a credential fingerprint when a JWT
 subject is unavailable. That value is useful for ephemeral event scoping but
-violates ADR-028's durable-assignment rule because ordinary credential rotation
+violates ADR-294's durable-assignment rule because ordinary credential rotation
 changes it. The server's authenticated User Profile endpoint provides the
 stable principal contract required here.
 
@@ -208,7 +208,7 @@ records. It also explicitly declines to extend the current Sync V2 contract.
 ## Links
 
 - [Approved Slice 3A design](../../Docs/superpowers/specs/2026-07-28-tts-character-identity-persona-separation-design.md)
-- [ADR-028 — Character TTS generation profile ownership](028-character-tts-generation-profile-ownership.md)
-- [ADR-004 — Personas destination-native workbench](004-personas-destination-native-workbench.md)
+- [ADR-294 — Character TTS generation profile ownership](294-character-tts-generation-profile-ownership.md)
+- [ADR-287 — Personas destination-native workbench](287-personas-destination-native-workbench.md)
 - [ADR-007 — Personas workbench route consolidation](007-personas-workbench-route-consolidation.md)
 - [ADR-033 — Application session state ownership](033-application-session-state-ownership.md)

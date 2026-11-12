@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pr2995-task17-collection-ygtmgzbp/pytest",
+    "Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]",
+    "Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]",
+    "Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged",
+    "--collect-only"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 1.5873667909999991,
+  "stdout": "composed_static_owners-collection.stdout",
+  "stderr": "composed_static_owners-collection.stderr",
+  "log": "composed_static_owners-collection.log",
+  "complete_outputs": true,
+  "pid": 46289,
+  "closed_process": true,
+  "head_after": "54a18180211ed2ecbf450db78202d28d97a7b995",
+  "source_after_unchanged": true,
+  "collected_nodes": [
+    "Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]",
+    "Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]",
+    "Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged"
+  ],
+  "exact_selection_equal": true,
+  "collected_count": 3
+}

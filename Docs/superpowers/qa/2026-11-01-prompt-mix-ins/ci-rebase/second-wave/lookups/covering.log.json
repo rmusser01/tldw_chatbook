@@ -1,0 +1,4 @@
+{
+  "sha256": "600c123efa9efe3639829e4b0d79d6a7baa28443aee27b5d7f48854ec0224bd9",
+  "raw_text": "ERROR: not found: /Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Architecture/test_app_string_lookup_census.py::test_app_string_lookups_match_their_pin[Agents]\n(no match in any of [<Module test_app_string_lookup_census.py>])\n\n\n=============================== warnings summary ===============================\n<unknown>:31\n  <unknown>:31: SyntaxWarning: invalid escape sequence '\\ '\n\n<unknown>:32\n  <unknown>:32: SyntaxWarning: invalid escape sequence '\\ '\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-lookups-ca26gp6e/covering.xml -\n2 warnings in 11.98s\n"
+}

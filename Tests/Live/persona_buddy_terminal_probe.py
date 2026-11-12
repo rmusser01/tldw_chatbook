@@ -803,13 +803,18 @@ def _drain_until_quiet(
     timeout: float = 0.50,
     quiet_seconds: float = 0.05,
     max_bytes: int | None = None,
+    wait_for_first_byte: bool = False,
 ) -> bytes:
     """Drain until the PTY has stayed quiet, bounded by one hard deadline."""
 
     deadline = time.monotonic() + timeout
     captured = bytearray()
-    while time.monotonic() < deadline:
-        wait = min(quiet_seconds, deadline - time.monotonic())
+    while (remaining := deadline - time.monotonic()) > 0:
+        wait = (
+            remaining
+            if wait_for_first_byte and not captured
+            else min(quiet_seconds, remaining)
+        )
         ready, _, _ = select.select([fd], [], [], wait)
         if not ready:
             break
@@ -891,7 +896,10 @@ def _capture_fresh_repaint(fd: int, request_repaint: Any | None = None) -> bytes
         os.write(fd, b"\x0c")
     else:
         request_repaint()
-    captured = _drain_until_quiet(fd, max_bytes=_CAPTURE_BYTES)
+    # The child can take longer than one quiet interval to begin repainting.
+    captured = _drain_until_quiet(
+        fd, max_bytes=_CAPTURE_BYTES, wait_for_first_byte=True
+    )
     _validate_terminal_capture(captured)
     return captured
 

@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="6" time="7.056" timestamp="2026-10-04T14:42:47.377153-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_missing_start_confirmation_requires_successful_owned_transaction[foreign_attempt]" time="0.537"><failure message="AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x11244f500&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110a0a450&gt;
+case = 'foreign_attempt'
+
+    @pytest.mark.parametrize(
+        "case",
+        ["absent", "present", "foreign_attempt", "stale_runtime", "missing_runtime", "exit_failure"],
+    )
+    def test_missing_start_confirmation_requires_successful_owned_transaction(db, monkeypatch, case):
+        """Only a successful exact-owner transaction may establish missing authority."""
+        ledger = db.automatic_work
+        ledger.recover(current_owner_id="owner")
+        root, source = source_run(db)
+        if case == "present":
+            prepare(db, source, "target", "attempt")
+        if case == "foreign_attempt":
+            with db.transaction() as conn:
+                conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='foreign'")
+            prepare(db, source, "target", "attempt", owner_id="foreign")
+            with db.transaction() as conn:
+                conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='owner'")
+        if case in {"stale_runtime", "missing_runtime"}:
+            with db.transaction() as conn:
+                if case == "stale_runtime":
+                    conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='replacement'")
+                else:
+                    conn.execute("DELETE FROM automatic_work_runtime_owner")
+        with db.connection() as conn:
+            before = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_chat_start_attempts"))
+            reservations = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_work_reservations"))
+        transaction = ledger.transaction
+        if case == "exit_failure":
+            @contextmanager
+            def fail_exit():
+                with transaction() as conn:
+                    yield conn
+                raise sqlite3.OperationalError("policy restoration unavailable")
+            monkeypatch.setattr(ledger, "transaction", fail_exit)
+            with pytest.raises(sqlite3.OperationalError):
+                ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+            monkeypatch.setattr(ledger, "transaction", transaction)
+        else:
+&gt;           assert ledger._confirm_chat_start_absent("attempt", owner_id="owner") is (case == "absent")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'
+
+Tests/DB/test_automatic_chat_starts.py:665: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_contended_preparation_confirms_absence_after_writer_exits" time="1.103"><failure message="AssertionError: assert ('review_requ..._unconfirmed') == ('not_started...start_failed')&#10;  &#10;  At index 0 diff: 'review_required' != 'not_started'&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task15/red-extra/test_contended_preparation_con0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110a35eb0&gt;
+
+    @pytest.mark.asyncio
+    async def test_contended_preparation_confirms_absence_after_writer_exits(tmp_path, monkeypatch):
+        """A real failed BEGIN and drained writer leave no automatic charge or denial."""
+        import asyncio
+        import sqlite3
+        from threading import Event
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+        blocker = sqlite3.connect(runs.db_path)
+        failed, released = Event(), Event()
+        prepare = ledger.prepare_chat_start
+        def contended(**kwargs):
+            with runs.connection() as conn:
+                timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                conn.execute("PRAGMA busy_timeout=0")
+                try:
+                    return prepare(**kwargs)
+                except sqlite3.OperationalError:
+                    failed.set()
+                    assert released.wait(10)
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA busy_timeout={timeout}")
+        monkeypatch.setattr(ledger, "prepare_chat_start", contended)
+        blocker.execute("BEGIN IMMEDIATE")
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(failed.wait, 5)
+            item = controller._chat_start._active[target.id]
+            assert not item.outcome.done()
+            assert target.id in controller.fleet_wake._automatic_primary_claims
+            blocker.rollback()
+            released.set()
+            outcome = await start
+            await asyncio.gather(*controller._chat_start.tasks())
+&gt;           assert (outcome.launch_status, outcome.reason) == ("not_started", "start_failed")
+E           AssertionError: assert ('review_requ..._unconfirmed') == ('not_started...start_failed')
+E             
+E             At index 0 diff: 'review_required' != 'not_started'
+E             Use -v to get more diff
+
+Tests/Chat/test_console_chat_start.py:3488: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[publication]" time="1.064" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[abandonment]" time="1.249"><failure message="AssertionError: assert [OSError('pri...nup failure')] == [None]&#10;  &#10;  At index 0 diff: OSError('private cleanup failure') != None&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task15/red-extra/test_post_drain_cleanup_keeps_1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x111ee9100&gt;
+fault = 'abandonment'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fault", ["publication", "abandonment", "run_state", "replacement"])
+    async def test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release(tmp_path, monkeypatch, fault):
+        """Fallible UI cleanup cannot retain a drained slot or steal a replacement."""
+        import asyncio
+        from copy import copy
+        from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        coordinator = controller._chat_start
+        ledger = runs.automatic_work
+        abort = ledger.abort_chat_start
+        abandon = controller._abandon_preparation
+        set_state = controller._set_run_state
+        saved = {}
+        def fail(*args, **kwargs):
+            raise OSError("private cleanup failure")
+        async def refuse_accept(item):
+            saved["item"] = item
+            saved["preparation"] = store.preparation_for_session(target.id)
+            assert saved["preparation"] is not None
+            if fault == "abandonment":
+                monkeypatch.setattr(controller, "_abandon_preparation", fail)
+            raise OSError("private preaccept refusal")
+        monkeypatch.setattr(coordinator, "accept", refuse_accept)
+        def refunded(*args, **kwargs):
+            result = abort(*args, **kwargs)
+            assert result
+            item = saved["item"]
+            if fault == "run_state":
+                # Re-establish the exact validation state to exercise its cleanup fence.
+                set_state(item.validating_state, session_id=target.id)
+                monkeypatch.setattr(controller, "_set_run_state", fail)
+            return result
+        monkeypatch.setattr(ledger, "abort_chat_start", refunded)
+        publish = coordinator._publish_outcome
+        async def publication(*args, **kwargs):
+            item = saved["item"]
+            if fault == "publication":
+                raise OSError("private publication failure")
+            if fault == "replacement":
+                replacement = copy(item)
+                replacement.token = object()
+                replacement.preparation_id = "replacement-preparation"
+                coordinator._active[target.id] = replacement
+                item.capacity_owner._automatic_primary_claims[target.id] = replacement.token
+                saved["replacement"] = replacement
+                saved["state"] = ConsoleRunState(ConsoleRunStatus.VALIDATING, "replacement")
+                set_state(saved["state"], session_id=target.id)
+            return await publish(*args, **kwargs)
+        monkeypatch.setattr(coordinator, "_publish_outcome", publication)
+        start = asyncio.create_task(coordinator.start(request))
+        try:
+            await asyncio.sleep(0)
+            item = coordinator._active[target.id]
+            results = await asyncio.gather(item.task, return_exceptions=True)
+            assert item.outcome.done()
+&gt;           assert results == [None]
+E           AssertionError: assert [OSError('pri...nup failure')] == [None]
+E             
+E             At index 0 diff: OSError('private cleanup failure') != None
+E             Use -v to get more diff
+
+Tests/Chat/test_console_chat_start.py:3566: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[run_state]" time="1.119"><failure message="AssertionError: assert [OSError('pri...nup failure')] == [None]&#10;  &#10;  At index 0 diff: OSError('private cleanup failure') != None&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task15/red-extra/test_post_drain_cleanup_keeps_2')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x112212030&gt;
+fault = 'run_state'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fault", ["publication", "abandonment", "run_state", "replacement"])
+    async def test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release(tmp_path, monkeypatch, fault):
+        """Fallible UI cleanup cannot retain a drained slot or steal a replacement."""
+        import asyncio
+        from copy import copy
+        from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        coordinator = controller._chat_start
+        ledger = runs.automatic_work
+        abort = ledger.abort_chat_start
+        abandon = controller._abandon_preparation
+        set_state = controller._set_run_state
+        saved = {}
+        def fail(*args, **kwargs):
+            raise OSError("private cleanup failure")
+        async def refuse_accept(item):
+            saved["item"] = item
+            saved["preparation"] = store.preparation_for_session(target.id)
+            assert saved["preparation"] is not None
+            if fault == "abandonment":
+                monkeypatch.setattr(controller, "_abandon_preparation", fail)
+            raise OSError("private preaccept refusal")
+        monkeypatch.setattr(coordinator, "accept", refuse_accept)
+        def refunded(*args, **kwargs):
+            result = abort(*args, **kwargs)
+            assert result
+            item = saved["item"]
+            if fault == "run_state":
+                # Re-establish the exact validation state to exercise its cleanup fence.
+                set_state(item.validating_state, session_id=target.id)
+                monkeypatch.setattr(controller, "_set_run_state", fail)
+            return result
+        monkeypatch.setattr(ledger, "abort_chat_start", refunded)
+        publish = coordinator._publish_outcome
+        async def publication(*args, **kwargs):
+            item = saved["item"]
+            if fault == "publication":
+                raise OSError("private publication failure")
+            if fault == "replacement":
+                replacement = copy(item)
+                replacement.token = object()
+                replacement.preparation_id = "replacement-preparation"
+                coordinator._active[target.id] = replacement
+                item.capacity_owner._automatic_primary_claims[target.id] = replacement.token
+                saved["replacement"] = replacement
+                saved["state"] = ConsoleRunState(ConsoleRunStatus.VALIDATING, "replacement")
+                set_state(saved["state"], session_id=target.id)
+            return await publish(*args, **kwargs)
+        monkeypatch.setattr(coordinator, "_publish_outcome", publication)
+        start = asyncio.create_task(coordinator.start(request))
+        try:
+            await asyncio.sleep(0)
+            item = coordinator._active[target.id]
+            results = await asyncio.gather(item.task, return_exceptions=True)
+            assert item.outcome.done()
+&gt;           assert results == [None]
+E           AssertionError: assert [OSError('pri...nup failure')] == [None]
+E             
+E             At index 0 diff: OSError('private cleanup failure') != None
+E             Use -v to get more diff
+
+Tests/Chat/test_console_chat_start.py:3566: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[replacement]" time="1.202" /></testsuite></testsuites>

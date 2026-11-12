@@ -1,0 +1,75 @@
+# RED-first and negative controls, re-run 2026-10-04 (finding 4)
+
+All runs: serial pytest under env -i (scratch HOME/XDG/TLDW_CONFIG_PATH, null keyring), PYTHONPATH=<worktree>,
+no admission plugin; every test in Tests/UI/test_settings_save_reach.py is @private_profile_test.
+
+## RED-first: production code at 401fc2e1fe, the test file at 769dff7edc
+(git checkout 401fc2e1fe -- tldw_chatbook; run; git checkout HEAD -- tldw_chatbook)
+E           --- child failure: textual.css.query.NoMatches: No nodes match '#settings-model-applies-row' on SettingsScreen(classes='shell-header-normal')
+E           1 failed in 10.08s
+E           --- child failure: textual.css.query.NoMatches: No nodes match '#settings-model-applies-to' on SettingsScreen(classes='shell-header-normal')
+E           1 failed in 10.65s
+E           --- child failure: AssertionError: assert ['Affects Con...guide', 'Key'] == ['Applies to'...guide', 'Key']
+E           1 failed in 10.77s
+E           --- child failure: AssertionError: #settings-provider-catalog
+E           1 failed in 9.46s
+E           --- child failure: AssertionError: Timed out waiting for #settings-model-applies-to. Visible text: Settings | Global preferences, appearance, storage, and app behavior | Local Mode: Providers & Models No filter | / focus category search Core Interface Data &  [...]
+E           1 failed in 17.99s
+E           --- child failure: AssertionError: Timed out waiting for #settings-model-applies-to. Visible text: Settings | Global preferences, appearance, storage, and app behavior | Local Mode: Providers & Models No filter | / focus category search Core Interface Data &  [...]
+E           1 failed in 17.41s
+FAILED Tests/UI/test_settings_save_reach.py::test_applies_to_row_sits_under_the_default_model_and_says_no_chat_is_open
+FAILED Tests/UI/test_settings_save_reach.py::test_a_long_chat_title_wraps_the_row_rather_than_cut_the_pair
+FAILED Tests/UI/test_settings_save_reach.py::test_inspector_leads_with_reach_then_the_next_new_chat_then_the_field
+FAILED Tests/UI/test_settings_save_reach.py::test_focused_field_shows_help_and_range_and_its_key_only_when_opened
+FAILED Tests/UI/test_settings_save_reach.py::test_saving_default_b_states_its_reach_and_a_new_chat_takes_it[untouched]
+FAILED Tests/UI/test_settings_save_reach.py::test_saving_default_b_states_its_reach_and_a_new_chat_takes_it[message]
+6 failed in 105.85s (0:01:45)  -- 6 of 6 red on the unchanged code, each for a missing Task 4 behaviour
+dirty entries after restore: 0
+
+## Negative controls at 769dff7edc
+Each mutation is one exact-string replacement asserted to match once, then the named test(s) run, then
+'git checkout -- tldw_chatbook' and 'git diff --quiet' prove the tree is clean again.
+
+NC1 predicate bypassed: providers_models_card.applies_to_copy 'if follows_saved_defaults(' -> 'if False and follows_saved_defaults('
+NC2 focus early-return removed: settings_screen.handle_descendant_focus config-key 'return' -> 'pass'
+NC3 dirty note pinned off: settings_screen 'note.display = has_unsaved_changes' -> 'note.display = False'
+NC4 nowrap + ellipsis: '.settings-applies-to { height: auto }' -> 'height: 1; text-wrap: nowrap; text-overflow: ellipsis',
+    and '#settings-model-applies-row { height: auto }' removed (source sheet and generated screen_agentic_settings.tcss)
+
+### nc1-predicate-bypass
+=== nc1-predicate-bypass at 769dff7edc
+mutated tldw_chatbook/UI/Settings_Modules/providers_models_card.py
+E           --- child failure: AssertionError: assert 'new chats (C...pp · model-a.' == 'new chats (C...pp · model-a.'
+E             -  “Chat 1” is unused and will use llama.cpp · model-a.
+E             +  “Chat 1” keeps llama.cpp · model-a.
+FAILED Tests/UI/test_settings_save_reach.py::test_saving_default_b_states_its_reach_and_a_new_chat_takes_it[untouched]
+1 failed, 1 passed in 48.34s  (the passing case is [message]: a chat with work keeps its pair either way)
+restored: tree clean
+
+### nc2-focus-early-return
+=== nc2-focus-early-return at 769dff7edc
+mutated tldw_chatbook/UI/Screens/settings_screen.py
+E           --- child failure: AssertionError: timed out waiting for the disclosure
+FAILED Tests/UI/test_settings_save_reach.py::test_focused_field_shows_help_and_range_and_its_key_only_when_opened
+1 failed in 27.80s
+restored: tree clean
+
+### nc3-dirty-note-off
+=== nc3-dirty-note-off at 769dff7edc
+mutated tldw_chatbook/UI/Screens/settings_screen.py
+E           --- child failure: AssertionError: assert False is True
+E            +  where False = Static(id='settings-provider-next-chat-note', classes='settings-detail-row').display
+FAILED Tests/UI/test_settings_save_reach.py::test_inspector_leads_with_reach_then_the_next_new_chat_then_the_field
+1 failed in 18.21s
+restored: tree clean
+
+### nc4-nowrap-ellipsis
+=== nc4-nowrap-ellipsis at 769dff7edc
+mutated tldw_chatbook/css/features/_settings.tcss
+mutated tldw_chatbook/css/screen_agentic_settings.tcss
+mutated tldw_chatbook/css/features/_settings.tcss
+mutated tldw_chatbook/css/screen_agentic_settings.tcss
+E           --- child failure: AssertionError: Applies to               new chats (Ctrl+T, temporary, workspace). Open chat “Refactor the settings s…” keeps Anthr…
+FAILED Tests/UI/test_settings_save_reach.py::test_a_long_chat_title_wraps_the_row_rather_than_cut_the_pair
+1 failed, 1 passed in 28.20s  (the passing case is the no-chat row, which fits one line either way)
+restored: tree clean

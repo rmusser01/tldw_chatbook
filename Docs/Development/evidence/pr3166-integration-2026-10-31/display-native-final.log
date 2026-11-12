@@ -1,0 +1,129 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 90.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 33 items
+
+Tests/UI/test_console_transcript_context_projection.py::test_original_transcript_does_not_read_unused_live_global_policy PASSED [  3%]
+Tests/UI/test_console_transcript_context_projection.py::test_context_publication_reopens_unchanged_transcript_gate PASSED [  6%]
+Tests/UI/test_console_transcript_context_projection.py::test_streaming_transcript_keeps_painting_during_original_native_context_read PASSED [  9%]
+Tests/UI/test_console_transcript_context_projection.py::test_transcript_banner_matches_original_branch_validated_memory PASSED [ 12%]
+Tests/UI/test_console_transcript_context_projection.py::test_custom_live_reader_keeps_original_post_gate_cadence_and_thread FAILED [ 15%]
+Tests/UI/test_console_transcript_context_projection.py::test_custom_presentation_reader_is_not_newly_used_by_transcript FAILED [ 18%]
+Tests/UI/test_console_transcript_context_projection.py::test_malformed_shared_inputs_remain_optional_display_failure PASSED [ 21%]
+Tests/UI/test_console_transcript_context_projection.py::test_restored_stock_reader_never_reuses_custom_memory_within_ttl[context_control_inputs] PASSED [ 24%]
+Tests/UI/test_console_transcript_context_projection.py::test_restored_stock_reader_never_reuses_custom_memory_within_ttl[context_control_presentation_inputs] PASSED [ 27%]
+Tests/UI/test_settings_prompt_summary_worker.py::test_original_checked_count_publishes_from_the_worker PASSED [ 30%]
+Tests/UI/test_settings_prompt_summary_worker.py::test_blocked_count_keeps_loop_responsive_and_publishes_after_release PASSED [ 33%]
+Tests/UI/test_settings_prompt_summary_worker.py::test_late_count_cannot_replace_newer_or_unavailable_summary[edit] PASSED [ 36%]
+Tests/UI/test_settings_prompt_summary_worker.py::test_late_count_cannot_replace_newer_or_unavailable_summary[config] PASSED [ 39%]
+Tests/UI/test_settings_prompt_summary_worker.py::test_late_count_cannot_replace_newer_or_unavailable_summary[unmount] PASSED [ 42%]
+Tests/UI/test_settings_prompt_summary_worker.py::test_late_count_cannot_replace_newer_or_unavailable_summary[cancel] PASSED [ 45%]
+Tests/UI/test_settings_prompt_summary_worker.py::test_late_count_cannot_replace_newer_or_unavailable_summary[failure] PASSED [ 48%]
+Tests/UI/test_console_skill_context_worker.py::test_context_read_retains_native_work_until_exit[success] PASSED [ 51%]
+Tests/UI/test_console_skill_context_worker.py::test_context_read_retains_native_work_until_exit[cancel] PASSED [ 54%]
+Tests/UI/test_console_skill_context_worker.py::test_context_read_retains_native_work_until_exit[source] PASSED [ 57%]
+Tests/UI/test_console_skill_context_worker.py::test_context_read_retains_native_work_until_exit[owner] PASSED [ 60%]
+Tests/UI/test_console_skill_context_worker.py::test_context_read_retains_native_work_until_exit[error] PASSED [ 63%]
+Tests/Performance/test_console_skill_context_owned.py::test_original_context_read_is_responsive_owned_and_custom_affine PASSED [ 66%]
+Tests/Performance/test_console_attention_owned.py::test_native_attention_read_ownership_and_stale_results PASSED [ 69%]
+Tests/Performance/test_console_tokenizer_owned.py::test_original_tokenizer_admission_is_off_loop_and_owned +++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++
+~~~~~~~~~~~~~~~~ Stack of chatbook-storage-admission (238340) ~~~~~~~~~~~~~~~~~
+  File "C:\Python312\Lib\threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Python312\Lib\threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "C:\Python312\Lib\threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 531, in _run
+    self.stop.wait()
+  File "C:\Python312\Lib\threading.py", line 655, in wait
+    signaled = self._cond.wait(timeout)
+  File "C:\Python312\Lib\threading.py", line 355, in wait
+    waiter.acquire()
+~~~~~~~~~~~~~~~~~~~~~~~~ Stack of MainThread (191652) ~~~~~~~~~~~~~~~~~~~~~~~~~
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\windows_private_fixture_runner.py", line 64, in <module>
+    raise SystemExit(main())
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\windows_private_fixture_runner.py", line 60, in main
+    return int(pytest.main(sys.argv[1:]))
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\config\__init__.py", line 175, in main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 330, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 283, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 337, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 362, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 113, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 132, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 241, in call_and_report
+    call = CallInfo.from_call(
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 341, in from_call
+    result: TResult | None = func()
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 242, in <lambda>
+    lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 174, in pytest_runtest_call
+    item.runtest()
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\python.py", line 1627, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\python.py", line 159, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\Performance\test_console_tokenizer_owned.py", line 97, in test_original_tokenizer_admission_is_off_loop_and_owned
+    _run(tmp_path, "tokenizer", "owned", script=launch, timeout=150)
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\Backup_Recovery\test_home_citation_retirement.py", line 304, in _run
+    result = subprocess.run(
+  File "C:\Python312\Lib\subprocess.py", line 550, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+  File "C:\Python312\Lib\subprocess.py", line 1228, in communicate
+    sts = self.wait(timeout=self._remaining_time(endtime))
+  File "C:\Python312\Lib\subprocess.py", line 1264, in wait
+    return self._wait(timeout=timeout)
+  File "C:\Python312\Lib\subprocess.py", line 1590, in _wait
+    result = _winapi.WaitForSingleObject(self._handle,
++++++++++++++++++++++++++++++++++++ Timeout +++++++++++++++++++++++++++++++++++

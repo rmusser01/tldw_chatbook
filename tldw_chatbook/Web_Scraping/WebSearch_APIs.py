@@ -47,7 +47,7 @@ import threading
 import time
 from functools import wraps
 from html import unescape
-from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict, Union
+from typing import Any, Callable, Dict, List, NamedTuple, NotRequired, Optional, TypedDict, Union
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse
 
 #
@@ -139,7 +139,10 @@ def _safe_search_error(error: Exception) -> str:
         "connection": "Could not connect to the search provider.",
         "timeout": "Search request timed out.",
         "http": "Search provider returned an HTTP error.",
-    }.get(_search_error_kind(error), "Search request failed. Check the configured backend.")
+    }.get(
+        _search_error_kind(error),
+        "Search request failed. Check the configured backend.",
+    )
 
 
 def _set_search_processing_error(output: dict) -> None:
@@ -148,11 +151,13 @@ def _set_search_processing_error(output: dict) -> None:
     if kind not in ("auth", "rate_limit", "connection", "timeout", "http", "request"):
         kind = "response"
     output.clear()
-    output.update({
-        "results": [],
-        "processing_error": "Search provider returned an invalid response.",
-        "error_kind": kind,
-    })
+    output.update(
+        {
+            "results": [],
+            "processing_error": "Search provider returned an invalid response.",
+            "error_kind": kind,
+        }
+    )
 
 
 # Common error handling and retry mechanisms
@@ -260,7 +265,11 @@ def initialize_config() -> dict[str, dict[str, Any]]:
     config_data = load_settings()
     raw = load_cli_config_and_ensure_existence()
     search_engines = {}
-    for section in ("search_engine_specific_settings", "search_engines_keys", "SearchEngines"):
+    for section in (
+        "search_engine_specific_settings",
+        "search_engines_keys",
+        "SearchEngines",
+    ):
         search_engines.update(config_data.get(section, {}))
     search_engines.update(raw.get("SearchEngines", {}))
     for backend in BACKENDS:
@@ -325,7 +334,9 @@ def _sanitize_sub_questions(raw_values: Any) -> List[str]:
         dropped (first occurrence wins).
     """
     if isinstance(raw_values, dict):
-        raw_values = raw_values.get("sub_questions", raw_values.get("search_queries", []))
+        raw_values = raw_values.get(
+            "sub_questions", raw_values.get("search_queries", [])
+        )
 
     if isinstance(raw_values, str):
         candidates: List[Any] = [raw_values]
@@ -548,7 +559,9 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     sub_queries = _sanitize_sub_questions(sub_query_dict.get("sub_questions", []))
     question_key = question.strip().casefold()
     sub_queries = [
-        sub_query for sub_query in sub_queries if sub_query.strip().casefold() != question_key
+        sub_query
+        for sub_query in sub_queries
+        if sub_query.strip().casefold() != question_key
     ]
 
     # Cap total fan-out at search_default_max_queries (final review,
@@ -590,15 +603,18 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     phase1_start = time.monotonic()
     phase1_budget_raw = search_params.get("phase1_time_budget_s")
     try:
-        phase1_budget = float(phase1_budget_raw) if phase1_budget_raw is not None else None
+        phase1_budget = (
+            float(phase1_budget_raw) if phase1_budget_raw is not None else None
+        )
     except (TypeError, ValueError):
         phase1_budget = None
 
     for n, q in enumerate(all_queries):
-        if phase1_budget is not None and (time.monotonic() - phase1_start) >= phase1_budget:
-            warning = (
-                f"deadline reached during search fan-out; searched {n} of {len(all_queries)} queries"
-            )
+        if (
+            phase1_budget is not None
+            and (time.monotonic() - phase1_start) >= phase1_budget
+        ):
+            warning = f"deadline reached during search fan-out; searched {n} of {len(all_queries)} queries"
             logger.warning(warning)
             web_search_results_dict["warnings"].append(warning)
             break
@@ -741,8 +757,12 @@ async def analyze_and_aggregate(
     # 4. Score/filter results
     logger.info("Scoring and filtering search results")
     sub_questions = sub_query_dict.get("sub_questions", [])
-    relevance_llm_timeout_s = float(search_params.get("relevance_llm_timeout_s", 30.0) or 30.0)
-    relevance_scrape_timeout_s = float(search_params.get("relevance_scrape_timeout_s", 30.0) or 30.0)
+    relevance_llm_timeout_s = float(
+        search_params.get("relevance_llm_timeout_s", 30.0) or 30.0
+    )
+    relevance_scrape_timeout_s = float(
+        search_params.get("relevance_scrape_timeout_s", 30.0) or 30.0
+    )
     # task-3260: default False when the key is absent -- the dead-wired
     # research-service caller (never sets this) keeps today's no-robots-
     # check behavior; web_deep_search (the tool) always places the real
@@ -919,9 +939,7 @@ def _credentialed_search_request(
                 continue
             collected += chunk
             if len(collected) > max_bytes:
-                raise EgressFetchError(
-                    f"response exceeds {max_bytes} bytes", url=url
-                )
+                raise EgressFetchError(f"response exceeds {max_bytes} bytes", url=url)
     finally:
         close = getattr(response, "close", None)
         if close is not None:
@@ -929,8 +947,6 @@ def _credentialed_search_request(
     response._content = bytes(collected)
     response._content_consumed = True
     return response
-
-
 
 
 def analyze_question(question: str, api_endpoint) -> Dict:
@@ -1157,6 +1173,29 @@ def _reset_dns_guard_executor_for_tests() -> None:
 
 
 # FIXME - Ensure edge cases are handled properly / Structured outputs?
+#: B16: upper bound on concurrently in-flight scrape+summarize pipelines in
+#: ``search_result_relevance``. The relevance GATE itself stays strictly
+#: sequential (it feeds spend decisions and the ``gate_rejected`` fallback
+#: order); only the scrape+summarize phase of gate-PASSED results overlaps.
+_RESEARCH_GATE_MAX_CONCURRENT_PIPELINES = 3
+
+
+class _RelevantSlot(NamedTuple):
+    """A gate-passed result awaiting its scrape+summarize pipeline (B16).
+
+    Captured by the sequential gate loop in result order; consumed by the
+    overlapped phase below. ``sleep_time`` carries the per-result jitter the
+    serial loop reused for its pre-summarization rate-limit sleep.
+    """
+
+    idx: int
+    result: Dict[str, Any]
+    content: str
+    reasoning: str
+    result_id: str
+    sleep_time: float
+
+
 async def search_result_relevance(
     search_results: List[Dict],
     original_question: str,
@@ -1203,9 +1242,9 @@ async def search_result_relevance(
         original_question (str): The original question posed by the user.
         sub_questions (List[str]): List of sub-questions generated from the original question.
         api_endpoint (str): The LLM or API endpoint to use for relevance analysis.
-        cancel_event: Optional cooperative-cancellation flag; checked at the
-            top of each iteration so a caller-side deadline watchdog can stop
-            the loop between results.
+        cancel_event: Optional cooperative-cancellation flag; checked before
+            relevance calls and each queued scrape/summarization phase so a
+            caller-side deadline watchdog can stop further work.
         llm_timeout_s: Wall-clock timeout for each relevance/summarization LLM call.
         scrape_timeout_s: Wall-clock timeout for the per-result scrape.
         respect_robots_txt: When True, consult the target host's robots.txt
@@ -1222,6 +1261,9 @@ async def search_result_relevance(
     # skipped via timeout/cancel/no-content were never judged, and promoting
     # them would launder unevaluated evidence.
     gate_rejected: List[tuple] = []
+    # B16: gate-passed results awaiting their scrape+summarize pipeline, in
+    # result order. The overlapped phase after the gate loop consumes these.
+    relevant_slots: List[_RelevantSlot] = []
 
     for idx, result in enumerate(search_results):
         if cancel_event and cancel_event.is_set():
@@ -1282,6 +1324,8 @@ async def search_result_relevance(
             # Add delay to avoid rate limiting
             sleep_time = random.uniform(0.2, 0.6)
             await asyncio.sleep(sleep_time)
+            if cancel_event and cancel_event.is_set():
+                break
 
             # Evaluate relevance (chat_api_call is sync; run off-thread so the
             # wait_for timeout can actually bound it).
@@ -1338,203 +1382,20 @@ async def search_result_relevance(
                         logger.debug("Relevant result found.")
                         # Use the 'id' from the result if available, otherwise use idx
                         result_id = result.get("id", str(idx))
-                        source_content = content
-
-                        try:
-                            # Pre-scrape SSRF guard (task-1356): scrape_article's
-                            # own validation (input_validation.validate_url) is
-                            # well-formedness only -- no DNS resolution, no
-                            # private-range blocking. This phase browses arbitrary
-                            # search-result URLs with Playwright, so a result
-                            # pointing at e.g. http://169.254.169.254/ must be
-                            # refused BEFORE navigation, not after. A refusal is
-                            # counted exactly like a scrape failure -- never an
-                            # exception -- and falls through to the existing
-                            # snippet/title/url fallback below.
-                            #
-                            # is_public_http_url does synchronous DNS resolution
-                            # (socket.getaddrinfo) -- its own docstring chain
-                            # (evaluate_url_policy) warns never to call that kind
-                            # of check directly from an event loop. Offload it,
-                            # bounded by the same timeout used for the scrape
-                            # itself; a guard timeout raises asyncio.TimeoutError,
-                            # which is an Exception (unlike CancelledError) so it
-                            # falls straight into the `except Exception` below and
-                            # is handled exactly like a scrape failure -- no
-                            # separate code path.
-                            #
-                            # Routed through the dedicated `_get_dns_guard_executor`
-                            # pool (task-3220), NOT `asyncio.to_thread`'s shared
-                            # default executor: on a wait_for timeout the abandoned
-                            # getaddrinfo thread keeps occupying its slot until the
-                            # OS resolver gives up, and the default executor is
-                            # also where this loop's own chat_api_call/summarize
-                            # offloads run -- a run of slow-DNS hosts must not be
-                            # able to queue those paid LLM calls behind dead
-                            # resolvers. This bounds the BLAST RADIUS, not the
-                            # symptom for THIS call: under full saturation of the
-                            # dedicated pool (all `_DNS_GUARD_EXECUTOR_MAX_WORKERS`
-                            # slots already occupied by abandoned threads), a new
-                            # guard call submitted here queues unstarted behind
-                            # them, and `wait_for` below still fires once
-                            # `scrape_timeout_s` elapses -- it has no way to tell
-                            # "queued" from "running slow" apart. That still
-                            # correctly skips the scrape fail-safe (falls through
-                            # to the snippet/title/url fallback exactly like a
-                            # real guard timeout), it just does so without this
-                            # particular call ever having gotten a real DNS
-                            # answer -- the isolation guarantee above is about
-                            # protecting OTHER offloads, not about this call
-                            # getting to run promptly.
-                            is_public = await asyncio.wait_for(
-                                asyncio.get_running_loop().run_in_executor(
-                                    _get_dns_guard_executor(), is_public_http_url, result["url"]
-                                ),
-                                timeout=scrape_timeout_s,
+                        # B16: the scrape+summarize pipeline for this gate-
+                        # passed result moves to the overlapped phase after
+                        # the gate loop; the gate itself stays strictly
+                        # sequential (verdicts -- and the ``gate_rejected``
+                        # order -- keep following result order).
+                        relevant_slots.append(
+                            _RelevantSlot(
+                                idx=idx,
+                                result=result,
+                                content=content,
+                                reasoning=reasoning,
+                                result_id=result_id,
+                                sleep_time=sleep_time,
                             )
-                            if not is_public:
-                                logger.warning(
-                                    f"Refusing to scrape non-public URL for result "
-                                    f"{result_id}: {result.get('url')!r}; falling "
-                                    "back to search snippet/title/url"
-                                )
-                            else:
-                                # robots.txt parity (task-3260): checked here,
-                                # between the SSRF guard above and the scrape
-                                # below -- same guard-class offload discipline
-                                # (dedicated DNS-guard executor, bounded by
-                                # scrape_timeout_s) as the SSRF check, since a
-                                # robots.txt fetch does its own network I/O.
-                                # Function-local import: no module-level cycle
-                                # (web_tool_impls already imports WebSearch_APIs
-                                # function-locally in the OTHER direction).
-                                robots_ok = True
-                                if respect_robots_txt:
-                                    from tldw_chatbook.Tools.web_tool_impls import (
-                                        robots_allows_for_scrape,
-                                    )
-
-                                    try:
-                                        robots_ok = await asyncio.wait_for(
-                                            asyncio.get_running_loop().run_in_executor(
-                                                _get_dns_guard_executor(),
-                                                robots_allows_for_scrape,
-                                                result["url"],
-                                            ),
-                                            timeout=scrape_timeout_s,
-                                        )
-                                    except asyncio.CancelledError:
-                                        raise
-                                    except Exception as robots_error:
-                                        # Fail-OPEN on a robots-check error or
-                                        # timeout (deliberately the opposite of
-                                        # the SSRF guard just above, whose own
-                                        # timeout/refusal still refuses) --
-                                        # matches _fetch_robots_parser's
-                                        # existing fail-open for web_fetch/
-                                        # web_crawl.
-                                        logger.debug(
-                                            f"robots.txt check failed for result "
-                                            f"{result_id}, failing open (will "
-                                            f"scrape): {robots_error}"
-                                        )
-                                        robots_ok = True
-
-                                if not robots_ok:
-                                    # Disallowed -> same path as an SSRF
-                                    # refusal: skip the scrape, keep the
-                                    # result via its existing fallback
-                                    # content (never discard). Log names the
-                                    # HOST only, never the query.
-                                    host = urlparse(result.get("url") or "").hostname or "unknown"
-                                    logger.debug(
-                                        f"Skipping scrape for result {result_id}: "
-                                        f"robots.txt disallows {host!r}; falling "
-                                        "back to search snippet/title/url"
-                                    )
-                                else:
-                                    scraped_content = await asyncio.wait_for(
-                                        scrape_article(result["url"]), timeout=scrape_timeout_s
-                                    )
-                                    scraped_text = ""
-                                    if isinstance(scraped_content, dict):
-                                        scraped_text = str(scraped_content.get("content") or "").strip()
-                                    elif isinstance(scraped_content, str):
-                                        scraped_text = scraped_content.strip()
-                                    if scraped_text:
-                                        source_content = scraped_text
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as scrape_error:
-                            logger.warning(
-                                f"Scrape failed for relevant result {result_id}; "
-                                f"falling back to search snippet/title/url: {scrape_error}"
-                            )
-
-                        # Create Summarization prompt
-                        logger.debug(
-                            f"Creating Summarization Prompt for result idx={idx}"
-                        )
-                        summary_prompt = render_internal_prompt(
-                            "websearch.result_summarization",
-                            question=original_question,
-                            content=source_content,
-                        )
-
-                        # Add delay before summarization
-                        await asyncio.sleep(sleep_time)
-
-                        # `analyze` (LLM_Calls.Summarization_General_Lib) is imported
-                        # lazily here (chatbook precedent, see module docstring)
-                        # so a plain import of this module doesn't eagerly pull in
-                        # the summarization stack.
-                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
-                            analyze,
-                        )
-
-                        logger.info(f"Summarizing relevant result: ID={result_id}")
-
-                        async def _summ_call(_sc=source_content, _sp=summary_prompt):
-                            return await asyncio.to_thread(
-                                lambda: analyze(
-                                    input_data=_sc,
-                                    custom_prompt_arg=_sp,
-                                    api_name=api_endpoint,
-                                    api_key=None,
-                                    temp=0.7,
-                                    system_message=None,
-                                    streaming=False,
-                                )
-                            )
-
-                        summary = None
-                        try:
-                            summary = await asyncio.wait_for(_summ_call(), timeout=llm_timeout_s)
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as summ_error:
-                            logger.error(f"Summary generation failed: {summ_error}")
-
-                        # `analyze()` reports failure by RETURNING one of its
-                        # providers' error strings rather than raising -- treat
-                        # that the same way the port source treats a raised
-                        # exception: fall back to the (scraped or fallback)
-                        # source content itself. Detection cannot be a bare
-                        # "Error:" prefix test: a llama.cpp failure returns
-                        # "Llama: Error occurred while ..." and used to be
-                        # stored here AS the evidence (task-17382).
-                        if _is_summary_failure(summary) or not summary:
-                            summary = source_content[:2000] or "Summary generation failed"
-
-                        relevant_results[result_id] = {
-                            "content": summary,  # Store the summary instead of full content
-                            "original_content": source_content,  # Keep original content if needed
-                            "reasoning": reasoning,
-                            "url": result.get("url"),
-                            "title": result.get("title"),
-                        }
-                        logger.info(
-                            f"Relevant result found and summarized: ID={result_id}; Reasoning={reasoning}"
                         )
                     else:
                         logger.info(f"Irrelevant result: {reasoning}")
@@ -1553,6 +1414,281 @@ async def search_result_relevance(
             logger.error(
                 f"Error during relevance evaluation/summarization for result idx={idx}: {e}"
             )
+
+    # --- B16: overlapped scrape+summarize phase --------------------------------
+    # The gate loop above judged every result IN ORDER (spend decisions and
+    # the gate_rejected order depend on that). Only the scrape+summarize
+    # pipelines of gate-PASSED results run concurrently here, bounded by
+    # ``_RESEARCH_GATE_MAX_CONCURRENT_PIPELINES``. Each slot reproduces the
+    # serial loop's per-result error handling exactly: scrape failures fall
+    # back to the snippet content, summarize failures fall back to the source
+    # content, and any OTHER unexpected error skips just that slot -- siblings
+    # are never affected.
+    async def _process_relevant_slot(
+        slot: _RelevantSlot,
+    ) -> Optional[tuple[str, Dict[str, Any]]]:
+        idx = slot.idx
+        result = slot.result
+        result_id = slot.result_id
+        reasoning = slot.reasoning
+        source_content = slot.content
+
+        async with _gate_semaphore:
+            if cancel_event and cancel_event.is_set():
+                return None
+            try:
+                try:
+                    # Pre-scrape SSRF guard (task-1356): scrape_article's
+                    # own validation (input_validation.validate_url) is
+                    # well-formedness only -- no DNS resolution, no
+                    # private-range blocking. This phase browses arbitrary
+                    # search-result URLs with Playwright, so a result
+                    # pointing at e.g. http://169.254.169.254/ must be
+                    # refused BEFORE navigation, not after. A refusal is
+                    # counted exactly like a scrape failure -- never an
+                    # exception -- and falls through to the existing
+                    # snippet/title/url fallback below.
+                    #
+                    # is_public_http_url does synchronous DNS resolution
+                    # (socket.getaddrinfo) -- its own docstring chain
+                    # (evaluate_url_policy) warns never to call that kind
+                    # of check directly from an event loop. Offload it,
+                    # bounded by the same timeout used for the scrape
+                    # itself; a guard timeout raises asyncio.TimeoutError,
+                    # which is an Exception (unlike CancelledError) so it
+                    # falls straight into the `except Exception` below and
+                    # is handled exactly like a scrape failure -- no
+                    # separate code path.
+                    #
+                    # Routed through the dedicated `_get_dns_guard_executor`
+                    # pool (task-3220), NOT `asyncio.to_thread`'s shared
+                    # default executor: on a wait_for timeout the abandoned
+                    # getaddrinfo thread keeps occupying its slot until the
+                    # OS resolver gives up, and the default executor is
+                    # also where this loop's own chat_api_call/summarize
+                    # offloads run -- a run of slow-DNS hosts must not be
+                    # able to queue those paid LLM calls behind dead
+                    # resolvers. This bounds the BLAST RADIUS, not the
+                    # symptom for THIS call: under full saturation of the
+                    # dedicated pool (all `_DNS_GUARD_EXECUTOR_MAX_WORKERS`
+                    # slots already occupied by abandoned threads), a new
+                    # guard call submitted here queues unstarted behind
+                    # them, and `wait_for` below still fires once
+                    # `scrape_timeout_s` elapses -- it has no way to tell
+                    # "queued" from "running slow" apart. That still
+                    # correctly skips the scrape fail-safe (falls through
+                    # to the snippet/title/url fallback exactly like a
+                    # real guard timeout), it just does so without this
+                    # particular call ever having gotten a real DNS
+                    # answer -- the isolation guarantee above is about
+                    # protecting OTHER offloads, not about this call
+                    # getting to run promptly.
+                    is_public = await asyncio.wait_for(
+                        asyncio.get_running_loop().run_in_executor(
+                            _get_dns_guard_executor(),
+                            is_public_http_url,
+                            result["url"],
+                        ),
+                        timeout=scrape_timeout_s,
+                    )
+                    if cancel_event and cancel_event.is_set():
+                        return None
+                    if not is_public:
+                        logger.warning(
+                            f"Refusing to scrape non-public URL for result "
+                            f"{result_id}: {result.get('url')!r}; falling "
+                            "back to search snippet/title/url"
+                        )
+                    else:
+                        # robots.txt parity (task-3260): checked here,
+                        # between the SSRF guard above and the scrape
+                        # below -- same guard-class offload discipline
+                        # (dedicated DNS-guard executor, bounded by
+                        # scrape_timeout_s) as the SSRF check, since a
+                        # robots.txt fetch does its own network I/O.
+                        # Function-local import: no module-level cycle
+                        # (web_tool_impls already imports WebSearch_APIs
+                        # function-locally in the OTHER direction).
+                        robots_ok = True
+                        if respect_robots_txt:
+                            from tldw_chatbook.Tools.web_tool_impls import (
+                                robots_allows_for_scrape,
+                            )
+
+                            try:
+                                robots_ok = await asyncio.wait_for(
+                                    asyncio.get_running_loop().run_in_executor(
+                                        _get_dns_guard_executor(),
+                                        robots_allows_for_scrape,
+                                        result["url"],
+                                    ),
+                                    timeout=scrape_timeout_s,
+                                )
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as robots_error:
+                                # Fail-OPEN on a robots-check error or
+                                # timeout (deliberately the opposite of
+                                # the SSRF guard just above, whose own
+                                # timeout/refusal still refuses) --
+                                # matches _fetch_robots_parser's
+                                # existing fail-open for web_fetch/
+                                # web_crawl.
+                                logger.debug(
+                                    f"robots.txt check failed for result "
+                                    f"{result_id}, failing open (will "
+                                    f"scrape): {robots_error}"
+                                )
+                                robots_ok = True
+
+                        if cancel_event and cancel_event.is_set():
+                            return None
+                        if not robots_ok:
+                            # Disallowed -> same path as an SSRF
+                            # refusal: skip the scrape, keep the
+                            # result via its existing fallback
+                            # content (never discard). Log names the
+                            # HOST only, never the query.
+                            host = (
+                                urlparse(result.get("url") or "").hostname
+                                or "unknown"
+                            )
+                            logger.debug(
+                                f"Skipping scrape for result {result_id}: "
+                                f"robots.txt disallows {host!r}; falling "
+                                "back to search snippet/title/url"
+                            )
+                        else:
+                            scraped_content = await asyncio.wait_for(
+                                scrape_article(result["url"]),
+                                timeout=scrape_timeout_s,
+                            )
+                            scraped_text = ""
+                            if isinstance(scraped_content, dict):
+                                scraped_text = str(
+                                    scraped_content.get("content") or ""
+                                ).strip()
+                            elif isinstance(scraped_content, str):
+                                scraped_text = scraped_content.strip()
+                            if scraped_text:
+                                source_content = scraped_text
+                except asyncio.CancelledError:
+                    raise
+                except Exception as scrape_error:
+                    logger.warning(
+                        f"Scrape failed for relevant result {result_id}; "
+                        f"falling back to search snippet/title/url: {scrape_error}"
+                    )
+
+                # Create Summarization prompt
+                logger.debug(
+                    f"Creating Summarization Prompt for result idx={idx}"
+                )
+                summary_prompt = render_internal_prompt(
+                    "websearch.result_summarization",
+                    question=original_question,
+                    content=source_content,
+                )
+
+                # Add delay before summarization (the serial loop reused the
+                # per-result jitter drawn before the relevance call -- kept,
+                # per-slot, unchanged).
+                await asyncio.sleep(slot.sleep_time)
+                if cancel_event and cancel_event.is_set():
+                    return None
+
+                # `analyze` (LLM_Calls.Summarization_General_Lib) is imported
+                # lazily here (chatbook precedent, see module docstring)
+                # so a plain import of this module doesn't eagerly pull in
+                # the summarization stack.
+                from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                    analyze,
+                )
+
+                logger.info(f"Summarizing relevant result: ID={result_id}")
+
+                async def _summ_call(_sc=source_content, _sp=summary_prompt):
+                    return await asyncio.to_thread(
+                        lambda: analyze(
+                            input_data=_sc,
+                            custom_prompt_arg=_sp,
+                            api_name=api_endpoint,
+                            api_key=None,
+                            temp=0.7,
+                            system_message=None,
+                            streaming=False,
+                        )
+                    )
+
+                summary = None
+                try:
+                    summary = await asyncio.wait_for(
+                        _summ_call(), timeout=llm_timeout_s
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as summ_error:
+                    logger.error(f"Summary generation failed: {summ_error}")
+
+                # `analyze()` reports failure by RETURNING one of its
+                # providers' error strings rather than raising -- treat
+                # that the same way the port source treats a raised
+                # exception: fall back to the (scraped or fallback)
+                # source content itself. Detection cannot be a bare
+                # "Error:" prefix test: a llama.cpp failure returns
+                # "Llama: Error occurred while ..." and used to be
+                # stored here AS the evidence (task-17382).
+                if _is_summary_failure(summary) or not summary:
+                    summary = (
+                        source_content[:2000] or "Summary generation failed"
+                    )
+
+                logger.info(
+                    f"Relevant result found and summarized: ID={result_id}; Reasoning={reasoning}"
+                )
+                return result_id, {
+                    "content": summary,  # Store the summary instead of full content
+                    "original_content": source_content,  # Keep original content if needed
+                    "reasoning": reasoning,
+                    "url": result.get("url"),
+                    "title": result.get("title"),
+                }
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                # Mirrors the serial loop's per-result outer handler: this
+                # slot is skipped, sibling slots are unaffected.
+                logger.error(
+                    f"Error during relevance evaluation/summarization for result idx={idx}: {e}"
+                )
+                return None
+
+    if relevant_slots:
+        _gate_semaphore = asyncio.Semaphore(
+            _RESEARCH_GATE_MAX_CONCURRENT_PIPELINES
+        )
+        outcomes = await asyncio.gather(
+            *(_process_relevant_slot(slot) for slot in relevant_slots),
+            return_exceptions=True,
+        )
+        # Assemble strictly in slot (== result) order, mirroring the serial
+        # loop's dict insertion order (later duplicates overwrite earlier,
+        # exactly as sequential assignment used to).
+        for slot, outcome in zip(relevant_slots, outcomes):
+            if isinstance(outcome, asyncio.CancelledError):
+                # Cooperative cancellation must keep propagating.
+                raise outcome
+            if isinstance(outcome, BaseException):
+                # Belt-and-braces: _process_relevant_slot handles its own
+                # exceptions; this guard keeps the serial loop's
+                # "one result's failure never kills the gate" contract.
+                logger.error(
+                    f"Error during relevance evaluation/summarization for result idx={slot.idx}: {outcome}"
+                )
+                continue
+            if outcome is not None:
+                entry_result_id, entry = outcome
+                relevant_results[entry_result_id] = entry
 
     # task-16333 zero-relevant fallback: the live baseline showed a strict
     # gate silently producing NO report at all. When every EVALUATED result
@@ -1609,11 +1745,16 @@ def review_and_select_results(
         return {}
 
     results_list = web_search_results_dict.get("results")
-    is_results_shape = "results" in web_search_results_dict and isinstance(results_list, list)
+    is_results_shape = "results" in web_search_results_dict and isinstance(
+        results_list, list
+    )
 
     if is_results_shape:
         candidates = [
-            (str(result.get("id", idx)) if isinstance(result, dict) else str(idx), result)
+            (
+                str(result.get("id", idx)) if isinstance(result, dict) else str(idx),
+                result,
+            )
             for idx, result in enumerate(results_list)
             if isinstance(result, dict)
         ]
@@ -1747,7 +1888,9 @@ def _estimate_confidence(
     if relevant_count <= 0:
         return 0.0
     coverage = min(relevant_count, 10) / 10.0
-    chunk_success = 1.0 if chunk_count == 0 else (chunk_count - failed_chunks) / chunk_count
+    chunk_success = (
+        1.0 if chunk_count == 0 else (chunk_count - failed_chunks) / chunk_count
+    )
     base = 0.35 + 0.45 * coverage
     modifier = 0.6 + 0.4 * chunk_success
     llm_bonus = 0.1 if has_llm and failed_chunks == 0 else (0.05 if has_llm else 0.0)
@@ -1837,7 +1980,9 @@ def aggregate_results(
     concatenated_texts = "\n\n".join(entry_texts)
 
     if not api_endpoint:
-        logger.warning("No final answer LLM configured; returning evidence summaries only.")
+        logger.warning(
+            "No final answer LLM configured; returning evidence summaries only."
+        )
         chunk_metadata = [
             {
                 "chunk_index": info["index"],
@@ -1853,7 +1998,8 @@ def aggregate_results(
             str(res.get("content") or "") for _, res in relevant_results.items()
         )
         fallback_answer: FinalAnswerDict = {
-            "text": combined_text or "Unable to generate a final answer without an LLM.",
+            "text": combined_text
+            or "Unable to generate a final answer without an LLM.",
             "evidence": evidence_payload,
             "confidence": _estimate_confidence(
                 len(evidence_payload), len(chunk_infos), 0, has_llm=False
@@ -1903,7 +2049,7 @@ def aggregate_results(
                 "3. Mention the reasoning notes when helpful.\n"
                 "4. Preserve all [n] citation markers exactly as they appear; "
                 "never renumber, merge, or drop them.\n\n"
-                f"<chunk index=\"{info['index']}\">\n{info['text']}\n</chunk>"
+                f'<chunk index="{info["index"]}">\n{info["text"]}\n</chunk>'
             )
             chunk_used_fallback = False
             try:
@@ -2250,7 +2396,9 @@ def perform_websearch(
             )
 
             if web_search_results_dict.get("processing_error"):
-                web_search_results_dict["processing_error"] = "Search provider returned an invalid response."
+                web_search_results_dict["processing_error"] = (
+                    "Search provider returned an invalid response."
+                )
             return web_search_results_dict
 
         elif search_engine.lower() == "kagi":
@@ -2311,7 +2459,9 @@ def perform_websearch(
         )
 
         if web_search_results_dict.get("processing_error"):
-            web_search_results_dict["processing_error"] = "Search provider returned an invalid response."
+            web_search_results_dict["processing_error"] = (
+                "Search provider returned an invalid response."
+            )
         return web_search_results_dict
 
     except Exception as e:
@@ -2331,7 +2481,10 @@ def perform_websearch(
             labels={"engine": search_engine.lower(), "error_type": type(e).__name__},
         )
 
-        return {"processing_error": _safe_search_error(e), "error_kind": _search_error_kind(e)}
+        return {
+            "processing_error": _safe_search_error(e),
+            "error_kind": _search_error_kind(e),
+        }
 
 
 def test_perform_websearch_google():
@@ -2482,7 +2635,9 @@ def test_perform_websearch_yandex():
 #
 
 
-def process_web_search_results(search_results: Union[Dict, str], search_engine: str) -> Dict:
+def process_web_search_results(
+    search_results: Union[Dict, str], search_engine: str
+) -> Dict:
     """
     Process raw search results into standardized format.
 
@@ -2579,7 +2734,9 @@ def process_web_search_results(search_results: Union[Dict, str], search_engine: 
     if not isinstance(search_results, dict) and not (
         isinstance(search_results, str) and search_engine.lower() in ("tavily", "searx")
     ):
-        raise TypeError("search_results must be a dictionary (or a string for tavily/searx)")
+        raise TypeError(
+            "search_results must be a dictionary (or a string for tavily/searx)"
+        )
 
     # Only a dict carries this request-echo metadata; a string payload (see
     # above) has none of it, so every field below falls back to its default.
@@ -2638,7 +2795,9 @@ def process_web_search_results(search_results: Union[Dict, str], search_engine: 
     except Exception:  # noqa: BLE001 - public parser boundary receives untrusted provider data.
         _set_search_processing_error(web_search_results_dict)
 
-    if web_search_results_dict.get("processing_error") or web_search_results_dict.get("error"):
+    if web_search_results_dict.get("processing_error") or web_search_results_dict.get(
+        "error"
+    ):
         _set_search_processing_error(web_search_results_dict)
         logger.error("Search provider returned an invalid response")
     return web_search_results_dict
@@ -2753,9 +2912,7 @@ def search_web_bing(
 
     # Get default country from config if not provided
     if not bing_country:
-        bing_country = search_settings.get(
-            "bing_country_code", "US"
-        )
+        bing_country = search_settings.get("bing_country_code", "US")
 
     # Construct market code (language-COUNTRY format)
     mkt = f"{bing_lang}-{bing_country}"
@@ -2801,7 +2958,6 @@ def search_web_bing(
             timeout=10,
         )
         response.raise_for_status()
-
 
         try:
             bing_search_results = response.json()
@@ -3008,7 +3164,11 @@ def search_web_brave(
     if search_type not in ("web", "ai"):
         raise ValueError("Invalid search type. Please choose 'ai' or 'web'.")
     if not brave_api_key:
-        key_name = "brave_search_api_key" if search_type == "web" else "brave_search_ai_api_key"
+        key_name = (
+            "brave_search_api_key"
+            if search_type == "web"
+            else "brave_search_ai_api_key"
+        )
         brave_api_key = search_settings.get(key_name, "")
     if not brave_api_key:
         raise ValueError("Please provide a valid Brave Search API subscription key")
@@ -3024,7 +3184,9 @@ def search_web_brave(
         "country": country,
         "search_lang": search_lang or "en",
         "count": result_count or 10,
-        "safesearch": "moderate" if safesearch == "active" else safesearch or "moderate",
+        "safesearch": "moderate"
+        if safesearch == "active"
+        else safesearch or "moderate",
         "result_filter": result_filter or "web",
     }
     if ui_lang and "-" in ui_lang:
@@ -3198,7 +3360,12 @@ def search_web_duckduckgo(
     for _ in range(5):
         # task-3060: bound worst-case latency per bootstrap/pagination call
         # (this loop can issue up to 5 requests.post calls, all this one site).
-        response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+        response = requests.post(
+            "https://html.duckduckgo.com/html",
+            data=payload,
+            timeout=SEARCH_BACKEND_TIMEOUT_S,
+            verify=requests_verify(),
+        )
         response.raise_for_status()
         resp_content = response.content
         tree = document_fromstring(resp_content)
@@ -3386,13 +3553,29 @@ def test_parse_duckduckgo_results():
 # `key` -- the Google CSE API credential written into `params` below -- is
 # deliberately absent: any key not listed here, now or added in the future,
 # is dropped from the logged view instead of exposed by default.
-SAFE_GOOGLE_SEARCH_PARAM_KEYS: frozenset = frozenset({
-    "q", "c2coff", "cr", "cx", "num", "dateRestrict", "exactTerms",
-    "excludeTerms", "filter", "gl", "hl", "lr", "safe", "sort",
-})
+SAFE_GOOGLE_SEARCH_PARAM_KEYS: frozenset = frozenset(
+    {
+        "q",
+        "c2coff",
+        "cr",
+        "cx",
+        "num",
+        "dateRestrict",
+        "exactTerms",
+        "excludeTerms",
+        "filter",
+        "gl",
+        "hl",
+        "lr",
+        "safe",
+        "sort",
+    }
+)
 
 
-def _safe_search_params_for_log(params: Dict[str, Any], safe_keys: frozenset) -> Dict[str, Any]:
+def _safe_search_params_for_log(
+    params: Dict[str, Any], safe_keys: frozenset
+) -> Dict[str, Any]:
     """Return an allowlisted, credential-free view of a request params dict.
 
     Only keys present in ``safe_keys`` are copied through; everything else
@@ -3458,26 +3641,26 @@ def search_web_google(
 
         # Handle results_origin_country
         if results_origin_country is None:
-            limit_country_search = search_settings[
-                "limit_google_search_to_country"
-            ]
+            limit_country_search = search_settings["limit_google_search_to_country"]
             if limit_country_search:
-                results_origin_country = search_settings[
-                    "google_search_country"
-                ]
+                results_origin_country = search_settings["google_search_country"]
         if results_origin_country:
             # Google cr uses countryXX tokens; gl is the separate bare country code.
             # Keep existing cr expressions (including boolean combinations) intact.
-            if len(results_origin_country) == 2 and results_origin_country.isascii() and results_origin_country.isalpha():
+            if (
+                len(results_origin_country) == 2
+                and results_origin_country.isascii()
+                and results_origin_country.isalpha()
+            ):
                 country_code = results_origin_country.upper()
-                results_origin_country = "country" + ("UK" if country_code == "GB" else country_code)
+                results_origin_country = "country" + (
+                    "UK" if country_code == "GB" else country_code
+                )
             params["cr"] = results_origin_country
 
         # Handle google_search_engine_id
         if google_search_engine_id is None:
-            google_search_engine_id = search_settings[
-                "google_search_engine_id"
-            ]
+            google_search_engine_id = search_settings["google_search_engine_id"]
         if not google_search_engine_id:
             raise ValueError(
                 "Please set a valid Google Search Engine ID in the config file"
@@ -3486,9 +3669,7 @@ def search_web_google(
 
         # Handle google_search_api_key
         if google_search_api_key is None:
-            google_search_api_key = search_settings[
-                "google_search_api_key"
-            ]
+            google_search_api_key = search_settings["google_search_api_key"]
         if not google_search_api_key:
             raise ValueError(
                 "Please provide a valid Google Search API subscription key"
@@ -3561,7 +3742,11 @@ def search_web_google(
         # `requests`'s own HTTPError/ConnectionError text embeds the full
         # request URL -- including the key -- via `response.url`. Redact at
         # the formatting point rather than trust the exception's shape.
-        logger.error("Error during API request: {} (HTTP {})", _safe_search_error(re), getattr(getattr(re, "response", None), "status_code", "unknown"))
+        logger.error(
+            "Error during API request: {} (HTTP {})",
+            _safe_search_error(re),
+            getattr(getattr(re, "response", None), "status_code", "unknown"),
+        )
         raise
 
     except Exception as e:
@@ -3572,12 +3757,8 @@ def search_web_google(
 def test_search_google():
     search_settings = initialize_config()["search_engines"]
     search_query = "How can I bake a cherry cake?"
-    google_search_api_key = search_settings[
-        "google_search_api_key"
-    ]
-    google_search_engine_id = search_settings[
-        "google_search_engine_id"
-    ]
+    google_search_api_key = search_settings["google_search_api_key"]
+    google_search_engine_id = search_settings["google_search_engine_id"]
     result_count = 10
     c2coff = "1"
     results_origin_country = "countryUS"
@@ -3883,19 +4064,25 @@ def search_web_searx(
         return json.dumps({"error": issue})
     parsed_url = urlparse(searx_url)
     params = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
-    params.update({
-        "q": search_query,
-        "format": "json",
-        "language": language,
-        "time_range": time_range,
-        "safesearch": safesearch,
-        "pageno": pageno,
-        "categories": categories,
-    })
+    params.update(
+        {
+            "q": search_query,
+            "format": "json",
+            "language": language,
+            "time_range": time_range,
+            "safesearch": safesearch,
+            "pageno": pageno,
+            "categories": categories,
+        }
+    )
     search_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}?{urlencode(params)}"
     session = searx_create_session()
     try:
-        response = session.get(search_url, headers={"Accept": "application/json"}, timeout=SEARCH_BACKEND_TIMEOUT_S)
+        response = session.get(
+            search_url,
+            headers={"Accept": "application/json"},
+            timeout=SEARCH_BACKEND_TIMEOUT_S,
+        )
         response.raise_for_status()
         payload = response.json()
         hits = payload.get("results") if isinstance(payload, dict) else payload
@@ -3904,7 +4091,12 @@ def search_web_searx(
         # The parser validates each result; malformed results remain explicit failures.
         return json.dumps(hits)
     except requests.exceptions.RequestException as error:
-        return json.dumps({"error": _safe_search_error(error), "error_kind": _search_error_kind(error)})
+        return json.dumps(
+            {
+                "error": _safe_search_error(error),
+                "error_kind": _search_error_kind(error),
+            }
+        )
     finally:
         session.close()
 
@@ -3918,7 +4110,9 @@ def test_search_searx():
     print(result)
 
 
-def parse_searx_results(searx_search_results: "list | dict | str", web_search_results_dict: dict) -> None:
+def parse_searx_results(
+    searx_search_results: "list | dict | str", web_search_results_dict: dict
+) -> None:
     """Parse SearX/SearXNG results into the standardized shape.
 
     Unlike every other backend in this file, the local `search_web_searx`
@@ -3957,7 +4151,9 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
             raise ValueError(f"Invalid Searx response: {e}") from e
 
     if isinstance(searx_search_results, dict) and "error" in searx_search_results:
-        web_search_results_dict["error_kind"] = searx_search_results.get("error_kind", "request")
+        web_search_results_dict["error_kind"] = searx_search_results.get(
+            "error_kind", "request"
+        )
         raise ValueError(searx_search_results["error"])
 
     if not isinstance(searx_search_results, list):
@@ -3968,22 +4164,26 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
 
     for i, item in enumerate(searx_search_results):
         if not isinstance(item, dict):
-            raise ValueError(f"Unexpected Searx result item at index {i}: expected an object")
+            raise ValueError(
+                f"Unexpected Searx result item at index {i}: expected an object"
+            )
         url = item.get("link") or item.get("url") or ""
         snippet = item.get("snippet") or item.get("content") or ""
-        web_search_results_dict["results"].append({
-            "title": item.get("title", ""),
-            "url": url,
-            "content": snippet,
-            "metadata": {
-                "date_published": item.get("publishedDate", None),
-                "author": None,
-                "source": None,
-                "language": None,
-                "relevance_score": None,
-                "snippet": snippet or None,
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": item.get("title", ""),
+                "url": url,
+                "content": snippet,
+                "metadata": {
+                    "date_published": item.get("publishedDate", None),
+                    "author": None,
+                    "source": None,
+                    "language": None,
+                    "relevance_score": None,
+                    "snippet": snippet or None,
+                },
+            }
+        )
 
 
 ######################### Serper.dev Search #########################
@@ -4013,7 +4213,9 @@ def search_web_serper(
     search_settings = initialize_config()["search_engines"]
     serper_api_key = search_settings.get("serper_search_api_key", "")
     if not serper_api_key:
-        raise ValueError("Please provide a valid Serper API key ([SearchEngines] serper_search_api_key)")
+        raise ValueError(
+            "Please provide a valid Serper API key ([SearchEngines] serper_search_api_key)"
+        )
     headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
     payload = {
         "q": search_query,
@@ -4033,7 +4235,9 @@ def search_web_serper(
     return response.json()
 
 
-def parse_serper_results(serper_search_results: dict, web_search_results_dict: dict) -> None:
+def parse_serper_results(
+    serper_search_results: dict, web_search_results_dict: dict
+) -> None:
     """Parse Serper organic results into the standardized shape.
 
     answerBox/knowledgeGraph blocks are deliberately ignored — organic web
@@ -4050,20 +4254,22 @@ def parse_serper_results(serper_search_results: dict, web_search_results_dict: d
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []
     for result in (serper_search_results or {}).get("organic", []):
-        web_search_results_dict["results"].append({
-            "title": result.get("title", ""),
-            "url": result.get("link", ""),
-            "content": result.get("snippet", ""),
-            "metadata": {
-                "date_published": result.get("date", None),
-                "author": None,
-                "source": None,
-                "language": None,
-                "relevance_score": None,
-                "position": result.get("position", None),
-                "snippet": result.get("snippet", None),
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": result.get("title", ""),
+                "url": result.get("link", ""),
+                "content": result.get("snippet", ""),
+                "metadata": {
+                    "date_published": result.get("date", None),
+                    "author": None,
+                    "source": None,
+                    "language": None,
+                    "relevance_score": None,
+                    "position": result.get("position", None),
+                    "snippet": result.get("snippet", None),
+                },
+            }
+        )
 
 
 ######################### Exa Search #########################
@@ -4091,7 +4297,9 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
     search_settings = initialize_config()["search_engines"]
     exa_api_key = search_settings.get("exa_search_api_key", "")
     if not exa_api_key:
-        raise ValueError("Please provide a valid Exa API key ([SearchEngines] exa_search_api_key)")
+        raise ValueError(
+            "Please provide a valid Exa API key ([SearchEngines] exa_search_api_key)"
+        )
     headers = {"x-api-key": exa_api_key, "Content-Type": "application/json"}
     payload = {
         "query": search_query,
@@ -4125,19 +4333,21 @@ def parse_exa_results(exa_search_results: dict, web_search_results_dict: dict) -
     for result in (exa_search_results or {}).get("results", []):
         highlights = result.get("highlights") or []
         snippet = highlights[0] if highlights else ""
-        web_search_results_dict["results"].append({
-            "title": result.get("title", ""),
-            "url": result.get("url", ""),
-            "content": snippet,
-            "metadata": {
-                "date_published": result.get("publishedDate", None),
-                "author": result.get("author", None),
-                "source": None,
-                "language": None,
-                "relevance_score": None,
-                "snippet": snippet or None,
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": result.get("title", ""),
+                "url": result.get("url", ""),
+                "content": snippet,
+                "metadata": {
+                    "date_published": result.get("publishedDate", None),
+                    "author": result.get("author", None),
+                    "source": None,
+                    "language": None,
+                    "relevance_score": None,
+                    "snippet": snippet or None,
+                },
+            }
+        )
 
 
 ######################### Tavily Search #########################
@@ -4217,7 +4427,9 @@ def test_search_tavily():
     print(result)
 
 
-def parse_tavily_results(tavily_search_results: "dict | str", web_search_results_dict: dict) -> None:
+def parse_tavily_results(
+    tavily_search_results: "dict | str", web_search_results_dict: dict
+) -> None:
     """Parse Tavily results into the standardized shape.
 
     The backend returns a dict with hits under "results" and raises request
@@ -4249,21 +4461,27 @@ def parse_tavily_results(tavily_search_results: "dict | str", web_search_results
 
     for i, result in enumerate((tavily_search_results or {}).get("results", [])):
         if not isinstance(result, dict):
-            raise ValueError(f"Unexpected Tavily result item at index {i}: expected an object")
+            raise ValueError(
+                f"Unexpected Tavily result item at index {i}: expected an object"
+            )
         content = result.get("content", "")
-        web_search_results_dict["results"].append({
-            "title": result.get("title", ""),
-            "url": result.get("url", ""),
-            "content": content,
-            "metadata": {
-                "date_published": result.get("published_date") or result.get("publishedDate") or None,
-                "author": None,
-                "source": None,
-                "language": None,
-                "relevance_score": result.get("score", None),
-                "snippet": content or None,
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": result.get("title", ""),
+                "url": result.get("url", ""),
+                "content": content,
+                "metadata": {
+                    "date_published": result.get("published_date")
+                    or result.get("publishedDate")
+                    or None,
+                    "author": None,
+                    "source": None,
+                    "language": None,
+                    "relevance_score": result.get("score", None),
+                    "snippet": content or None,
+                },
+            }
+        )
 
 
 ######################### Yandex Search #########################
@@ -4296,11 +4514,18 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
     search_settings = initialize_config()["search_engines"]
     yandex_api_key = search_settings.get("yandex_search_api_key", "")
     if not yandex_api_key:
-        raise ValueError("Please provide a valid Yandex Search API key ([SearchEngines] yandex_search_api_key)")
+        raise ValueError(
+            "Please provide a valid Yandex Search API key ([SearchEngines] yandex_search_api_key)"
+        )
     folder_id = search_settings.get("yandex_search_folder_id", "")
     if not folder_id:
-        raise ValueError("Please provide the Yandex Cloud folder id ([SearchEngines] yandex_search_folder_id)")
-    headers = {"Authorization": f"Api-Key {yandex_api_key}", "Content-Type": "application/json"}
+        raise ValueError(
+            "Please provide the Yandex Cloud folder id ([SearchEngines] yandex_search_folder_id)"
+        )
+    headers = {
+        "Authorization": f"Api-Key {yandex_api_key}",
+        "Content-Type": "application/json",
+    }
     payload = {
         "query": {"searchType": "SEARCH_TYPE_COM", "queryText": search_query},
         "folderId": folder_id,
@@ -4318,7 +4543,9 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
     return response.json()
 
 
-def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: dict) -> None:
+def parse_yandex_results(
+    yandex_search_results: dict, web_search_results_dict: dict
+) -> None:
     """Decode rawData base64 XML and parse docs into the standardized shape.
 
     Raises on an in-XML <error> element except code 15 (no matches).
@@ -4355,23 +4582,28 @@ def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: d
         url_el = doc.find("url")
         title_el = doc.find("title")
         passages = [
-            " ".join("".join(p.itertext()).split())
-            for p in doc.findall(".//passage")
+            " ".join("".join(p.itertext()).split()) for p in doc.findall(".//passage")
         ]
         content = " ".join(passages).strip()
-        web_search_results_dict["results"].append({
-            "title": "".join(title_el.itertext()).strip() if title_el is not None else "",
-            "url": url_el.text.strip() if url_el is not None and url_el.text else "",
-            "content": content,
-            "metadata": {
-                "date_published": None,
-                "author": None,
-                "source": None,
-                "language": None,
-                "relevance_score": None,
-                "snippet": content or None,
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": "".join(title_el.itertext()).strip()
+                if title_el is not None
+                else "",
+                "url": url_el.text.strip()
+                if url_el is not None and url_el.text
+                else "",
+                "content": content,
+                "metadata": {
+                    "date_published": None,
+                    "author": None,
+                    "source": None,
+                    "language": None,
+                    "relevance_score": None,
+                    "snippet": content or None,
+                },
+            }
+        )
 
 
 #

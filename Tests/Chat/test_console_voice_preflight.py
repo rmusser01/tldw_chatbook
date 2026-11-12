@@ -97,6 +97,7 @@ async def test_real_controller_preparation_uses_trusted_failure_category(failure
     assert "SECRET" not in str(caught.value)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_readiness_rejects_config_change_during_resolution(monkeypatch):
     from tldw_chatbook import config
@@ -124,6 +125,7 @@ async def test_readiness_rejects_config_change_during_resolution(monkeypatch):
     assert getattr(caught.value, "category", None) == "stale"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("publications", [0, 1, 2])
 async def test_readiness_retains_generation_before_initial_snapshot_wait(
@@ -613,6 +615,7 @@ async def test_obsolete_preparation_failures_do_not_emit_diagnostics_or_drafts(
             release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("capture", [False, True])
 @pytest.mark.parametrize("compacted", [False, True])

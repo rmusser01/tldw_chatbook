@@ -30,7 +30,10 @@ from tldw_chatbook.Chatbooks import LocalChatbookService
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Client_Media_DB_v2 import (
+    MediaDatabase,
+    fetch_keywords_for_media_batch,
+)
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Library.library_export_scope import (
     ExportScope,
@@ -40,6 +43,7 @@ from tldw_chatbook.Library.library_export_state import (
     format_empty_export_error,
     format_last_export_line,
 )
+from tldw_chatbook.Notes.note_import_parsers import split_frontmatter
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 # Pinned transcript text -- the round-trip assertion below checks this
@@ -87,6 +91,16 @@ def _seed_source_dbs(tmp_path: Path) -> dict:
     note_id = chachanotes_db.add_note(
         title="Roundtrip Note", content="Roundtrip note content"
     )
+    # TASK-34000.19: the note and the conversation carry keywords too, so the
+    # everything-scope test below can pin that the product's real export
+    # route keeps them for all three types (media already had one).
+    for keyword in ("meeting", "moc"):
+        chachanotes_db.link_note_to_keyword(
+            note_id, int(chachanotes_db.add_keyword(keyword))
+        )
+    chachanotes_db.link_conversation_to_keyword(
+        conv_id, int(chachanotes_db.add_keyword("launch"))
+    )
 
     media_id, _msg, _status = media_db.add_media_with_keywords(
         url="https://example.com/roundtrip-media",
@@ -118,6 +132,7 @@ def _seed_source_dbs(tmp_path: Path) -> dict:
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_roundtrip_everything_scope_through_real_service_and_importer(
     tmp_path,
 ):
@@ -202,6 +217,31 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
         assert media_metadata["created_at"] is not None
         assert media_metadata["updated_at"] is not None
 
+        # TASK-34000.19 (L-04): keywords ride in BOTH the manifest item's
+        # ``tags`` and the item's own record, for every type, through the
+        # product's real export route. They used to be ``[]``/``null``.
+        tags_by_type = {
+            item["type"]: item["tags"] for item in manifest["content_items"]
+        }
+        assert tags_by_type[ContentType.MEDIA.value] == ["roundtrip"]
+        assert tags_by_type[ContentType.NOTE.value] == ["meeting", "moc"]
+        assert tags_by_type[ContentType.CONVERSATION.value] == ["launch"]
+        assert media_metadata["metadata"]["media_keywords"] == ["roundtrip"]
+        note_path = next(
+            item["file_path"]
+            for item in manifest["content_items"]
+            if item["type"] == ContentType.NOTE.value
+        )
+        note_metadata, _body = split_frontmatter(zf.read(note_path).decode("utf-8"))
+        assert note_metadata is not None
+        assert note_metadata["tags"] == ["meeting", "moc"]
+        conversation_path = next(
+            item["file_path"]
+            for item in manifest["content_items"]
+            if item["type"] == ContentType.CONVERSATION.value
+        )
+        assert json.loads(zf.read(conversation_path))["keywords"] == ["launch"]
+
         prompt_names = [
             name
             for name in namelist
@@ -246,6 +286,18 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
     assert len(imported_convs) == 1
     imported_notes = import_chachanotes_db.search_notes("Roundtrip Note")
     assert len(imported_notes) == 1
+    # TASK-34000.19: the destination holds the same keyword memberships.
+    imported_note_id = str(imported_notes[0]["id"])
+    assert import_chachanotes_db.get_keywords_for_notes_batch([imported_note_id]) == {
+        imported_note_id: ["meeting", "moc"]
+    }
+    imported_conv_id = str(imported_convs[0]["id"])
+    assert [
+        row["keyword"]
+        for row in import_chachanotes_db.get_keywords_for_conversations(
+            [imported_conv_id]
+        )[imported_conv_id]
+    ] == ["launch"]
     imported_chars = import_chachanotes_db.list_character_cards()
     assert any(char["name"] == "Roundtrip Assistant" for char in imported_chars)
 
@@ -256,6 +308,9 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
     assert imported_media["content"] == _MEDIA_TRANSCRIPT
     # The media type must survive the export -> import round-trip too.
     assert imported_media["type"] == "video"
+    assert fetch_keywords_for_media_batch(
+        import_media_db, [int(imported_media["id"])]
+    ) == {int(imported_media["id"]): ["roundtrip"]}
     imported_prompt_ids = import_prompts_db.get_all_active_prompt_ids()
     assert len(imported_prompt_ids) == 1
     imported_prompt = import_prompts_db.fetch_prompt_chatbook_snapshot(
@@ -266,6 +321,7 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
     assert imported_prompt["system_prompt"] == _PROMPT_SYSTEM
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_notes(
     tmp_path,
 ):
@@ -319,6 +375,7 @@ def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_no
         assert not any(name.startswith("content/prompts/") for name in zf.namelist())
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_roundtrip_media_ids_scope_exports_exactly_the_selected_items(
     tmp_path,
 ):
@@ -442,6 +499,7 @@ def test_library_export_roundtrip_unwritable_destination_fails_with_no_registry_
     assert listed == []
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_success_records_a_durable_receipt_with_the_real_path(
     tmp_path,
 ):
@@ -554,6 +612,7 @@ def _seed_two_selectable_media(seeded: dict) -> tuple[int, int]:
     return selected_a_id, selected_b_id
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_roundtrip_selected_media_uses_canonical_display_ids(
     tmp_path,
 ):
@@ -614,6 +673,7 @@ def test_library_export_roundtrip_selected_media_uses_canonical_display_ids(
         assert media_texts == {"CANONICAL A TRANSCRIPT", "CANONICAL B TRANSCRIPT"}
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_selected_media_collecting_nothing_reports_failure(
     tmp_path,
 ):
@@ -654,6 +714,7 @@ def test_library_export_selected_media_collecting_nothing_reports_failure(
     assert asyncio.run(service.list_chatbooks()) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_receipt_counts_come_from_the_written_manifest(
     tmp_path,
 ):

@@ -120,7 +120,9 @@ def test_draft_renderable_renders_dimmed_ghost_after_caret():
     )
     assert rendered.plain == "hel▌lo world"
     ghost_spans = [
-        span for span in rendered.spans if span.style == ConsoleComposerBar.GHOST_TEXT_STYLE
+        span
+        for span in rendered.spans
+        if span.style == ConsoleComposerBar.GHOST_TEXT_STYLE
     ]
     assert len(ghost_spans) == 1
     assert (ghost_spans[0].start, ghost_spans[0].end) == (4, 12)
@@ -162,9 +164,12 @@ def test_draft_renderable_ghost_wraps_without_affecting_height_math():
     )
     assert rendered.plain.splitlines()[0].startswith("hel▌lo")
     # The composer's own height math only ever sees the draft, not the ghost.
-    assert ConsoleComposerBar._visible_draft_row_count(
-        draft, 40, reserve_trailing_cell=True
-    ) == 1
+    assert (
+        ConsoleComposerBar._visible_draft_row_count(
+            draft, 40, reserve_trailing_cell=True
+        )
+        == 1
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -320,17 +325,15 @@ def _seed_history_file(path, *inputs: str) -> None:
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_ghost_text_renders_and_right_arrow_accepts(
-    tmp_path, monkeypatch
+    tmp_path,
 ):
     history_path = tmp_path / "prompt_history.jsonl"
     _seed_history_file(history_path, "explain quantum computing")
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Console_Modules.prompts.default_prompt_history_path",
-        lambda: history_path,
-    )
     app = _build_test_app()
+    app.console_prompt_history_factory = lambda: PromptHistory(history_path)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -369,15 +372,13 @@ async def test_console_ghost_text_renders_and_right_arrow_accepts(
         assert composer.cursor_index == len("explain quantum computing")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_console_up_down_recall_gated_to_boundary_rows(tmp_path, monkeypatch):
+async def test_console_up_down_recall_gated_to_boundary_rows(tmp_path):
     history_path = tmp_path / "prompt_history.jsonl"
     _seed_history_file(history_path, "first prompt", "second prompt")
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Console_Modules.prompts.default_prompt_history_path",
-        lambda: history_path,
-    )
     app = _build_test_app()
+    app.console_prompt_history_factory = lambda: PromptHistory(history_path)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -423,18 +424,16 @@ async def test_console_up_down_recall_gated_to_boundary_rows(tmp_path, monkeypat
         assert composer.cursor_index == len("line one\nline two")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_console_send_records_to_shared_prompt_history(tmp_path, monkeypatch):
+async def test_console_send_records_to_shared_prompt_history(tmp_path):
     """An accepted send lands once in the JSONL store the composer reads."""
     from Tests.UI.test_console_native_chat_flow import CapturingGateway
 
     history_path = tmp_path / "prompt_history.jsonl"
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Console_Modules.prompts.default_prompt_history_path",
-        lambda: history_path,
-    )
     gateway = CapturingGateway()
     app = _build_test_app()
+    app.console_prompt_history_factory = lambda: PromptHistory(history_path)
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway

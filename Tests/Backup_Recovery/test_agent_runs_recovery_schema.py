@@ -8,6 +8,7 @@ from threading import Event
 import pytest
 
 from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA, recovery_adapters
 
 # Literal CREATE statement from the native v19/v20 constructor, before v21.
@@ -69,7 +70,7 @@ def test_legacy_agent_candidate_migration_preserves_history(tmp_path):
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute(
             "SELECT MAX(version) FROM schema_version"
-        ).fetchone() == (21,)
+        ).fetchone() == (AgentRunsDB._CURRENT_SCHEMA_VERSION,)
         assert connection.execute(
             "SELECT id,name,provider,params_json,max_wall_seconds FROM agent_definitions"
         ).fetchall() == [("kept", "Saved preset", "", "{}", None)]
@@ -91,11 +92,31 @@ def test_legacy_agent_candidate_migration_preserves_history(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "alteration", ["extra_table", "future_version", "relabeled_legacy"]
+    "alteration",
+    [
+        "extra_table",
+        "future_version",
+        "relabeled_legacy",
+        "v21_stamped_v22",
+        "v22_stamped_v21",
+        "v23_stamped_v22",
+    ],
 )
 def test_unknown_agent_schema_or_version_refuses(tmp_path, alteration):
     path = tmp_path / "agents.db"
-    if alteration == "relabeled_legacy":
+    if alteration in {"v21_stamped_v22", "v22_stamped_v21"}:
+        catalog_version, stamp = (21, 22) if alteration == "v21_stamped_v22" else (22, 21)
+        schema = next(schema for version, schema in _AGENT_RUNS_SCHEMA if version == catalog_version)
+        with closing(sqlite3.connect(path)) as connection:
+            for sql in sorted(
+                schema, key=lambda sql: not sql.startswith("CREATE TABLE")
+            ):
+                if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                    connection.execute(sql)
+            connection.execute("INSERT INTO schema_version VALUES (?)", (stamp,))
+            connection.commit()
+        path.chmod(0o600)
+    elif alteration == "relabeled_legacy":
         legacy(path)
     else:
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -105,10 +126,17 @@ def test_unknown_agent_schema_or_version_refuses(tmp_path, alteration):
     with closing(sqlite3.connect(path)) as connection:
         if alteration == "extra_table":
             connection.execute("CREATE TABLE unrecognized(payload TEXT)")
-        else:
+        elif alteration == "v23_stamped_v22":
+            connection.execute("DELETE FROM schema_version")
+            connection.execute("INSERT INTO schema_version VALUES (22)")
+        elif alteration not in {"v21_stamped_v22", "v22_stamped_v21"}:
             connection.execute(
                 "INSERT INTO schema_version VALUES (?)",
-                (21 if alteration == "relabeled_legacy" else 22,),
+                (
+                    21
+                    if alteration == "relabeled_legacy"
+                    else AgentRunsDB._CURRENT_SCHEMA_VERSION + 1,
+                ),
             )
         connection.commit()
     before = path.read_bytes()
@@ -126,6 +154,9 @@ def test_unknown_agent_schema_or_version_refuses(tmp_path, alteration):
         "wrong_database",
         "wrong_reindex",
         "row_delete",
+        "unrelated_trigger",
+        "writable_schema",
+        "other_database_trigger",
     ],
 )
 def test_agent_migration_authority_is_exact_and_temporary(tmp_path, case):
@@ -147,6 +178,9 @@ def test_agent_migration_authority_is_exact_and_temporary(tmp_path, case):
             "wrong_database": "CREATE TEMP TABLE agent_worktrees(run_id TEXT PRIMARY KEY)",
             "wrong_reindex": "REINDEX idx_agent_definitions_name",
             "row_delete": "DELETE FROM agent_definitions",
+            "unrelated_trigger": "DROP TRIGGER automatic_run_chain_immutable",
+            "writable_schema": "PRAGMA writable_schema=ON",
+            "other_database_trigger": "CREATE TEMP TRIGGER automatic_chain_root_insert AFTER INSERT ON agent_definitions BEGIN SELECT 1; END",
         }[case]
         with pytest.raises(sqlite3.DatabaseError):
             connection.execute(sql)
@@ -171,3 +205,59 @@ def test_agent_migration_cancellation_rolls_back_all_schema_and_rows(
     assert validate_candidate(owner(), path, cancel, migrate=True) == ("cancelled",)
     assert path.read_bytes() == before
     assert validate_candidate(owner(), path, Event(), migrate=False) == ()
+
+
+def test_fixed_v21_to_v22_recovery_route_preserves_historical_variants(tmp_path):
+    for index, schema in enumerate(
+        sql for version, sql in _AGENT_RUNS_SCHEMA if version == 21
+    ):
+        path = tmp_path / f"predecessor-{index}.db"
+        with closing(sqlite3.connect(path)) as connection:
+            for sql in sorted(
+                schema, key=lambda sql: not sql.startswith("CREATE TABLE")
+            ):
+                if sql.startswith("CREATE TABLE sqlite_sequence"):
+                    continue
+                connection.execute(sql)
+            connection.execute("INSERT INTO schema_version VALUES (21)")
+            connection.execute(
+                "INSERT INTO agent_definitions(id,name,max_wall_seconds,provider,params_json,created_at,updated_at) VALUES ('kept','Kept',12.5,'openai','{}','then','then')"
+            )
+            connection.execute(
+                "INSERT INTO automatic_work_chains(id,conversation_id,root_submission_id,limits_json,created_at,last_observed_at) VALUES ('kept-chain','conversation','root','{}',1.0,2.0)"
+            )
+            connection.execute(
+                "INSERT INTO automatic_work_reservations(id,chain_id,owner_id,kind,amount,state,actual_amount,created_at,updated_at) VALUES ('kept-reservation','kept-chain','owner','tokens',25,'settled',17,1.0,2.0)"
+            )
+            connection.commit()
+        path.chmod(0o600)
+        assert validate_candidate(owner(), path, Event(), migrate=True) == ()
+        with closing(sqlite3.connect(path)) as connection:
+            assert connection.execute(
+                "SELECT MAX(version) FROM schema_version"
+            ).fetchone() == (AgentRunsDB._CURRENT_SCHEMA_VERSION,)
+            assert connection.execute(
+                "SELECT max_wall_seconds,provider,params_json FROM agent_definitions"
+            ).fetchall() == [(12.5, "openai", "{}")]
+            assert connection.execute(
+                "SELECT id,conversation_id,root_submission_id,limits_json,created_at,last_observed_at,allowance_root_chain_id FROM automatic_work_chains"
+            ).fetchall() == [
+                ("kept-chain", "conversation", "root", "{}", 1.0, 2.0, None)
+            ]
+            assert connection.execute(
+                "SELECT id,chain_id,owner_id,kind,amount,state,actual_amount,created_at,updated_at FROM automatic_work_reservations"
+            ).fetchall() == [
+                (
+                    "kept-reservation",
+                    "kept-chain",
+                    "owner",
+                    "tokens",
+                    25,
+                    "settled",
+                    17,
+                    1.0,
+                    2.0,
+                )
+            ]
+            assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+        assert validate_candidate(owner(), path, Event(), migrate=False) == ()

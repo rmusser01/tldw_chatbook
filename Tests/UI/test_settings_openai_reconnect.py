@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from textual.app import App
 from textual.widgets import Button,Input
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 EFFECT_FIXTURE
 instance=SimpleNamespace(app_config=config.load_settings())
@@ -56,7 +56,9 @@ async def main():
   screen=app.screen
   await app.workers.wait_for_complete();await pilot.pause()
   button=screen.query_one('#settings-openai-reconnect-review',Button)
-  assert button.display
+  # TASK-33007 capture fix 3: the row shows only while a review awaits.
+  row=screen.query_one('#settings-openai-reconnect-row')
+  assert row.display and recovery.openai_reconnect_pending()
   if mode=='dirty':
    screen.query_one('#settings-provider-api-key',Input).value='unsaved-private-key'
    await pilot.pause()
@@ -123,6 +125,7 @@ async def main():
   else:
    await app.workers.wait_for_complete()
   await pilot.pause()
+  if mode=='approve':assert not row.display and not recovery.openai_reconnect_pending()
   if mode not in ('approve','accepted-cancel'):
    denied()
    return

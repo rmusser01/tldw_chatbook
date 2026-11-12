@@ -79,11 +79,10 @@ async def _seed_row(pilot, transcript: ConsoleTranscript) -> ConsoleTranscriptMe
     )
     await transcript.refresh_messages()
     await pilot.pause()
-    return pilot.app.screen.query_one(
-        "#console-message-row1", ConsoleTranscriptMessage
-    )
+    return pilot.app.screen.query_one("#console-message-row1", ConsoleTranscriptMessage)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_idle_press_makes_no_full_screen_selection_walks():
     """No menu, no selection: a press outside the transcript walks nothing.
@@ -119,13 +118,16 @@ async def test_idle_press_makes_no_full_screen_selection_walks():
         assert counts["menu"] == 0, counts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_screen_mounted_menu_is_still_dismissed_by_an_outside_press():
     """Control arm: the production mount site (the screen) still folds."""
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
         transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
-        await screen.mount(ConsoleSelectionMenu(screen_x=2, screen_y=2, owner=transcript))
+        await screen.mount(
+            ConsoleSelectionMenu(screen_x=2, screen_y=2, owner=transcript)
+        )
         await pilot.pause()
         assert screen.query_one(ConsoleSelectionMenu)
 
@@ -135,6 +137,7 @@ async def test_screen_mounted_menu_is_still_dismissed_by_an_outside_press():
         assert not screen.query(ConsoleSelectionMenu)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_selection_without_a_menu_is_still_cleared():
     """Control arm: keyboard-selection state (highlight, no menu) clears.
@@ -161,6 +164,7 @@ async def test_active_selection_without_a_menu_is_still_cleared():
         assert row.get_selection_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_recomposed_transcript_replaces_the_old_one_with_no_bookkeeping():
     """The staleness arm: recompose swaps the transcript, the gate follows.
@@ -207,6 +211,7 @@ async def test_a_recomposed_transcript_replaces_the_old_one_with_no_bookkeeping(
         assert row.get_selection_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_registries_are_scoped_to_one_screen_not_the_whole_app():
     """The screen-scope arm (review round 1, MINOR-1).
@@ -243,6 +248,7 @@ async def test_the_registries_are_scoped_to_one_screen_not_the_whole_app():
         assert menu.is_attached
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_press_inside_the_transcript_still_leaves_the_menu_alone():
     """Control arm: the in-transcript guard is unchanged.
@@ -256,7 +262,9 @@ async def test_press_inside_the_transcript_still_leaves_the_menu_alone():
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
         transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
-        await screen.mount(ConsoleSelectionMenu(screen_x=2, screen_y=2, owner=transcript))
+        await screen.mount(
+            ConsoleSelectionMenu(screen_x=2, screen_y=2, owner=transcript)
+        )
         await pilot.pause()
         menu = screen.query_one(ConsoleSelectionMenu)
 

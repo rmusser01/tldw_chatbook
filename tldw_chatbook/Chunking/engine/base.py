@@ -17,6 +17,7 @@ from tldw_chatbook.Chunking._shims.testing import is_truthy
 
 class ChunkingMethod(Enum):
     """Enumeration of available chunking methods."""
+
     WORDS = "words"
     SENTENCES = "sentences"
     PARAGRAPHS = "paragraphs"
@@ -35,6 +36,7 @@ class ChunkingMethod(Enum):
 @dataclass
 class ChunkMetadata:
     """Metadata for a text chunk."""
+
     index: int
     start_char: int
     end_char: int
@@ -51,13 +53,18 @@ class ChunkMetadata:
 
     def __post_init__(self):
         """Calculate derived fields if not provided."""
-        if self.char_count is None and self.end_char is not None and self.start_char is not None:
+        if (
+            self.char_count is None
+            and self.end_char is not None
+            and self.start_char is not None
+        ):
             self.char_count = self.end_char - self.start_char
 
 
 @dataclass
 class ChunkResult:
     """Result of a chunking operation."""
+
     text: str
     metadata: ChunkMetadata
 
@@ -65,11 +72,7 @@ class ChunkResult:
 class ChunkingStrategy(Protocol):
     """Protocol for chunking strategies."""
 
-    def chunk(self,
-              text: str,
-              max_size: int,
-              overlap: int = 0,
-              **options) -> list[str]:
+    def chunk(self, text: str, max_size: int, overlap: int = 0, **options) -> list[str]:
         """
         Chunk text according to the strategy.
 
@@ -84,11 +87,9 @@ class ChunkingStrategy(Protocol):
         """
         ...
 
-    def chunk_with_metadata(self,
-                           text: str,
-                           max_size: int,
-                           overlap: int = 0,
-                           **options) -> list[ChunkResult]:
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> list[ChunkResult]:
         """
         Chunk text and return with metadata.
 
@@ -107,7 +108,7 @@ class ChunkingStrategy(Protocol):
 class BaseChunkingStrategy(ABC):
     """Base class for chunking strategies."""
 
-    def __init__(self, language: str = 'en'):
+    def __init__(self, language: str = "en"):
         """
         Initialize the chunking strategy.
 
@@ -128,30 +129,42 @@ class BaseChunkingStrategy(ABC):
         try:
             import os
             from tldw_chatbook.Chunking._shims.testing import is_truthy
+
             v = os.getenv(key.upper())
             if v is None:
-                from tldw_chatbook.Chunking._shims.config import load_comprehensive_config
+                from tldw_chatbook.Chunking._shims.config import (
+                    load_comprehensive_config,
+                )
+
                 cp = load_comprehensive_config()
-                if hasattr(cp, 'has_section') and cp.has_section('Chunking'):
-                    v = cp.get('Chunking', key, fallback=str(default))
+                if hasattr(cp, "has_section") and cp.has_section("Chunking"):
+                    v = cp.get("Chunking", key, fallback=str(default))
             s = str(v).strip().lower() if v is not None else str(default).lower()
             return is_truthy(s)
         except (ImportError, AttributeError, KeyError) as e:
-            logger.debug(f"_get_chunking_bool: config lookup failed for '{key}', using default={default}: {e}")
+            logger.debug(
+                f"_get_chunking_bool: config lookup failed for '{key}', using default={default}: {e}"
+            )
             return default
         except ValueError as e:
-            logger.debug(f"_get_chunking_bool: invalid value for '{key}', using default={default}: {e}")
+            logger.debug(
+                f"_get_chunking_bool: invalid value for '{key}', using default={default}: {e}"
+            )
             return default
 
     def _strict_grapheme_mode(self, options: dict | None = None) -> bool:
-        if options and 'strict_grapheme_end_expansion' in options:
+        if options and "strict_grapheme_end_expansion" in options:
             try:
-                return bool(options.get('strict_grapheme_end_expansion'))
+                return bool(options.get("strict_grapheme_end_expansion"))
             except (TypeError, ValueError) as e:
-                logger.debug(f"_strict_grapheme_mode: invalid option value, falling back to config: {e}")
-        return self._get_chunking_bool('strict_grapheme_end_expansion', False)
+                logger.debug(
+                    f"_strict_grapheme_mode: invalid option value, falling back to config: {e}"
+                )
+        return self._get_chunking_bool("strict_grapheme_end_expansion", False)
 
-    def _expand_end_to_grapheme_boundary(self, text: str, end: int, *, options: dict | None = None) -> int:
+    def _expand_end_to_grapheme_boundary(
+        self, text: str, end: int, *, options: dict | None = None
+    ) -> int:
         """Expand end index so that we don't split grapheme clusters.
 
         Default mode (strict=False):
@@ -181,7 +194,7 @@ class BaseChunkingStrategy(ABC):
             ch = text[i]
             cp = ord(ch)
             cat = _ud.category(ch)
-            if _is_combining(ch) or _is_vs(cp) or (cat == 'Cf' and (cp != 0x200D)):
+            if _is_combining(ch) or _is_vs(cp) or (cat == "Cf" and (cp != 0x200D)):
                 i += 1
                 continue
             if strict and _is_skin_tone(cp):
@@ -191,7 +204,11 @@ class BaseChunkingStrategy(ABC):
                     ch2 = text[i]
                     cp2 = ord(ch2)
                     cat2 = _ud.category(ch2)
-                    if _is_combining(ch2) or _is_vs(cp2) or (cat2 == 'Cf' and cp2 != 0x200D):
+                    if (
+                        _is_combining(ch2)
+                        or _is_vs(cp2)
+                        or (cat2 == "Cf" and cp2 != 0x200D)
+                    ):
                         i += 1
                     else:
                         break
@@ -205,7 +222,11 @@ class BaseChunkingStrategy(ABC):
                         ch2 = text[i]
                         cp2 = ord(ch2)
                         cat2 = _ud.category(ch2)
-                        if _is_combining(ch2) or _is_vs(cp2) or (cat2 == 'Cf' and cp2 != 0x200D):
+                        if (
+                            _is_combining(ch2)
+                            or _is_vs(cp2)
+                            or (cat2 == "Cf" and cp2 != 0x200D)
+                        ):
                             i += 1
                         else:
                             break
@@ -215,11 +236,7 @@ class BaseChunkingStrategy(ABC):
         return min(i, n)
 
     @abstractmethod
-    def chunk(self,
-              text: str,
-              max_size: int,
-              overlap: int = 0,
-              **options) -> list[str]:
+    def chunk(self, text: str, max_size: int, overlap: int = 0, **options) -> list[str]:
         """
         Chunk text according to the strategy.
 
@@ -234,11 +251,9 @@ class BaseChunkingStrategy(ABC):
         """
         pass
 
-    def chunk_with_metadata(self,
-                           text: str,
-                           max_size: int,
-                           overlap: int = 0,
-                           **options) -> list[ChunkResult]:
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> list[ChunkResult]:
         """
         Chunk text and return with metadata.
 
@@ -273,9 +288,13 @@ class BaseChunkingStrategy(ABC):
             chunk_end = chunk_start + len(chunk)
             # Expand to avoid splitting grapheme clusters in metadata
             try:
-                chunk_end = self._expand_end_to_grapheme_boundary(text, chunk_end, options=options)
+                chunk_end = self._expand_end_to_grapheme_boundary(
+                    text, chunk_end, options=options
+                )
             except (IndexError, ValueError) as e:
-                logger.debug(f"chunk_with_metadata: grapheme expansion failed for chunk {i}, using original end: {e}")
+                logger.debug(
+                    f"chunk_with_metadata: grapheme expansion failed for chunk {i}, using original end: {e}"
+                )
 
             metadata = ChunkMetadata(
                 index=i,
@@ -284,7 +303,7 @@ class BaseChunkingStrategy(ABC):
                 word_count=len(chunk.split()),
                 language=self.language,
                 overlap_with_previous=overlap if i > 0 else 0,
-                overlap_with_next=overlap if i < len(chunks) - 1 else 0
+                overlap_with_next=overlap if i < len(chunks) - 1 else 0,
             )
 
             results.append(ChunkResult(text=chunk, metadata=metadata))
@@ -346,16 +365,16 @@ class BaseChunkingStrategy(ABC):
             raise ValueError(f"overlap cannot be negative, got {overlap}")
 
         if overlap >= max_size:
-            logger.warning(f"Overlap ({overlap}) >= max_size ({max_size}), adjusting to max_size - 1")
+            logger.warning(
+                f"Overlap ({overlap}) >= max_size ({max_size}), adjusting to max_size - 1"
+            )
             overlap = max_size - 1
 
         return True
 
-    def chunk_generator(self,
-                       text: str,
-                       max_size: int,
-                       overlap: int = 0,
-                       **options) -> Generator[str, None, None]:
+    def chunk_generator(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> Generator[str, None, None]:
         """
         Generator version of chunk for memory efficiency.
 
@@ -375,24 +394,26 @@ class BaseChunkingStrategy(ABC):
 class ChunkerConfig:
     """Configuration for the chunking system."""
 
-    def __init__(self,
-                 default_method: ChunkingMethod = ChunkingMethod.WORDS,
-                 default_max_size: int = 400,
-                 default_overlap: int = 200,
-                 language: str = 'en',
-                 enable_cache: bool = True,
-                 cache_size: int = 100,
-                 cache_copy_on_access: bool = True,
-                 cache_max_text_length: int = 2_000_000,
-                 min_text_length_to_cache: int = 0,
-                 max_text_length_to_cache: int = 2_000_000,
-                 max_text_size: int = 100_000_000,  # 100MB
-                 enable_metrics: bool = True,
-                 verbose_logging: bool = False,
-                 strategy_cache_mode: str = "shared",
-                 # Execution/concurrency knobs (used by AsyncChunker; optional here)
-                 max_workers: int = 4,
-                 max_concurrent: int = 10):
+    def __init__(
+        self,
+        default_method: ChunkingMethod = ChunkingMethod.WORDS,
+        default_max_size: int = 400,
+        default_overlap: int = 200,
+        language: str = "en",
+        enable_cache: bool = True,
+        cache_size: int = 100,
+        cache_copy_on_access: bool = True,
+        cache_max_text_length: int = 2_000_000,
+        min_text_length_to_cache: int = 0,
+        max_text_length_to_cache: int = 2_000_000,
+        max_text_size: int = 100_000_000,  # 100MB
+        enable_metrics: bool = True,
+        verbose_logging: bool = False,
+        strategy_cache_mode: str = "shared",
+        # Execution/concurrency knobs (used by AsyncChunker; optional here)
+        max_workers: int = 4,
+        max_concurrent: int = 10,
+    ):
         """
         Initialize chunker configuration.
 
@@ -414,30 +435,56 @@ class ChunkerConfig:
             try:
                 default_method = ChunkingMethod(default_method)
             except ValueError:
-                logger.warning(f"Unknown chunking method '{default_method}', using default")
+                logger.warning(
+                    f"Unknown chunking method '{default_method}', using default"
+                )
                 default_method = ChunkingMethod.WORDS
 
         # Basic validations
         if not isinstance(default_max_size, int) or default_max_size <= 0:
-            raise ValueError(f"default_max_size must be a positive integer, got {default_max_size}")
+            raise ValueError(
+                f"default_max_size must be a positive integer, got {default_max_size}"
+            )
         if not isinstance(default_overlap, int) or default_overlap < 0:
-            raise ValueError(f"default_overlap must be a non-negative integer, got {default_overlap}")
+            raise ValueError(
+                f"default_overlap must be a non-negative integer, got {default_overlap}"
+            )
         if not isinstance(cache_size, int) or cache_size <= 0:
             raise ValueError(f"cache_size must be a positive integer, got {cache_size}")
         if not isinstance(max_text_size, int) or max_text_size <= 0:
-            raise ValueError(f"max_text_size must be a positive integer, got {max_text_size}")
+            raise ValueError(
+                f"max_text_size must be a positive integer, got {max_text_size}"
+            )
         if not isinstance(cache_max_text_length, int) or cache_max_text_length <= 0:
-            raise ValueError(f"cache_max_text_length must be a positive integer, got {cache_max_text_length}")
-        if not isinstance(min_text_length_to_cache, int) or min_text_length_to_cache < 0:
-            raise ValueError(f"min_text_length_to_cache must be a non-negative integer, got {min_text_length_to_cache}")
-        if not isinstance(max_text_length_to_cache, int) or max_text_length_to_cache <= 0:
-            raise ValueError(f"max_text_length_to_cache must be a positive integer, got {max_text_length_to_cache}")
+            raise ValueError(
+                f"cache_max_text_length must be a positive integer, got {cache_max_text_length}"
+            )
+        if (
+            not isinstance(min_text_length_to_cache, int)
+            or min_text_length_to_cache < 0
+        ):
+            raise ValueError(
+                f"min_text_length_to_cache must be a non-negative integer, got {min_text_length_to_cache}"
+            )
+        if (
+            not isinstance(max_text_length_to_cache, int)
+            or max_text_length_to_cache <= 0
+        ):
+            raise ValueError(
+                f"max_text_length_to_cache must be a positive integer, got {max_text_length_to_cache}"
+            )
         if not isinstance(max_workers, int) or max_workers <= 0:
-            raise ValueError(f"max_workers must be a positive integer, got {max_workers}")
+            raise ValueError(
+                f"max_workers must be a positive integer, got {max_workers}"
+            )
         if not isinstance(max_concurrent, int) or max_concurrent <= 0:
-            raise ValueError(f"max_concurrent must be a positive integer, got {max_concurrent}")
+            raise ValueError(
+                f"max_concurrent must be a positive integer, got {max_concurrent}"
+            )
         if not isinstance(strategy_cache_mode, str):
-            raise ValueError(f"strategy_cache_mode must be a string, got {type(strategy_cache_mode).__name__}")
+            raise ValueError(
+                f"strategy_cache_mode must be a string, got {type(strategy_cache_mode).__name__}"
+            )
         strategy_cache_mode = strategy_cache_mode.strip().lower()
         if strategy_cache_mode not in {"shared", "thread", "call"}:
             raise ValueError(
@@ -467,28 +514,36 @@ class ChunkerConfig:
         # Allow config.txt overrides for selected settings (no ENV toggles)
         try:
             from tldw_chatbook.Chunking._shims.config import load_comprehensive_config
+
             cp = load_comprehensive_config()
-            if hasattr(cp, 'has_section') and cp.has_section('Chunking'):
+            if hasattr(cp, "has_section") and cp.has_section("Chunking"):
                 try:
-                    v = cp.get('Chunking', 'cache_copy_on_access', fallback=None)
+                    v = cp.get("Chunking", "cache_copy_on_access", fallback=None)
                     if v is not None:
                         self.cache_copy_on_access = is_truthy(str(v))
                 except (AttributeError, KeyError, TypeError) as e:
-                    logger.debug(f"ChunkerConfig: failed to read 'cache_copy_on_access' from config: {e}")
+                    logger.debug(
+                        f"ChunkerConfig: failed to read 'cache_copy_on_access' from config: {e}"
+                    )
                 try:
-                    v = cp.get('Chunking', 'verbose_logging', fallback=None)
+                    v = cp.get("Chunking", "verbose_logging", fallback=None)
                     if v is not None:
                         self.verbose_logging = is_truthy(str(v))
                 except (AttributeError, KeyError, TypeError) as e:
-                    logger.debug(f"ChunkerConfig: failed to read 'verbose_logging' from config: {e}")
+                    logger.debug(
+                        f"ChunkerConfig: failed to read 'verbose_logging' from config: {e}"
+                    )
         except ImportError as e:
-            logger.debug(f"ChunkerConfig: config module not available, using defaults: {e}")
+            logger.debug(
+                f"ChunkerConfig: config module not available, using defaults: {e}"
+            )
         except (AttributeError, TypeError) as e:
             logger.debug(f"ChunkerConfig: config loading failed, using defaults: {e}")
 
-        logger.info(f"ChunkerConfig initialized with method={self.default_method.value if hasattr(self.default_method, 'value') else self.default_method}, "
-                   f"max_size={default_max_size}, overlap={default_overlap}")
-
+        logger.info(
+            f"ChunkerConfig initialized with method={self.default_method.value if hasattr(self.default_method, 'value') else self.default_method}, "
+            f"max_size={default_max_size}, overlap={default_overlap}"
+        )
 
     # Note: Exceptions for the chunking module live in
     # tldw_chatbook.Chunking.engine.exceptions. This file intentionally

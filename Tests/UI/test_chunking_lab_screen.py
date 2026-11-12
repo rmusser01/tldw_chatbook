@@ -63,6 +63,7 @@ def hold_final_edit_render(screen):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_final_render_edit_is_consumed_without_another_keystroke(lab_app):
     from tldw_chatbook.Chunking import lab_state
 
@@ -96,6 +97,7 @@ async def test_final_render_edit_is_consumed_without_another_keystroke(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_real_navigation_routes_lab_and_checkpoints_return_to_opener(lab_app):
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
@@ -120,6 +122,7 @@ async def test_real_navigation_routes_lab_and_checkpoints_return_to_opener(lab_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_invalid_structural_json_remains_editable_and_visible(lab_app):
     from tldw_chatbook.Chunking import lab_state
 
@@ -143,6 +146,7 @@ async def test_invalid_structural_json_remains_editable_and_visible(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_narrow_results_paging_and_inspector_are_keyboard_reachable(lab_app):
     from textual.widgets import DataTable
 
@@ -204,6 +208,7 @@ async def test_narrow_results_paging_and_inspector_are_keyboard_reachable(lab_ap
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_template_export_retains_tags_and_recovery_transfer(lab_app, tmp_path):
     route = resolve_screen_route("chunking_lab")
     assert route is not None
@@ -290,16 +295,39 @@ def test_file_excerpt_is_explicit_utf8_and_never_silently_truncated(tmp_path):
 
 
 @pytest.fixture
-def lab_app(tmp_path, monkeypatch):
-    monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: tmp_path)
+def lab_app(tmp_path):
+    from tldw_chatbook import config
+
+    data_dir = tmp_path / "lab-data"
+    data_dir.mkdir(mode=0o700)
+    assert config.save_setting_to_cli_config("paths", "data_dir", str(data_dir))
+    assert config.get_user_data_dir().parent == data_dir
     app = _build_test_app()
     # This fixture mounts its own initial Lab screen during each test.
     app._initial_screen_pushed = True
     return app
 
 
+@pytest.fixture
+def attach_lab_media(lab_app, tmp_path, request):
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    def attach(filename, client_id):
+        database = MediaDatabase(str(tmp_path / filename), client_id=client_id)
+
+        def retire():
+            assert database.close_idle_connections(), "Lab media store is still in use"
+
+        request.addfinalizer(retire)
+        lab_app.media_db = database
+        return database
+
+    return attach
+
+
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Requires POSIX FIFO support")
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_template_import_refuses_fifo_without_changing_session(
     lab_app, tmp_path, monkeypatch
 ):
@@ -313,7 +341,6 @@ async def test_template_import_refuses_fifo_without_changing_session(
             pytest.fail("Template import attempted a blocking FIFO open")
         return original_open(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "open", guard_blocking_open)
     async with lab_app.run_test(size=(80, 24)) as pilot:
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
         await lab_app.push_screen(screen)
@@ -321,16 +348,23 @@ async def test_template_import_refuses_fifo_without_changing_session(
         await settle_lab(lab_app, screen, pilot)
         await screen.drain_edits()
         before = screen.coordinator.session
-        with pytest.raises(ValueError, match="regular"):
-            await screen.file_operation("import-template", {"path": str(selected)})
+        with monkeypatch.context() as scoped:
+            scoped.setattr(Path, "open", guard_blocking_open)
+            with pytest.raises(ValueError, match="regular"):
+                await screen.file_operation("import-template", {"path": str(selected)})
         assert screen.coordinator.session == before
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Requires POSIX FIFO support")
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_template_import_refuses_file_replaced_by_fifo_at_open(
     lab_app, tmp_path, monkeypatch
 ):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens import chunking_lab_screen
+
     selected = tmp_path / "template.json"
     selected.write_text('{"chunking":{"method":"words"}}')
     original_open = os.open
@@ -353,14 +387,20 @@ async def test_template_import_refuses_file_replaced_by_fifo_at_open(
         await settle_lab(lab_app, screen, pilot)
         await screen.drain_edits()
         before = screen.coordinator.session
-        monkeypatch.setattr(os, "open", replace_at_open)
-        with pytest.raises(ValueError, match="regular"):
-            await screen.file_operation("import-template", {"path": str(selected)})
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                chunking_lab_screen,
+                "os",
+                SimpleNamespace(**(vars(os) | {"open": replace_at_open})),
+            )
+            with pytest.raises(ValueError, match="regular"):
+                await screen.file_operation("import-template", {"path": str(selected)})
         assert replaced
         assert screen.coordinator.session == before
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_manually_mounted_lab_owns_deferred_initial_screen(lab_app):
     async with lab_app.run_test():
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
@@ -372,14 +412,13 @@ async def test_manually_mounted_lab_owns_deferred_initial_screen(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_slow_tags_keep_unfinished_separator_after_render_reopen_and_failed_save(
-    lab_app, tmp_path
+    lab_app, attach_lab_media
 ):
     from textual.widgets import Input
 
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-
-    lab_app.media_db = MediaDatabase(str(tmp_path / "tags.sqlite3"), client_id="tags")
+    attach_lab_media("tags.sqlite3", "tags")
     async with lab_app.run_test(size=(80, 24)) as pilot:
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
         await lab_app.push_screen(screen)
@@ -421,17 +460,16 @@ async def test_slow_tags_keep_unfinished_separator_after_render_reopen_and_faile
 
 
 @pytest.mark.asyncio
-async def test_builtin_dialog_defaults_to_copy_and_preserves_builtin(lab_app, tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_builtin_dialog_defaults_to_copy_and_preserves_builtin(
+    lab_app, attach_lab_media
+):
     from textual.widgets import Checkbox, Input
 
     from Tests.UI.test_chunking_lab_recovery_flow import wait_for_dialog
     from tldw_chatbook.Chunking.chunking_interop_library import ChunkingInteropService
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-
-    lab_app.media_db = MediaDatabase(
-        str(tmp_path / "builtins.sqlite3"), client_id="builtin"
-    )
-    service = ChunkingInteropService(lab_app.media_db)
+    database = attach_lab_media("builtins.sqlite3", "builtin")
+    service = ChunkingInteropService(database)
     identity = service.create_template(
         "Protected",
         "Builtin description",
@@ -471,6 +509,7 @@ async def test_builtin_dialog_defaults_to_copy_and_preserves_builtin(lab_app, tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_unsupported_authored_template_exports_without_run_or_save_admission(
     lab_app, tmp_path
 ):
@@ -526,6 +565,7 @@ async def test_unsupported_authored_template_exports_without_run_or_save_admissi
         ),
     ],
 )
+@pytest.mark.bootstrap_profile
 async def test_sample_source_and_extent_are_visible_after_reopen(
     lab_app, source, labels
 ):
@@ -553,6 +593,7 @@ async def test_sample_source_and_extent_are_visible_after_reopen(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_initial_load_survives_yielding_mount_handler(
     lab_app: "TldwCli", monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -589,6 +630,7 @@ async def test_initial_load_survives_yielding_mount_handler(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_lazy_screen_workers_abandon_work_after_teardown(
     lab_app: "TldwCli", monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -628,6 +670,7 @@ async def test_lazy_screen_workers_abandon_work_after_teardown(
     "size,outcome",
     [((80, 24), "failed"), ((120, 40), "canceled"), ((160, 50), "pending")],
 )
+@pytest.mark.bootstrap_profile
 async def test_previous_choice_survives_reopen_without_completing_failed_batch(
     lab_app, size, outcome
 ):
@@ -723,9 +766,9 @@ async def test_previous_choice_survives_reopen_without_completing_failed_batch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(80, 24), (120, 40), (160, 50)])
-async def test_complete_workflow_viewports(lab_app, tmp_path, size):
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+async def test_complete_workflow_viewports(lab_app, attach_lab_media, size):
     from tldw_chatbook.Library.library_ingest_state import (
         LibraryIngestFormState,
         build_library_ingest_state,
@@ -733,8 +776,7 @@ async def test_complete_workflow_viewports(lab_app, tmp_path, size):
     from tldw_chatbook.RAG_Admin.local_rag_admin_service import LocalRAGAdminService
     from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
 
-    database = MediaDatabase(str(tmp_path / "media.sqlite3"), client_id="lab-viewports")
-    lab_app.media_db = database
+    database = attach_lab_media("media.sqlite3", "lab-viewports")
 
     class Catalog:
         async def list_templates(self, *, mode):
@@ -885,6 +927,7 @@ def test_lab_is_library_owned_and_lazy():
     assert route.module_path == "tldw_chatbook.UI.Screens.chunking_lab_screen"
 
 
+@pytest.mark.bootstrap_profile
 def test_library_handoff_uses_local_id_and_refuses_server(lab_app):
     from types import SimpleNamespace
 
@@ -917,6 +960,7 @@ def test_library_handoff_uses_local_id_and_refuses_server(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_profile_owner_is_single_flight_and_recovers(lab_app):
     assert hasattr(lab_app, "get_chunking_lab_coordinator")
     first, second = await asyncio.gather(
@@ -942,6 +986,7 @@ async def test_profile_owner_is_single_flight_and_recovers(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_local_shortcuts_do_not_steal_editor_text(lab_app):
     route = resolve_screen_route("chunking_lab")
     assert route is not None
@@ -970,15 +1015,16 @@ async def test_local_shortcuts_do_not_steal_editor_text(lab_app):
 
 
 @pytest.mark.asyncio
-async def test_real_library_text_save_a_and_conflict_preserve_state(lab_app, tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_real_library_text_save_a_and_conflict_preserve_state(
+    lab_app, attach_lab_media
+):
     import json
 
     from tldw_chatbook.Chunking import lab_state
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.RAG_Admin.chunking_lab_service import TemplateSaveConflict
 
-    database = MediaDatabase(str(tmp_path / "media.sqlite3"), client_id="lab-test")
-    lab_app.media_db = database
+    database = attach_lab_media("media.sqlite3", "lab-test")
     text = "line\r\n" + "local full source " * 1800 + "exact tail"
     media_id, _, _ = database.add_media_with_keywords(
         title="Full source", media_type="document", content=text

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  paper-retrieval-practice                                 │
+│ │ Navigation                     │  a  │ Media (5)      Sets                                  │  t  file://$TMPROOT/… │
+│ │     Import…                    │  v  │ Media · 5 of 5 · all types · sort: Newest            │  e  nts-GitHub-tldw-chatbook/9a6612d8-88a3-469a-a5da-1307bdf │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m  f44b8/scratchpad/nlrev/runs/nl-v-l-03-2/home/fixtures/im │
+│ │ ▊ Search Library…         ▎▊x▎ │     │  ▊  Title/keyword…                  ▎                │  s  port-docs/paper-retrieval-practice.pdf                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │       Find  Read later  Use in Console  More ▴               │
+│ │                                │     │    type: All types    sort: Newest                   │       Edit metadata    Open original    Open manager         │
+│ │ ────────────────────────────── │     │                                                      │         Move to trash                                        │
+│ │ Browse                     ▾   │     │    Export…     Trash     Select                      │       Read (selected)  Analysis  Highlights  Info            │
+│ │  ▸ Media (5) — your files      │     │    Review these                                      │     Delete this media? You can undo right away, or restore   │
+│ │    Conversations (0)           │     │  ▸ team-handbook                                     │     later from Trash.                                        │
+│ │    Notes (0)                   │     │      document · updated just now                     │           Delete          Cancel                             │
+│ │    Prompts (0) — reuse         │     │    paper-retrieval-practice                          │      Rendered (selected) |      Raw                          │
+│ │    Skills (1) — AI add-ons     │<--- │      pdf · updated just now · loaded                 │     ┌──────────────────────────────────────────────────────┐ │
+│ │    Collections (0)             │     │    podcast-transcript-ep12                           │     │                                                      │ │
+│ │    Search / RAG — find all     │     │      plaintext · updated just now                    │     │                                                      │ │
+│ │ ────────────────────────────── │     │    article-local-first                               │     │   Retrieval practice improves long-term retention    │ │
+│ │ Artifacts                  ▾   │     │      plaintext · updated just now                    │     │                                                      │ │
+│ │    All artifacts               │     │    web-page-spaced-repetition                        │<--- │   Abstract. We compare rereading with retrieval      │ │
+│ │    Chatbooks                   │     │      html · updated just now                         │     │   practice in 120 undergraduates. Results.           │ │
+│ │    Reports                     │     │                                                      │     │   Retrieval practice improved 7-day retention by     │ │
+│ │ ────────────────────────────── │     │                                                      │     │   21 percentage points. Discussion. Effects held     │ │
+│ │ Create                     ▾   │     │                                                      │     │   across subject areas. Abstract. We compare         │ │
+│ │    New note                    │     │                                                      │     │   rereading with retrieval practice in 120           │ │
+│ │    New prompt                  │<--- │                                                      │     │   undergraduates. Results. Retrieval practice        │ │
+│ │    New skill                   │     │                                                      │     │   improved 7-day retention by 21 percentage          │ │
+│ │ ────────────────────────────── │     │                                                      │     │   points. Discussion. Effects held across subject    │ │
+│ │ Study                      ▾   │     │                                                      │     │   areas.                                             │ │
+│ │    Study decks (0)             │     │                                                      │     │                                                      │ │
+│ │    Flashcards due: 0           │     │                                                      │     │   Abstract. We compare rereading with retrieval      │ │
+│ │    Quizzes (0)                 │     │                                                      │     │   practice in 120 undergraduates. Results.           │ │
+│ │ ────────────────────────────── │     │                                                      │     │   Retrieval practice improved 7-day retention by     │ │
+│ │ Import / Export            ▾   │     │                                                      │     │   21 percentage points. Discussion. Effects held     │ │
+│ │    Import…                     │     │                                                      │     │   across subject areas.                              │ │
+│ │    Export                      │     │                                                      │     │                                                      │ │
+│ │ ────────────────────────────── │     │                                                      │     │                                                      │ │
+│ │ Details                    ▸   │     │                       1-5 of 5                       │     └──────────────────────────────────────────────────────┘ │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc close | F1 help · Ctrl+P palette · Ctrl+Q quit

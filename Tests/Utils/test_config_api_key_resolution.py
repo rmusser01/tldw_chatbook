@@ -14,8 +14,8 @@ OpenAI key stored by the Settings screen, and the pre-connect check
 refused with "no OpenAI API key is configured" -- honestly reporting a
 lookup that could never have succeeded.
 
-Every test here drives the REAL loader via `TLDW_CONFIG_PATH` +
-force_reload rather than monkeypatching `load_settings`, for the reason
+The real-loader cases select a private profile before import, seed its
+actual TOML file and force reload rather than monkeypatching `load_settings`, for the reason
 the sibling file records: the shape returned by the real loader IS the
 thing under test, and an accessor mock would have agreed with whatever
 shape the test author imagined (which is exactly how this bug survived).
@@ -23,10 +23,10 @@ The one exception is the flat-dotted fallback, which no TOML file can
 produce -- see that test's own comment.
 """
 
-import os
-from contextlib import contextmanager
+import pytest
 
 import tldw_chatbook.config as config_mod
+from Tests.private_profile import is_private_profile_child, private_profile_test
 from tldw_chatbook.config import get_api_key
 
 #: Names an env var this suite guarantees is unset, so the nested branch's
@@ -55,29 +55,13 @@ openai_api_key = "sk-test-legacy-section-key"
 """
 
 
-@contextmanager
-def _real_config(tmp_path, monkeypatch, toml_text: str):
-    """Point the real loader at a scratch TOML; restore + reload afterwards.
-
-    Copied deliberately from `test_config_nested_settings.py` -- same
-    isolation contract, same teardown, so the two suites cannot drift on
-    how "the real loader" is driven.
-    """
-    config_path = tmp_path / "scratch-api-key-config.toml"
+def _seed_config(request, toml_text: str) -> None:
+    assert is_private_profile_child(request)
+    config_path = config_mod.get_cli_config_path()
+    config_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     config_path.write_text(toml_text, encoding="utf-8")
-    original_env = os.environ.get("TLDW_CONFIG_PATH")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     config_mod.load_cli_config_and_ensure_existence(force_reload=True)
     config_mod.load_settings(force_reload=True)
-    try:
-        yield
-    finally:
-        if original_env is not None:
-            monkeypatch.setenv("TLDW_CONFIG_PATH", original_env)
-        else:
-            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-        config_mod.load_cli_config_and_ensure_existence(force_reload=True)
-        config_mod.load_settings(force_reload=True)
 
 
 def _clear_provider_env(monkeypatch) -> None:
@@ -91,26 +75,32 @@ def _clear_provider_env(monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_nested_api_settings_api_key_resolves(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_nested_api_settings_api_key_resolves(request, monkeypatch):
     """The shape the Settings screen actually writes must resolve.
 
     RED against the pre-fix code: `"api_settings.openai" in settings` is
     False for every real config, so this returned None.
     """
     _clear_provider_env(monkeypatch)
-    with _real_config(tmp_path, monkeypatch, NESTED_STORED_KEY_TOML):
-        assert get_api_key("openai") == "sk-test-nested-stored-key"
+    _seed_config(request, NESTED_STORED_KEY_TOML)
+    assert get_api_key("openai") == "sk-test-nested-stored-key"
 
 
-def test_provider_name_is_case_insensitive(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_provider_name_is_case_insensitive(request, monkeypatch):
     """`api_name.lower()` is the documented normalization -- it has to keep
     applying to the nested lookup, not just the dead flat one."""
     _clear_provider_env(monkeypatch)
-    with _real_config(tmp_path, monkeypatch, NESTED_STORED_KEY_TOML):
-        assert get_api_key("OpenAI") == "sk-test-nested-stored-key"
+    _seed_config(request, NESTED_STORED_KEY_TOML)
+    assert get_api_key("OpenAI") == "sk-test-nested-stored-key"
 
 
-def test_the_stored_key_wins_over_the_env_var_it_names(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_stored_key_wins_over_the_env_var_it_names(request, monkeypatch):
     """TASK-32806.2: the ruling, and the reason this test changed sides.
 
     This asserted the opposite order, and so did
@@ -132,47 +122,57 @@ def test_the_stored_key_wins_over_the_env_var_it_names(tmp_path, monkeypatch):
     """
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv(UNSET_ENV_VAR, "sk-test-from-env-var")
-    with _real_config(tmp_path, monkeypatch, NESTED_STORED_KEY_TOML):
-        assert get_api_key("openai") == "sk-test-nested-stored-key"
+    _seed_config(request, NESTED_STORED_KEY_TOML)
+    assert get_api_key("openai") == "sk-test-nested-stored-key"
 
 
-def test_the_named_env_var_is_still_used_when_nothing_is_stored(
-    tmp_path, monkeypatch
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_named_env_var_is_still_used_when_nothing_is_stored(
+    request, monkeypatch
 ):
     """The fallback the ruling keeps: no stored key, so the env var spends."""
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv(UNSET_ENV_VAR, "sk-test-from-env-var")
-    with _real_config(tmp_path, monkeypatch, NESTED_PLACEHOLDER_TOML):
-        assert get_api_key("openai") == "sk-test-from-env-var"
+    _seed_config(request, NESTED_PLACEHOLDER_TOML)
+    assert get_api_key("openai") == "sk-test-from-env-var"
 
 
-def test_placeholder_api_key_is_never_returned(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_placeholder_api_key_is_never_returned(request, monkeypatch):
     """`<API_KEY_HERE>` is the shipped placeholder -- returning it would
     send a literal placeholder to a provider as a bearer token."""
     _clear_provider_env(monkeypatch)
-    with _real_config(tmp_path, monkeypatch, NESTED_PLACEHOLDER_TOML):
-        assert get_api_key("openai") is None
+    _seed_config(request, NESTED_PLACEHOLDER_TOML)
+    assert get_api_key("openai") is None
 
 
-def test_legacy_api_section_still_resolves(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_legacy_api_section_still_resolves(request, monkeypatch):
     """The legacy `[API] <provider>_api_key` fallback is untouched."""
     _clear_provider_env(monkeypatch)
-    with _real_config(tmp_path, monkeypatch, LEGACY_API_SECTION_TOML):
-        assert get_api_key("openai") == "sk-test-legacy-section-key"
+    _seed_config(request, LEGACY_API_SECTION_TOML)
+    assert get_api_key("openai") == "sk-test-legacy-section-key"
 
 
-def test_direct_environment_variable_still_resolves(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_direct_environment_variable_still_resolves(request, monkeypatch):
     """The last fallback (`<PROVIDER>_API_KEY`) is untouched."""
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-direct-env")
-    with _real_config(tmp_path, monkeypatch, NESTED_PLACEHOLDER_TOML):
-        assert get_api_key("openai") == "sk-test-direct-env"
+    _seed_config(request, NESTED_PLACEHOLDER_TOML)
+    assert get_api_key("openai") == "sk-test-direct-env"
 
 
-def test_unknown_provider_returns_none(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_unknown_provider_returns_none(request, monkeypatch):
     _clear_provider_env(monkeypatch)
-    with _real_config(tmp_path, monkeypatch, NESTED_STORED_KEY_TOML):
-        assert get_api_key("not-a-provider") is None
+    _seed_config(request, NESTED_STORED_KEY_TOML)
+    assert get_api_key("not-a-provider") is None
 
 
 def test_flat_dotted_settings_shape_is_still_supported(monkeypatch):

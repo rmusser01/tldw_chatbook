@@ -128,7 +128,7 @@ state; otherwise it would become an alternate unpinned execution path.
 
 - [TASK-19637](../tasks/task-19637%20-%20Atomically-pin-local-tool-workspace-execution.md)
 - [Approved design after review](../../Docs/superpowers/specs/2026-08-28-task-19637-atomic-local-tool-workspace-execution-design.md)
-- [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-317](317-console-project-instruction-local-state-and-preflight.md)
 - [ADR-094](094-raw-and-virtual-cli-execution-boundaries.md)
 - [Microsoft SetCurrentDirectory](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setcurrentdirectory)
 - [Microsoft process inheritance](https://learn.microsoft.com/en-us/windows/win32/procthread/inheritance)

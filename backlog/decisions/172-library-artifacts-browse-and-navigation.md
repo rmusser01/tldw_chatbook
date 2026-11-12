@@ -122,4 +122,4 @@ evidence are required; the reviewed browser mockup is visual evidence only.
 - [ADR-086: adaptive reader](086-library-adaptive-reader-shell.md)
 - [ADR-067: source pagination](067-library-top-level-pagination-contracts.md)
 - [ADR-123: artifact sharing](123-artifact-share-web-export.md)
-- [ADR-031: keys and footer](031-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-299: keys and footer](299-tui-keybinding-and-footer-hint-conventions.md)

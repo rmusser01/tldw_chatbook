@@ -1,0 +1,42 @@
+{
+  "runs": {
+    "control1": {
+      "median_input_ms": 232.9009500099346,
+      "median_attach_ms": 1315.8971999946516,
+      "worst_input_ms": 307.2509000194259,
+      "worst_attach_ms": 1743.1238999997731
+    },
+    "after1": {
+      "median_input_ms": 175.30654999427497,
+      "median_attach_ms": 1036.768599995412,
+      "worst_input_ms": 212.34019999974407,
+      "worst_attach_ms": 2106.490899983328
+    },
+    "after2": {
+      "median_input_ms": 153.73079999699257,
+      "median_attach_ms": 970.4241000144975,
+      "worst_input_ms": 171.06100000091828,
+      "worst_attach_ms": 1179.396799998358
+    },
+    "control2": {
+      "median_input_ms": 177.38310000277124,
+      "median_attach_ms": 1069.0489999833517,
+      "worst_input_ms": 248.38679999811575,
+      "worst_attach_ms": 1332.445900014136
+    }
+  },
+  "pooled": {
+    "control": {
+      "input_ms": 191.33319999673404,
+      "attach_ms": 1149.0844499930972
+    },
+    "after": {
+      "input_ms": 169.09024998312816,
+      "attach_ms": 979.4064500165405
+    }
+  },
+  "improvement_percent": {
+    "input_ms": 11.62524330016199,
+    "attach_ms": 14.766364646008046
+  }
+}

@@ -78,18 +78,14 @@ class ProfileTrackingService:
         return False
 
     async def local_external_catalog(self) -> list[dict]:
-        return [
-            _catalog_record("srv", [_tool_dict("run"), _tool_dict("fs_write")])
-        ]
+        return [_catalog_record("srv", [_tool_dict("run"), _tool_dict("fs_write")])]
 
     def effective_tool_states(
         self, tools: list[HubTool], *, profile_id: str = "default"
     ) -> dict[tuple[str, str], EffectiveToolState]:
         self.effective_tool_states_calls.append(profile_id)
         return {
-            (t.server_key, t.name): self._state_for(
-                t.server_key, t.name, profile_id
-            )
+            (t.server_key, t.name): self._state_for(t.server_key, t.name, profile_id)
             for t in tools
         }
 
@@ -324,9 +320,7 @@ def test_always_allow_verdict_persists_into_named_profile(running_loop):
         service=service,
         main_loop=running_loop,
         profile_id_provider=lambda: NAMED_PROFILE,
-        approval_callback=lambda pending: {
-            p.llm_name: "always_allow" for p in pending
-        },
+        approval_callback=lambda pending: {p.llm_name: "always_allow" for p in pending},
     )
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -348,9 +342,7 @@ def test_always_allow_verdict_without_provider_persists_default_profile(
     provider = MCPToolProvider(
         service=service,
         main_loop=running_loop,
-        approval_callback=lambda pending: {
-            p.llm_name: "always_allow" for p in pending
-        },
+        approval_callback=lambda pending: {p.llm_name: "always_allow" for p in pending},
     )
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -358,9 +350,7 @@ def test_always_allow_verdict_without_provider_persists_default_profile(
     result = provider.invoke(tool_id, {})
 
     assert result.ok is True
-    assert service.set_tool_state_calls == [
-        ("local:srv", "run", "allow", "default")
-    ]
+    assert service.set_tool_state_calls == [("local:srv", "run", "allow", "default")]
 
 
 # -- Persona require_confirmation floor at invoke (final-review FIX 1) --------

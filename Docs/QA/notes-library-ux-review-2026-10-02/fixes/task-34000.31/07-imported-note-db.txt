@@ -1,0 +1,11 @@
+# sqlite3 $HARNESS/runs/p1p1-t1-1/data/nl_review/tldw_chatbook_ChaChaNotes.db (read-only)
+# All active notes titled 'Paper notes: Retrieval practice', oldest first:
+#   row 1 = the renamed original; row 2 = Import once BEFORE the parser fix (block kept as body, fence at char 1, no keywords);
+#   row 3 = Import once AFTER the parser fix (body starts at the heading, fence_pos 0, both keywords restored).
+id|title|body_head|fence_pos|keywords
+27e32e98-0350-45da-87c7-0669f6669a38|Paper notes: Retrieval practice|# Advisor meeting — 2026-09-24\n\nAt|0|meeting, thesis
+573d53b3-e1a0-5920-b55e-d88b80771d6c|Paper notes: Retrieval practice|---\ntitle: 'Paper notes: Retrieval|1|
+81500c04-4faf-56c0-9ffe-bff4715d45cc|Paper notes: Retrieval practice|# Paper notes: Retrieval practice\n|0|meeting, thesis
+
+# total active notes:
+124

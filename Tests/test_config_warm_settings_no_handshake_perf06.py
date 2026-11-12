@@ -13,6 +13,7 @@ Deterministic: a call counter on ``config_participants.operation``, not timing.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import inspect
 import os
@@ -380,3 +381,93 @@ def test_the_owned_file_check_works_without_geteuid(
     posture = config_module._config_file_posture(plain)
     monkeypatch.delattr(config_module.os, "geteuid", raising=False)
     assert config_module._is_plain_owned_file(posture)
+
+
+@pytest.mark.asyncio
+async def test_warm_hits_on_an_event_loop_stamp_the_config_path_once_per_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33620.15: one identity stamp per loop batch, not per warm hit.
+
+    A Console send made 114-243 warm hits on the UI loop, each ``lstat``-ing
+    every component of the config path (53-251 ms per send in the mounted
+    harness). Hits the loop runs in one batch share one stamp; the next batch
+    stamps again, so a swap is still seen there.
+
+    Args:
+        monkeypatch: Counts ``_config_file_posture`` calls.
+    """
+    _warm_settings()
+    await asyncio.sleep(0)  # a fresh batch: warming stamped the one it ran in
+    real_posture = config_module._config_file_posture
+    stamps = [0]
+
+    def counted(path: Path) -> tuple:
+        stamps[0] += 1
+        return real_posture(path)
+
+    monkeypatch.setattr(config_module, "_config_file_posture", counted)
+    first_batch = [config_module.load_settings() for _ in range(25)]
+    assert stamps[0] == 1, f"25 warm hits in one loop batch stamped {stamps[0]} times"
+    assert all(result is first_batch[0] for result in first_batch)
+
+    await asyncio.sleep(0)
+    assert config_module.load_settings() is first_batch[0]
+    assert stamps[0] == 2, "the next loop batch reused the previous batch's stamp"
+
+
+@pytest.mark.asyncio
+async def test_a_config_file_replaced_between_loop_batches_is_not_served_warm(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The per-batch stamp still turns a replaced config file into a miss.
+
+    Args:
+        monkeypatch: Replaces the guarded rebuild with a marker.
+        tmp_path: pytest fixture; holds the swapped-out original.
+    """
+    _warm_settings()
+    path = config_module._get_effective_config_path()
+    if not path.exists():
+        pytest.skip("no config file to swap in this environment")
+    marker: dict = {"guarded": True}
+    monkeypatch.setattr(
+        config_module, "_load_settings_guarded", lambda **kwargs: marker
+    )
+    assert config_module.load_settings() is not marker  # warm, stamped this batch
+    await asyncio.sleep(0)
+
+    original = path.read_bytes()
+    target = tmp_path / "elsewhere.toml"
+    target.write_bytes(original)
+    backup = tmp_path / "original.toml"
+    os.replace(path, backup)
+    try:
+        os.replace(target, path)
+        assert config_module.load_settings() is marker
+    finally:
+        if path.is_symlink() or path.exists():
+            path.unlink()
+        os.replace(backup, path)
+
+
+def test_warm_hits_off_an_event_loop_still_stamp_every_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workers, scripts and sync callers keep the per-hit identity check.
+
+    Args:
+        monkeypatch: Counts ``_config_file_posture`` calls.
+    """
+    _warm_settings()
+    real_posture = config_module._config_file_posture
+    stamps = [0]
+
+    def counted(path: Path) -> tuple:
+        stamps[0] += 1
+        return real_posture(path)
+
+    monkeypatch.setattr(config_module, "_config_file_posture", counted)
+    for _ in range(5):
+        config_module.load_settings()
+    assert stamps[0] == 5

@@ -59,6 +59,7 @@ def _loop(database, *, now, handler) -> SchedulerLoop:
         handlers={"reminder": handler},
         clock=lambda: now,
         missed_fire_grace_seconds=60.0,
+        emergency_stop_path=database.db_path.with_name("stop.json"),
     )
 
 
@@ -172,6 +173,7 @@ def test_the_tick_records_how_long_its_handlers_held_the_loop(db):
         handlers={"reminder": handler},
         clock=lambda: clock["now"],
         missed_fire_grace_seconds=60.0,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     assert loop._last_tick_dispatch_seconds == 0.0
     loop.queue.load()
@@ -204,6 +206,7 @@ def test_a_raising_handler_still_records_the_tick_span(db):
         handlers={"reminder": handler},
         clock=lambda: clock["now"],
         missed_fire_grace_seconds=60.0,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     loop.queue.load()
     asyncio.run(loop.tick())
@@ -289,6 +292,7 @@ def test_head_of_line_blocking_produces_the_busy_attribution(db):
         handlers={"reminder": handler},
         clock=lambda: clock["now"],
         missed_fire_grace_seconds=60.0,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     original = loop._report_lateness_cause
 

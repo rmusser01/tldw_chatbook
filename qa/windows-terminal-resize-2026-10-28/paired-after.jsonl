@@ -1,0 +1,15 @@
+{"seconds": 0.0, "kind": "windows_size", "size": [98, 42]}
+{"seconds": 2.031, "kind": "app_resize_event", "size": [98, 42]}
+{"seconds": 2.047, "kind": "driver", "name": "WindowsResizeDriver", "input_mode": 520, "output_isatty": true, "render_isatty": true, "windows_terminal": true, "removed_automation_term_dumb": true, "textual": "8.2.8"}
+{"seconds": 4.125, "kind": "layout", "app": [98, 42], "screen": [98, 42], "regions": {"#screen-content": [0, 3, 98, 38], "#logs-destination-header": [0, 3, 98, 5], "#logs-window": [0, 8, 98, 33], "#app-log-display": [0, 9, 98, 30], "#screen-footer-status": [0, 41, 98, 1]}}
+{"seconds": 64.547, "kind": "app_resize_event", "size": [99, 43]}
+{"seconds": 64.953, "kind": "windows_size", "size": [131, 63]}
+{"seconds": 64.968, "kind": "app_resize_event", "size": [102, 45]}
+{"seconds": 65.0, "kind": "app_resize_event", "size": [131, 63]}
+{"seconds": 65.0, "kind": "layout", "app": [131, 63], "screen": [131, 63], "regions": {"#screen-content": [0, 3, 99, 39], "#logs-destination-header": [0, 3, 99, 5], "#logs-window": [0, 8, 99, 34], "#app-log-display": [0, 9, 99, 31], "#screen-footer-status": [0, 42, 99, 1]}}
+{"seconds": 65.031, "kind": "app_resize_event", "size": [135, 66]}
+{"seconds": 65.031, "kind": "app_resize_event", "size": [135, 67]}
+{"seconds": 65.14, "kind": "app_resize_event", "size": [135, 68]}
+{"seconds": 65.187, "kind": "layout", "app": [135, 68], "screen": [135, 68], "regions": {"#screen-content": [0, 3, 135, 63], "#logs-destination-header": [0, 3, 135, 5], "#logs-window": [0, 8, 135, 58], "#app-log-display": [0, 9, 135, 55], "#screen-footer-status": [0, 66, 135, 1]}}
+{"seconds": 65.218, "kind": "windows_size", "size": [135, 68]}
+{"seconds": 65.625, "kind": "layout", "app": [135, 68], "screen": [135, 68], "regions": {"#screen-content": [0, 3, 135, 64], "#logs-destination-header": [0, 3, 135, 5], "#logs-window": [0, 8, 135, 59], "#app-log-display": [0, 9, 135, 56], "#screen-footer-status": [0, 67, 135, 1]}}

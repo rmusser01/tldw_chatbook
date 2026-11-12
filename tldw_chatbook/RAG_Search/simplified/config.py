@@ -8,7 +8,7 @@ sensible defaults and easy overrides.
 
 from dataclasses import dataclass, field, fields, asdict
 from typing import Optional, Dict, Any, List, Union
-from pathlib import Path
+from pathlib import Path, PurePath
 import os
 from loguru import logger
 
@@ -221,6 +221,12 @@ def default_chroma_persist_directory() -> Path:
     return get_user_data_dir() / "chromadb"
 
 
+def reject_nul_chroma_persist_directory(path: object) -> None:
+    """Reject invalid lexical path text before admission or normalization."""
+    if isinstance(path, (str, PurePath)) and "\x00" in str(path):
+        raise ValueError("Invalid Chroma persist_directory: path contains a null byte")
+
+
 def validate_chroma_persist_directory(persist_directory: Union[str, Path]) -> Path:
     """Validate and normalize a config-sourced Chroma ``persist_directory``.
 
@@ -273,6 +279,7 @@ def validate_chroma_persist_directory(persist_directory: Union[str, Path]) -> Pa
             the resulting path contains null bytes or another dangerous
             pattern (see ``validate_path_simple``).
     """
+    reject_nul_chroma_persist_directory(persist_directory)
     try:
         expanded = Path(persist_directory).expanduser()
         validate_path_simple(str(expanded))

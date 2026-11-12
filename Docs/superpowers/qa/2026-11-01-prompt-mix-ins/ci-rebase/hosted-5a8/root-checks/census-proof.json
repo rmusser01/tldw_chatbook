@@ -1,0 +1,11 @@
+{
+  "base": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+  "old_count": 1335,
+  "new_count": 1336,
+  "old_prefix_exact": true,
+  "appended": [
+    "Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the_old_visible_draft"
+  ],
+  "reader_cases_covered_by_existing_whole_file": "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py",
+  "sha256": "58561a8e9d9e369e41fb7c74a240da87fc2b4ac8d3c349a4a39b48f9adacb8d3"
+}

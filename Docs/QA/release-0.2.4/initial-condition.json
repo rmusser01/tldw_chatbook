@@ -1,0 +1,48 @@
+{
+  "CASE_identities": 15556,
+  "FD_threshold": 200,
+  "case_ledger": {
+    "bytes": 77380481,
+    "path": "CASE_EVIDENCE.json",
+    "sha256": "d92dfb27e046eecac0d4af22e7e3f62ce136695615224688a3f4c4676b582993"
+  },
+  "combined_raw_parent_outcomes": {
+    "error": 1581,
+    "failed": 13966,
+    "passed": 119256,
+    "skipped": 484,
+    "subtests passed": 1,
+    "xfailed": 8
+  },
+  "current_maintained_expected": 6,
+  "cut": "a0ae30b7ed9c313fe19cb3a0da5d95ebde182385",
+  "deferred_future_Roleplay_expected": 2,
+  "failed_collectors_separate": 9,
+  "initial_source_clean": true,
+  "local_full_consolidated_record_sha256": "506f1a2a30569737af52da89328c0e458bcf39df593489816b6a6dc0c41429e7",
+  "logical_parents": 135296,
+  "note": "Immutable initial result at frozen cut, before candidate repairs. Large raw reports and exact CASE notes remain in persistent local validation storage; paths below name those local artifacts, not repository files.",
+  "primary_attempts_finished": 386,
+  "primary_complete": 384,
+  "primary_files": 5657,
+  "primary_incomplete": 2,
+  "primary_result": {
+    "bytes": 3841107,
+    "path": "FRESH_BASELINE_RESULT.json",
+    "sha256": "9ad40aa77a63be2a73286b1e5b9182e97a88cd61eb29c89a646169deb0660081"
+  },
+  "qualification": "Initial failed baseline only; no final/native physical/device/model/other-platform qualification. Expected outcomes/skips/incomplete attempts are not passes or waivers.",
+  "release_ready": false,
+  "saved_FD_warned_sessions": 39,
+  "status": "FAILED_AND_NOT_FULLY_QUALIFIED",
+  "successful_subtests_separate_inside_one_parent": 5,
+  "supplemental_accounting_addendum": {
+    "bytes": 154600,
+    "path": "rca/supplemental-subtests-accounting-independent-addendum.json",
+    "sha256": "dabb9cb2c3ccb3e43663c8db4e2571d672a8409b30ab0454cc62d1bef46b7ff5"
+  },
+  "supplemental_files": 13,
+  "supplemental_groups_finished": 4,
+  "supplemental_independent_successful_parents": 873,
+  "unique_test_files": 5670
+}

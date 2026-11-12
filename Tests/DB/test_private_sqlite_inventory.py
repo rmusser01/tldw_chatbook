@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import warnings
 from collections import Counter
 from collections.abc import Iterable
@@ -108,11 +109,6 @@ EXPECTED_PARENT_CREATORS = {
         "tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage",
         "SQLiteStorage.__init__",
         "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        "ToolsSettingsWindow._backup_worker",
-        "backup_dir.mkdir(parents=True, exist_ok=True)",
     ),
     (
         "tldw_chatbook/Evals/eval_orchestrator",
@@ -505,8 +501,640 @@ def _qualified_core_recovery_dispatch(source_path, symbol, call):
     return owner_property is not None and len(owner_property.body) == 1 and isinstance(owner_property.body[0], ast.Return) and ast.dump(owner_property.body[0].value) == ast.dump(expected)
 
 
+_DETACHED_NORMALIZER_MODULE = "tldw_chatbook/Backup_Recovery/detached_layout"
+_DETACHED_NORMALIZER_REFERENCE = r'''
+def _check(cancel: Event) -> None:
+    if cancel.is_set():
+        raise InterruptedError("cancelled")
+
+
+def _wal_checksum(data: bytes, order: str, checksum=(0, 0)):
+    first, second = checksum
+    words = struct.unpack(order + "I" * (len(data) // 4), data)
+    for index in range(0, len(words), 2):
+        first = (first + words[index] + second) & 0xFFFFFFFF
+        second = (second + words[index + 1] + first) & 0xFFFFFFFF
+    return first, second
+
+
+def _validate_wal(path: Path, cancel: Event) -> None:
+    """Refuse damaged or unfinished frames instead of SQLite silently ignoring them."""
+    with _regular(path) as stream:
+        header = stream.read(32)
+        if len(header) != 32:
+            raise ValueError("detached_sqlite_wal_invalid")
+        magic, version, page_size = struct.unpack(">III", header[:12])
+        if (
+            magic not in (0x377F0682, 0x377F0683)
+            or version != 3007000
+            or page_size < 512
+            or page_size > 65536
+            or page_size & (page_size - 1)
+        ):
+            raise ValueError("detached_sqlite_wal_invalid")
+        order = "<" if magic == 0x377F0682 else ">"
+        checksum = _wal_checksum(header[:24], order)
+        if checksum != struct.unpack(">II", header[24:]):
+            raise ValueError("detached_sqlite_wal_invalid")
+        frames = 0
+        committed = False
+        while frame := stream.read(24 + page_size):
+            _check(cancel)
+            frames += 1
+            if (
+                len(frame) != 24 + page_size
+                or frame[8:16] != header[16:24]
+                or struct.unpack(">I", frame[:4])[0] == 0
+            ):
+                raise ValueError("detached_sqlite_wal_invalid")
+            checksum = _wal_checksum(frame[:8] + frame[24:], order, checksum)
+            if checksum != struct.unpack(">II", frame[16:24]):
+                raise ValueError("detached_sqlite_wal_invalid")
+            committed = struct.unpack(">I", frame[4:8])[0] != 0
+        if frames and not committed:
+            raise ValueError("detached_sqlite_wal_unfinished")
+
+
+def _normalize_sqlite(owner, source: Path, destination: Path, cancel: Event) -> int:
+    """Normalize only disposable copies and validate the complete committed image.
+
+    The acquired main/WAL/SHM set remains unchanged. SHM is rebuilt locally, never
+    trusted as evidence. All imported SQL is restricted before the first query.
+    """
+    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+    from .native_files import create_private_directory, create_private_file
+    from .sqlite_validation import _check as validate_connection
+    from .sqlite_validation import _installed_owner, validated_schema_version
+
+    _check(cancel)
+    if Path(str(source) + "-journal").exists():
+        raise ValueError("detached_sqlite_rollback_unsupported")
+    wal = Path(str(source) + "-wal")
+    if wal.exists() and wal.stat().st_size:
+        _validate_wal(wal, cancel)
+    limits = ArchiveLimits()
+    if any(
+        path.exists() and path.stat().st_size > limits.member_bytes
+        for path in (source, wal)
+    ):
+        raise ValueError("detached_sqlite_limit")
+    scratch = destination.parent / (
+        "normalize-" + hashlib.sha256(destination.name.encode()).hexdigest()
+    )
+    create_private_directory(scratch)
+    main = scratch / "source.sqlite3"
+    try:
+        for original, target in ((source, main), (wal, Path(str(main) + "-wal"))):
+            if not original.exists() or original == wal and not original.stat().st_size:
+                continue
+            with (
+                _regular(original) as incoming,
+                create_private_file(target) as fd,
+                os.fdopen(os.dup(fd), "wb") as output,
+            ):
+                while chunk := incoming.read(1024**2):
+                    _check(cancel)
+                    output.write(chunk)
+        installed = _installed_owner(owner.owner_id)
+        with open_recovery_validation(
+            installed.owner_id,
+            main,
+            writable=True,
+            with_restrictions=True,
+            cancel=cancel,
+        ) as (connection, restrictions):
+            issues, _ = validate_connection(
+                connection, installed, installed.schema_policy(), restrictions
+            )
+            if issues:
+                raise ValueError(issues[0])
+            with create_private_file(destination):
+                pass
+            with closing(sqlite3.connect(destination)) as output:
+                output.enable_load_extension(False)
+                output.execute("PRAGMA trusted_schema=OFF")
+
+                def progress(_status, _remaining, _total):
+                    _check(cancel)
+                    if restrictions.expired():
+                        raise ValueError("detached_sqlite_limit")
+
+                connection.backup(output, pages=64, progress=progress, sleep=0)
+                output.execute("PRAGMA journal_mode=DELETE")
+        return validated_schema_version(installed, destination, cancel)
+    except sqlite3.Error:
+        raise ValueError("detached_sqlite_invalid") from None
+
+'''
+
+
+def _qualified_detached_normalizer(production_module, tree):
+    """Qualify only the reviewed disposable output, never generic raw SQLite."""
+    if production_module != _DETACHED_NORMALIZER_MODULE:
+        return False
+    expected = ast.parse(_DETACHED_NORMALIZER_REFERENCE)
+    functions = {}
+    for reference in expected.body:
+        matches = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == reference.name
+        ]
+        if len(matches) != 1:
+            return False
+        actual = copy.deepcopy(matches[0])
+        for function in (actual, reference):
+            if ast.get_docstring(function) is not None:
+                function.body = function.body[1:]
+        if ast.dump(actual) != ast.dump(reference):
+            return False
+        functions[reference.name] = matches[0]
+
+    canonical = ast.parse("""
+import hashlib
+import sqlite3
+import struct
+from contextlib import closing
+from pathlib import Path
+from threading import Event
+from tldw_chatbook.Utils.platform_files import os
+from .archive_reader import _regular
+from .limits import ArchiveLimits
+""").body
+    signatures = ast.parse("""
+def _owner_items(source, selected, root, config, context, owners, normal, cancel):
+    pass
+
+def produce_detached_archive(source: Path, work: Path, cancel: Event) -> DetachedImportResult:
+    pass
+""").body
+    for reference in signatures:
+        matches = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == reference.name
+        ]
+        if (
+            len(matches) != 1
+            or matches[0].decorator_list
+            or ast.dump(matches[0].args) != ast.dump(reference.args)
+        ):
+            return False
+        actual_return = ast.dump(matches[0].returns) if matches[0].returns else None
+        expected_return = ast.dump(reference.returns) if reference.returns else None
+        if actual_return != expected_return:
+            return False
+        functions[reference.name] = matches[0]
+    # A same-spelled call must still resolve to these reviewed declarations.
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+            (alias.asname or alias.name) in functions for alias in node.names
+        ):
+            return False
+    protected = set(functions)
+    for reference in canonical:
+        alias = reference.names[0]
+        name = alias.asname or alias.name
+        protected.add(name)
+        bindings = [
+            node
+            for node in tree.body
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            and any((a.asname or a.name) == name for a in node.names)
+        ]
+        if len(bindings) != 1 or ast.dump(bindings[0]) != ast.dump(reference):
+            return False
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id in protected
+        ):
+            return False
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node.name in protected
+            and node not in functions.values()
+        ):
+            return False
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store):
+            root = node.value
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name) and root.id in protected:
+                return False
+
+    owners = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "_owner_items"
+    ]
+    producers = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "produce_detached_archive"
+    ]
+    if len(owners) != 1 or len(producers) != 1:
+        return False
+    caller = ast.parse("""
+if path not in normalized:
+    target_parent = normal / hashlib.sha256(str(path).encode()).hexdigest()
+    from .native_files import create_private_directory
+    create_private_directory(target_parent)
+    target = target_parent / path.name
+    versions[owner_id] = _normalize_sqlite(owners[owner_id], path, target, cancel)
+    normalized[path] = target
+    normalized_owners[path] = owner_id
+""").body[0]
+    blocks = [
+        n
+        for n in ast.walk(owners[0])
+        if isinstance(n, ast.If) and ast.dump(n.test) == ast.dump(caller.test)
+    ]
+    if len(blocks) != 1 or ast.dump(
+        ast.Module(body=blocks[0].body, type_ignores=[])
+    ) != ast.dump(ast.Module(body=caller.body, type_ignores=[])):
+        return False
+    references = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Name)
+        and isinstance(n.ctx, ast.Load)
+        and n.id == "_normalize_sqlite"
+    ]
+    if len(references) != 1 or references[0] not in list(ast.walk(blocks[0])):
+        return False
+    if any(
+        isinstance(n, ast.Attribute) and n.attr == "_normalize_sqlite"
+        for n in ast.walk(tree)
+    ):
+        return False
+    creators = {"create_private_directory", "create_private_file"}
+    for function, imported in (
+        (owners[0], "create_private_directory"),
+        (producers[0], "create_private_directory, create_private_file"),
+    ):
+        expected_import = ast.parse(f"from .native_files import {imported}").body[0]
+        creator_imports = []
+        for node in ast.walk(function):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                bound = {alias.asname or alias.name for alias in node.names}
+                if bound & protected:
+                    return False
+                if bound & creators:
+                    creator_imports.append(node)
+            if (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Store)
+                and node.id in creators
+            ):
+                return False
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and node.name in creators
+            ):
+                return False
+        if len(creator_imports) != 1 or ast.dump(creator_imports[0]) != ast.dump(
+            expected_import
+        ):
+            return False
+    producer = producers[0]
+    operational = [
+        n
+        for n in producer.body
+        if not isinstance(n, (ast.Import, ast.ImportFrom))
+        and not (
+            isinstance(n, ast.Expr)
+            and isinstance(n.value, ast.Constant)
+            and isinstance(n.value.value, str)
+        )
+    ]
+    entry = ast.parse("""
+_check(cancel)
+source, work = Path(source), Path(work)
+if not source.is_absolute() or not work.is_absolute() or source in work.parents or work in source.parents:
+    raise ValueError("detached_work_overlap")
+""").body
+    if [ast.dump(n) for n in operational[:3]] != [ast.dump(n) for n in entry]:
+        return False
+    staging = ast.parse("""
+create_private_directory(work)
+normal = work / "normalized"
+payload = work / "payload"
+directories = work / "directories"
+for path in (normal, payload, directories):
+    create_private_directory(path)
+""").body
+    starts = [
+        i
+        for i in range(len(operational) - len(staging) + 1)
+        if [ast.dump(n) for n in operational[i : i + len(staging)]]
+        == [ast.dump(n) for n in staging]
+    ]
+    if len(starts) != 1:
+        return False
+    calls = [
+        n
+        for n in ast.walk(producer)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "_owner_items"
+    ]
+    expected_call = ast.parse(
+        "_owner_items(source, selected, root, config, context, owners, normal, cancel)",
+        mode="eval",
+    ).body
+    if (
+        len(calls) != 1
+        or ast.dump(calls[0]) != ast.dump(expected_call)
+        or calls[0].lineno <= operational[starts[0] + len(staging) - 1].end_lineno
+    ):
+        return False
+    for function, counts in (
+        (producer, {"source": 1, "work": 1, "normal": 1, "cancel": 0}),
+        (owners[0], {"source": 0, "normal": 0, "owners": 0, "cancel": 0}),
+    ):
+        stores = Counter(
+            n.id
+            for n in ast.walk(function)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+        )
+        if any(stores[name] != count for name, count in counts.items()):
+            return False
+    return True
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        (
+            "        return validated_schema_version(installed, destination, cancel)",
+            "                return validated_schema_version(installed, destination, cancel)",
+        ),
+        (
+            "            with create_private_file(destination):\n                pass",
+            "            with create_private_file(source):\n                pass",
+        ),
+        ("pages=64", "pages=65"),
+        ("sleep=0", "sleep=1"),
+        ("progress=progress", "progress=None"),
+        ("connection.backup(output,", "alternate.backup(output,"),
+        ("connection.backup(output,", "connection.backup(main,"),
+        ("sqlite3.connect(destination)", "sqlite3.connect(source)"),
+        ("sqlite3.connect(destination)", "sqlite3.connect(main)"),
+        (
+            "sqlite3.connect(destination)",
+            'sqlite3.connect("file:source?mode=rw", uri=True)',
+        ),
+        (
+            "sqlite3.connect(destination)",
+            "sqlite3.connect(destination, factory=alternate)",
+        ),
+        ("sqlite3.connect(destination)", "sqlite3.connect(destination, **options)"),
+        ("closing(sqlite3.connect(destination))", "sqlite3.connect(destination)"),
+        ("with create_private_file(destination):", "with alternate(destination):"),
+        ("output.enable_load_extension(False)", "output.enable_load_extension(True)"),
+        ('output.execute("PRAGMA trusted_schema=OFF")', "pass"),
+        ('output.execute("PRAGMA journal_mode=DELETE")', "pass"),
+        ("installed = _installed_owner(owner.owner_id)", "installed = owner"),
+        (
+            "installed.owner_id,\n            main,",
+            "owner.owner_id,\n            main,",
+        ),
+        (
+            "installed.owner_id,\n            main,",
+            "installed.owner_id,\n            source,",
+        ),
+        ("with_restrictions=True", "with_restrictions=False"),
+        ("writable=True", "writable=False"),
+        ("cancel=cancel,", "cancel=None,"),
+        (
+            "connection, installed, installed.schema_policy(), restrictions",
+            "connection, owner, owner.schema_policy(), restrictions",
+        ),
+        (
+            "            issues, _ = validate_connection(",
+            (
+                "            with create_private_file(destination):\n                pass\n"
+                "            issues, _ = validate_connection("
+            ),
+        ),
+        ("raise ValueError(issues[0])", "pass"),
+        ("return validated_schema_version(installed, destination, cancel)", "return 0"),
+        ("if restrictions.expired():", "if False:"),
+        (
+            "                    _check(cancel)\n                    output.write(chunk)",
+            "                    output.write(chunk)",
+        ),
+        (
+            "                    _check(cancel)\n                    if restrictions.expired():",
+            "                    if restrictions.expired():",
+        ),
+        ("if cancel.is_set():", "if False:"),
+        ("_validate_wal(wal, cancel)", "pass"),
+        ("limits = ArchiveLimits()", "limits = alternate"),
+        ("from contextlib import closing", "from alternate import closing"),
+        ("import sqlite3", "import alternate as sqlite3"),
+        (
+            "from .sqlite_validation import _check as validate_connection",
+            "from .alternate import _check as validate_connection",
+        ),
+        (
+            "target_parent = normal / hashlib.sha256(str(path).encode()).hexdigest()",
+            "target_parent = source",
+        ),
+        ("create_private_directory(target_parent)", "pass"),
+        ("target = target_parent / path.name", "target = path"),
+        ('normal = work / "normalized"', "normal = source"),
+        ('raise ValueError("detached_work_overlap")', "pass"),
+        (
+            "    source, work = Path(source), Path(work)",
+            "    source, work = Path(source), Path(work)\n    work = source",
+        ),
+        ("def _normalize_sqlite(", "def unreviewed_normalize("),
+        (
+            "                connection.backup(output, pages=64, progress=progress, sleep=0)",
+            (
+                "                connection.backup(output, pages=64, progress=progress, sleep=0)\n"
+                "                connection.backup(output, pages=64, progress=progress, sleep=0)"
+            ),
+        ),
+        (
+            "            with closing(sqlite3.connect(destination)) as output:",
+            (
+                "            connection = alternate\n"
+                "            with closing(sqlite3.connect(destination)) as output:"
+            ),
+        ),
+        (
+            "            with closing(sqlite3.connect(destination)) as output:",
+            (
+                "            restrictions = alternate\n"
+                "            with closing(sqlite3.connect(destination)) as output:"
+            ),
+        ),
+        (
+            "            with closing(sqlite3.connect(destination)) as output:",
+            (
+                "            with closing(sqlite3.connect(destination)) as output:\n"
+                "                sqlite3.connect(destination)"
+            ),
+        ),
+    ],
+)
+def test_detached_normalizer_rejects_changed_safety_contract(before, after):
+    source = (PROJECT_ROOT / f"{_DETACHED_NORMALIZER_MODULE}.py").read_text()
+    assert before in source
+    assert not _qualified_detached_normalizer(
+        _DETACHED_NORMALIZER_MODULE, ast.parse(source.replace(before, after, 1))
+    )
+
+
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "\nsqlite3 = alternate\n",
+        "\nclosing = alternate\n",
+        "\nsqlite3.connect = alternate\n",
+        "\n_normalize_sqlite = alternate\n",
+        "\nalias = _normalize_sqlite\n",
+        (
+            "\ndef extra(owner, source, target, cancel):\n"
+            "    return _normalize_sqlite(owner, source, target, cancel)\n"
+        ),
+    ],
+)
+def test_detached_normalizer_rejects_rebinding_and_additional_callers(addition):
+    source = (PROJECT_ROOT / f"{_DETACHED_NORMALIZER_MODULE}.py").read_text()
+    assert not _qualified_detached_normalizer(
+        _DETACHED_NORMALIZER_MODULE, ast.parse(source + addition)
+    )
+
+
+def test_detached_normalizer_qualification_is_exact_and_source_only():
+    tree = _parse_source(PROJECT_ROOT / f"{_DETACHED_NORMALIZER_MODULE}.py")
+    assert _qualified_detached_normalizer(_DETACHED_NORMALIZER_MODULE, tree)
+    assert not _qualified_detached_normalizer(
+        _DETACHED_NORMALIZER_MODULE + "_other", tree
+    )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "caller_parameter",
+        "caller_hash_import",
+        "caller_binding",
+        "producer_binding",
+        "caller_binding_import",
+        "producer_parameter",
+        "producer_creator_import",
+        "producer_creator_rebinding",
+        "producer_creator_declaration",
+    ],
+)
+def test_detached_normalizer_rejects_caller_and_staging_binding_changes(damage):
+    tree = _parse_source(PROJECT_ROOT / f"{_DETACHED_NORMALIZER_MODULE}.py")
+    caller = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "_owner_items"
+    )
+    producer = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "produce_detached_archive"
+    )
+    if damage == "caller_parameter":
+        caller.args.kwonlyargs.append(ast.arg(arg="_normalize_sqlite"))
+        caller.args.kw_defaults.append(ast.parse("lambda *args: 0", mode="eval").body)
+    elif damage == "caller_hash_import":
+        caller.body.insert(1, ast.parse("from .alternate import hashlib").body[0])
+    elif damage in {"caller_binding", "producer_binding"}:
+        name = (
+            "_owner_items" if damage == "caller_binding" else "produce_detached_archive"
+        )
+        tree.body.append(ast.parse(f"{name} = alternate").body[0])
+    elif damage == "caller_binding_import":
+        tree.body.append(ast.parse("from .alternate import _owner_items").body[0])
+    elif damage == "producer_parameter":
+        producer.args.kwonlyargs.append(ast.arg(arg="_owner_items"))
+        producer.args.kw_defaults.append(ast.Name(id="alternate", ctx=ast.Load()))
+    elif damage == "producer_creator_import":
+        creator = next(
+            n
+            for n in producer.body
+            if isinstance(n, ast.ImportFrom) and n.module == "native_files"
+        )
+        creator.module = "alternate"
+    else:
+        first_creation = next(
+            i
+            for i, n in enumerate(producer.body)
+            if isinstance(n, ast.Expr)
+            and isinstance(n.value, ast.Call)
+            and isinstance(n.value.func, ast.Name)
+            and n.value.func.id == "create_private_directory"
+        )
+        replacement = (
+            "def create_private_directory(destination): pass"
+            if damage == "producer_creator_declaration"
+            else "create_private_directory = alternate"
+        )
+        producer.body.insert(first_creation, ast.parse(replacement).body[0])
+    assert not _qualified_detached_normalizer(_DETACHED_NORMALIZER_MODULE, tree)
+
+
 def _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
-    """Admit the six reviewed restore sites only with their fixed declarations."""
+    """Admit reviewed restore/normalization sites with their fixed authority."""
+    if production_module == _DETACHED_NORMALIZER_MODULE:
+        expected = ast.parse(
+            "open_recovery_validation(installed.owner_id, main, writable=True, "
+            "with_restrictions=True, cancel=cancel)",
+            mode="eval",
+        ).body
+        return (
+            symbol == "_normalize_sqlite"
+            and ast.dump(call) == ast.dump(expected)
+            and _qualified_detached_normalizer(
+                production_module, _parse_source(source_path)
+            )
+        )
+    if production_module == "tldw_chatbook/DB/recovery_response_rules":
+        if symbol != "prepare_imported_candidate" or ast.unparse(call) != (
+            "open_recovery_validation(owner.owner_id, candidate, writable=True, "
+            "with_restrictions=True, cancel=cancel)"
+        ):
+            return False
+        tree = _parse_source(source_path)
+        function = next(
+            (
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == symbol
+            ),
+            None,
+        )
+        if function is None:
+            return False
+        expected_owner = ast.parse(
+            'owner = next(a for a in core_adapters() if a.owner_id == "db.chachanotes.primary")'
+        ).body[0]
+        expected_validation = ast.parse(
+            "issues = validate_candidate(owner, candidate, cancel, migrate=False)"
+        ).body[0]
+        expected_guard = ast.parse("if issues:\n    raise ValueError(issues[0])").body[0]
+        statements = [node for node in function.body
+                      if not isinstance(node, (ast.Import, ast.ImportFrom))
+                      and not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))]
+        return (len(statements) == 4
+                and ast.dump(statements[0]) == ast.dump(expected_owner)
+                and ast.dump(statements[1]) == ast.dump(expected_validation)
+                and ast.dump(statements[2]) == ast.dump(expected_guard)
+                and isinstance(statements[3], ast.With)
+                and len(statements[3].items) == 1
+                and ast.dump(statements[3].items[0].context_expr) == ast.dump(call))
     declarations = {
         "tldw_chatbook/DB/recovery_operations": ("_SubscriptionsAdapter", "db.subscriptions"),
         "tldw_chatbook/Backup_Recovery/recovered_media": ("_RecoveredAdapter", "recovered.media"),
@@ -546,6 +1174,34 @@ def _qualified_file_notes_core_read(source_path, symbol, call):
     return any(isinstance(node, ast.Assign) and ast.dump(node) == ast.dump(expected)
                for node in ast.walk(tree))
 
+
+
+def _qualified_store_kernel_dispatch(source_path, symbol, call):
+    """Admit the store kernel's per-subclass owner dispatch (ADR-353).
+
+    The ONE qualified connect lives in SQLiteStoreKernel._get_connection;
+    each subclass declares a class-level _kernel_sqlite_owner that
+    _init_store_kernel validates non-empty and that must resolve to a
+    registered, documented owner policy at connect time (registry<->doc
+    parity). The allowance is tied to that validation being present.
+    """
+    if symbol not in {
+        "SQLiteStoreKernel._get_connection",
+        "SQLiteStoreKernel._open_connection",
+    } or not call.args:
+        return False
+    if ast.unparse(call.args[0]) != "self._kernel_sqlite_owner":
+        return False
+    tree = _parse_source(source_path)
+    qualified = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "connect_private_sqlite" and node.args
+        and not isinstance(node.args[0], ast.Constant)
+    ]
+    if len(qualified) != 1:
+        return False
+    return "if not self._kernel_sqlite_owner:" in source_path.read_text()
 
 def _private_sqlite_seam_violations(
     source_path: Path,
@@ -595,6 +1251,8 @@ def _private_sqlite_seam_violations(
                 if production_module == "tldw_chatbook/DB/recovery_core" and _qualified_core_recovery_dispatch(source_path, symbol, call):
                     continue
                 if production_module == "tldw_chatbook/Notes/recovery" and _qualified_file_notes_core_read(source_path, symbol, call):
+                    continue
+                if production_module == "tldw_chatbook/DB/store_kernel" and _qualified_store_kernel_dispatch(source_path, symbol, call):
                     continue
                 violations.append(
                     f"{production_module}:{symbol}: non-literal {keyword_name}"
@@ -654,6 +1312,7 @@ def _assert_raw_connection_census(
         "require_native_close_policy_support",
     )
     child_proof_site = ("tldw_chatbook/TTS/profile_sqlite_proof", "TTSProof.initialize")
+    normalizer_site = (_DETACHED_NORMALIZER_MODULE, "_normalize_sqlite")
     if not seam_exists:
         assert sum(current.values()) == 31
         assert current == documented_legacy
@@ -667,7 +1326,7 @@ def _assert_raw_connection_census(
     # check. Its one raw call is admitted only by the strict source guard below.
     assert current[runtime_probe_site] == 1
     assert current == Counter(
-        {seam_site: 4, runtime_probe_site: 1, child_proof_site: 1}
+        {seam_site: 4, runtime_probe_site: 1, child_proof_site: 1, normalizer_site: 1}
     )
 
 
@@ -743,16 +1402,24 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C57 discovers native fleet results at launch without migration (ADR-135).
         # C92 owns local workflow definitions and recoverable authoring drafts.
         # C93/C94 own plugin registry and in-memory schema validation.
+        # C95 validates the installed Guardian v1/v2 recovery catalogs.
+        # C97 was the SQLiteStoreKernel contract-test owner (TASK-33132); the
+        # test registers it itself since TASK-39053, so C97 is retired.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
         # C89 validates recovered-media restore edges against staged catalog
         # rows and archive-relative payload topology under the existing owner.
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
-        for number in range(1, 95) if number not in {10, 75}
+        # C08/C09 were the legacy settings window's VACUUM and integrity
+        # workers; they left with the window (TASK-33244).
+        for number in range(1, 99) if number not in {8, 9, 10, 75, 97}
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 39) if number not in {10, 11, 12, 16, 34}
+        # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
+        f"B{number:02d}"
+        for number in range(1, 41)
+        if number not in {4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 34}
     ]
 
 
@@ -771,6 +1438,11 @@ def test_raw_connection_census_is_qualified_and_transition_aware() -> None:
 
     if not seam_exists:
         assert len({module for module, _symbol in current}) == 18
+    if seam_exists:
+        assert _qualified_detached_normalizer(
+            _DETACHED_NORMALIZER_MODULE,
+            _parse_source(PROJECT_ROOT / f"{_DETACHED_NORMALIZER_MODULE}.py"),
+        )
     _assert_raw_connection_census(
         documented_legacy,
         current,
@@ -786,6 +1458,7 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
         "require_native_close_policy_support",
     )
     child_proof_site = ("tldw_chatbook/TTS/profile_sqlite_proof", "TTSProof.initialize")
+    normalizer_site = (_DETACHED_NORMALIZER_MODULE, "_normalize_sqlite")
     documented = Counter({legacy_site: 31})
 
     _assert_raw_connection_census(
@@ -802,13 +1475,13 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({seam_site: 4, runtime_probe_site: 1, child_proof_site: 1}),
+        Counter({seam_site: 4, runtime_probe_site: 1, child_proof_site: 1, normalizer_site: 1}),
         seam_exists=True,
     )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({seam_site: 5, runtime_probe_site: 1, child_proof_site: 1}),
+            Counter({seam_site: 5, runtime_probe_site: 1, child_proof_site: 1, normalizer_site: 1}),
             seam_exists=True,
         )
     with pytest.raises(AssertionError):
@@ -820,6 +1493,7 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
                     seam_site: 4,
                     runtime_probe_site: 1,
                     child_proof_site: 1,
+                    normalizer_site: 1,
                 }
             ),
             seam_exists=True,
@@ -833,6 +1507,7 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
                     seam_site: 1,
                     runtime_probe_site: 1,
                     child_proof_site: 1,
+                    normalizer_site: 1,
                     ("tldw_chatbook/new_owner", "open_database"): 1,
                 }
             ),
@@ -841,15 +1516,24 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
-            Counter({seam_site: 4, runtime_probe_site: 2, child_proof_site: 1}),
+            Counter({seam_site: 4, runtime_probe_site: 2, child_proof_site: 1, normalizer_site: 1}),
             seam_exists=True,
         )
+    for site, count in (
+        (normalizer_site, 0), (normalizer_site, 2),
+        ((_DETACHED_NORMALIZER_MODULE, "other"), 1),
+        ((_DETACHED_NORMALIZER_MODULE + "_other", "_normalize_sqlite"), 1),
+    ):
+        changed = Counter({seam_site: 4, runtime_probe_site: 1, child_proof_site: 1})
+        changed[site] = count
+        with pytest.raises(AssertionError):
+            _assert_raw_connection_census(documented, changed, seam_exists=True)
     for child_count in (0, 2):
         with pytest.raises(AssertionError):
             _assert_raw_connection_census(
                 documented,
                 Counter(
-                    {seam_site: 4, runtime_probe_site: 1, child_proof_site: child_count}
+                    {seam_site: 4, runtime_probe_site: 1, child_proof_site: child_count, normalizer_site: 1}
                 ),
                 seam_exists=True,
             )
@@ -1356,7 +2040,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 3,
             "backup_open_connections_to_private": 2,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 26,
+            "copy_private_sqlite": 22,
             "migrate_profile_store_to_candidate": 1,
         }
     )
@@ -1371,6 +2055,8 @@ def _assert_direct_backup_census(
 ) -> None:
     calls: Counter[tuple[str, str, str]] = Counter()
     for module, tree in sources:
+        if module == _DETACHED_NORMALIZER_MODULE:
+            assert _qualified_detached_normalizer(module, tree)
         visitor = _QualifiedCallNodeVisitor(
             lambda call: (
                 isinstance(call.func, ast.Attribute) and call.func.attr == "backup"
@@ -1386,6 +2072,7 @@ def _assert_direct_backup_census(
     assert calls == Counter(
         {
             ("tldw_chatbook/DB/private_sqlite", "_backup_pages", "source"): 1,
+            (_DETACHED_NORMALIZER_MODULE, "_normalize_sqlite", "connection"): 1,
             (
                 "tldw_chatbook/DB/base_db",
                 "_QuiescentSQLiteConnection.backup",
@@ -1409,6 +2096,9 @@ def test_direct_backup_census_rejects_unreviewed_calls(mutation: str) -> None:
             "        super().backup(target)\n"
         ),
     }
+    sources[_DETACHED_NORMALIZER_MODULE] = (
+        PROJECT_ROOT / f"{_DETACHED_NORMALIZER_MODULE}.py"
+    ).read_text()
     _assert_direct_backup_census(
         (module, ast.parse(code)) for module, code in sources.items()
     )
@@ -1441,13 +2131,6 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
         )
         for source_path in PRODUCTION_ROOT.rglob("*.py")
     )
-
-    settings_path = PROJECT_ROOT / "tldw_chatbook/UI/Tools_Settings_Window.py"
-    settings_copy_count = sum(
-        isinstance(node, ast.Call) and _is_named_call(node, "shutil", "copy2")
-        for node in ast.walk(_parse_source(settings_path))
-    )
-    assert settings_copy_count == 0
 
     expected_calls = Counter(
         {
@@ -1492,14 +2175,11 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
                 "ProfileMigrationBoundarySnapshot.backup_to",
                 "backup_profile_migration_boundary",
             ): 1,
-            (
-                "tldw_chatbook/UI/Tools_Settings_Window",
-                "ToolsSettingsWindow._backup_worker",
-                "copy_private_sqlite",
-            ): 1,
         }
     )
     expected_calls.update({
+        ("tldw_chatbook/DB/recovery_dreams_guardian", "_GuardianAdapter.capture", "copy_private_sqlite"): 1,
+        ("tldw_chatbook/DB/recovery_dreams_guardian", "_DreamsAdapter.capture", "copy_private_sqlite"): 1,
         ('tldw_chatbook/Scheduling/recovery', '_ScheduledTasksAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Sync_Interop/recovery', '_SyncAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Notes/recovery', '_FileNotesAdapter.capture', "copy_private_sqlite"): 1,
@@ -1712,7 +2392,7 @@ def test_explicit_exclusions_and_absence_of_async_owner_are_documented() -> None
             isinstance(node, ast.Call) and _is_named_call(node, "raw", method)
             for node in ast.walk(json_backup)
         )
-        for method in ("_file", "_replace")
+        for method in ("file", "replace")
     )
     assert not any(
         isinstance(node, ast.Call) and _is_sqlite3_connect(node)
@@ -1748,6 +2428,8 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
         "recovery.domain.evals", "recovery.domain.study",
     }
     installed_domain_authority |= {
+        'recovery.operations.guardian',
+        'recovery.operations.dreams',
         'recovery.operations.workspaces',
         'recovery.operations.agent_runs',
         'recovery.operations.subscriptions',
@@ -1848,3 +2530,31 @@ def test_plugins_registry_is_private_readonly_and_memory_without_backup() -> Non
         "PluginRegistry.__init__",
         "PluginRegistry._reference_schema",
     }
+
+
+@pytest.mark.parametrize("damage", ["owner", "path", "namespace", "validation", "guard", "reassign", "order"])
+def test_response_rule_import_dispatch_is_exact_and_validated(tmp_path, damage):
+    path = PROJECT_ROOT / "tldw_chatbook/DB/recovery_response_rules.py"
+    source = path.read_text()
+    module = "tldw_chatbook/DB/recovery_response_rules"
+    _, clean = _private_sqlite_seam_violations(path, module)
+    assert clean == []
+    if damage == "owner":
+        source = source.replace('a.owner_id == "db.chachanotes.primary"', 'a.owner_id == "db.media.primary"')
+    elif damage == "path":
+        source = source.replace("owner.owner_id, candidate, writable=True", "owner.owner_id, alternate, writable=True")
+    elif damage == "namespace":
+        module += "_unreviewed"
+    elif damage == "validation":
+        source = source.replace("issues = validate_candidate(owner, candidate, cancel, migrate=False)", "issues = ()")
+    elif damage == "guard":
+        source = source.replace("raise ValueError(issues[0])", "pass")
+    elif damage == "reassign":
+        source = source.replace("    with open_recovery_validation(", '    owner = requested_owner\n    with open_recovery_validation(')
+    else:
+        line = '    issues = validate_candidate(owner, candidate, cancel, migrate=False)\n'
+        source = source.replace(line, "") + line
+    candidate = tmp_path / "recovery.py"
+    candidate.write_text(source)
+    _, violations = _private_sqlite_seam_violations(candidate, module)
+    assert any("unqualified recovery validation" in violation for violation in violations)

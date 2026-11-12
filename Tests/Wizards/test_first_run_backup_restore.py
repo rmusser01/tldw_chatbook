@@ -1,4 +1,10 @@
-"""First-run entry uses the canonical view without committing setup choices."""
+"""First-run entry uses the canonical view without committing setup choices.
+
+TASK-34100.16 [entry-exit-handoff-16]: setup's "Restore a backup" opens that
+view directly on Inspect, titled "Restore from a backup" (it used to open the
+generic home, Create backup first), and Esc -- pressed with focus in the
+archive field it now starts in -- still returns to the same setup surface.
+"""
 
 import pytest
 
@@ -28,8 +34,10 @@ class Host(App):
         self.results = []
     def on_mount(self):
         self.push_screen(Welcome() if sys.argv[1] == 'welcome' else SetupRecoveryDialog(), self.results.append)
-    def action_backup_restore(self):
-        self.push_screen(BackupRestoreScreen(self.service, config_paths=(selector,)))
+    def action_backup_restore(self, mode="home"):
+        self.push_screen(
+            BackupRestoreScreen(self.service, config_paths=(selector,), initial_mode=mode)
+        )
 async def main():
     app = Host()
     try:
@@ -44,6 +52,10 @@ async def main():
             assert isinstance(app.screen, BackupRestoreScreen), type(app.screen)
             assert app.screen.service is app.service
             assert app.service.current() is None
+            assert str(app.screen.query_one('#backup-title').render()) == 'Restore from a backup'
+            assert app.screen.query_one('#backup-inspect-form').display
+            assert not app.screen.query_one('#backup-home').display
+            assert app.screen.focused is app.screen.query_one('#backup-source')
             await pilot.press('escape')
             assert app.screen is original
             assert not app.results
@@ -85,6 +97,9 @@ async def main():
         assert isinstance(app.screen, BackupRestoreScreen), type(app.screen)
         assert app.screen.service is app.recovery_service
         assert app.recovery_service.current() is None
+        assert str(app.screen.query_one('#backup-title').render()) == 'Restore from a backup'
+        assert app.screen.query_one('#backup-inspect-form').display
+        assert not app.screen.query_one('#backup-home').display
         await pilot.press('escape')
         assert app.screen is wizard
         assert selector.read_bytes() == before

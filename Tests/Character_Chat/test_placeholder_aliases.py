@@ -2,7 +2,9 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import replace_placeholders
 
 
 def test_new_character_side_aliases():
-    out = replace_placeholders("Hi {{user}}, I am {{char}}/{{character}}/{{persona}}.", "Ada", "Sam")
+    out = replace_placeholders(
+        "Hi {{user}}, I am {{char}}/{{character}}/{{persona}}.", "Ada", "Sam"
+    )
     assert out == "Hi Sam, I am Ada/Ada/Ada."
 
 

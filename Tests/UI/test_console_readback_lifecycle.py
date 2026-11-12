@@ -12,6 +12,7 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_state", ["stopped", "failed"])
 @pytest.mark.parametrize("stale_context", [False, True])

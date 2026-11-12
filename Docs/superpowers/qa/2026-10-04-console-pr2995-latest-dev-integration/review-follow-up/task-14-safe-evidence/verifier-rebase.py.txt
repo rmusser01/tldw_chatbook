@@ -1,0 +1,2 @@
+from common import *
+sys.exit(run('rebase',['git','-c','gc.auto=0','rebase','--onto',NEW,OLD]))

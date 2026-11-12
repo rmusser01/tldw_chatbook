@@ -1253,3 +1253,81 @@ def test_private_mutation_revision_rejects_bool_as_invalid_not_conflict(
             expected_revision=True,
             target="executing",
         )
+
+
+@pytest.mark.parametrize("selection", ["custom-ep:identity-a", "custom-ep:Identity-A"])
+def test_bound_v3_rejects_same_execution_foreign_selection(selection):
+    neutral = parse_provider_continuation_json(
+        json.dumps(_checkpoint(provider="custom-hosted", protocol="chat_completions"))
+    )
+    target = ContinuationRestoreTarget(
+        provider="custom-hosted",
+        protocol="chat_completions",
+        model=neutral.model,
+        api_base_url=neutral.api_base_url,
+        selected_provider=selection,
+    )
+    bound = continuation_module.bind_continuation_to_target(neutral, target)
+    assert bound.schema_version == 3
+    assert bound.selected_provider == selection
+    assert bound.managed_resume is None
+    assert (
+        parse_provider_continuation_json(dump_provider_continuation_json(bound))
+        == bound
+    )
+    validate_continuation_restore(bound, target)
+    continuation_module.validate_continuation_execution_target(
+        bound, replace(target, selected_provider=None)
+    )
+    for other in (None, "custom-ep:identity-b", "custom-hosted"):
+        with pytest.raises(ContinuationConflictError):
+            validate_continuation_restore(
+                bound, replace(target, selected_provider=other)
+            )
+    with pytest.raises(ContinuationConflictError):
+        validate_continuation_restore(neutral, target)
+    with pytest.raises(ContinuationConflictError):
+        continuation_module.bind_continuation_to_target(
+            bound, replace(target, selected_provider="custom-ep:identity-b")
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("selected_provider", None),
+        ("selected_provider", ""),
+        ("selected_provider", "x" * 4097),
+        ("schema_version", 4),
+        ("managed_resume", {}),
+    ],
+)
+def test_v3_invalid_identity_or_envelope_is_refused(field, value):
+    payload = dict(
+        _checkpoint(),
+        schema_version=3,
+        selected_provider="deepseek",
+        managed_resume=None,
+    )
+    payload[field] = value
+    with pytest.raises(ContinuationValidationError):
+        parse_provider_continuation_json(json.dumps(payload))
+
+
+def test_legacy_bytes_and_explicit_builtin_restore_remain_unchanged():
+    payload = _checkpoint()
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    checkpoint = parse_provider_continuation_json(encoded)
+    assert dump_provider_continuation_json(checkpoint) == encoded
+    target = ContinuationRestoreTarget(
+        provider="deepseek",
+        protocol="responses",
+        model=checkpoint.model,
+        api_base_url=checkpoint.api_base_url,
+        selected_provider="deepseek",
+    )
+    validate_continuation_restore(checkpoint, target)
+    with pytest.raises(ContinuationConflictError):
+        validate_continuation_restore(
+            checkpoint, replace(target, selected_provider="custom-ep:fake")
+        )

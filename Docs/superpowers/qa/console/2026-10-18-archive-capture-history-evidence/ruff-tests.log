@@ -1,0 +1,150 @@
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_archive_recovery_followup.py:3:1
+   |
+ 1 |   """A new native user turn retains authenticated immutable archive selection."""
+ 2 |
+ 3 | / import asyncio
+ 4 | | import json
+ 5 | | import socket
+ 6 | | import threading
+ 7 | | from dataclasses import replace
+ 8 | | from functools import partial
+ 9 | | from types import SimpleNamespace
+10 | |
+11 | | import pytest
+12 | |
+13 | | from Tests.Chat.test_archive_recovery_operations import (
+14 | |     recovery_stores as recovery_stores,  # noqa: PLC0414 - pytest fixture export
+15 | | )
+16 | | from Tests.Chat.test_console_archive_recovery_dispatch import RecoveryGateway
+17 | | from Tests.Chat.test_console_runtime_lifetime import _View
+18 | | from Tests.Chat.test_console_prepared_request import _private_group
+19 | | from Tests.Chat.test_console_turn_library_authority import (
+20 | |     _allowed_candidate,
+21 | |     _execution_configuration,
+22 | | )
+23 | | from tldw_chatbook.Agents.library_rag_tool_provider import LibraryRagToolProvider
+24 | | from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+25 | | from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+26 | | from tldw_chatbook.Chat.console_agent_bridge import (
+27 | |     ConsoleAgentBridge,
+28 | |     ConsoleAgentTraceRequestFactory,
+29 | | )
+30 | | from tldw_chatbook.Chat.console_chat_controller import (
+31 | |     ConsoleChatController,
+32 | |     _flatten_preflight_messages,
+33 | | )
+34 | | from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+35 | | from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+36 | | from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+37 | |     ConsoleEgressClass,
+38 | |     ConsoleResolvedDestination,
+39 | | )
+40 | | from tldw_chatbook.Chat.console_library_policy import (
+41 | |     ConsoleAssistantLibraryAccess,
+42 | |     ConsoleAutoRetrieve,
+43 | | )
+44 | | from tldw_chatbook.Chat.console_prepared_request import (
+45 | |     CONTINUATION_OWNER_KEY,
+46 | |     THINKING_OWNER_KEY,
+47 | |     build_console_request,
+48 | |     thaw_json,
+49 | | )
+50 | | from tldw_chatbook.Chat.console_provider_gateway import (
+51 | |     ConsoleProviderGateway,
+52 | |     ConsoleProviderResolution,
+53 | |     ProviderToolCalls,
+54 | | )
+55 | | from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, _library_provider_for_app
+56 | | from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+57 | | from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+58 | | from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+59 | | from tldw_chatbook.Chat.console_trace_provenance import (
+60 | |     ConsoleRequestRoute,
+61 | |     DerivedTraceProvenance,
+62 | |     ProviderArtifactTraceProvenance,
+63 | |     SavedRevisionTraceProvenance,
+64 | |     TraceProvenanceSource,
+65 | |     TraceTransformKind,
+66 | | )
+67 | | from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+68 | | from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+69 | | from tldw_chatbook.Chat.console_thinking_history import (
+70 | |     ResolvedThinkingBlock,
+71 | |     ThinkingOwnerGroup,
+72 | | )
+73 | | from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+74 | | from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
+75 | | from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
+   | |__________________________________________________________________________________^
+help: Organize imports
+   |
+16 | from Tests.Chat.test_console_archive_recovery_dispatch import RecoveryGateway
+17 + from Tests.Chat.test_console_prepared_request import _private_group
+18 | from Tests.Chat.test_console_runtime_lifetime import _View
+   - from Tests.Chat.test_console_prepared_request import _private_group
+19 | from Tests.Chat.test_console_turn_library_authority import (
+--------------------------------------------------------------------------------
+55 | from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, _library_provider_for_app
+56 + from tldw_chatbook.Chat.console_thinking_history import (
+57 +     ResolvedThinkingBlock,
+58 +     ThinkingOwnerGroup,
+59 + )
+60 | from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+--------------------------------------------------------------------------------
+72 | from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+   - from tldw_chatbook.Chat.console_thinking_history import (
+   -     ResolvedThinkingBlock,
+   -     ThinkingOwnerGroup,
+   - )
+73 | from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+   |
+
+F821 Undefined name `transport_count`
+   --> Tests/Chat/test_console_archive_recovery_followup.py:557:44
+    |
+555 |         assert not rig.recovery.authenticates(authority)
+556 |         assert authority.run_id is None
+557 |         assert rig.gateway.stream_calls == transport_count
+    |                                            ^^^^^^^^^^^^^^^
+558 |         assert len(rig.trace_requests) == boundary_count
+559 |         assert not rig.cards
+    |
+
+F821 Undefined name `boundary_count`
+   --> Tests/Chat/test_console_archive_recovery_followup.py:558:43
+    |
+556 |         assert authority.run_id is None
+557 |         assert rig.gateway.stream_calls == transport_count
+558 |         assert len(rig.trace_requests) == boundary_count
+    |                                           ^^^^^^^^^^^^^^
+559 |         assert not rig.cards
+560 |         assert rig.db.get_conversation_by_id(rig.first)["archived"] == 1
+    |
+
+F841 Local variable `transport_count` is assigned to but never used
+   --> Tests/Chat/test_console_archive_recovery_followup.py:653:5
+    |
+651 |     )
+652 |     offset = len(rig.gateway.messages_seen)
+653 |     transport_count = rig.gateway.stream_calls
+    |     ^^^^^^^^^^^^^^^
+654 |     boundary_count = len(rig.trace_requests)
+655 |     rig.gateway.phase, rig.gateway.index = "restore", 0
+    |
+help: Remove assignment to unused variable `transport_count`
+
+F841 Local variable `boundary_count` is assigned to but never used
+   --> Tests/Chat/test_console_archive_recovery_followup.py:654:5
+    |
+652 |     offset = len(rig.gateway.messages_seen)
+653 |     transport_count = rig.gateway.stream_calls
+654 |     boundary_count = len(rig.trace_requests)
+    |     ^^^^^^^^^^^^^^
+655 |     rig.gateway.phase, rig.gateway.index = "restore", 0
+656 |     turn = asyncio.create_task(rig.send("Restore the second one"))
+    |
+help: Remove assignment to unused variable `boundary_count`
+
+Found 5 errors.
+[*] 1 fixable with the `--fix` option (2 hidden fixes can be enabled with the `--unsafe-fixes` option).

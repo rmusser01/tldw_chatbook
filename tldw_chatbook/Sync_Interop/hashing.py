@@ -17,7 +17,7 @@ HASH_VERSION = 1
 
 def canonical_thinking_blocks_json(value: object) -> str:
     """Return one supported thinking envelope's canonical JSON representation."""
-    from tldw_chatbook.Chat.thinking_blocks import (
+    from tldw_chatbook.Provider_Contract.thinking_blocks import (
         dump_thinking_blocks_json,
         parse_thinking_blocks_json,
     )

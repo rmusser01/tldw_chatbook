@@ -97,6 +97,15 @@ def _db(tmp_path) -> SubscriptionsDB:
     return SubscriptionsDB(tmp_path / "subs.db", "test")
 
 
+@pytest.fixture
+def db(tmp_path):
+    database = _db(tmp_path)
+    try:
+        yield database
+    finally:
+        database.close()
+
+
 def _new_source(db, watchlist_id, name) -> int:
     """Add a subscription and attach it to a watchlist."""
     source_id = db.add_subscription(
@@ -176,7 +185,8 @@ def _junction(db, briefing_id) -> list[tuple[int, int]]:
 
 
 @pytest.mark.asyncio
-async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_generation_happy_path_writes_everything(monkeypatch, db):
     """One generation, end to end: body, counts, junction flags, watermark.
 
     Seeds more items than `DEFAULT_ITEM_CAP` so the overflow leg is real
@@ -190,7 +200,6 @@ async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
         "resolve_persisted_briefing_defaults",
         lambda: ("local-llama", "local-model"),
     )
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
 
@@ -257,9 +266,9 @@ async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
-    db = _db(tmp_path)
-    watchlist = WatchlistBundleService(db).create(name="Ordered")['id']
+@pytest.mark.bootstrap_profile
+async def test_generation_writes_ordered_snapshot_provenance(db):
+    watchlist = WatchlistBundleService(db).create(name="Ordered")["id"]
     source = _new_source(db, watchlist, "ordered")
     first = _add_article(db, source, "First", age_hours=2)
     second = _add_article(db, source, "Second", queued=True, age_hours=1)
@@ -294,7 +303,9 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
     ).fetchone()[0]
     assert effective_date not in {published, created}
     selection = select_briefing_items(db, watchlist, mode="auto_featured")
-    reply = f"Second first [item {second}], then [item {first}], repeat [item {second}]."
+    reply = (
+        f"Second first [item {second}], then [item {first}], repeat [item {second}]."
+    )
 
     row = await generate_briefing(db, watchlist, chat=_FakeChat(reply=reply))
 
@@ -362,9 +373,9 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_provenance_and_complete_publication_roll_back_together(tmp_path):
-    db = _db(tmp_path)
-    watchlist = WatchlistBundleService(db).create(name="Atomic")['id']
+@pytest.mark.bootstrap_profile
+async def test_provenance_and_complete_publication_roll_back_together(db):
+    watchlist = WatchlistBundleService(db).create(name="Atomic")["id"]
     source = _new_source(db, watchlist, "atomic")
     item_id = _add_article(db, source, "Atomic item")
     db.conn.execute(
@@ -385,20 +396,24 @@ async def test_provenance_and_complete_publication_roll_back_together(tmp_path):
         "SELECT id, status FROM briefings WHERE watchlist_id = ?", (watchlist,)
     ).fetchone()
     assert briefing["status"] == "generating"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM briefing_items WHERE briefing_id = ?", (briefing["id"],)
-    ).fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM briefing_items WHERE briefing_id = ?",
+            (briefing["id"],),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio
-async def test_llm_failure_is_honest_and_loses_nothing(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_llm_failure_is_honest_and_loses_nothing(db):
     """THE named invariant: a failed generation never advances coverage.
 
     Asserted through its consequence -- the next attempt re-selects the same
     item identities -- rather than through the column alone, because that is
     the property the user actually has (no item is silently skipped).
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
 
@@ -406,7 +421,9 @@ async def test_llm_failure_is_honest_and_loses_nothing(tmp_path):
     prior = db.insert_briefing(watchlist)
     db.update_briefing(prior, status="complete", covers_through_item_id=old_item)
 
-    fresh_ids = [_add_article(db, source, f"Fresh {n}", age_hours=10 - n) for n in range(3)]
+    fresh_ids = [
+        _add_article(db, source, f"Fresh {n}", age_hours=10 - n) for n in range(3)
+    ]
 
     boom = _FakeChat(error=RuntimeError("provider exploded: 503 upstream"))
     failed = await generate_briefing(db, watchlist, chat=boom)
@@ -449,13 +466,13 @@ async def test_llm_failure_is_honest_and_loses_nothing(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_empty_window_is_a_row_not_an_absence(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_empty_window_is_a_row_not_an_absence(db):
     """No items -> a visible `empty` row, no provider call, watermark held.
 
     Silence is never a state (spec §Error-handling ethos): the user gets a
     row saying "nothing arrived", not an absent artifact they must interpret.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Quiet")["id"]
     source = _new_source(db, watchlist, "quiet")
 
@@ -571,7 +588,9 @@ def test_long_article_excerpt_is_capped_in_the_prompt():
         "content": long_body + tail,
         "content_kind": "article",
     }
-    _system, user = build_briefing_prompt([article], featured_ids=set(), overflow_count=0)
+    _system, user = build_briefing_prompt(
+        [article], featured_ids=set(), overflow_count=0
+    )
 
     assert tail not in user  # the tail was cut, not merely wrapped
     assert long_body[:EXCERPT_CHAR_CAP] in user
@@ -586,7 +605,6 @@ def test_long_article_excerpt_is_capped_in_the_prompt():
     assert len(contribution) <= EXCERPT_CHAR_CAP + len(marker)
     # No overflow -> no overflow note.
     assert "not covered" not in user
-
 
 
 # --- extract_citation_ids (spec #2 phase 2a, Task 6) --------------------
@@ -647,7 +665,9 @@ def test_interrupted_recovery_only_touches_generating_rows(tmp_path):
     other = WatchlistBundleService(db).create(name="Other")["id"]
 
     done = db.insert_briefing(watchlist)
-    db.update_briefing(done, status="complete", body_markdown="body", covers_through_item_id=9)
+    db.update_briefing(
+        done, status="complete", body_markdown="body", covers_through_item_id=9
+    )
     blank = db.insert_briefing(watchlist)
     db.update_briefing(blank, status="empty", covers_through_item_id=9)
     already_failed = db.insert_briefing(watchlist)
@@ -679,14 +699,14 @@ def test_interrupted_recovery_only_touches_generating_rows(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing(db):
     """A provider that returns nothing produced no briefing.
 
     Recording it `complete` with a blank body would show the user an empty
     artifact with no error to explain it -- and, worse, would advance the
     coverage window past items nothing ever reported.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     item = _add_article(db, source, "Something Happened")
@@ -705,7 +725,8 @@ async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_a_failed_generation_logs_no_item_content(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_a_failed_generation_logs_no_item_content(db):
     """The module's egress claim, pinned: no item content reaches the log.
 
     Generation sends titles, excerpts and diffs to the configured provider --
@@ -724,7 +745,6 @@ async def test_a_failed_generation_logs_no_item_content(tmp_path):
     # reason. Round 1's first draft used a 15-character title and the repr
     # ended one character short of it -- green against a live leak.
     canary = "ZEBRACANARY"
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, canary)
     _add_article(db, source, canary)
@@ -753,9 +773,9 @@ async def test_a_failed_generation_logs_no_item_content(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_explicit_provider_and_model_override_the_default(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_explicit_provider_and_model_override_the_default(db):
     """A preset's provider/model wins over the app default (spec §5)."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -781,8 +801,10 @@ async def test_explicit_provider_and_model_override_the_default(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(
+    db,
+):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -800,8 +822,8 @@ async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(t
 
 
 @pytest.mark.asyncio
-async def test_explicit_args_still_win_over_the_presets_provider_and_model(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_explicit_args_still_win_over_the_presets_provider_and_model(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -821,8 +843,8 @@ async def test_explicit_args_still_win_over_the_presets_provider_and_model(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_a_presets_style_notes_are_appended_to_the_system_prompt(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_a_presets_style_notes_are_appended_to_the_system_prompt(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -837,18 +859,22 @@ async def test_a_presets_style_notes_are_appended_to_the_system_prompt(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(monkeypatch, tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(
+    monkeypatch, db
+):
     """A preset id that no longer resolves must not brick generation."""
     monkeypatch.setattr(
         briefing_service,
         "resolve_persisted_briefing_defaults",
         lambda: ("local-llama", "local-model"),
     )
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
-    preset_id = db.insert_briefing_preset("Gone", roster_json="[]", provider="anthropic")
+    preset_id = db.insert_briefing_preset(
+        "Gone", roster_json="[]", provider="anthropic"
+    )
     assert db.delete_briefing_preset(preset_id) is True
 
     chat = _FakeChat()
@@ -861,7 +887,8 @@ async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(m
 
 
 @pytest.mark.asyncio
-async def test_curated_mode_generation_leaves_the_window_alone(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_curated_mode_generation_leaves_the_window_alone(db):
     """The service honours the watchlist's stored mode, and curated's echo.
 
     Task 2's contract: curated selection echoes the prior watermark rather
@@ -869,7 +896,6 @@ async def test_curated_mode_generation_leaves_the_window_alone(tmp_path):
     a service that recomputed "max id covered" from its own item list would
     silently step the window past items no briefing ever covered.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Curated")["id"]
     source = _new_source(db, watchlist, "acme")
 
@@ -897,14 +923,14 @@ async def test_curated_mode_generation_leaves_the_window_alone(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generation_accepts_an_async_chat_seam(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_generation_accepts_an_async_chat_seam(db):
     """`chat` may be a coroutine function; the service awaits it.
 
     The real seam is synchronous and is offloaded to a thread, but the UI
     (task 4) may wrap it, so both shapes must work rather than one of them
     returning an un-awaited coroutine object as the briefing body.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -923,7 +949,8 @@ async def test_generation_accepts_an_async_chat_seam(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_db_work_runs_off_the_event_loop_thread(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_the_db_work_runs_off_the_event_loop_thread(db):
     """Whole-branch review fix 1: `generate_briefing`'s DB work must not run
     on the caller's event loop. The screen dispatches this from a Textual
     worker, so a contended sqlite write used to block the whole UI.
@@ -933,7 +960,6 @@ async def test_the_db_work_runs_off_the_event_loop_thread(tmp_path):
     executes the database-owned accept and publish operations can distinguish
     the off-loop implementation from a blocking event-loop mutation.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Threaded")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1008,13 +1034,13 @@ def test_fail_interrupted_briefings_spares_an_excluded_row_both_directions(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_second_generation_for_a_claimed_watchlist_raises_before_any_row_insert(
-    tmp_path,
+    db,
 ):
     """Phase-1's no-orphan-row contract, extended to the claim itself: the
     refusal must happen before `generate_briefing` ever calls
     `db.insert_briefing`."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1030,8 +1056,8 @@ async def test_a_second_generation_for_a_claimed_watchlist_raises_before_any_row
 
 
 @pytest.mark.asyncio
-async def test_the_claim_is_released_after_a_successful_generation(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_the_claim_is_released_after_a_successful_generation(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1043,8 +1069,8 @@ async def test_the_claim_is_released_after_a_successful_generation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_claim_is_released_after_a_chat_failure(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_the_claim_is_released_after_a_chat_failure(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1058,19 +1084,18 @@ async def test_the_claim_is_released_after_a_chat_failure(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_claim_is_released_when_a_db_error_escapes(tmp_path, monkeypatch):
+@pytest.mark.bootstrap_profile
+async def test_the_claim_is_released_when_a_db_error_escapes(db, monkeypatch):
     """A stuck claim would wedge scheduling for this watchlist forever --
     worse than the bug this design fixes -- so a genuine DB error escaping
     must still release it."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
 
-    closed_connection = db._get_connection()
-    closed_connection.close()
+    closed_connection = db.conn
+    db.close()
     monkeypatch.setattr(db, "_get_connection", lambda: closed_connection)
-    db._local = threading.local()  # evict every thread's cached (open) connection
 
     with pytest.raises(sqlite3.ProgrammingError):
         await generate_briefing(db, watchlist, chat=_FakeChat())
@@ -1079,14 +1104,14 @@ async def test_the_claim_is_released_when_a_db_error_escapes(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_a_concurrent_generation_for_the_same_watchlist_is_refused(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_a_concurrent_generation_for_the_same_watchlist_is_refused(db):
     """Pins that the claim is held THROUGH the chat call (released in
     `finally`, not right before it): with a slow, real overlapping first
     call still mid-flight, a second concurrent `generate_briefing` for the
     SAME watchlist must be refused rather than run alongside it -- the
     double-LLM-call / double-watermark-write bug this design exists to
     prevent."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1100,14 +1125,14 @@ async def test_a_concurrent_generation_for_the_same_watchlist_is_refused(tmp_pat
         return CANNED_BODY
 
     first = asyncio.ensure_future(generate_briefing(db, watchlist, chat=_slow_chat))
-    await entered.wait()
-
-    assert watchlist in active_briefing_claims()
-    with pytest.raises(GenerationInFlightError, match=str(watchlist)):
-        await generate_briefing(db, watchlist, chat=_FakeChat())
-
-    release.set()
-    row = await first
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        assert watchlist in active_briefing_claims()
+        with pytest.raises(GenerationInFlightError, match=str(watchlist)):
+            await generate_briefing(db, watchlist, chat=_FakeChat())
+    finally:
+        release.set()
+        row = await asyncio.wait_for(first, timeout=5)
     assert row["status"] == "complete"
     assert watchlist not in active_briefing_claims()
 
@@ -1130,11 +1155,11 @@ def test_active_briefing_claim_row_ids_is_an_empty_snapshot_by_default():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_second_database_owner_resolves_the_existing_durable_briefing_claim(
-    tmp_path,
+    db,
 ):
     """A durable active row wins before a second owner can call the model."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1235,11 +1260,11 @@ def test_a_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_row(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_reconciliation_releases_a_zombie_claim_before_new_generation(
-    tmp_path,
+    db,
 ):
     """Terminal reconciliation releases the partial-index claim."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1264,10 +1289,10 @@ async def test_reconciliation_releases_a_zombie_claim_before_new_generation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_reasoning_typed_deepseek_model_gets_a_larger_completion_budget(
-    tmp_path,
+    db,
 ):
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1282,13 +1307,13 @@ async def test_a_reasoning_typed_deepseek_model_gets_a_larger_completion_budget(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_plain_deepseek_chat_model_keeps_the_plain_completion_budget(
-    tmp_path,
+    db,
 ):
     """deepseek-chat completes the same prompt within the plain budget
     (live-verified during the TASK-21515 incident) -- only the
     reasoning-typed families are widened."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")

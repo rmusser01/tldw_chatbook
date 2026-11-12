@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from textual.widgets import Button, Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.Audio.meeting_owner import (
@@ -399,6 +400,7 @@ async def _boot(tmp_path, **owner_kwargs):
     return host, owner
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mount_shows_probe_results(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -413,6 +415,7 @@ async def test_mount_shows_probe_results(tmp_path):
         assert screen.query_one("#meetings-stop", Button).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_start_pause_stop_flow_renders_transcript_and_footer(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -445,6 +448,7 @@ async def test_start_pause_stop_flow_renders_transcript_and_footer(tmp_path):
         assert owner.stop_reasons == ["user"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_coarse_then_labeled_segment_updates_one_line_in_place(tmp_path):
     """I1: a segment delivered coarse ("Others: hi") then again with its
@@ -467,6 +471,7 @@ async def test_coarse_then_labeled_segment_updates_one_line_in_place(tmp_path):
         assert screen.rendered_lines == ["[00:00:00] Speaker 1: hi"]   # one line, updated
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lost_tap_updates_system_status(tmp_path):
     # Spec §7: when the tap dies and gives up, the rail must say so -- it
@@ -483,6 +488,7 @@ async def test_lost_tap_updates_system_status(tmp_path):
         assert "System source lost" in _text(screen.query_one("#meetings-system-status", Static))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_user_stop_finalises_exactly_once(tmp_path, monkeypatch):
     host, owner = await _boot(tmp_path)
@@ -505,6 +511,7 @@ async def test_user_stop_finalises_exactly_once(tmp_path, monkeypatch):
         assert "Library ingest queued: ingest-job-3" in _text(screen.query_one("#meetings-footer", Static))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_external_stop_finalises_via_state_event(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -526,6 +533,7 @@ async def test_external_stop_finalises_via_state_event(tmp_path):
         assert owner.stop_reasons == []              # the screen never called owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stopping_state_disables_all_three_buttons(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -541,6 +549,7 @@ async def test_stopping_state_disables_all_three_buttons(tmp_path):
             assert screen.query_one(wid, Button).disabled is True, wid
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_in_library_navigates_with_ingest_context(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -555,6 +564,7 @@ async def test_open_in_library_navigates_with_ingest_context(tmp_path):
         assert host.seen == [(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_INGEST: True})]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_attach_on_mount_replays_running_session(tmp_path):
     app = _build_test_app()
@@ -572,6 +582,7 @@ async def test_attach_on_mount_replays_running_session(tmp_path):
     assert owner.session.listeners == []  # unsubscribed on unmount
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_room_mode_omits_labels_and_submit_error_shows_saved_locally(tmp_path):
     host, owner = await _boot(tmp_path, tap_kind="unavailable", mode="room")
@@ -600,6 +611,7 @@ async def test_room_mode_omits_labels_and_submit_error_shows_saved_locally(tmp_p
         assert screen.query_one("#meetings-open-library", Button).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recoverable_folder_offers_recover_and_submits(tmp_path, monkeypatch):
     folder = tmp_path / "2026-09-04_1000"
@@ -620,6 +632,7 @@ async def test_recoverable_folder_offers_recover_and_submits(tmp_path, monkeypat
         assert "ingest-job-8" in _text(screen.query_one("#meetings-footer", Static))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_failure_re_enables_start_instead_of_wedging(tmp_path):
     """I2: `_stop_worker` had no try/except. A raising `owner.stop()` (e.g.
@@ -646,6 +659,7 @@ async def test_stop_failure_re_enables_start_instead_of_wedging(tmp_path):
         assert screen.query_one("#meetings-stop", Button).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_partial_keeps_whisper_bracket_tokens(tmp_path):
     """Whisper emits bracketed tokens ("[BLANK_AUDIO]", "[Music]", "[laughs]")
@@ -666,6 +680,7 @@ async def test_partial_keeps_whisper_bracket_tokens(tmp_path):
         assert "[laughs]" in _rendered(partial)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_recorder_reports_on_the_rail_and_keeps_start_disabled(tmp_path):
     """C1: on an install with no numpy / no audio backend the mic factory
@@ -680,6 +695,7 @@ async def test_missing_recorder_reports_on_the_rail_and_keeps_start_disabled(tmp
         assert screen.query_one("#meetings-start", Button).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_recovery_reports_and_re_offers_recover(tmp_path, monkeypatch):
     """A truncated meeting.json used to raise straight out of `_recover_worker`,
@@ -702,6 +718,7 @@ async def test_failed_recovery_reports_and_re_offers_recover(tmp_path, monkeypat
         assert screen.query_one("#meetings-recover", Button).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 def test_unmounted_screen_never_subscribes_or_touches_widgets(tmp_path):
     """Q14: navigation can unmount Meetings while the threaded start is still
     running. `_on_started` then subscribed the dead screen to the app-owned
@@ -728,6 +745,7 @@ def test_unmounted_screen_never_subscribes_or_touches_widgets(tmp_path):
     assert screen._stop_requested is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_device_selects_apply_choice(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -739,6 +757,7 @@ async def test_device_selects_apply_choice(tmp_path):
         assert owner.choices == [("system", "BlackHole 2ch")]
 
 
+@pytest.mark.bootstrap_profile
 def test_rename_updates_map_and_rerenders(meetings_screen_with_session):
     screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
     screen._apply_rename("S1", "Alice")
@@ -746,12 +765,14 @@ def test_rename_updates_map_and_rerenders(meetings_screen_with_session):
     assert "Alice:" in screen._rendered_transcript_text()
 
 
+@pytest.mark.bootstrap_profile
 def test_rename_pins_the_cluster_when_diarizer_present(meetings_screen_with_session):
     screen = meetings_screen_with_session(segments=[("others", "S1", "hi")], with_diarizer=True)
     screen._apply_rename("S1", "Bob")
     assert screen._session._diarizer.pinned == ["S1"]
 
 
+@pytest.mark.bootstrap_profile
 def test_rename_persists_to_meeting_json(meetings_screen_with_session):
     """`_apply_rename` must survive the screen being torn down: the name map
     has to reach disk, not just the in-memory `meta.speaker_names`."""
@@ -762,6 +783,7 @@ def test_rename_persists_to_meeting_json(meetings_screen_with_session):
     assert read_meeting_json(screen._session.meta.folder)["speaker_names"] == {"S1": "Alice"}
 
 
+@pytest.mark.bootstrap_profile
 def test_rename_persist_failure_log_carries_no_path(meetings_screen_with_session, monkeypatch, captured_lines):
     """TASK-31748: `update_meeting_json` failures are usually filesystem
     errors whose `str()` embeds the meeting folder path -- the persist-
@@ -783,6 +805,7 @@ def test_rename_persist_failure_log_carries_no_path(meetings_screen_with_session
     assert "/Users/alice" not in joined and "alice" not in joined
 
 
+@pytest.mark.bootstrap_profile
 def test_empty_rename_removes_the_map_entry(meetings_screen_with_session):
     screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
     screen._apply_rename("S1", "Alice")
@@ -791,6 +814,7 @@ def test_empty_rename_removes_the_map_entry(meetings_screen_with_session):
     assert "Speaker 1:" in screen._rendered_transcript_text()
 
 
+@pytest.mark.bootstrap_profile
 def test_apply_rename_on_unmounted_screen_does_not_raise(meetings_screen_with_session):
     """Phase-1 rule: a rename triggered on a screen that has since been
     unmounted (navigation raced the Input.Submitted event) must update the
@@ -801,6 +825,7 @@ def test_apply_rename_on_unmounted_screen_does_not_raise(meetings_screen_with_se
     assert screen._session.meta.speaker_names["S1"] == "Alice"
 
 
+@pytest.mark.bootstrap_profile
 def test_transcript_honours_the_configured_display_name(meetings_screen_with_session, monkeypatch):
     """task 31746: `_user_display_name` delegates to the shared helper, so a
     configured mic name shows in the transcript wherever "You:" used to."""
@@ -811,6 +836,7 @@ def test_transcript_honours_the_configured_display_name(meetings_screen_with_ses
     assert screen.rendered_lines == ["[00:00:00] Alice: hi"]
 
 
+@pytest.mark.bootstrap_profile
 def test_finalized_overlap_segment_honours_the_configured_display_name(
     meetings_screen_with_session, monkeypatch
 ):
@@ -827,6 +853,7 @@ def test_finalized_overlap_segment_honours_the_configured_display_name(
     assert screen.rendered_lines == ["[00:00:00] Alice + Others: hi"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_partial_preview_honours_the_configured_display_name(tmp_path, monkeypatch):
     """task 31746: the in-flight "you" partial preview must not disagree with
@@ -856,6 +883,7 @@ async def test_partial_preview_honours_the_configured_display_name(tmp_path, mon
         assert "Alice:" in _text(screen.query_one("#meetings-partial", Static))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_display_name_change_mid_meeting_never_splits_the_live_rows(
     tmp_path, monkeypatch
@@ -897,6 +925,7 @@ async def test_a_display_name_change_mid_meeting_never_splits_the_live_rows(
         assert "Alice" not in screen._rendered_transcript_text()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_legend_row_mounts_and_rename_input_updates_ui(tmp_path):
     """End-to-end through the real widget tree: a segment with a
@@ -928,6 +957,7 @@ async def test_legend_row_mounts_and_rename_input_updates_ui(tmp_path):
 
 # ---- I4 / spec §7: live speaker labels are reported, on and off ------------
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_reports_live_speaker_labels_off_with_a_reason(tmp_path):
     """Fix I4: `PrepareResult.live_diarization_active` was computed and read
@@ -941,6 +971,7 @@ async def test_rail_reports_live_speaker_labels_off_with_a_reason(tmp_path):
         assert status == "Live speaker labels: off (not enabled in settings)"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_reports_live_speaker_labels_on(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -955,6 +986,7 @@ async def test_rail_reports_live_speaker_labels_on(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_two_speaker_label_lines_read_their_own_missing_list(tmp_path):
     """Task 5 review I3: there are now TWO missing-package lists, and they
@@ -979,6 +1011,7 @@ async def test_the_two_speaker_label_lines_read_their_own_missing_list(tmp_path)
 # The manifest total the rail rounds, in MB: the segmentation tarball
 # (6_958_444 downloaded bytes) plus the embedder. titanet_small is
 # 40_257_283 -> 47; wespeaker_resnet34 is 26_534_365 -> 33.
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "live, backend, engine, missing, models_ready, embedder, expected",
     [
@@ -1023,6 +1056,7 @@ def test_live_diarization_rail_copy_per_state(
     assert screen._live_diarization_copy(owner.prepared) == expected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 45), (100, 30)])
 @pytest.mark.asyncio
 async def test_rail_names_the_engine_and_the_download_at_both_sizes(tmp_path, size):
@@ -1037,6 +1071,7 @@ async def test_rail_names_the_engine_and_the_download_at_both_sizes(tmp_path, si
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_follows_the_warm_up_from_download_to_the_engine_name(tmp_path):
     """Spec §3: the models are fetched as the first step of the backend's own
@@ -1059,6 +1094,7 @@ async def test_rail_follows_the_warm_up_from_download_to_the_engine_name(tmp_pat
         assert await _wait_until(pilot, lambda: _text(line) == "Live speaker labels: on (ONNX)")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_ready_line_names_the_engine_the_meeting_actually_started(tmp_path):
     """Qodo 6: `start()` re-resolves the engine (packages can be installed or
@@ -1081,6 +1117,7 @@ async def test_the_ready_line_names_the_engine_the_meeting_actually_started(tmp_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_ready_line_falls_back_to_the_prepared_engine(tmp_path):
     """A meeting whose meta carries no engine (nothing was stamped because no
@@ -1098,6 +1135,7 @@ async def test_the_ready_line_falls_back_to_the_prepared_engine(tmp_path):
         assert await _wait_until(pilot, lambda: _text(line) == "Live speaker labels: on (ONNX)")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_reports_a_failed_model_fetch(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1115,6 +1153,7 @@ async def test_rail_reports_a_failed_model_fetch(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_blames_the_backend_not_the_models_for_a_worker_failure(tmp_path):
     """Final review I3: `"unavailable"` is also what a SpeechBrain worker
@@ -1146,6 +1185,7 @@ def test_the_screens_copy_of_the_models_reason_matches_the_backend():
     assert DIARIZER_MODELS_UNAVAILABLE == COARSE_MODELS_UNAVAILABLE
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_unchanged_warm_up_status_is_not_rewritten_every_tick(tmp_path):
     """The tick runs five times a second for the whole meeting; writing the
@@ -1168,6 +1208,7 @@ async def test_an_unchanged_warm_up_status_is_not_rewritten_every_tick(tmp_path)
         assert writes == ["Live speaker labels: warming up"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_warm_up_status_is_only_polled_while_the_meeting_runs(tmp_path):
     """Owner addendum: `diarizer_status()` can still answer from the worker
@@ -1189,6 +1230,7 @@ async def test_the_warm_up_status_is_only_polled_while_the_meeting_runs(tmp_path
         assert _text(line) == "Live speaker labels: on (SpeechBrain)"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_footer_says_speaker_labels_unavailable_when_the_backend_never_built(tmp_path):
     """Spec §7: a subprocess that failed to start puts the whole meeting on
@@ -1207,6 +1249,7 @@ async def test_footer_says_speaker_labels_unavailable_when_the_backend_never_bui
         assert "Speaker labels unavailable (backend unavailable)." in footer
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_footer_reports_the_backends_own_degradation_reason(tmp_path):
     """A mid-meeting worker crash sends the rest of the meeting to coarse
@@ -1231,6 +1274,7 @@ async def test_footer_reports_the_backends_own_degradation_reason(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_footer_surfaces_a_flagged_speaker_merge(tmp_path):
     """Spec §4: the Stop pass merged two clusters the user named differently;
@@ -1258,6 +1302,7 @@ async def test_footer_surfaces_a_flagged_speaker_merge(tmp_path):
 
 # ---- I2 / MINOR: hostile names and ids in the live legend -----------------
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_live_legend_renders_a_markup_name_literally(tmp_path):
     """Fix I2 (Qodo Q2): the legend label was markup-enabled, so renaming a
@@ -1276,6 +1321,7 @@ async def test_live_legend_renders_a_markup_name_literally(tmp_path):
         assert _rendered(label) == "Alice [/]"
 
 
+@pytest.mark.bootstrap_profile
 def test_live_rename_bounds_the_name(meetings_screen_with_session):
     screen = meetings_screen_with_session(segments=[("others", "S1", "hi")])
     screen._apply_rename("S1", "  " + "B" * 500 + "  ")
@@ -1283,6 +1329,7 @@ def test_live_rename_bounds_the_name(meetings_screen_with_session):
     assert screen._session.meta.speaker_names["S1"] == "B" * MAX_SPEAKER_NAME_CHARS
 
 
+@pytest.mark.bootstrap_profile
 def test_live_legend_skips_a_hostile_speaker_id(meetings_screen_with_session):
     """Final review MINOR: the id is interpolated into a widget id."""
     screen = meetings_screen_with_session()
@@ -1294,6 +1341,7 @@ def test_live_legend_skips_a_hostile_speaker_id(meetings_screen_with_session):
 # ---- TASK-31826: self-voiceprint match, learning offer, enrollment, Voice row
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "reason, expected",
     [
@@ -1319,6 +1367,7 @@ def test_voice_match_rail_copy_per_reason(tmp_path, reason, expected):
     assert screen._voice_match_copy(VoiceMatchState("on", None)) == "Voice match: on"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_voice_row_explains_an_engine_switch(tmp_path):
     """Spec §6: "needs re-enrollment" on its own reads like a corrupt record.
@@ -1342,6 +1391,7 @@ async def test_the_voice_row_explains_an_engine_switch(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_shows_the_prepared_voice_match_then_the_verified_one(tmp_path):
     """The pre-Start verdict is provisional (`prepare()` only stats the
@@ -1361,6 +1411,7 @@ async def test_rail_shows_the_prepared_voice_match_then_the_verified_one(tmp_pat
         assert _text(status) == "Voice match: off (keyring locked)"
 
 
+@pytest.mark.bootstrap_profile
 def test_matched_cluster_carries_the_marker_in_legend_and_transcript(
     meetings_screen_with_session,
 ):
@@ -1375,6 +1426,7 @@ def test_matched_cluster_carries_the_marker_in_legend_and_transcript(
     assert screen.rendered_lines == ["[00:00:00] You ·: hello"]
 
 
+@pytest.mark.bootstrap_profile
 def test_overriding_the_match_clears_the_marker(meetings_screen_with_session):
     screen = meetings_screen_with_session(segments=[("others", "S1", "hello")])
     session = screen._session
@@ -1386,12 +1438,14 @@ def test_overriding_the_match_clears_the_marker(meetings_screen_with_session):
     assert screen.rendered_lines == ["[00:00:00] Alice: hello"]
 
 
+@pytest.mark.bootstrap_profile
 def test_unmatched_clusters_never_get_the_marker(meetings_screen_with_session):
     screen = meetings_screen_with_session(segments=[("others", "S2", "hi")])
     screen._session.meta.matched_self = "S1"
     assert screen._speaker_label("S2") == "Speaker 2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_shows_the_learning_offer_and_accept_calls_the_owner(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1413,6 +1467,7 @@ async def test_stop_shows_the_learning_offer_and_accept_calls_the_owner(tmp_path
         assert block.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_accepting_shows_the_warm_up_instead_of_a_silent_two_minutes(tmp_path):
     """Final review I3: with no live diarizer, Accept spawns a worker and
@@ -1440,6 +1495,7 @@ async def test_accepting_shows_the_warm_up_instead_of_a_silent_two_minutes(tmp_p
     assert "Warming up the voice model…" in seen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mic_channel_offer_asks_whether_it_was_only_you(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1456,6 +1512,7 @@ async def test_mic_channel_offer_asks_whether_it_was_only_you(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_not_now_declines_without_touching_the_setting(tmp_path, monkeypatch):
     import tldw_chatbook.UI.Screens.meetings_screen as meetings_screen_module
@@ -1480,6 +1537,7 @@ async def test_not_now_declines_without_touching_the_setting(tmp_path, monkeypat
         assert screen.query_one("#meetings-learn-offer").display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dont_ask_again_persists_the_setting_and_stops_the_running_owner(
     tmp_path, monkeypatch
@@ -1509,6 +1567,7 @@ async def test_dont_ask_again_persists_the_setting_and_stops_the_running_owner(
         assert owner.learning_calls[-1][0] == "decline"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_unanswered_offer_lapses_when_the_screen_goes_away(tmp_path):
     """A warm diarizer worker must not outlive the screen that offered to use
@@ -1524,6 +1583,7 @@ async def test_an_unanswered_offer_lapses_when_the_screen_goes_away(tmp_path):
     assert ("dismiss", None) in owner.learning_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enroll_is_refused_while_a_meeting_is_running(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1540,6 +1600,7 @@ async def test_enroll_is_refused_while_a_meeting_is_running(tmp_path):
         assert "microphone" in _text(screen.query_one("#meetings-voice-message", Static))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enrollment_shows_a_countdown_and_cancel_stops_it(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1565,6 +1626,7 @@ async def test_enrollment_shows_a_countdown_and_cancel_stops_it(tmp_path):
         assert owner.invalidated == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_successful_enrollment_refreshes_the_voice_row(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1584,6 +1646,7 @@ async def test_a_successful_enrollment_refreshes_the_voice_row(tmp_path):
         assert screen.query_one("#meetings-start", Button).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_row_reports_the_key_file_mode(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1597,6 +1660,7 @@ async def test_voice_row_reports_the_key_file_mode(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_asks_for_confirmation_before_removing_the_voiceprint(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1629,6 +1693,7 @@ def test_export_refuses_a_directory_destination(tmp_path):
     assert _validated_transfer_path(str(tmp_path / "vp.json"), "Export") == tmp_path / "vp.json"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_needs_a_passphrase_and_then_calls_the_store(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1657,6 +1722,7 @@ async def test_export_needs_a_passphrase_and_then_calls_the_store(tmp_path):
         assert passphrase.value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_merge_and_replace_call_the_store_with_the_choice(tmp_path):
     host, owner = await _boot(tmp_path)
@@ -1689,6 +1755,7 @@ async def test_import_merge_and_replace_call_the_store_with_the_choice(tmp_path)
         assert store.calls[-1] == ("import", source, "hunter2", True)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_unusable_transfer_path_is_refused_before_the_store(tmp_path):
     """Qodo 1: the typed path went straight to the store, so traversal and
@@ -1729,6 +1796,7 @@ async def test_an_unusable_transfer_path_is_refused_before_the_store(tmp_path):
         assert store.calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_plain_home_relative_export_destination_still_works(tmp_path):
     """The other half of Qodo 1: validation must not break the ordinary case."""
@@ -1747,6 +1815,7 @@ async def test_a_plain_home_relative_export_destination_still_works(tmp_path):
         assert store.calls == [("export", Path("~/vp.json").expanduser(), "hunter2")]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path):
     from tldw_chatbook.Audio.voiceprint import (
@@ -1795,6 +1864,7 @@ async def test_import_failures_get_static_copy_not_an_exception_string(tmp_path)
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_unmounted_screen_never_touches_the_voice_widgets(tmp_path):
     """Every worker completion and owner callback added by TASK-31826 can land
     after navigation unmounted the screen."""
@@ -1824,6 +1894,7 @@ VOICE_BUTTON_IDS = (
 OFFER_BUTTON_IDS = ("meetings-learn-accept", "meetings-learn-decline", "meetings-learn-never")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 45), (100, 30), (80, 24)])
 @pytest.mark.asyncio
 async def test_the_offer_and_voice_row_are_reachable_on_a_small_terminal(tmp_path, size):
@@ -1858,6 +1929,7 @@ async def test_the_offer_and_voice_row_are_reachable_on_a_small_terminal(tmp_pat
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_rail_scrolls_so_the_controls_stay_reachable(tmp_path):
     """The other half of C2: the rail's content is taller than a 30-row
@@ -1886,6 +1958,7 @@ async def test_the_rail_scrolls_so_the_controls_stay_reachable(tmp_path):
             assert _shown(screen, widget_id) is not None, widget_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_learning_offer_is_decided_off_the_ui_thread(tmp_path):
     """Ruling R2 (review I2): deciding the offer can read the voiceprint
@@ -1902,6 +1975,7 @@ async def test_the_learning_offer_is_decided_off_the_ui_thread(tmp_path):
         assert owner.offer_threads and host._thread_id not in owner.offer_threads
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_declining_never_blocks_the_event_loop(tmp_path):
     """Ruling R1 (review I1): `decline_learning` closes a diarizer
@@ -1931,6 +2005,7 @@ async def test_declining_never_blocks_the_event_loop(tmp_path):
         assert owner.declined.wait(5.0)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_unmount_lapse_never_blocks_the_teardown(tmp_path):
     """Same for the lapse (review I1/M8): navigating away with an offer on
@@ -1955,6 +2030,7 @@ async def test_the_unmount_lapse_never_blocks_the_teardown(tmp_path):
     assert ("dismiss", None) in owner.learning_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_transfer_worker_description_carries_no_passphrase_or_path(tmp_path):
     """Review I3: `@work` with no `description=` builds one from `repr()` of
@@ -1985,6 +2061,7 @@ async def test_the_transfer_worker_description_carries_no_passphrase_or_path(tmp
         assert "voiceprint transfer" in joined
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_voice_status_never_reads_the_key(tmp_path):
     """Review M2: the status line may only stat the file and report the key
@@ -2000,6 +2077,7 @@ async def test_the_voice_status_never_reads_the_key(tmp_path):
         assert store.calls == []             # nothing was mutated
 
 
+@pytest.mark.bootstrap_profile
 def test_the_marker_never_lands_on_the_mic_you_row(meetings_screen_with_session):
     """Review M3: in plain call mode the mic row has no cluster id at all, so
     it can never be "the matched cluster" — pinned rather than left to the
@@ -2010,6 +2088,7 @@ def test_the_marker_never_lands_on_the_mic_you_row(meetings_screen_with_session)
     assert screen.rendered_lines == ["[00:00:00] You: hi"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_enrollment_countdown_actually_counts_down(tmp_path):
     """Review M4: a `set_interval` that fired once and never again would have
@@ -2034,6 +2113,7 @@ async def test_the_enrollment_countdown_actually_counts_down(tmp_path):
         assert screen._enroll_timer is None              # ... and stopped
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_passphrase_never_lingers_in_the_input(tmp_path):
     """Review M6: it survived a form switch and a refusal, so a passphrase
@@ -2055,3 +2135,71 @@ async def test_the_passphrase_never_lingers_in_the_input(tmp_path):
         screen.query_one("#meetings-voice-merge", Button).press()
         await pilot.pause(0.1)
         assert passphrase.value == ""
+
+
+# --- TASK-35028: the timer-driven rail writes are equality-gated ------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_tick_repaints_the_clock_only_when_the_formatted_time_moves(request, tmp_path):
+    """The 5 Hz tick costs a string compare while the seconds digit is still.
+
+    TASK-35028: `#meetings-timer` is a bare height:auto Static, so an
+    ungated per-tick write armed a whole-screen relayout even though the
+    painted copy (HH:MM:SS) only moves once a second.
+    """
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        await pilot.click("#meetings-start")
+        await pilot.pause(0.3)
+        timer = screen.query_one("#meetings-timer", Static)
+        calls = []
+        original_update = timer.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        timer.update = counting_update
+        # One write for the first tick after the gate resets, then none
+        # while the formatted copy is unchanged (the fake capture stands
+        # still at 65.0 s).
+        screen._last_timer_text = None
+        screen._tick()
+        assert len(calls) == 1
+        screen._tick()
+        screen._tick()
+        assert len(calls) == 1, "unchanged ticks must not repaint the clock"
+        owner.session.capture.audio_position_s = 66.0
+        screen._tick()
+        assert len(calls) == 2
+        assert _text(timer) == "00:01:06"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_enroll_progress_repaints_only_when_the_copy_changes(request, tmp_path):
+    """The 1 Hz countdown write is gated on its own last-written copy."""
+    host, owner = await _boot(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.3)
+        screen = host.screen_stack[-1]
+        progress = screen.query_one("#meetings-enroll-progress", Static)
+        calls = []
+        original_update = progress.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        progress.update = counting_update
+        screen._set_enroll_progress("Recording… 30s left")
+        assert len(calls) == 1
+        screen._set_enroll_progress("Recording… 30s left")
+        assert len(calls) == 1, "an unchanged countdown tick must not repaint"
+        screen._set_enroll_progress("Recording… 29s left")
+        assert len(calls) == 2
+        assert _text(progress) == "Recording… 29s left"

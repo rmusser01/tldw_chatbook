@@ -1,0 +1,25 @@
+# RAG step radio rows on a fresh template config (RagStep._embedding_model_ids: sorted(models))
+# FirstRunSetupWizard.py:5289-5313 -- label is the raw id only; no provider/dimension/size/local-vs-API hint
+  all-MiniLM-L6-v2                       provider=huggingface  dim=384   model=sentence-transformers/all-MiniLM-L6-v2  base_url=  api_key=(none)
+  all-mpnet-base-v2                      provider=huggingface  dim=768   model=sentence-transformers/all-mpnet-base-v2  base_url=  api_key=(none)
+  bge-base-en-v1                         provider=None         dim=None  model=None  base_url=  api_key=(none)
+  bge-small-en-v1                        provider=None         dim=None  model=None  base_url=  api_key=(none)
+  e5-base-v2                             provider=huggingface  dim=768   model=intfloat/e5-base-v2  base_url=  api_key=(none)
+  e5-large-v2                            provider=huggingface  dim=1024  model=intfloat/e5-large-v2  base_url=  api_key=(none)
+  e5-small-v2                            provider=huggingface  dim=384   model=intfloat/e5-small-v2  base_url=  api_key=(none)
+  gte-small                              provider=huggingface  dim=384   model=thenlper/gte-small  base_url=  api_key=(none)
+  local-llama-cpp-embeddings             provider=openai       dim=4096  model=llama-2-7b-chat.Q4_K_M.gguf  base_url=http://localhost:8000/v1  api_key=(none)
+  multilingual-e5-large-instruct         provider=huggingface  dim=1024  model=intfloat/multilingual-e5-large-instruct  base_url=  api_key=(none)
+  my-local-nomic-model                   provider=openai       dim=768   model=nomic-ai/nomic-embed-text-v1  base_url=http://localhost:8080/v1  api_key=(none)
+  openai-ada-002                         provider=openai       dim=1536  model=text-embedding-ada-002  base_url=  api_key=YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET
+  openai-text-embedding-3-large          provider=openai       dim=1536  model=text-embedding-3-large  base_url=  api_key=YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET
+  openai-text-embedding-3-small          provider=openai       dim=3072  model=text-embedding-3-small  base_url=  api_key=YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET
+  => 14 rows
+
+default_model_id: e5-small-v2
+chat_defaults.rag_auto_retrieve_on_send: False (no wizard control)
+NOTE: OpenAI text-embedding-3-small native dim is 1536 and -3-large is 3072; the template has them swapped.
+
+# TOML dotted-key trap: [embedding_config.models.bge-small-en-v1.5] parses as nested keys
+models['bge-small-en-v1'] = {'5': {'provider': 'huggingface', 'model_name_or_path': 'BAAI/bge-small-en-v1.5', 'dimension': 384, 'trust_remote_code': False, 'max_length': 512}}
+models['bge-base-en-v1']  = {'5': {'provider': 'huggingface', 'model_name_or_path': 'BAAI/bge-base-en-v1.5', 'dimension': 768, 'trust_remote_code': False, 'max_length': 512}}

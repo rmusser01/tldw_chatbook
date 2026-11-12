@@ -19,6 +19,7 @@ class _WorkspaceHarness(ConsolidatedCSSApp):
         await self.push_screen(ResearchWorkspaceScreen(SimpleNamespace()))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_composes_once_with_honest_regions_and_exact_handles() -> None:
     from tldw_chatbook.UI.Research_Workspace_Modules.chat_region import (
@@ -57,6 +58,7 @@ async def test_workspace_composes_once_with_honest_regions_and_exact_handles() -
         assert "Add" in labels  # Quick URL intake is now a real implemented action.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_collapse_and_expand_move_focus_and_remove_hidden_pane_from_cycle() -> (
     None
@@ -86,6 +88,7 @@ async def test_collapse_and_expand_move_focus_and_remove_hidden_pane_from_cycle(
         assert app.focused is sources
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_medium_companion_switch_preserves_wide_preferences_and_widget_identity() -> (
     None
@@ -127,6 +130,7 @@ async def test_medium_companion_switch_preserves_wide_preferences_and_widget_ide
         assert screen.query_one("#research-studio-pane") is studio
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_narrow_mode_has_one_pane_and_resize_relocates_hidden_focus() -> None:
     app = _WorkspaceHarness()
@@ -156,6 +160,7 @@ async def test_narrow_mode_has_one_pane_and_resize_relocates_hidden_focus() -> N
         assert app.focused is screen.query_one("#research-sources-pane")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_medium_reflow_moves_focus_from_swapped_handle_to_pane_mode() -> None:
     app = _WorkspaceHarness()
@@ -178,6 +183,7 @@ async def test_medium_reflow_moves_focus_from_swapped_handle_to_pane_mode() -> N
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_narrow_reflow_hides_handle_children_and_moves_focus_to_pane_mode() -> (
     None

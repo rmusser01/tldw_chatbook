@@ -1,6 +1,8 @@
 # Tests/Agents/test_run_log_prompt_integration.py
 """Truncation points at the log; the prompt mentions it only when real."""
 
+import pytest
+
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
@@ -149,7 +151,10 @@ def test_truncation_trailer_names_the_tool_result_record_not_the_tool_call_recor
         budget=RunBudget(max_tool_result_chars=100),
     )
     deps = make_deps(
-        [ModelTurn(text=fence("calculator", {"expression": "1"})), ModelTurn(text="done")],
+        [
+            ModelTurn(text=fence("calculator", {"expression": "1"})),
+            ModelTurn(text="done"),
+        ],
         invoke=lambda c: ToolResult(ok=True, content=huge),
     )
     deps.on_record = on_record
@@ -162,8 +167,9 @@ def test_truncation_trailer_names_the_tool_result_record_not_the_tool_call_recor
     assert "000111" not in trailer
 
 
+@pytest.mark.bootstrap_profile
 def test_prompt_mentions_the_log_on_a_non_native_fence_protocol_endpoint(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, request
 ):
     """test_prompt_mentions_the_log_when_logging_is_active above drives
     api_endpoint="openai", a NATIVE-tools provider -- _make_call_model's
@@ -180,6 +186,7 @@ def test_prompt_mentions_the_log_on_a_non_native_fence_protocol_endpoint(
         return {"choices": [{"message": {"content": "ok"}}]}
 
     service = _service(tmp_path, capture)
+    request.addfinalizer(service.db.close)
     service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "hi"}],

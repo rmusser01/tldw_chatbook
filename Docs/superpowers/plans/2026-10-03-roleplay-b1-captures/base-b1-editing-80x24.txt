@@ -1,0 +1,24 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                     │
+│  Ready                                                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────┐
+│╭──────────────╮╭──────────────────────────────────────╮┌────────────────────┐│
+││  Library  <  ││      ▸ Try a test chat (nothing      ││  Inspector     >   ││
+││  Search...   ││ Character Editor                     ││ Selected: Ada      ││
+││     New      ││  Context: whole character  Generate  ││ (Debugging         ││
+││     New      ││  Name                                ││ Partner)           ││
+││    Import    ││  ┌───────────────────────────────┐   ││ Type: character  ▆ ││
+││    Import    ││  │  Ada (Debugging Partner)      │   ││ Validation:        ││
+││    Duplic    ││                                      ││ editing...         ││
+││    Sort:     ││    Save     Cancel                   ││ Conversations (0)  ││
+││     Tag:     ││          ▸ Dictionaries (0)          ││   Search this      ││
+││  Ada (Deb…   ││          ▸ World Books (0)           ││  No saved          ││
+│╰──────────────╯╰──────────────────────────────────────╯└────────────────────┘│
+└──────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+s save | F1 · F6 · Ctrl+P · Ctrl+Q

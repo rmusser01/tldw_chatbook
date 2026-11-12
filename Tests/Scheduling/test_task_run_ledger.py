@@ -83,20 +83,19 @@ def test_reconcile_fails_interrupted_running_rows_only(db):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_writes_a_run_row_and_excludes_server_scoped(tmp_path):
+async def test_dispatch_writes_a_run_row_and_excludes_server_scoped(tmp_path, request):
     from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 
     real_db = ScheduledTasksDB(tmp_path / "d.db")
+    request.addfinalizer(real_db.close)
 
     async def ok_handler(task):
         return None
 
-    loop = SchedulerLoop.__new__(SchedulerLoop)
-    loop.db = real_db
-    loop.clock = lambda: _t(0)
+    loop = SchedulerLoop(
+        real_db, handlers={}, clock=lambda: _t(0), handler_timeout_seconds=0
+    )
     loop.missed_fire_grace_seconds = 0.0
-    loop.handler_timeout_seconds = None
-    loop._effective_timeout_seconds = lambda task: None
 
     # a local reminder -> ledgered
     await loop.dispatch_reminder(
@@ -130,20 +129,19 @@ async def test_dispatch_writes_a_run_row_and_excludes_server_scoped(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_records_a_failed_run_with_error(tmp_path):
+async def test_dispatch_records_a_failed_run_with_error(tmp_path, request):
     from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 
     real_db = ScheduledTasksDB(tmp_path / "d.db")
+    request.addfinalizer(real_db.close)
 
     async def boom(task):
         raise RuntimeError("handler kaboom")
 
-    loop = SchedulerLoop.__new__(SchedulerLoop)
-    loop.db = real_db
-    loop.clock = lambda: _t(0)
+    loop = SchedulerLoop(
+        real_db, handlers={}, clock=lambda: _t(0), handler_timeout_seconds=0
+    )
     loop.missed_fire_grace_seconds = 0.0
-    loop.handler_timeout_seconds = None
-    loop._effective_timeout_seconds = lambda task: None
     loop._report_lateness_cause = lambda *a, **k: None
 
     ok = await loop.dispatch_reminder(

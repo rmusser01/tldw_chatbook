@@ -263,7 +263,13 @@ def test_first_persist_binding_preserves_revision_but_explicit_rebind_advances()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failed_component", list(ConsoleSettingsComponent))
+@pytest.mark.parametrize(
+    "failed_component",
+    [
+        ConsoleSettingsComponent.GENERATION_SETTINGS,
+        ConsoleSettingsComponent.CONTEXT_POLICY,
+    ],
+)
 async def test_live_values_survive_component_failure_and_retry_is_exact(
     failed_component: ConsoleSettingsComponent,
 ) -> None:
@@ -483,7 +489,12 @@ async def test_queued_applies_before_first_yield_drain_only_latest_values() -> N
     assert session.generation_durable_snapshot.model == "model-b"
     assert session.context_policy_durable_revision == persistence.context_revision
     assert first_outcome == second_outcome
-    assert first_outcome.written_components == frozenset(ConsoleSettingsComponent)
+    assert first_outcome.written_components == frozenset(
+        {
+            ConsoleSettingsComponent.GENERATION_SETTINGS,
+            ConsoleSettingsComponent.CONTEXT_POLICY,
+        }
+    )
     assert first_outcome.failed_components == frozenset()
     assert first_outcome.stale_components == frozenset()
 
@@ -560,7 +571,12 @@ async def test_inflight_apply_drains_to_latest_without_scheduling_newer_commits(
     assert persistence.context_policy.compaction_mode is ContextCompactionMode.AUTOMATIC
     assert session.generation_durable_snapshot.model == "model-c"
     assert session.context_policy_durable_revision == persistence.context_revision
-    assert outcome.written_components == frozenset(ConsoleSettingsComponent)
+    assert outcome.written_components == frozenset(
+        {
+            ConsoleSettingsComponent.GENERATION_SETTINGS,
+            ConsoleSettingsComponent.CONTEXT_POLICY,
+        }
+    )
     assert outcome.failed_components == frozenset()
     assert outcome.stale_components == frozenset()
 
@@ -675,7 +691,12 @@ async def test_closed_drain_cannot_publish_into_same_id_restoration() -> None:
     assert replacement.context_policy_durable_revision is None
     assert replacement.settings_persistence_failures == {}
     assert old_outcome.written_components == frozenset()
-    assert old_outcome.stale_components == frozenset(ConsoleSettingsComponent)
+    assert old_outcome.stale_components == frozenset(
+        {
+            ConsoleSettingsComponent.GENERATION_SETTINGS,
+            ConsoleSettingsComponent.CONTEXT_POLICY,
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -766,8 +787,18 @@ async def test_replacement_apply_serializes_after_old_inflight_owned_write() -> 
     assert replacement.settings.model == "model-b"
     assert replacement.generation_durable_snapshot.model == "model-b"
     assert replacement.settings_persistence_failures == {}
-    assert old_outcome.stale_components == frozenset(ConsoleSettingsComponent)
-    assert replacement_outcome.written_components == frozenset(ConsoleSettingsComponent)
+    assert old_outcome.stale_components == frozenset(
+        {
+            ConsoleSettingsComponent.GENERATION_SETTINGS,
+            ConsoleSettingsComponent.CONTEXT_POLICY,
+        }
+    )
+    assert replacement_outcome.written_components == frozenset(
+        {
+            ConsoleSettingsComponent.GENERATION_SETTINGS,
+            ConsoleSettingsComponent.CONTEXT_POLICY,
+        }
+    )
 
 
 def test_restore_state_fences_same_session_id_and_resets_old_apply_state() -> None:

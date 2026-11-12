@@ -1,0 +1,12 @@
+{
+  "fdee8a31f": {
+    "returncode": 128,
+    "stdout": "",
+    "stderr": "fatal: Not a valid object name fdee8a31f\n"
+  },
+  "afee9672a": {
+    "returncode": 128,
+    "stdout": "",
+    "stderr": "fatal: Not a valid object name afee9672a\n"
+  }
+}

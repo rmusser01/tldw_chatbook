@@ -68,7 +68,12 @@ says that no earlier message can be forked. A reply that is still being written
 only asks you to wait for it to finish.
 After confirmation the fork opens as a separate Console tab and can diverge;
 the source tab stays open with the same title, selected variants, active leaf,
-history, and live work it had before.
+history, and live work it had before. While the dialog shows **Forking…** the
+fork can no longer be cancelled: Escape is refused, and **Ctrl+Q** says the
+fork is still being created and stays open; press it again once the fork has
+opened. Pressed again before that, it asks **Quit while still working?**
+(**Wait** keeps the dialog; if the fork opened in the meantime, the dialog
+then closes on the new fork as usual).
 
 - A saved source creates a saved fork in the same Chats or named Workspace
   section, with durable ancestry back to the source and boundary.
@@ -137,7 +142,9 @@ Select one of **your** messages and press `e` (or click **Edit**) to open the
 
 ### The /rewind menu
 
-Type `/rewind` in the composer and press Enter. The **Rewind** menu (see
+Type `/rewind` in the composer and press Enter (or click **Send**). Opening
+the menu takes `/rewind` out of the composer, however you sent it; anything
+you typed after pressing Enter stays. The **Rewind** menu (see
 the capture in the Layout tour) lists your earlier prompts newest-first as
 "#1 …" rows; pick one to reveal three buttons:
 

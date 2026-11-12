@@ -28,6 +28,8 @@ import asyncio
 import pytest
 from textual.widgets import Static
 
+from Tests.private_profile import private_profile_test
+
 from Tests.UI.test_console_fleet_panel import (
     _real_fleet_recovery_database,
     _AGENT_SECTION_SIZE,
@@ -139,6 +141,7 @@ async def _wire_survivor(pilot, host, bridge):
     return console, controller
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_survivor_elapsed_advances_with_no_other_interaction():
     """15664 AC#1 + AC#3, red against unmodified production: only a
@@ -197,7 +200,8 @@ async def test_survivor_elapsed_advances_with_no_other_interaction():
 
 
 @pytest.mark.asyncio
-async def test_survivor_tick_observes_new_published_usage_without_a_new_timer():
+@private_profile_test
+async def test_survivor_tick_observes_new_published_usage_without_a_new_timer(request):
     """The owned one-second survivor clock must advance a child's published scalar."""
     import time as _time
 
@@ -213,7 +217,7 @@ async def test_survivor_tick_observes_new_published_usage_without_a_new_timer():
         section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
-        assert section.rows[0].secondary_text == "long job · ~3 local output tok"
+        assert section.rows[0].secondary_text == "Target unavailable · long job · ~3 local output tok"
 
         console._start_console_transcript_sync_timer()
         await pilot.pause(0.5)
@@ -223,9 +227,10 @@ async def test_survivor_tick_observes_new_published_usage_without_a_new_timer():
         await pilot.pause(1.5)
 
         assert console._fleet._console_fleet_survivor_timer is timer
-        assert section.rows[0].secondary_text == "long job · ~11 local output tok"
+        assert section.rows[0].secondary_text == "Target unavailable · long job · ~11 local output tok"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_tick_stops_itself_with_one_final_settle_paint():
     """15664 AC#2: the refresh must not keep repainting on a timer when no
@@ -264,6 +269,7 @@ async def test_the_tick_stops_itself_with_one_final_settle_paint():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_idle_console_never_gains_a_survivor_timer():
     """15664 AC#2's other face: with nothing live, neither the mount hedge
@@ -297,6 +303,7 @@ def _attach_real_marks_service(app, tmp_path):
     return app.conversation_local_marks_service
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unseen_mark_paints_the_tab_badge_and_viewing_clears_it(tmp_path):
     """The durable ``fleet_unseen`` mark drives a ◈ glyph on the marked
@@ -349,6 +356,7 @@ async def test_unseen_mark_paints_the_tab_badge_and_viewing_clears_it(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_turn_outcome_glyphs_outrank_the_unseen_badge(tmp_path):
     """A session with BOTH an unvisited turn outcome and the durable mark
@@ -381,6 +389,7 @@ async def test_turn_outcome_glyphs_outrank_the_unseen_badge(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unseen_mark_reaches_the_sidebar_browser_rows(tmp_path):
     """The sidebar conversation-browser pipeline carries the ◈ glyph for a
@@ -416,6 +425,7 @@ async def test_unseen_mark_reaches_the_sidebar_browser_rows(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mount_claim_switches_to_the_settled_conversations_session():
     """A staged ``CONSOLE_FLEET_COMPLETION`` target is claimed and Console

@@ -269,7 +269,9 @@ class RuntimeServerContextProvider:
     def _credential_profile_scope_id(self, server_id: str) -> str:
         """Return the profile id a credential for ``server_id`` is scoped under."""
         return (
-            server_id if self._credential_profile_id is None else self._credential_profile_id
+            server_id
+            if self._credential_profile_id is None
+            else self._credential_profile_id
         )
 
     def _credential_scope(self, server_id: str, purpose: str) -> ServerCredentialScope:
@@ -364,9 +366,7 @@ class RuntimeServerContextProvider:
         """
         try:
             if context_capture is None:
-                capture = self._capture_character_authority_context(
-                    expected_server_id
-                )
+                capture = self._capture_character_authority_context(expected_server_id)
             elif (
                 type(context_capture) is _CharacterAuthorityContextCapture
                 and context_capture.expected_server_id == expected_server_id
@@ -602,7 +602,9 @@ class RuntimeServerContextProvider:
         self._invalidate_cached_client()
         return purpose
 
-    def store_scoped_credential(self, server_id: str, purpose: str, secret: str) -> None:
+    def store_scoped_credential(
+        self, server_id: str, purpose: str, secret: str
+    ) -> None:
         """Persist ``secret`` for ``server_id``/``purpose``, profile-scoped (task-31821).
 
         Generic scoped-write seam mirroring the store's ``set_scoped_secret``,

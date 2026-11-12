@@ -1,0 +1,179 @@
+{
+  "head": "79da83a8dca98eab6ca854a7505b8abd264eb959",
+  "results": [
+    {
+      "module": "study",
+      "exit_code": 0,
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 64.144
+    },
+    {
+      "module": "watchlists",
+      "exit_code": 0,
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 96.46
+    },
+    {
+      "module": "sources",
+      "exit_code": 0,
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "seconds": 42.285
+    }
+  ],
+  "independently_inspected_child_reports": [
+    {
+      "path": "sources/pytest/test_settled_create_edit_conte0/private-profile-process/pytest.xml",
+      "sha256": "6c9e72903600322708205487cbafda7d2f1098b341d8464f1783c010629eae95",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.795
+    },
+    {
+      "path": "sources/pytest/test_settled_create_edit_conte1/private-profile-process/pytest.xml",
+      "sha256": "2c7c0c00a62de74edcf17936ab3cf5c6edfab316bccb428c284d75343e0df044",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.008
+    },
+    {
+      "path": "sources/pytest/test_settled_create_edit_conte2/private-profile-process/pytest.xml",
+      "sha256": "fc9f6321812223b89a838d1b29222978d3b447625b0135842ad7f9c9f1efb67a",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.055
+    },
+    {
+      "path": "sources/pytest/test_settled_create_edit_conte3/private-profile-process/pytest.xml",
+      "sha256": "b8871e7a393c6eeca94f80d0270c508d18caf6f1d1a5ed7ae7375964f13178a5",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.05
+    },
+    {
+      "path": "study/pytest/test_pending_start_publication0/private-profile-process/pytest.xml",
+      "sha256": "ede712414cca1371f701f17215d3f7ca472d08f850055691636486cdb483b082",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.239
+    },
+    {
+      "path": "study/pytest/test_pending_start_publication1/private-profile-process/pytest.xml",
+      "sha256": "e025d3e286338e5b96ee6036678ced49967ffa0bb9811034bba0da3b50393c22",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.461
+    },
+    {
+      "path": "study/pytest/test_pending_start_publication2/private-profile-process/pytest.xml",
+      "sha256": "72a8217d1c42ef483f6d6a8baa700ca1d209026c5f775a85d48449c3bdd52c5c",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 5.589
+    },
+    {
+      "path": "study/pytest/test_pending_start_publication3/private-profile-process/pytest.xml",
+      "sha256": "bef572146f61bc93f5adf6f9c58d5a11e8c81b72efbbc5823b00b5160031b961",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 6.099
+    },
+    {
+      "path": "study/pytest/test_shell_resume_after_failed0/private-profile-process/pytest.xml",
+      "sha256": "c52d006e3e623f1ad90c49b6da66638dac355cd89385ee291bfbabff0118bdd4",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.641
+    },
+    {
+      "path": "study/pytest/test_shell_resume_after_failed1/private-profile-process/pytest.xml",
+      "sha256": "cdba584fb20bae8a10d0dfde5398f4fbffe756a65641f3c53e2e130cca57a13e",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.65
+    },
+    {
+      "path": "watchlists/pytest/test_watchlists_reader_queue_h0/private-profile-process/pytest.xml",
+      "sha256": "595f65654bdf1e8acce83c5654e9646fa532c7ade8423a6ed78ede146523ade6",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 26.062
+    },
+    {
+      "path": "watchlists/pytest/test_watchlists_reader_queue_h1/private-profile-process/pytest.xml",
+      "sha256": "ce564762ba9979092d0236747ef9abb39248e6a951bdd26239e269b5055dfb64",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 25.213
+    },
+    {
+      "path": "watchlists/pytest/test_watchlists_reader_queue_o0/private-profile-process/pytest.xml",
+      "sha256": "ce070f63b0db662db69c1fcb178844222a2cb541bda31b6ca28ba9778f57839e",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 28.573
+    }
+  ],
+  "parent_reports": [
+    {
+      "path": "sources/result.xml",
+      "sha256": "8de7785eab9517f8969989e16f780b29cff8368d385b58bac73091c3b8795384",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 42.285
+    },
+    {
+      "path": "study/result.xml",
+      "sha256": "29d373daf72535eaa3de3081bc37491db27c3cabcfe694fbf57c1c22c097ed76",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 64.144
+    },
+    {
+      "path": "watchlists/result.xml",
+      "sha256": "d18bfdda0a71b64a729529dd4b9ea64b2e26e5732965b5d72ecb7cf3cf15126a",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 96.46
+    }
+  ],
+  "assertions": "Current-behavior audit observations, not repair regressions",
+  "full_suite_run": false
+}

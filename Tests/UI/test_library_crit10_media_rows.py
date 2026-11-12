@@ -38,6 +38,7 @@ def test_the_age_label_names_the_field_the_age_comes_from():
     assert media_updated_age_copy("", now=now) == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_media_header_states_the_applied_scope_not_the_typed_draft():
     host = _host()
@@ -87,6 +88,7 @@ def test_the_import_footer_names_what_enter_does_at_each_step():
     assert _ingest_enter_label(start_enabled=True) == "start import"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_import_footer_flips_when_the_gate_opens_without_a_recompose(
     tmp_path,
@@ -169,6 +171,7 @@ async def test_the_import_footer_flips_when_the_gate_opens_without_a_recompose(
         assert "enter start import" in footer_text(), footer_text()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_gate_change_on_a_suspended_screen_is_latched_for_resume():
     """Re-review finding B: skipping is fine, dropping is not.
@@ -238,6 +241,7 @@ async def test_a_prompt_row_does_not_repeat_the_canvas_it_is_already_on():
         assert "Prompt · " not in label, label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_scope_line_says_nothing_it_cannot_stand_behind():
     """Review finding 2: `of M` must respect `_local_source_total_known`.
@@ -264,6 +268,7 @@ async def test_the_scope_line_says_nothing_it_cannot_stand_behind():
         assert line.startswith("Media · "), line
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_scope_lines_clear_is_painted_inside_the_items_pane():
     """Review finding 3: the live-found off-screen Clear, pinned.
@@ -289,6 +294,7 @@ async def test_the_scope_lines_clear_is_painted_inside_the_items_pane():
             ), (size, clear.region, canvas.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_clear_whose_request_failed_can_be_pressed_again():
     """Qodo review: the visible Clear must be able to retry.
@@ -320,6 +326,7 @@ async def test_a_clear_whose_request_failed_can_be_pressed_again():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_the_applied_filter_also_clears_the_box():
     host = _host()

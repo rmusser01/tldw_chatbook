@@ -110,3 +110,33 @@ def test_dead_idle_connection_is_transparently_reopened(tmp_path, factory):
         assert row[0] >= 0
     finally:
         db.close_connection()
+
+
+def test_a_failed_media_connection_build_closes_the_connection_it_opened(
+    tmp_path, monkeypatch
+):
+    """TASK-38714 re-review: when the new connection's first PRAGMA fails (here,
+    a file that is not SQLite), the build must close that connection. Before,
+    each failed build cleared the slot and left one registered handle open."""
+    import sqlite3
+
+    import tldw_chatbook.DB.Client_Media_DB_v2 as media_module
+
+    not_sqlite = tmp_path / "media.db"
+    not_sqlite.write_bytes(b"this is not a SQLite database file\n" * 64)
+    opened: list = []
+    real_connect = media_module.connect_private_sqlite
+
+    def recording(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(media_module, "connect_private_sqlite", recording)
+    with pytest.raises(media_module.DatabaseError):
+        MediaDatabase(not_sqlite, "failed-build-test")
+
+    assert opened, "the build must reach the native connection"
+    for connection in opened:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            sqlite3.Connection.in_transaction.__get__(connection)

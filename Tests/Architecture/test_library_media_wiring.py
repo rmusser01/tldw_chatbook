@@ -33,7 +33,7 @@ docstring's own note on the collision).
 
 **Task 2 (controller PR)** adds the full-cluster ownership / same-name-
 delegator-forwarding / staticmethod-class-forwarding / controller-state-shim
-checks (``_MEDIA_CLUSTER_METHOD_NAMES``, 140 names) plus a
+checks (``_MEDIA_CLUSTER_METHOD_NAMES``, 142 names) plus a
 constructor-binding coverage check (``_MEDIA_CONTROLLER_BOUND_NAMES``, 92
 names) carried from the prompts series, which added it because the skills
 series shipped a silent production regression precisely in that gap (a moved
@@ -83,7 +83,16 @@ from tldw_chatbook.UI.Library_Modules.library_media_state import (
 #: state -- see the state module's docstring), so 82 move. Pinned here so a
 #: field silently added to or dropped from the dataclass fails loudly
 #: instead of quietly resizing the shim surface this file checks.
-_EXPECTED_MEDIA_STATE_FIELD_COUNT = 82
+#: 2026-10-19, TASK-34000.24: 82 -> 83, ``link_receipt`` (the Reader's
+#: "Use in Console" workspace-link receipt; shim ``_library_media_link_receipt``).
+#: 2026-10-20, TASK-34000.18 fix round 2: 83 -> 84, ``highlight_held_by_reader``
+#: (the order-based hold: the Reader holds the list highlight from an open or
+#: select until the user's next scope change), placed beside ``editing``.
+#: 2026-10-20, TASK-34000.22: 84 -> 86, ``edit_draft`` beside ``editing`` and
+#: ``analysis_draft`` beside ``editing_analysis`` (the two authoring forms'
+#: typed text; shims ``_library_media_edit_draft`` /
+#: ``_library_media_analysis_draft``).
+_EXPECTED_MEDIA_STATE_FIELD_COUNT = 86
 
 #: The 2 WIRING attributes the state PR deliberately left on
 #: ``LibraryScreen`` (the ``_conversation_reader_controller``/``_library_
@@ -276,6 +285,7 @@ def test_wiring_and_blocked_attributes_stay_off_the_state_object() -> None:
 #: decision.
 _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_add_library_media_highlight",
+    "_adopt_library_media_highlight",
     "_adopt_library_media_row_owner",
     "_advance_library_media_content_match",
     "_advance_library_media_presentation_epoch",
@@ -320,6 +330,10 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_library_media_live_focus_is_allowed",
     "_library_media_preview_request_is_current",
     "_library_media_reader_identity",
+    "_library_media_reader_target_id",
+    "_library_media_editor_dirty",
+    "_notify_media_editor_dirty_veto",
+    "_reveal_library_media_dirty_form",
     "_library_media_request_matches_current_authority",
     "_library_media_semantic_row_is_current",
     "_library_media_successful_focus_is_allowed",
@@ -371,6 +385,8 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "handle_library_media_analysis_cancel",
     "handle_library_media_analysis_edit",
     "handle_library_media_analysis_save",
+    "handle_library_media_analysis_text_changed",
+    "handle_library_media_edit_field_changed",
     "handle_library_media_back",
     "handle_library_media_content_mode_raw",
     "handle_library_media_content_mode_rendered",
@@ -667,8 +683,22 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
         n for n in _MEDIA_CLUSTER_METHOD_NAMES if "media" not in n.lower()
     ]
     assert not not_media_named, f"non-media-named cluster entries: {not_media_named!r}"
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 140, (
-        f"expected 140 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-10-20, TASK-34000.18: 140 -> 141, ``_library_media_reader_target_id``
+    # (the one identity every Reader-scoped action reads), born on the
+    # controller with its one-line screen delegator. Fix round 1: 141 -> 142,
+    # ``_adopt_library_media_highlight`` (the one writer of the list's
+    # resolved highlight into the selection) moved onto the controller so
+    # ``_build_library_media_active_child`` can route through it too.
+    # 2026-10-20, TASK-34000.22: 142 -> 146, the two authoring-form draft
+    # recorders (``handle_library_media_edit_field_changed``,
+    # ``handle_library_media_analysis_text_changed``), the one dirty
+    # predicate every exit reads (``_library_media_editor_dirty``) and its
+    # veto toast (``_notify_media_editor_dirty_veto``), each with a one-line
+    # screen delegator. Fix round 2 (2026-10-21): 146 -> 147,
+    # ``_reveal_library_media_dirty_form`` (the refusal's and the Media
+    # press's "put the form on screen": viewer view + the form's tab).
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 147, (
+        f"expected 147 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -677,7 +707,7 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
 
 @pytest.mark.unit
 def test_media_controller_owns_its_cluster() -> None:
-    """Every one of the 140 moved names is a callable on the controller.
+    """Every one of the 142 moved names is a callable on the controller.
 
     Covers the whole cluster, not a hand-picked sample -- mirrors
     ``test_prompts_controller_owns_its_cluster``.
@@ -696,7 +726,7 @@ def test_media_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_media_handlers() -> None:
-    """Every one of the 140 moved names is a one-line screen delegator that
+    """Every one of the 142 moved names is a one-line screen delegator that
     forwards to the SAME-NAMED controller method (or, for the 3
     staticmethods, to the module-level controller CLASS) -- unless a later
     cleanup task pruned it.
@@ -749,7 +779,7 @@ def test_the_canvas_owned_rows_are_movers_that_landed_on_the_canvas() -> None:
     assert len(_MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS) == 16
     assert _MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS <= set(
         _MEDIA_CLUSTER_METHOD_NAMES
-    ), "a canvas-owned row is not one of the 140 moved names"
+    ), "a canvas-owned row is not one of the 142 moved names"
     assert not (
         _MEDIA_CLUSTER_SCREEN_ROWS_OWNED_BY_THE_CANVAS
         & _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED

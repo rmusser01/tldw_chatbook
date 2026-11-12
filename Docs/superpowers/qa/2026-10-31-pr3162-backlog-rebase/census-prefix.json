@@ -1,0 +1,11 @@
+{
+  "original_entries": 1173,
+  "final_entries": 1174,
+  "original_prefix_bytes": 155644,
+  "original_prefix_sha256": "d045d3334a4350ec1616b28e38d890802a750597ebf75869cbcb5b49b3f8da86",
+  "prefix_unchanged": true,
+  "appended": [
+    "Tests/UI/test_console_archive_recovery_cards.py"
+  ],
+  "deferred": "Tests/UI/test_console_archive_recovery_flow.py: unresolved mounted/received setup failures"
+}

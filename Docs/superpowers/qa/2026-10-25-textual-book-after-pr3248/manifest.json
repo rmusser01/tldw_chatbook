@@ -1,0 +1,32 @@
+{
+  "audited_dev": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+  "utc": "2026-10-25T23:43:45.863439+00:00",
+  "new_tasks": [
+    36930,
+    36931,
+    36932
+  ],
+  "existing_owner_updates": [
+    "33283",
+    "33279"
+  ],
+  "report_sha256": "8988d2bac3cf9d2fc1d1a76b046bbb539c7f8e1da62c1cc69638d3d0ae546cb5",
+  "artifacts": {
+    "book-reference.json": "c6b1751f5080622581d640069dc6dfbc22ca30347bcb4a5cb2e87c38fdb5c448",
+    "ci-qualification.json": "171dcc5e74286925628753753aaca3f18a259b63c18d950e4ea3efd0c5f38a39",
+    "commands.json": "7aaa6f0e21a0a0c6de55b74ac67711d3e9cb0335528e375e9dd879af4f9fedcf",
+    "conftest.py": "db759b26ec0b08f189b7ec7864ffd605de2994adf3f98e2c18ef6f282826c488",
+    "merge.json": "3b1db87fd75b0436b236820f2078c3a607baba6f939a31f49dff7d698e9e5360",
+    "observations.json": "d5e98f6e4b8a27709657c4ccf779b3faaeeb69e0ae171b6c87da9c7824753209",
+    "ownership.json": "1eb6959d53c838e589d75c2e851aea903bab7fd83051cce0e9a595a8fb5c570f",
+    "publication-checks.json": "b63a134e9ac033dc92de152e900ee3e72564dbab6d343755900bbc8acc28bf37",
+    "reproduction-origins.json": "c551da1a778cfd5f135cf847a74e0d6389d7344e7cce32050174ba3f75301f0a",
+    "run-probes.py": "520c6ffeabfecaa1f3480832093830c40edcdcc154bc34d22fe6c136cfb06d0a",
+    "source-pins.json": "f6363f044b21460e64515cd9ece3acffdd1f196970ab8914dc72f733605fceac",
+    "test_personas.py": "240f46203bd2b00fd561ae0b26099353812d57599125b64b28693368dad0704e",
+    "test_research.py": "5ad9e941816b969f281c61931c2e068c253c3e9f3b09c342daf27618253f70c4",
+    "test_study.py": "3d3e51fb163e2ebfd8351b931b5faec928a96a0b2fdddcf0f256b83c87eb903f",
+    "test_watchlists.py": "9b1f1442b252728acf1b2c41f0c18c56eccca73ac6b567a1b44e22707a55a1f9",
+    "verification.json": "44218b4ed5e04b4eaa80e0b166801041fceb31e3dc12992919e6474c89de9ca9"
+  }
+}

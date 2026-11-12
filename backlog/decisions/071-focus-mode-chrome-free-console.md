@@ -5,7 +5,7 @@ Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-16
 Related Task: [TASK-18812](../tasks/task-18812%20-%20Focus-mode-chrome-free-Console-presentation.md)
 Related Spec: [Focus Mode — Design](../../Docs/superpowers/specs/2026-08-16-focus-mode-design.md)
-Supersedes: N/A (complements [ADR-014](014-retire-legacy-navigation-chrome.md))
+Supersedes: N/A (complements [ADR-290](290-retire-legacy-navigation-chrome.md))
 
 ## Decision
 
@@ -26,7 +26,7 @@ Mechanism:
 - A single helper sets the flag and applies/removes the class;
   `ChatScreen.on_mount` reads the flag so any Console mounted while focus
   is on starts chrome-free. `BaseAppScreen.compose()` itself is untouched
-  — ADR-014's per-screen chrome model is preserved, only its presentation
+  — ADR-290's per-screen chrome model is preserved, only its presentation
   is suppressed.
 
 Semantics are **zen, not kiosk, with one navigation rule**:
@@ -45,7 +45,7 @@ Semantics are **zen, not kiosk, with one navigation rule**:
 Entry points: a `--focus` CLI flag (combines with `--serve` as the phone
 launcher), a `[general] focus_mode` config default, and the runtime
 toggle. `ctrl+shift+f` is verified conflict-free (existing ctrl+shift+
-bindings are z/p/h/c/a only) and is not in ADR-031's forbidden or
+bindings are z/p/h/c/a only) and is not in ADR-299's forbidden or
 reserved sets; the Console advertises it through the existing
 footer shortcut-context pipeline so the advertised key is a real
 binding.
@@ -115,8 +115,8 @@ count on desktop widths.
 
 ## Links
 
-- [ADR-014: Retire legacy navigation chrome](014-retire-legacy-navigation-chrome.md)
-- [ADR-031: TUI keybinding and footer hint conventions](031-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-290: Retire legacy navigation chrome](290-retire-legacy-navigation-chrome.md)
+- [ADR-299: TUI keybinding and footer hint conventions](299-tui-keybinding-and-footer-hint-conventions.md)
 - [ADR-042: Design token system](042-design-token-system-and-design-language.md)
 - [ADR-043: Rail collapse yields to explicit toggle](043-console-rail-compact-collapse-yields-to-explicit-toggle.md)
 - [Spec: Focus Mode — Design](../../Docs/superpowers/specs/2026-08-16-focus-mode-design.md)

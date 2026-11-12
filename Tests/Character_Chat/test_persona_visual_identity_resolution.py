@@ -427,8 +427,8 @@ def test_persona_authority_change_during_portrait_decode_fails_closed(
 ) -> None:
     original_validate = persona_svi._shared._validate_fallback_image
 
-    def mutate_during_decode(value):
-        result = original_validate(value)
+    def mutate_during_decode(value, **kwargs):
+        result = original_validate(value, **kwargs)
         service.personas["p-1"]["version"] = 5
         return result
 

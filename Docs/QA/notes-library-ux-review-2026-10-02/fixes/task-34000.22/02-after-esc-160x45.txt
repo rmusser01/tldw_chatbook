@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N    I       ‹ Back                                                                                                      │
+│ │ Navigation                     │  a    t  Workshop handout                                                                                                 │
+│ │     Import…                    │  v    e  Seed                                                                                                             │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       m    ○ Find  Note  Read later  Use in Console  More                                                                 │
+│ │ ▊ Search Library…        ▎▊x▎  │       s  Finish editing the analysis first.                                                                               │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │                                                                                                                           │
+│ │                                │            Read  Analysis (selected)  Highlights  Info                                                                    │
+│ │ ─────────────────────────────  │          ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Browse                    ▾    │          │ Key points: the handout covers the quarterly roadmap.                                                        │ │
+│ │  ▸ Media (23) — your files     │          │                                                                                                              │ │
+│ │    Conversations (0)           │          │                                                                                                              │ │
+│ │    Notes (122)                 │          │                                                                                                              │ │
+│ │    Prompts (0) — reuse         │          │                                                                                                              │ │
+│ │    Skills (1) — AI add-ons     │<---      │                                                                                                              │ │
+│ │    Collections (0)             │          │                                                                                                              │ │
+│ │    Search / RAG — find all     │          │                                                                                                              │ │
+│ │ ─────────────────────────────  │          │                                                                                                              │ │
+│ │ Artifacts                 ▾    │          │                                                                                                              │ │
+│ │    All artifacts               │     ---> │                                                                                                              │ │
+│ │    Chatbooks                   │          │                                                                                                              │ │
+│ │    Reports                     │          │                                                                                                              │ │
+│ │    Dreams                      │          │                                                                                                              │ │
+│ │ ─────────────────────────────  │          │                                                                                                              │ │
+│ │ Create                    ▾    │          │                                                                                                              │ │
+│ │    New note                    │<---      │                                                                                                              │ │
+│ │    New prompt                  │          │                                                                                                              │ │
+│ │    New skill                   │          │                                                                                                              │ │
+│ │ ─────────────────────────────  │          │                                                                                                              │ │
+│ │ Study                     ▾    │          │                                                                                                              │ │
+│ │    Study decks (0)             │          │                                                                                                              │ │
+│ │    Flashcards due: 0           │          │                                                                                                              │ │
+│ │    Quizzes (0)                 │          │                                                                                                              │ │
+│ │ ─────────────────────────────  │          │                                                   ╭──────────────────────────────────────────────────────────╮ │
+│ │ Import / Export           ▾    │          │                                                   │                                                          │ │
+│ │    Import…                     │          │                                                   │ Unsaved analysis — Save or Discard changes first.        │ │
+│ │    Export                    ▇ │          │                                                   │                                                          │ │
+│ │  ▾ scroll for more             │          └───────────────────────────────────────────────────╰──────────────────────────────────────────────────────────╯ │
+│ └────────────────────────────────┘                 Save         Discard changes                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc save or discard first | after esc: / focus search | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved 07:25 · Next: Keep editing; changes save automatically.                      │
+│   a  │ Library notes · Ready                                        │  o    ‹ Notes   Paper notes: Retrieval practice                                        │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     Saved                                                                              │
+│      │                                                              │         Edit     Preview     Info                                                      │
+│      │ Filter                                                       │         Save     Use in Console                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ┃Properties                                                                      ┃ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ┃Keywords                                                                        ┃ │
+│      │                                                              │     ┃▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎┃ │
+│      │    New     Sort: Newest     Select                           │     ┃▊ meeting, thesis                                                              ▎┃ │
+│ ---> │    Add from files…     Export                                │     ┃▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎┃ │
+│      │ Folders & placement                                          │     ┃                                                                                ┃ │
+│      │    New folder     Add to folder     Move note                │     ┃Created   2026-10-24 07:21 · 3m ago                                             ┃ │
+│      │    Remove placement                                          │     ┃Modified  2026-10-24 07:25 · just now                                           ┃ │
+│      │                                                              │     ┃Version   v3                                                                    ┃ │
+│      │                                                              │<--- ┃Words     60 words                                                              ┃ │
+│      │  ▸ Agent_Lessons                                             │     ┃Linked from (1)                                                                 ┃ │
+│      │  ▸ Journal                                                   │     ┃  Thesis outline — retrieval-augmented tutoring                                 ┃ │
+│      │  ▾ Meetings                                                  │     ┃Reuse & Export                                                                  ┃ │
+│      │    Paper notes: Retrieval practice · now                     │     ┃  Copy                                                                          ┃ │
+│ ---> │    Standup 2026-09-29 · 3m                                   │     ┃  Export Markdown                                                               ┃ │
+│      │    Advisor meeting 2026-09-10 · 3m                           │     ┃  Export text                                                                   ┃ │
+│      │    ملاحظات الاجتماع — مراجعة المشروع · 3m                    │     ┃Danger                                                                          ┃ │
+│      │    Meeting: design critique — Library rail · 3m              │     ┃      Delete                                                                    ┃ │
+│      │    Meeting notes 2026-09-30 · 3m                             │     ┃                                                                                ┃ │
+│      │  ▸ Projects                                                  │     ┃                                                                                ┃ │
+│      │  ▸ Recipes                                                   │     ┃                                                                                ┃ │
+│      │  ▸ Research                                                  │     ┃                                                                                ┃ │
+│      │  ▸ Study                                                   ▇ │     ┃                                                                                ┃ │
+│      │  ▾ Unfiled                                                   │     ┃                                                                                ┃ │
+│      │    Quotes · 3m                                               │     ┃                                                                                ┃ │
+│      │    Scratch · 3m                                              │     ┃                                                                                ┃ │
+│      │    Untitled · 3m                                             │     ┃                                                                                ┃ │
+│      └──────────────────────────────────────────────────────────────┘     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

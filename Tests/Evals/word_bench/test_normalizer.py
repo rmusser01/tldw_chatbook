@@ -76,14 +76,40 @@ def test_top_k_is_sorted_even_when_the_provider_sends_it_unordered():
     whatever the provider happened to send first. No committed fixture
     exercises this, because both arrive pre-sorted."""
     payload = {
-        "choices": [{"logprobs": {"content": [{
-            "id": 1, "token": " mid", "bytes": [], "logprob": -1.5,
-            "top_logprobs": [
-                {"id": 1, "token": " mid", "bytes": [], "logprob": -1.5},
-                {"id": 2, "token": " best", "bytes": [], "logprob": -0.2},
-                {"id": 3, "token": " worst", "bytes": [], "logprob": -4.0},
-            ],
-        }]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 1,
+                            "token": " mid",
+                            "bytes": [],
+                            "logprob": -1.5,
+                            "top_logprobs": [
+                                {
+                                    "id": 1,
+                                    "token": " mid",
+                                    "bytes": [],
+                                    "logprob": -1.5,
+                                },
+                                {
+                                    "id": 2,
+                                    "token": " best",
+                                    "bytes": [],
+                                    "logprob": -0.2,
+                                },
+                                {
+                                    "id": 3,
+                                    "token": " worst",
+                                    "bytes": [],
+                                    "logprob": -4.0,
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+        ]
     }
     top_k, _ = normalize_logprobs(payload, want_content_token=False)
     assert [t.token for t in top_k] == [" best", " mid", " worst"]
@@ -112,14 +138,17 @@ def test_identity_is_bytes_based_so_it_compares_across_models():
 
 def test_unrecognized_shape_raises_rather_than_guessing():
     with pytest.raises(NormalizerError, match="shape"):
-        normalize_logprobs({"choices": [{"logprobs": {"top_logprobs": [{"a": -1.0}]}}]},
-                           want_content_token=False)
+        normalize_logprobs(
+            {"choices": [{"logprobs": {"top_logprobs": [{"a": -1.0}]}}]},
+            want_content_token=False,
+        )
 
 
 def test_missing_logprobs_raises():
     with pytest.raises(NormalizerError, match="logprobs"):
-        normalize_logprobs({"choices": [{"message": {"content": "hi"}}]},
-                           want_content_token=False)
+        normalize_logprobs(
+            {"choices": [{"message": {"content": "hi"}}]}, want_content_token=False
+        )
 
 
 def test_control_tokens_are_detected_structurally():
@@ -139,15 +168,48 @@ def test_a_bracketed_token_with_real_uncertainty_is_not_a_control_token():
 def test_want_content_token_skips_leading_control_positions():
     """The reason chat mode needs this: position 0 was <|channel> at p=1.0."""
     payload = {
-        "choices": [{"logprobs": {"content": [
-            {"id": 100, "token": "<|channel>", "bytes": [], "logprob": 0.0,
-             "top_logprobs": [{"id": 100, "token": "<|channel>", "bytes": [], "logprob": 0.0}]},
-            {"id": 7, "token": " I", "bytes": [32, 73], "logprob": -0.9,
-             "top_logprobs": [
-                 {"id": 7, "token": " I", "bytes": [32, 73], "logprob": -0.9},
-                 {"id": 8, "token": " Sure", "bytes": [32, 83], "logprob": -1.4},
-             ]},
-        ]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 100,
+                            "token": "<|channel>",
+                            "bytes": [],
+                            "logprob": 0.0,
+                            "top_logprobs": [
+                                {
+                                    "id": 100,
+                                    "token": "<|channel>",
+                                    "bytes": [],
+                                    "logprob": 0.0,
+                                }
+                            ],
+                        },
+                        {
+                            "id": 7,
+                            "token": " I",
+                            "bytes": [32, 73],
+                            "logprob": -0.9,
+                            "top_logprobs": [
+                                {
+                                    "id": 7,
+                                    "token": " I",
+                                    "bytes": [32, 73],
+                                    "logprob": -0.9,
+                                },
+                                {
+                                    "id": 8,
+                                    "token": " Sure",
+                                    "bytes": [32, 83],
+                                    "logprob": -1.4,
+                                },
+                            ],
+                        },
+                    ]
+                }
+            }
+        ]
     }
     top_k, offset = normalize_logprobs(payload, want_content_token=True)
     assert offset == 1, "must measure the first non-control position"
@@ -156,10 +218,28 @@ def test_want_content_token_skips_leading_control_positions():
 
 def test_no_content_token_in_window_raises():
     payload = {
-        "choices": [{"logprobs": {"content": [
-            {"id": 100, "token": "<|channel>", "bytes": [], "logprob": 0.0,
-             "top_logprobs": [{"id": 100, "token": "<|channel>", "bytes": [], "logprob": 0.0}]},
-        ]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 100,
+                            "token": "<|channel>",
+                            "bytes": [],
+                            "logprob": 0.0,
+                            "top_logprobs": [
+                                {
+                                    "id": 100,
+                                    "token": "<|channel>",
+                                    "bytes": [],
+                                    "logprob": 0.0,
+                                }
+                            ],
+                        },
+                    ]
+                }
+            }
+        ]
     }
     with pytest.raises(NormalizerError, match="no_content_token") as exc_info:
         normalize_logprobs(payload, want_content_token=True)
@@ -175,10 +255,21 @@ def test_empty_top_logprobs_at_the_measured_position_raises_no_logprobs():
     a grid of identical zero-entropy cells that preflight would still read
     as Ready. This must raise instead, so it routes to Blocked."""
     payload = {
-        "choices": [{"logprobs": {"content": [{
-            "id": 1, "token": " a", "bytes": [32, 97], "logprob": -0.5,
-            "top_logprobs": [],
-        }]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 1,
+                            "token": " a",
+                            "bytes": [32, 97],
+                            "logprob": -0.5,
+                            "top_logprobs": [],
+                        }
+                    ]
+                }
+            }
+        ]
     }
     with pytest.raises(NormalizerError) as exc_info:
         normalize_logprobs(payload, want_content_token=False)
@@ -189,9 +280,20 @@ def test_missing_top_logprobs_key_at_the_measured_position_also_raises():
     """Some servers omit the key entirely rather than sending an empty list;
     both must be treated identically."""
     payload = {
-        "choices": [{"logprobs": {"content": [{
-            "id": 1, "token": " a", "bytes": [32, 97], "logprob": -0.5,
-        }]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 1,
+                            "token": " a",
+                            "bytes": [32, 97],
+                            "logprob": -0.5,
+                        }
+                    ]
+                }
+            }
+        ]
     }
     with pytest.raises(NormalizerError) as exc_info:
         normalize_logprobs(payload, want_content_token=False)
@@ -203,12 +305,35 @@ def test_empty_top_logprobs_at_the_measured_chat_position_also_raises():
     the empty-top_logprobs check must fire there too, not just at position
     0."""
     payload = {
-        "choices": [{"logprobs": {"content": [
-            {"id": 100, "token": "<|channel>", "bytes": [], "logprob": 0.0,
-             "top_logprobs": [{"id": 100, "token": "<|channel>", "bytes": [], "logprob": 0.0}]},
-            {"id": 7, "token": " I", "bytes": [32, 73], "logprob": -0.9,
-             "top_logprobs": []},
-        ]}}]
+        "choices": [
+            {
+                "logprobs": {
+                    "content": [
+                        {
+                            "id": 100,
+                            "token": "<|channel>",
+                            "bytes": [],
+                            "logprob": 0.0,
+                            "top_logprobs": [
+                                {
+                                    "id": 100,
+                                    "token": "<|channel>",
+                                    "bytes": [],
+                                    "logprob": 0.0,
+                                }
+                            ],
+                        },
+                        {
+                            "id": 7,
+                            "token": " I",
+                            "bytes": [32, 73],
+                            "logprob": -0.9,
+                            "top_logprobs": [],
+                        },
+                    ]
+                }
+            }
+        ]
     }
     with pytest.raises(NormalizerError) as exc_info:
         normalize_logprobs(payload, want_content_token=True)

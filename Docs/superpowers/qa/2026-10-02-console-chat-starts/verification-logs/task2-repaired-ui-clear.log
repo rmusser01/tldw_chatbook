@@ -1,0 +1,13 @@
+.............                                                            [100%]
+============================= slowest 25 durations =============================
+33.54s call     Tests/UI/test_console_launch_wake.py::test_a_second_launch_does_not_re_announce_a_delivered_wake
+17.04s call     Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab
+7.78s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+4.96s call     Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit
+2.47s call     Tests/UI/test_console_launch_wake.py::test_a_launch_with_no_marks_constructs_nothing_and_reads_once
+2.03s call     Tests/DB/test_chachanotes_console_library_policy_migration.py::test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows
+1.76s teardown Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab
+1.23s call     Tests/Chat/test_console_chat_start.py::test_unconfirmed_preaccept_settlement_requires_review
+
+(17 durations < 1s hidden.)
+13 passed, 161 deselected in 79.38s (0:01:19)

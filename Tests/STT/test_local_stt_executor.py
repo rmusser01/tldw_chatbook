@@ -4,6 +4,7 @@ import os
 import pickle
 import subprocess
 import sys
+import tempfile
 import textwrap
 import threading
 import time
@@ -696,10 +697,10 @@ def test_worker_file_source_uses_existing_parser_with_path_options_and_runner() 
 
     assert callbacks.failures == []
     assert callbacks.results[0].payload == {
-        "file_path": "/private/audio/file.wav",
+        "file_path": str(source.path),
         "options": options,
         "runner_payload": {
-            "audio_path": "/private/audio/file.wav",
+            "audio_path": str(source.path),
             "kwargs": {"provider": "parakeet-onnx"},
         },
     }
@@ -846,20 +847,25 @@ def test_worker_passes_each_buffer_requests_current_provenance_metadata(
             return False
 
     connection = _Connection()
-    monkeypatch.setattr(
-        "tldw_chatbook.STT.executor_worker.enter_worker_containment",
-        lambda: SimpleNamespace(pid=1),
-    )
-
-    _run_executor_worker(
-        connection,  # type: ignore[arg-type]
-        _Event(),
-        _Event(),
-        1,
-        str(tmp_path),
-        provider_builder=provider_builder,
-        parse_job=lambda *_args, **_kwargs: {},
-    )
+    with monkeypatch.context() as worker:
+        worker.setattr(tempfile, "tempdir", tempfile.tempdir)
+        worker.setattr(
+            "tldw_chatbook.Local_Ingestion.ingest_parse_worker.silence_ingest_worker_import_noise",
+            lambda: None,
+        )
+        worker.setattr(
+            "tldw_chatbook.STT.executor_worker.enter_worker_containment",
+            lambda: SimpleNamespace(pid=1),
+        )
+        _run_executor_worker(
+            connection,  # type: ignore[arg-type]
+            _Event(),
+            _Event(),
+            1,
+            str(tmp_path),
+            provider_builder=provider_builder,
+            parse_job=lambda *_args, **_kwargs: {},
+        )
 
     assert received == [
         {
@@ -2087,25 +2093,31 @@ def test_external_dependency_failure_keeps_stable_worker_taxonomy(
             return False
 
     connection = _Connection()
-    monkeypatch.setattr(
-        "tldw_chatbook.STT.executor_worker.enter_worker_containment",
-        lambda: SimpleNamespace(pid=1),
-    )
-    try:
-        _run_executor_worker(
-            connection,  # type: ignore[arg-type]
-            _Event(),
-            _Event(),
-            1,
-            str(tmp_path),
-            provider_builder=lambda *_args: (_ for _ in ()).throw(
-                AssertionError("invalid dependency reached native load")
-            ),
-            parse_job=lambda *_args, **_kwargs: {},
+    with monkeypatch.context() as worker:
+        worker.setattr(tempfile, "tempdir", tempfile.tempdir)
+        worker.setattr(
+            "tldw_chatbook.Local_Ingestion.ingest_parse_worker.silence_ingest_worker_import_noise",
+            lambda: None,
         )
-    finally:
-        if lease is not None:
-            lease.release()
+        worker.setattr(
+            "tldw_chatbook.STT.executor_worker.enter_worker_containment",
+            lambda: SimpleNamespace(pid=1),
+        )
+        try:
+            _run_executor_worker(
+                connection,  # type: ignore[arg-type]
+                _Event(),
+                _Event(),
+                1,
+                str(tmp_path),
+                provider_builder=lambda *_args: (_ for _ in ()).throw(
+                    AssertionError("invalid dependency reached native load")
+                ),
+                parse_job=lambda *_args, **_kwargs: {},
+            )
+        finally:
+            if lease is not None:
+                lease.release()
 
     failures = [item for item in connection.sent if type(item) is ExecutorFailure]
     assert len(failures) == 1
@@ -2395,6 +2407,7 @@ def test_parakeet_provider_keeps_external_root_out_of_vad_provenance(
 
 
 @pytest.mark.parametrize("suffix", (".wav", ".mp4"))
+@pytest.mark.bootstrap_profile
 def test_parakeet_failure_survives_media_parse_and_executor_envelope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2789,3 +2802,73 @@ def test_worker_revalidates_unmanaged_local_snapshot_before_reuse(
         assert second.failures[0].recovery_actions == ("retry_faster_whisper",)
     finally:
         executor.close()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=demo&next=https://example.org/a%2Fb",
+        "http://example.org/audio/path.wav?literal=a/b",
+    ],
+)
+def test_url_ingest_source_survives_spawn_and_reaches_parse_unchanged(url):
+    from tldw_chatbook.STT.executor import URLIngestSource
+
+    source = URLIngestSource(url)
+    assert pickle.loads(pickle.dumps(source)) == source
+    assert url not in repr(source)
+    with pytest.raises(FrozenInstanceError):
+        source.url = "https://changed.invalid/"
+    executor = _protocol_executor()
+    callbacks = _Callbacks()
+    try:
+        executor.submit(
+            attempt_id="url-attempt",
+            job_id="url-job",
+            source=source,
+            identity=_identity(
+                root_revision=None, closure_fingerprint=None, local_snapshot_token=None
+            ),
+            options={"transcription_provider": "parakeet-onnx"},
+            on_event=callbacks.on_event,
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+        _wait_for_terminal(callbacks)
+        assert callbacks.failures == []
+        assert callbacks.results[0].payload["file_path"] == url
+    finally:
+        executor.close()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///private/audio.wav",
+        "https:/broken",
+        "https:\\broken",
+        "ftp://example.org/a",
+        "",
+    ],
+)
+def test_url_ingest_source_rejects_non_http_or_missing_authority(url):
+    from tldw_chatbook.STT.executor import URLIngestSource
+
+    with pytest.raises(ValueError):
+        URLIngestSource(url)
+
+
+def test_url_ingest_source_requires_text_and_a_library_job():
+    from tldw_chatbook.STT.executor import URLIngestSource
+
+    with pytest.raises(TypeError):
+        URLIngestSource(Path("https://example.org/audio.wav"))
+    with pytest.raises(ValueError, match="Library job ID"):
+        ExecutorRequest(
+            generation=1,
+            attempt_id="url",
+            job_id=None,
+            source=URLIngestSource("https://example.org/audio.wav"),
+            identity=_identity(),
+            options={},
+        )

@@ -1,0 +1,79 @@
+{
+  "ordinary_registration": [
+    "stts",
+    [
+      [
+        "g",
+        "generate"
+      ],
+      [
+        "r",
+        "random text"
+      ],
+      [
+        "x",
+        "clear"
+      ],
+      [
+        "p",
+        "play"
+      ],
+      [
+        "s",
+        "stop"
+      ],
+      [
+        "\u2190/\u2192 [ ]",
+        "Move mode focus"
+      ],
+      [
+        "Enter",
+        "Go"
+      ]
+    ]
+  ],
+  "effects_registration": [
+    "stts",
+    [
+      [
+        "g",
+        "generate"
+      ],
+      [
+        "r",
+        "random text"
+      ],
+      [
+        "x",
+        "clear"
+      ],
+      [
+        "p",
+        "play"
+      ],
+      [
+        "s",
+        "stop"
+      ],
+      [
+        "\u2190/\u2192 [ ]",
+        "Move mode focus"
+      ],
+      [
+        "Enter",
+        "Go"
+      ]
+    ]
+  ],
+  "active_view": "effects",
+  "playground_present": false,
+  "footer_render": "g generate | r random text | x clear | p play | s stop | \u2190/\u2192 [ ] Move mode focus | Enter Go | F1 help \u00b7 F6 next pane \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit",
+  "painted_footer_child": "g generate | r random text | x clear | p play | s stop | \u2190/\u2192 [ ] Move mode focus | Enter Go | F1 help \u00b7 F6 next pane \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit",
+  "active_bindings": {
+    "g": "generate_tts",
+    "r": "random_text",
+    "x": "clear_text",
+    "p": "play_audio",
+    "s": "stop_audio"
+  }
+}

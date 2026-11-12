@@ -12,6 +12,8 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
 )
 from tldw_chatbook.Persona_Buddy.speech import BuddySpeechItem, BuddySpeechQueue
 
+pytestmark = pytest.mark.bootstrap_profile
+
 DESTINATION = "sha256:" + "a" * 64
 
 

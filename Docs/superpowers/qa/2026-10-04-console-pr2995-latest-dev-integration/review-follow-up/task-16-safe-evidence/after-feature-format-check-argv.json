@@ -1,0 +1,29 @@
+{
+  "HEAD": "749e7540affab2b543f472fcf6fae6bff34d8122",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "ruff",
+    "format",
+    "--check",
+    "--diff",
+    "tldw_chatbook/UI/Console_Modules/session.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "Tests/UI/test_console_runtime_ownership.py",
+    "Tests/UI/test_console_composer_cursor.py",
+    "Tests/UI/test_console_environment_controller.py",
+    "Tests/UI/test_console_native_chat_flow.py",
+    "Tests/UI/test_console_send_draft_snapshot.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "environment_overrides": {},
+  "source_sha256": {
+    "Tests/UI/test_console_composer_cursor.py": "be64bdb53f8ab0b23b46d1073b115ad1530b4590875698593e20920dc67fe40b",
+    "Tests/UI/test_console_environment_controller.py": "ead2894bf6b78f3335de3d4a09702b552fa1d1f2f929dbcaed24765775953a9a",
+    "Tests/UI/test_console_native_chat_flow.py": "d5f2231c87c8a4dc5d476d15ad47c35467b1c82ee15bb2f0119ebc3b069822a7",
+    "Tests/UI/test_console_runtime_ownership.py": "48bfe2f95a6fad7b9be0920e210b894ba8ccb8264267fb08762867a81ca98932",
+    "Tests/UI/test_console_send_draft_snapshot.py": "2c6bac8a3b27cb8fb08cbf9fa8f11a69f2560953776be45f79f7f2013c29abe3",
+    "tldw_chatbook/Chat/console_chat_controller.py": "5d9df3acc6ff2caa5d03e425d13f8ff23f6109c0c78300aa7a36dcae53b26c94",
+    "tldw_chatbook/UI/Console_Modules/session.py": "9a6c31fdf30b3d478686d90a32775ce927002544ef428ec4b16bcaf43b30011f"
+  }
+}

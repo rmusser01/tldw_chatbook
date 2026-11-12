@@ -108,7 +108,9 @@ def _rendered(item_row: dict) -> tuple[str, str]:
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_for
 
     item = normalize_watchlist_item("local", item_row)
-    console = Console(width=80, record=True, color_system="standard", force_terminal=True)
+    console = Console(
+        width=80, record=True, color_system="standard", force_terminal=True
+    )
     console.print(render_for(item))
     return console.export_text(clear=False), console.export_text(styles=True)
 
@@ -179,6 +181,7 @@ async def _site_source(
 # --- AC#1 / AC#3: the change path reaches `render_change` ------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_real_site_change_is_dispatched_to_the_change_renderer(monkeypatch):
     """AC#3, driven end to end: fetch, detect, persist, normalize, dispatch.
@@ -220,6 +223,7 @@ async def test_a_real_site_change_is_dispatched_to_the_change_renderer(monkeypat
     assert "% changed" in plain, "the change headline must be present"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_stored_change_content_is_a_diff_not_the_whole_new_page(monkeypatch):
     """`content` used to be `current_content["text"]` -- the entire new page.
@@ -267,8 +271,11 @@ async def test_the_stored_change_content_is_a_diff_not_the_whole_new_page(monkey
     assert "\x1b[31m" in ansi, "a removed (`-`) diff line must be painted red"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(monkeypatch):
+async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(
+    monkeypatch,
+):
     """AC#4, plus the scale of `change_percentage`.
 
     `diff_summary` is rendered by `render_change` and had no producer at all.
@@ -307,6 +314,7 @@ async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(
     assert item["diff_summary"] in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_change_type_is_derived_from_the_snapshots_not_hardcoded(monkeypatch):
     """`change_type` was the literal `"content"` for every change ever.
@@ -342,6 +350,7 @@ async def test_change_type_is_derived_from_the_snapshots_not_hardcoded(monkeypat
 # --- AC#2: the feed and API paths ------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_feed_item_is_stored_as_an_article_with_a_legal_format(monkeypatch):
     """AC#2. The RSS path wrote neither field, so it relied on `render_for`'s
@@ -378,6 +387,7 @@ async def test_a_feed_item_is_stored_as_an_article_with_a_legal_format(monkeypat
     assert "% changed" not in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_api_item_is_stored_as_an_article_with_a_legal_format(monkeypatch):
     """The API path is normalized in the service, not the monitoring engine,
@@ -433,6 +443,7 @@ async def test_an_api_item_is_stored_as_an_article_with_a_legal_format(monkeypat
 # --- the size bound --------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_oversized_change_is_truncated_and_says_so(monkeypatch):
     """A large page can produce an enormous diff, and this goes into a TEXT
@@ -482,8 +493,10 @@ async def test_an_oversized_change_is_truncated_and_says_so(monkeypatch):
     # in `render_change`'s headline.
     db, service, source_id = await _site_source(
         monkeypatch,
-        [f"<html><body><p>{before}</p></body></html>",
-         f"<html><body><p>{after}</p></body></html>"],
+        [
+            f"<html><body><p>{before}</p></body></html>",
+            f"<html><body><p>{after}</p></body></html>",
+        ],
     )
     await _check(service, source_id)
     await _check(service, source_id)
@@ -594,8 +607,8 @@ def test_the_diff_generator_is_not_materialised():
 
     real_unified_diff = monitoring_engine.unified_diff
     try:
-        monitoring_engine.unified_diff = (
-            lambda *args, **kwargs: iter(list(real_unified_diff(*args, **kwargs)))
+        monitoring_engine.unified_diff = lambda *args, **kwargs: iter(
+            list(real_unified_diff(*args, **kwargs))
         )
         tracemalloc.start()
         listed_body, listed_summary = monitoring_engine.build_change_diff(before, after)
@@ -658,6 +671,7 @@ def test_a_removed_line_that_looks_like_a_diff_header_is_not_deleted():
     assert body.splitlines()[0].startswith("@@")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_whole_stored_diff_body_is_exactly_this(monkeypatch):
     """Pin the body a real check produces, in full.
@@ -736,6 +750,7 @@ def test_the_diff_is_readable_in_a_narrow_pane():
 # --- rules must still see the page, not the diff ---------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_site_alert_still_fires_on_text_the_change_did_not_touch(monkeypatch):
     """Fix round 1, Important #3. An undeclared narrowing of every site rule.
@@ -790,6 +805,7 @@ async def test_a_site_alert_still_fires_on_text_the_change_did_not_touch(monkeyp
     assert [match["rule_name"] for match in matches] == ["Status alert"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_exclude_filter_on_unchanged_page_text_still_excludes(monkeypatch):
     """The same narrowing, on the other service.
@@ -839,12 +855,14 @@ def test_the_rule_haystack_is_the_page_when_content_is_a_diff():
         build_rule_haystack,
     )
 
-    haystack = build_rule_haystack({
-        "title": "Change detected: Status",
-        "content": "@@ -1,2 +1,2 @@\n-Opus 4.1 available\n+Opus 4.5 available",
-        RULE_MATCH_TEXT_KEY: "All systems operational. Opus 4.5 available.",
-        "author": None,
-    })
+    haystack = build_rule_haystack(
+        {
+            "title": "Change detected: Status",
+            "content": "@@ -1,2 +1,2 @@\n-Opus 4.1 available\n+Opus 4.5 available",
+            RULE_MATCH_TEXT_KEY: "All systems operational. Opus 4.5 available.",
+            "author": None,
+        }
+    )
 
     assert "all systems operational" in haystack
     assert "change detected: status" in haystack
@@ -937,7 +955,9 @@ def test_pre_segmented_diff_helpers_match_the_self_segmenting_path():
     )
 
 
-async def _direct_check(db: SubscriptionsDB, source_id: int) -> tuple[dict | None, dict]:
+async def _direct_check(
+    db: SubscriptionsDB, source_id: int
+) -> tuple[dict | None, dict]:
     """Call the real `check_url` directly, bypassing persistence.
 
     `_check`/`_stored_items` only ever see what survives `persist_subscription_item`,
@@ -956,6 +976,7 @@ async def _direct_check(db: SubscriptionsDB, source_id: int) -> tuple[dict | Non
     return await URLMonitor(db).check_url(config)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_url_attaches_added_and_removed_text_to_a_real_change(monkeypatch):
     """The producer wiring, end to end: a real site change's `change_info`
@@ -1012,9 +1033,9 @@ def test_feed_and_api_items_carry_neither_key_so_scope_falls_back_safely():
     assert RULE_MATCH_ADDED_TEXT_KEY not in feed_item
     assert RULE_MATCH_REMOVED_TEXT_KEY not in feed_item
 
-    assert "the model is available" in build_rule_haystack(feed_item, scope="appeared"), (
-        "a wholly new item has no diff to narrow against -- it all just appeared"
-    )
+    assert "the model is available" in build_rule_haystack(
+        feed_item, scope="appeared"
+    ), "a wholly new item has no diff to narrow against -- it all just appeared"
     assert build_rule_haystack(feed_item, scope="disappeared") == "", (
         "nothing is known to have disappeared from an item with no previous "
         "version to compare against"
@@ -1026,6 +1047,7 @@ def test_feed_and_api_items_carry_neither_key_so_scope_falls_back_safely():
 # --- no path may emit an invalid pairing -----------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_producer_emits_a_pairing_persistence_would_reject(monkeypatch):
     """`persist_subscription_item` RAISES on an invalid pairing, and that raise
@@ -1165,6 +1187,7 @@ _JSON_FEED = """{
 # --- TASK-1361: the baseline must be the newest snapshot, not either of two --
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_snapshots_in_one_second_compare_against_the_newer(monkeypatch):
     """The baseline is picked by `created_at DESC`, which ties at one second.
@@ -1197,7 +1220,8 @@ async def test_two_snapshots_in_one_second_compare_against_the_newer(monkeypatch
     latest = "Version 3.0 is current. Everything else on this page is stable."
 
     db, service, source_id = await _site_source(
-        monkeypatch, [f"<html><body><p>{latest}</p></body></html>"],
+        monkeypatch,
+        [f"<html><body><p>{latest}</p></body></html>"],
         change_threshold=0.0,
     )
     subscription = db.get_subscription(source_id)
@@ -1218,8 +1242,14 @@ async def test_two_snapshots_in_one_second_compare_against_the_newer(monkeypatch
                      created_at, extraction_fingerprint)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (source_id, "https://example.com/page", f"hash-{body[:9]}",
-                 body, tied, fingerprint),
+                (
+                    source_id,
+                    "https://example.com/page",
+                    f"hash-{body[:9]}",
+                    body,
+                    tied,
+                    fingerprint,
+                ),
             )
 
     result = await _check(service, source_id)

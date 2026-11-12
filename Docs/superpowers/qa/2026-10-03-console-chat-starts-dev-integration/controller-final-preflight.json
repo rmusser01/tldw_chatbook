@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "bash",
+    "scripts/preflight.sh"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "PYTHON": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python"
+  },
+  "started_at": 1791066689.713581,
+  "elapsed_seconds": 164.85257601737976,
+  "returncode": 0,
+  "stdout": "preflight: using /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python (3.12.11)\n\n=== generated stylesheets ===\nCSS bundle reproduces from its source modules.\nwidget_defaults_self.tcss reproduces from its Python sources.\nwidget_defaults_scoped.tcss reproduces from its Python sources.\nscreen_css_self.tcss reproduces from its Python sources.\nscreen_css_scoped.tcss reproduces from its Python sources.\nscreen_agentic_library.tcss reproduces from its Python sources.\nscreen_agentic_settings.tcss reproduces from its Python sources.\nscreen_feature_evals.tcss reproduces from its Python sources.\nscreen_feature_scheduling.tcss reproduces from its Python sources.\nscreen_feature_workflows.tcss reproduces from its Python sources.\nscreen_modal_console_delete_receipt.tcss reproduces from its Python sources.\nscreen_feature_watchlists.tcss reproduces from its Python sources.\n\n=== Canvas Mermaid generated assets ===\nCanvas Mermaid assets reproduce: 6 outputs (4 derived from pinned inputs, 2 vendored digests verified)\n\n=== profile-owned path census ===\nprofile-owned path census verified: 54 executable occurrence(s) across 22 file(s), all matched by 51 approved exceptions.\n\n=== production diagnostic inventory ===\ndiagnostic inventory verified: 640 owners, 1426 TASK-492 calls, 56 TASK-31551 calls, 7603 TASK-494 calls, 16 sink files\n\n=== backlog task ids ===\nNo duplicate task IDs across 4911 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.\n\n=== readable backlog task files ===\nAll 4911 task files in backlog/tasks, backlog/archive/tasks are readable (frontmatter + owned-section markers).\n\n=== chachanotes table allowlist ===\nchachanotes: 117 declared tables, all present in VALID_TABLES['chachanotes'].\n\n=== index plan pins ===\nindex plan pins: 308 index names declared under tldw_chatbook/DB, 308 census rows, 90 plan-pinned.\ncheck_index_plan_pins: OK\n\n=== textual worker contract ===\ntextual worker contract: no synchronous run_worker targets; 340 post-await DOM lookup(s) in 161 function(s), none new; 5 baseline lookup(s) resolved; 69 wait-for-dismiss push(es) reachable from 27 non-worker entry point(s), none new.\n\n=== timestamp writers ===\ntimestamp writers: 0 datetime.utcnow() site(s), 0 naive_now_iso, 99 offset_now_iso, 18 strftime_iso occurrence(s) (117 pinned).\ncheck_timestamp_writers: OK\n\n=== gated Tests/UI census ===\nOK: 122 Tests/UI files in the PR gate (floor 121); every listed path exists.\n\npreflight: all derived-artifact checks passed.\n",
+  "head": "3c4c522b40091901514959061c29c092033bb874"
+}

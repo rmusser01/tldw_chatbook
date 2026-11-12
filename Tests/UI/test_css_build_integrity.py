@@ -35,6 +35,7 @@ _GENERATED_SHEETS = (
     _CSS_ROOT / "screen_feature_evals.tcss",
     _CSS_ROOT / "screen_feature_scheduling.tcss",
     _CSS_ROOT / "screen_feature_watchlists.tcss",
+    _CSS_ROOT / "screen_feature_roleplay.tcss",
 )
 
 
@@ -537,10 +538,21 @@ def test_file_notes_error_ink_and_disabled_opacity_are_app_tier(request) -> None
     for css in stylesheets:
         git_error = _declarations(css, ".file-notes-git-commit-error")
         save_error = _declarations(css, "#file-notes-save-status.-error")
-        assert git_error["color"] == "$ds-status-error-readable"
-        assert save_error["color"] == "$ds-status-error-readable"
-        assert git_error["background"] == "$error-darken-3"
-        assert save_error["background"] == "$error-darken-3"
+        # TASK-36528: plain ink on an error tint (Conflict's pair); the old
+        # $text-error on $error-darken-3 painted 3.89:1 in textual-dark.
+        # TASK-38715: the tint sits on an opaque $surface, not on whatever the
+        # host paints; over litestep's mid-tone $background it read 3.54:1.
+        # ANSI palette entries take no tint, so the ANSI themes paint $error.
+        assert git_error["color"] == "$text"
+        assert save_error["color"] == "$text"
+        for declarations in (git_error, save_error):
+            assert declarations["background"] == "$surface"
+            assert declarations["background-tint"] == "$error 14%"
+        for selector in (
+            "App:ansi .file-notes-git-commit-error",
+            "App:ansi #file-notes-save-status.-error",
+        ):
+            assert _declarations(css, selector)["background"] == "$error"
         disabled = _declarations(css, "LibraryFileNotesWorkspace Button:disabled")
         assert disabled["opacity"] == "100%"
         assert disabled["text-opacity"] == "100%"
@@ -996,7 +1008,12 @@ def _split_spec(module: str) -> "css_builder.ScreenOwnedSplit":
 
 @pytest.mark.parametrize(
     "module",
-    ["features/_evals.tcss", "features/_scheduling.tcss", "features/_workflows.tcss"],
+    [
+        "features/_evals.tcss",
+        "features/_scheduling.tcss",
+        "features/_workflows.tcss",
+        "features/_roleplay.tcss",
+    ],
 )
 @private_profile_test
 def test_screen_owned_module_is_exactly_partitioned(request, module: str) -> None:
@@ -1212,13 +1229,17 @@ def test_screens_do_not_take_owned_sheets_onto_css_path(request) -> None:
             "tldw_chatbook.UI.Screens.watchlists_collections_screen",
             "WatchlistsCollectionsScreen",
         ),
+        ("tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
     ]:
         try:
             screen_cls = getattr(importlib.import_module(screen_module), screen_name)
         except ImportError as exc:  # optional-deps environments
             pytest.skip(f"{screen_module} unavailable here: {exc}")
         css_path = getattr(screen_cls, "CSS_PATH", None) or []
-        for entry in css_path:
+        # A bare str would be walked one character at a time and never match
+        # (Roleplay frame B1 review): normalise like the modal check above.
+        entries = [css_path] if isinstance(css_path, (str, Path)) else list(css_path)
+        for entry in entries:
             assert "screen_feature_" not in str(entry), (
                 f"{screen_name}.CSS_PATH loads {entry}: harnesses would "
                 "style themselves with the moved half of the module (the "

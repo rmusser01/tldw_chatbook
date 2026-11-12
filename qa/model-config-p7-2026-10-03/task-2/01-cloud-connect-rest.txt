@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │ │  ▶ Prompt-cache snapshots                                                                                         │ │  │  │  │  Save (s) — no changes                  │
+│ █  > Providers & Models      │  │  │ │ │                                                                                                                   │ │  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │                                                                                                                       │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │  Connect                                                                                                              │  │  │  │ Affects Console and provider-backed     │
+│      Appearance              │  │  │ │ Provider                │ Anthropic                          new-chat default configured: Anthropic · 59 more         │▁ │  │  │ generation.                             │
+│      Theme                   │  │  │ │ API key                 │ Local config key saved;    Clear   saved in config  masked · used before the env var        │  │  │  │  Provider readiness: Anthropic /        │
+│      Splash Screen           │  │  │ │ Env var                 │ ANTHROPIC_API_KEY                  not set          safer: keeps keys out of config.toml    │  │  │  │  claude-sonnet-4-5                      │
+│      Console Behavior        │  │  │ │ Endpoint                │ https://api.anthropic.com          built-in         blank uses the provider default         │  │  │  │ Focused field guide                     │
+│  Data & Privacy              │  │  │ │ Key check                Ready · not tested                                                                Test (t)   │  │  │  │  Focused setting: None — Tab to a       │
+│      Storage                 │  │  │ │  Provider settings have not been saved this session.                                                                  │  │  │  │  setting                                │
+│      Workspaces              │  │  │ │                                                                                                                       │  │  │  │  Purpose: Configure the default         │
+│      Tool Profiles           │  │  │ │  Default model for new chats                                                                                          │  │  │  │  provider, model, endpoint, and         │
+│      Privacy & Security      │  │  │ │ Model                   │ claude-sonnet-4-5                              new-chat default                             │  │  │  │  credential source.                     │
+│      Network                 │  │  │ │                                                                                                                       │  │  │  │  Saved as: chat_defaults plus         ▆ │
+│      My Profile              │  │  │ │  Context capacity                                                                                                     │  │  │  │  provider-specific api_settings         │
+│  Troubleshooting             │  │  │ │  Detected context window: 200,000 tokens.                                                                             │  │  │  │  Save: staged - press s to save, r to   │
+│      Diagnostics (view)      │  │  │ │ Context window          │ 200000                                                                                      │  │  │  │  revert                                 │
+│      About (view)            │  │  │ │                          Reset to detected                                                                            │  │  │  │  Validation: test provider readiness    │
+│      Agents                  │  │  │ │  This is the model's total token capacity, not a conversation length preference. Repairs update the existing          │  │  │  │  before saving these defaults           │
+│  Expert                      │  │  │ │  model-capability registry used by request safety checks.                                                             │  │  │  │ Key                                     │
+│      Hooks                   │  │  │ │                                                                                                                       │  │  │  │  Checks the settings, then lists        │
+│      Internal Prompts        │  │  │ │  Model discovery                                                                                                      │  │  │  │  models without generating: a cloud     │
+│      Advanced Config         │  │  │ │  Discover models from configured endpoint                                                                             │  │  │  │  provider's listing checks the API      │
+│   Domain Defaults ▸ (11)     │  │  │ │  No discovered models yet. Use Discover models after endpoint is configured.                                          │  │  │  │  key, a local server's shows it         │
+│                              │  │  │ │  Capabilities unknown until saved or verified; text chat is assumed.                                                  │  │  │  │  answers. Nothing is saved.             │
+│                              │  │  │ │  Discover models  Save selected       Clear                                                                           │  │  │  │ Configuration check has not run.        │
+│                              │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

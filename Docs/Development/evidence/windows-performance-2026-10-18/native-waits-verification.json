@@ -1,0 +1,45 @@
+{
+  "baseline_revision": "d24919ab402d503ca8210dc5ee6b0fd186adbd64",
+  "product_revision": "bf1463078cb1bf08cfe0c75c1833a199e0c45115",
+  "red": {
+    "failed": 6,
+    "passed": 1,
+    "seconds": 13.42,
+    "expected": true
+  },
+  "earlier_setup_refusals": "Two attempts failed before assertions: missing bootstrap_profile marker, then marker incorrectly named as fixture; corrected without weakening source checks.",
+  "focused_green": {
+    "passed": 7,
+    "seconds": 7.91,
+    "overlaps_final": true
+  },
+  "final_targeted": {
+    "passed": 50,
+    "failed": 0,
+    "seconds": 158.23,
+    "files": [
+      "Tests/UI/test_home_content_demand.py",
+      "Tests/UI/test_home_dashboard_seams.py",
+      "Tests/UI/test_home_screen.py::test_home_content_snapshot_uses_library_rail_seams",
+      "Tests/UI/test_console_return_responsiveness.py",
+      "Tests/UI/test_console_full_config_preparation.py",
+      "Tests/UI/test_console_workspace_reconciliation_preparation.py"
+    ],
+    "full_suite": false
+  },
+  "observer_api_failure": {
+    "exit_code": 1,
+    "receipt": "native-waits-verified-exit.json",
+    "phase": "Before TldwCli construction",
+    "error": "ValueError: invalid local event set 0x100f",
+    "correction": "Minimal stdlib RED confirms PY_UNWIND cannot be local; GREEN filtered global event observes original exception. Corrected observer enables global mask with exact-code filter and clears it on finish."
+  },
+  "plain_comparison": "Four zero exits, all24 drafts retained and attachments completed, all guard counts zero. Same product hashes; baseline scope only Home.",
+  "diagnostic_comparison": "Corrected original/current trace exits zero; six successful returns each, zero guards; observed Home content worker entries22 to8. Existing queued worker may start after suspend.",
+  "safety": "12 storage/config/ownership modules unchanged after LF normalization; native-waits-safety.json.",
+  "review": "Final independent review passes with no additional findings: product behavior, both diagnostic worker counts, exact exits/guards, mixed latency qualification, safety hashes and cleanup receipt reviewed. Auto-merge OFF.",
+  "lint_format": "All changed Python check and format pass; git diff --check passes.",
+  "auto_merge": "OFF, explicitly required by user.",
+  "qualification": "Deterministic hidden-demand removal, mixed latency. Pooled attachment -23.8%; reverse pair +6.2%; worst input worse. No consistent end-to-end gain or threshold qualification.",
+  "cleanup": "14 exact completed roots removed after all-target validation; receipt native-waits-cleanup.json. Unrecorded earlier setup root was not inferred/deleted."
+}

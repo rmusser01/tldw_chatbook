@@ -11,6 +11,7 @@ a fingerprint mismatch means the numbers are not comparable at all, so
 reporting them as a code regression would be a lie the harness tells once and
 then gets ignored for.
 """
+
 from __future__ import annotations
 
 import io
@@ -209,8 +210,9 @@ def test_fingerprint_changes_when_the_golden_set_bytes_change(tmp_path):
 
     golden_path.write_bytes(b"golden, edited")
 
-    assert current_fingerprint(corpus_path, golden_path)["corpus_sha256"] != (
-        before["corpus_sha256"]
+    assert (
+        current_fingerprint(corpus_path, golden_path)["corpus_sha256"]
+        != (before["corpus_sha256"])
     ), "the golden set must participate in the corpus hash, not just the corpus"
 
 
@@ -219,8 +221,9 @@ def test_fingerprint_distinguishes_a_byte_moved_across_the_file_boundary(tmp_pat
     left = _fixture_files(tmp_path / "left", corpus=b"ab", golden=b"c")
     right = _fixture_files(tmp_path / "right", corpus=b"a", golden=b"bc")
 
-    assert current_fingerprint(*left)["corpus_sha256"] != (
-        current_fingerprint(*right)["corpus_sha256"]
+    assert (
+        current_fingerprint(*left)["corpus_sha256"]
+        != (current_fingerprint(*right)["corpus_sha256"])
     )
 
 
@@ -269,8 +272,7 @@ def test_sentence_transformers_is_recorded_but_never_compared(tmp_path):
         f"compared: {payload['metadata']['environment']}"
     )
     assert payload["metadata"]["environment_info"]["sentence_transformers"], (
-        "sentence_transformers must still be recorded for debugging, just "
-        "not compared"
+        "sentence_transformers must still be recorded for debugging, just not compared"
     )
 
 
@@ -663,7 +665,8 @@ def test_a_zero_valued_baseline_metric_does_not_divide_by_zero(tmp_path):
     floor = _report(
         _mode_report("semantic"),
         _mode_report(
-            "plain", per_category={"keyword": _metrics(0.9), "paraphrase": _metrics(0.0)}
+            "plain",
+            per_category={"keyword": _metrics(0.9), "paraphrase": _metrics(0.0)},
         ),
         _mode_report("hybrid"),
     )

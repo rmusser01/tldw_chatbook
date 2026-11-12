@@ -102,7 +102,6 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
     Based on: https://github.com/boson-ai/higgs-audio
     """
 
-    @voice_files.call
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
 
@@ -169,7 +168,6 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 ),
             )
         ).expanduser()
-        voice_files.mkdir(self, self.voice_samples_dir, parents=True, exist_ok=True)
 
         self.enable_voice_cloning = self.config.get("HIGGS_ENABLE_VOICE_CLONING", True)
         self.max_reference_duration = self.config.get(
@@ -180,24 +178,22 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             "HIGGS_ENABLE_BACKGROUND_MUSIC", False
         )
 
-        # Voice profiles storage
-        self.voice_profiles_file = self.voice_samples_dir / "voice_profiles.json"
-        self.voice_profiles = self._load_voice_profiles()
-
-        # Create profiles directory for saved profiles
-        self.profiles_dir = self.voice_samples_dir / "profiles"
-        voice_files.mkdir(self, self.profiles_dir, parents=True, exist_ok=True)
-
-        # Create default voice profiles if none exist
-        if not self.voice_profiles:
-            self._create_default_profiles()
+        # Config reads have their own custody; keep related voice files in one scope.
+        with voice_files._scope(self):
+            voice_files.mkdir(self, self.voice_samples_dir, parents=True, exist_ok=True)
+            self.voice_profiles_file = self.voice_samples_dir / "voice_profiles.json"
+            self.voice_profiles = self._load_voice_profiles()
+            self.profiles_dir = self.voice_samples_dir / "profiles"
+            voice_files.mkdir(self, self.profiles_dir, parents=True, exist_ok=True)
+            if not self.voice_profiles:
+                self._create_default_profiles()
+            self.audio_service = get_audio_service()
 
         logger.info(
             f"Loaded {len(self.voice_profiles)} voice profiles from {self.voice_profiles_file}"
         )
 
         # Services
-        self.audio_service = get_audio_service()
         self.text_chunker = TextChunker(
             max_tokens=self.config.get("HIGGS_MAX_TOKENS", 500)
         )

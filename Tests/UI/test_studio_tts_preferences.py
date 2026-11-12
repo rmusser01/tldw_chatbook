@@ -197,9 +197,10 @@ async def test_studio_surface_states_scope_and_excludes_every_global_owner() -> 
         assert app.query_one("#studio-tts-reset-btn", Button).label.plain == (
             "Reset to Global"
         )
-        assert str(
-            app.query_one("#studio-tts-voice-tools-heading", Static).render()
-        ) == "Voice tools"
+        assert (
+            str(app.query_one("#studio-tts-voice-tools-heading", Static).render())
+            == "Voice tools"
+        )
         assert app.query_one("#voice-profiles", Button).label.plain == (
             "Voice Profiles"
         )
@@ -627,6 +628,7 @@ async def test_revert_and_reset_restore_only_the_studio_scope() -> None:
     assert not app.global_saves
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reset_to_global_discards_the_bounded_playground_draft() -> None:
     """A reset must not leave stale exact axes ahead of inherited globals."""

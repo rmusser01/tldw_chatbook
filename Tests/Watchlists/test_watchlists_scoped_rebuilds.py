@@ -171,9 +171,7 @@ async def _open(app, watchlist_id: int | None = None, *, section: str = "items")
         screen = host.screen_stack[-1]
         assert isinstance(screen, WatchlistsCollectionsScreen)
         if watchlist_id is not None:
-            screen.tree_scope = TreeScope(
-                kind="watchlist", watchlist_id=watchlist_id
-            )
+            screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
         screen.active_section = section
         await pilot.pause(0.4)
         yield screen, pilot, host
@@ -204,6 +202,7 @@ async def _mount_failed_reader_return(screen, pilot, host, scope):
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_never_recomposes_the_whole_screen():
     """The screen, its navigation bar and its footer are shared chrome that
     a tab click has nothing to say about.
@@ -237,6 +236,7 @@ async def test_a_section_switch_never_recomposes_the_whole_screen():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_leaves_both_rails_standing():
     """The rails carry no `active_section`-derived state at all.
 
@@ -264,11 +264,12 @@ async def test_a_section_switch_leaves_both_rails_standing():
             is inspector_before
         ), f"the Inspector must survive a tab click: {counted.report()}"
         assert counted.recomposes["WatchlistTree#wl-tree"] == 0, counted.report()
-        assert (
-            counted.recomposes["InspectorPane#watchlists-entity-inspector"] == 0
-        ), counted.report()
+        assert counted.recomposes["InspectorPane#watchlists-entity-inspector"] == 0, (
+            counted.report()
+        )
 
 
+@pytest.mark.bootstrap_profile
 async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
     monkeypatch,
 ) -> None:
@@ -293,9 +294,7 @@ async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
     }
 
     async with _open(app) as (screen, pilot, host):
-        collapsed_grip = screen.query_one(
-            "#wl-grip-right_rail", WatchlistsPaneGrip
-        )
+        collapsed_grip = screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip)
         assert str(collapsed_grip.label) == "<---"
         assert collapsed_grip.tooltip == "Expand Inspector"
 
@@ -322,9 +321,7 @@ async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
 
         screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip).press()
         await _settle(pilot, host)
-        expected_collapsed = RegionLayout(
-            collapsed=frozenset({Region.RIGHT_RAIL})
-        )
+        expected_collapsed = RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL}))
         assert writes == [RegionLayout(), expected_collapsed]
 
         screen.active_section = "items"
@@ -340,6 +337,7 @@ async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
         assert writes == [RegionLayout(), expected_collapsed]
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_builds_the_sections_pane_exactly_once():
     """One scoped region build per switch, and no duplicate pane rebuild.
 
@@ -418,11 +416,12 @@ async def test_a_section_switch_builds_the_sections_pane_exactly_once():
             f"removed by task-15778: {warm.report()}"
         )
         assert warm.recomposes["WatchlistsCollectionsScreen#-"] == 0, warm.report()
-        assert (
-            screen.query_one("#rules-table", DataTable).row_count == 1
-        ), "and the row still has to be on screen"
+        assert screen.query_one("#rules-table", DataTable).row_count == 1, (
+            "and the row still has to be on screen"
+        )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_shows_rows_that_land_while_the_swap_runs():
     """The window `_reseed_active_section_pane` closes.
 
@@ -484,6 +483,7 @@ async def test_a_section_switch_shows_rows_that_land_while_the_swap_runs():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_rapid_management_section_requests_keep_captured_intent_on_failure(
     monkeypatch,
 ) -> None:
@@ -543,6 +543,7 @@ async def test_rapid_management_section_requests_keep_captured_intent_on_failure
         assert screen.query("#watchlists-rules-pane")
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_moves_the_tab_strip_and_the_backend_control():
     """Behaviour, not just widget counts: the scoped swap must still render
     the section it was asked for, mark its tab, and disable the backend
@@ -628,6 +629,7 @@ async def test_a_section_switch_moves_the_tab_strip_and_the_backend_control():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_clicking_a_tab_leaves_focus_on_that_tab_so_z_stays_refused():
     """A tab click must not hand the left rail to the next keypress.
 
@@ -677,6 +679,7 @@ async def test_clicking_a_tab_leaves_focus_on_that_tab_so_z_stays_refused():
         assert screen.query("#wl-region-left_rail"), "the rail is still expanded"
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_driven_from_elsewhere_does_not_steal_focus():
     """The other half of the focus rule: only re-home focus the swap destroyed.
 
@@ -707,6 +710,7 @@ async def test_a_section_switch_driven_from_elsewhere_does_not_steal_focus():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_tree_click_updates_each_affected_pane_at_most_once():
     """A tree click fans out to the Inspector, the tree's own highlight, the
     centre header and the section's rows. Each of those is one update; none
@@ -727,14 +731,14 @@ async def test_a_tree_click_updates_each_affected_pane_at_most_once():
         )
         for key, count in counted.recomposes.items():
             assert count <= 1, (
-                f"{key} was rebuilt {count} times by one tree click: "
-                f"{counted.report()}"
+                f"{key} was rebuilt {count} times by one tree click: {counted.report()}"
             )
         assert screen.tree_scope == TreeScope(kind="all"), (
             "the click still has to move the scope"
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_briefing_selection_never_recomposes_the_pane():
     """The select->clear->reload pipeline, fully scoped.
 
@@ -795,6 +799,7 @@ async def test_a_briefing_selection_never_recomposes_the_pane():
 _SCRIPT_ROSTER = [{"name": "Narrator", "role_prompt": "Calm narration."}]
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
     """Task-16852: the identical guarantee, one level down.
 
@@ -832,8 +837,7 @@ async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
             await _settle(pilot, host)
 
         assert counted.recomposes["ArtifactsPane#watchlists-artifacts-pane"] == 0, (
-            "a script selection must never rebuild the pane: "
-            f"{counted.report()}"
+            f"a script selection must never rebuild the pane: {counted.report()}"
         )
         assert (
             counted.recomposes["BriefingDetailRegion#artifacts-detail-region"] == 0
@@ -843,10 +847,7 @@ async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
             f"scripts table (and its focus, cursor and scroll): {counted.report()}"
         )
         assert (
-            counted.recomposes[
-                "ScriptDetailRegion#artifacts-script-detail-region"
-            ]
-            == 1
+            counted.recomposes["ScriptDetailRegion#artifacts-script-detail-region"] == 1
         ), (
             "the script selection and its audio reload landing must "
             f"coalesce into ONE script-detail-region rebuild: {counted.report()}"
@@ -860,6 +861,7 @@ async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", ["false", "exception"])
 async def test_browser_worker_failure_does_not_rebuild_reader(
     monkeypatch, failure: str
@@ -907,6 +909,7 @@ async def test_browser_worker_failure_does_not_rebuild_reader(
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_rail_toggle_rebuilds_only_the_toggled_region():
     """`[` collapses the left rail. Nothing in the centre or on the right has
     changed, so nothing there may be rebuilt."""
@@ -930,8 +933,7 @@ async def test_a_rail_toggle_rebuilds_only_the_toggled_region():
             counted.report()
         )
         assert (
-            screen.query_one("#watchlists-entity-inspector", InspectorPane)
-            is inspector
+            screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
         ), counted.report()
         assert screen.query_one("#wl-centre-status") is header, counted.report()
         assert counted.recomposes["WatchlistsWorkbench#wl-workbench"] == 0, (
@@ -948,6 +950,7 @@ async def test_a_rail_toggle_rebuilds_only_the_toggled_region():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_collapsing_items_rebuilds_neither_rail_nor_the_reader():
     """`z` on Feed Items removes only that side body."""
     app = _build_test_app()
@@ -973,6 +976,7 @@ async def test_collapsing_items_rebuilds_neither_rail_nor_the_reader():
         assert screen.query_one("#wl-region-content") is content_region
 
 
+@pytest.mark.bootstrap_profile
 async def test_an_inspector_toggle_leaves_the_centre_and_the_left_rail_alone():
     """`]` collapses the right rail: the mirror image of the `[` test, so a
     regression that scoped one rail and not the other cannot hide."""
@@ -996,6 +1000,7 @@ async def test_an_inspector_toggle_leaves_the_centre_and_the_left_rail_alone():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_layout_toggle_mounts_far_fewer_widgets_than_a_full_rebuild():
     """The headline number, asserted rather than described.
 
@@ -1018,6 +1023,7 @@ async def test_a_layout_toggle_mounts_far_fewer_widgets_than_a_full_rebuild():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_layout_keys_keep_independent_side_pane_state():
     """Scoping the rebuild must not couple the side-pane preferences."""
     app = _build_test_app()
@@ -1050,6 +1056,7 @@ async def test_layout_keys_keep_independent_side_pane_state():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_collapsed_region_still_expands_from_its_grip_button() -> None:
     """The grip route through `RegionToggled`, not just the keybinding."""
     app = _build_test_app()
@@ -1068,6 +1075,7 @@ async def test_a_collapsed_region_still_expands_from_its_grip_button() -> None:
         assert screen.query("#wl-tree"), "and rebuild its content"
 
 
+@pytest.mark.bootstrap_profile
 async def test_resize_derives_effective_layout_without_persisting_preference(
     monkeypatch,
 ) -> None:
@@ -1091,6 +1099,7 @@ async def test_resize_derives_effective_layout_without_persisting_preference(
         assert writes == []
 
 
+@pytest.mark.bootstrap_profile
 async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
     monkeypatch,
 ) -> None:
@@ -1120,12 +1129,8 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         for width in (155, 156, 157, 158, 157, 158, 157, 158):
             await pilot.resize_terminal(width, 50)
             await _settle(pilot, host)
-            assert screen._responsive_region_layout.is_collapsed(
-                Region.RIGHT_RAIL
-            )
-            assert screen.query_one(
-                "#wl-grip-right_rail", WatchlistsPaneGrip
-            ) is grip
+            assert screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
+            assert screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip) is grip
             assert screen.focused is focused
 
         assert requests == []
@@ -1133,21 +1138,15 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         await pilot.resize_terminal(159, 50)
         await _settle(pilot, host)
         assert len(requests) == 1
-        assert not screen._responsive_region_layout.is_collapsed(
-            Region.RIGHT_RAIL
-        )
+        assert not screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
         right_rail_body = screen.query_one("#wl-region-right_rail")
-        assert screen.query_one(
-            "#wl-grip-right_rail", WatchlistsPaneGrip
-        ) is grip
+        assert screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip) is grip
         assert screen.focused is focused
 
         await pilot.resize_terminal(155, 50)
         await _settle(pilot, host)
         assert len(requests) == 1
-        assert not screen._responsive_region_layout.is_collapsed(
-            Region.RIGHT_RAIL
-        )
+        assert not screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert screen.query_one("#wl-region-right_rail") is right_rail_body
         assert screen.focused is focused
 
@@ -1156,12 +1155,11 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         assert len(requests) == 2
         assert screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert not screen.query("#wl-region-right_rail")
-        assert screen.query_one(
-            "#wl-grip-right_rail", WatchlistsPaneGrip
-        ) is grip
+        assert screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip) is grip
         assert screen.focused is focused
 
 
+@pytest.mark.bootstrap_profile
 async def test_zero_width_never_seeds_or_replaces_responsive_history(
     monkeypatch,
 ) -> None:
@@ -1220,6 +1218,7 @@ async def test_zero_width_never_seeds_or_replaces_responsive_history(
         assert len(requests) == positive_request_count
 
 
+@pytest.mark.bootstrap_profile
 async def test_article_focus_is_transient_and_restores_exact_preference() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1244,6 +1243,7 @@ async def test_article_focus_is_transient_and_restores_exact_preference() -> Non
         assert screen._effective_region_layout == preferred
 
 
+@pytest.mark.bootstrap_profile
 async def test_article_focus_is_refused_off_read_without_layout_change() -> None:
     app = _build_test_app()
     async with _open(app, section="sources") as (screen, pilot, host):
@@ -1256,6 +1256,7 @@ async def test_article_focus_is_refused_off_read_without_layout_change() -> None
         assert (screen.region_layout, screen._effective_region_layout) == before
 
 
+@pytest.mark.bootstrap_profile
 async def test_responsive_grip_open_protects_preferred_open_pane(
     monkeypatch,
 ) -> None:
@@ -1277,9 +1278,7 @@ async def test_responsive_grip_open_protects_preferred_open_pane(
         screen.query_one("#wl-grip-right_rail", Button).press()
         await _settle(pilot, host)
 
-        expected_lease = ResponsivePriorityLease(
-            Region.RIGHT_RAIL, read_mode=True
-        )
+        expected_lease = ResponsivePriorityLease(Region.RIGHT_RAIL, read_mode=True)
         assert screen._responsive_priority_lease == expected_lease
         assert not screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert not screen._effective_region_layout.is_collapsed(Region.RIGHT_RAIL)
@@ -1292,6 +1291,7 @@ async def test_responsive_grip_open_protects_preferred_open_pane(
         assert not screen._effective_region_layout.is_collapsed(Region.RIGHT_RAIL)
 
 
+@pytest.mark.bootstrap_profile
 async def test_article_focus_preserves_priority_lease_and_hidden_baseline(
     monkeypatch,
 ) -> None:
@@ -1355,6 +1355,7 @@ async def test_article_focus_preserves_priority_lease_and_hidden_baseline(
         assert screen._effective_region_layout == hidden_baseline
 
 
+@pytest.mark.bootstrap_profile
 async def test_priority_lease_parks_across_management_and_replaces_in_read() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1392,7 +1393,10 @@ async def test_priority_lease_parks_across_management_and_replaces_in_read() -> 
         assert screen._responsive_priority_lease is None
 
 
-async def test_priority_lease_clears_only_after_origin_mode_fits_past_dead_band() -> None:
+@pytest.mark.bootstrap_profile
+async def test_priority_lease_clears_only_after_origin_mode_fits_past_dead_band() -> (
+    None
+):
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
         await pilot.resize_terminal(154, 50)
@@ -1413,6 +1417,7 @@ async def test_priority_lease_clears_only_after_origin_mode_fits_past_dead_band(
         assert screen._responsive_priority_lease is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_manual_grip_during_article_focus_exits_before_opening() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1428,6 +1433,7 @@ async def test_manual_grip_during_article_focus_exits_before_opening() -> None:
         assert not screen._effective_region_layout.is_collapsed(Region.LEFT_RAIL)
 
 
+@pytest.mark.bootstrap_profile
 async def test_z_targets_only_collapsible_side_panes() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1445,6 +1451,7 @@ async def test_z_targets_only_collapsible_side_panes() -> None:
         assert screen.region_layout == before
 
 
+@pytest.mark.bootstrap_profile
 async def test_z_ignores_stale_region_after_focus_moves_outside_workbench(
     monkeypatch,
 ) -> None:
@@ -1474,6 +1481,7 @@ async def test_z_ignores_stale_region_after_focus_moves_outside_workbench(
         assert writes == []
 
 
+@pytest.mark.bootstrap_profile
 async def test_mounted_layout_cycles_preserve_complete_reader_and_list_state() -> None:
     app = _build_test_app()
     watchlist_id = _seed(app, items=40)
@@ -1517,42 +1525,40 @@ async def test_mounted_layout_cycles_preserve_complete_reader_and_list_state() -
         assert reader_scroll_y > 0
 
         async def assert_restored() -> None:
-            restored = screen.query_one(
-                "#watchlists-items-pane", ArticleListPane
-            )
+            restored = screen.query_one("#watchlists-items-pane", ArticleListPane)
             restored_table = restored.query_one("#items-table", ListView)
             assert str(restored.selected_item["id"]) == selected_id
             assert restored.status_filter == "unread"
             assert restored.search_query == "Story"
             assert restored.page_number == 3
-            assert getattr(
-                restored_table.highlighted_child, "item_id_key", None
-            ) == anchor_id
+            assert (
+                getattr(restored_table.highlighted_child, "item_id_key", None)
+                == anchor_id
+            )
             assert float(restored_table.scroll_y) == list_scroll_y
             assert restored_table.has_focus
             assert screen.tree_scope == scope
             assert screen._items_page_index == page_index
-            assert screen.query_one(
-                "#watchlists-content-pane", ContentPane
-            ) is reader
-            assert float(
-                reader.query_one("#content-body-scroll", VerticalScroll).scroll_y
-            ) == reader_scroll_y
+            assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
+            assert (
+                float(reader.query_one("#content-body-scroll", VerticalScroll).scroll_y)
+                == reader_scroll_y
+            )
 
         for key in ("[", "]"):
-            items_identity = screen.query_one(
-                "#watchlists-items-pane", ArticleListPane
+            items_identity = screen.query_one("#watchlists-items-pane", ArticleListPane)
+            await pilot.press(key)
+            await _settle(pilot, host)
+            assert (
+                screen.query_one("#watchlists-items-pane", ArticleListPane)
+                is items_identity
             )
             await pilot.press(key)
             await _settle(pilot, host)
-            assert screen.query_one(
-                "#watchlists-items-pane", ArticleListPane
-            ) is items_identity
-            await pilot.press(key)
-            await _settle(pilot, host)
-            assert screen.query_one(
-                "#watchlists-items-pane", ArticleListPane
-            ) is items_identity
+            assert (
+                screen.query_one("#watchlists-items-pane", ArticleListPane)
+                is items_identity
+            )
             await assert_restored()
 
         await pilot.press("z")
@@ -1584,9 +1590,11 @@ async def test_mounted_layout_cycles_preserve_complete_reader_and_list_state() -
         await assert_restored()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", [False, OSError("disk full")])
 async def test_layout_persistence_advances_only_after_current_success(
-    monkeypatch, failure,
+    monkeypatch,
+    failure,
 ) -> None:
     results = iter([failure, True])
 
@@ -1616,9 +1624,11 @@ async def test_layout_persistence_advances_only_after_current_success(
         assert screen._pending_persist_layout is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", [False, OSError("disk full")])
 async def test_manual_focus_exit_retries_pending_preference_without_changing_it(
-    monkeypatch, failure,
+    monkeypatch,
+    failure,
 ) -> None:
     writes: list[RegionLayout] = []
     results = iter([failure, True])
@@ -1658,6 +1668,7 @@ async def test_manual_focus_exit_retries_pending_preference_without_changing_it(
         assert screen._manual_layout_rollback is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_layout_persistence_rapid_toggles_drain_latest_request(
     monkeypatch,
 ) -> None:
@@ -1696,6 +1707,7 @@ async def test_layout_persistence_rapid_toggles_drain_latest_request(
         assert screen._layout_persist_draining is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_layout_persist_disarm_is_atomic_with_a_newer_generation(
     monkeypatch,
 ) -> None:
@@ -1760,7 +1772,10 @@ async def test_layout_persist_disarm_is_atomic_with_a_newer_generation(
         assert screen._layout_persist_draining is False
 
 
-async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noop() -> None:
+@pytest.mark.bootstrap_profile
+async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noop() -> (
+    None
+):
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
         layout = screen._effective_region_layout
@@ -1804,6 +1819,7 @@ async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noo
         assert screen._manual_layout_rollback is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
     monkeypatch,
 ) -> None:
@@ -1817,9 +1833,7 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
     async with _open(app) as (screen, pilot, host):
         preferred = screen.region_layout
         effective = screen._effective_region_layout
-        lease_before = ResponsivePriorityLease(
-            Region.RIGHT_RAIL, read_mode=False
-        )
+        lease_before = ResponsivePriorityLease(Region.RIGHT_RAIL, read_mode=False)
         effective_before = effective.toggle_preferred(Region.RIGHT_RAIL)
         responsive_before = effective.toggle_preferred(Region.LEFT_RAIL)
         token1 = screen._next_layout_request_token()
@@ -1836,15 +1850,9 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
 
         token2 = screen._next_layout_request_token()
         assert screen._manual_layout_rollback is not None
-        assert (
-            screen._manual_layout_rollback.priority_lease_before
-            == lease_before
-        )
+        assert screen._manual_layout_rollback.priority_lease_before == lease_before
         assert screen._manual_layout_rollback.effective_before == effective_before
-        assert (
-            screen._manual_layout_rollback.responsive_before
-            == responsive_before
-        )
+        assert screen._manual_layout_rollback.responsive_before == responsive_before
         screen.post_message(
             RegionLayoutApplyFailed(
                 token=token1,
@@ -1872,6 +1880,7 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
         assert screen._manual_layout_rollback is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_suppressed_manual_preference_change_does_not_reuse_stale_token(
     monkeypatch,
 ) -> None:
@@ -1923,6 +1932,7 @@ async def test_suppressed_manual_preference_change_does_not_reuse_stale_token(
         assert persisted == [preferred]
 
 
+@pytest.mark.bootstrap_profile
 async def test_failed_responsive_inspector_open_restores_layout_snapshots(
     monkeypatch,
 ) -> None:
@@ -1944,9 +1954,7 @@ async def test_failed_responsive_inspector_open_restores_layout_snapshots(
         effective_before = screen._effective_region_layout
         responsive_before = screen._responsive_region_layout
         focus_before = screen._article_focus_active
-        parked_lease = ResponsivePriorityLease(
-            Region.LEFT_RAIL, read_mode=False
-        )
+        parked_lease = ResponsivePriorityLease(Region.LEFT_RAIL, read_mode=False)
         screen._responsive_priority_lease = parked_lease
 
         assert not preferred_before.is_collapsed(Region.RIGHT_RAIL)
@@ -1995,6 +2003,7 @@ async def test_failed_responsive_inspector_open_restores_layout_snapshots(
         workbench._content[Region.RIGHT_RAIL] = original_factory
 
 
+@pytest.mark.bootstrap_profile
 async def test_failed_manual_expansion_rolls_back_full_layout_intent(
     monkeypatch,
 ) -> None:
@@ -2018,9 +2027,7 @@ async def test_failed_manual_expansion_rolls_back_full_layout_intent(
         fallback = screen.region_layout
         persisted.clear()
 
-        parked_lease = ResponsivePriorityLease(
-            Region.RIGHT_RAIL, read_mode=False
-        )
+        parked_lease = ResponsivePriorityLease(Region.RIGHT_RAIL, read_mode=False)
         screen._responsive_priority_lease = parked_lease
         screen._article_focus_active = True
 
@@ -2070,6 +2077,7 @@ async def test_failed_manual_expansion_rolls_back_full_layout_intent(
         assert screen.region_layout == newer
 
 
+@pytest.mark.bootstrap_profile
 async def test_failed_manual_expansion_survives_resize_request_supersession(
     monkeypatch,
 ) -> None:
@@ -2115,6 +2123,7 @@ async def test_failed_manual_expansion_survives_resize_request_supersession(
         assert getattr(grip, "expanded") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("focus_id", ["items-search-input", "items-status-select"])
 async def test_reopening_items_restores_exact_focused_descendant(focus_id) -> None:
     app = _build_test_app()
@@ -2135,6 +2144,7 @@ async def test_reopening_items_restores_exact_focused_descendant(focus_id) -> No
         assert screen.focused is screen.query_one(f"#{focus_id}")
 
 
+@pytest.mark.bootstrap_profile
 async def test_items_anchor_is_abandoned_once_when_query_context_changes(
     monkeypatch,
 ) -> None:
@@ -2170,6 +2180,7 @@ async def test_items_anchor_is_abandoned_once_when_query_context_changes(
         assert 0.01 not in scheduled
 
 
+@pytest.mark.bootstrap_profile
 async def test_management_scope_invalidates_reader_return_to_read_failure_is_honest():
     """A failed return never relabels rows parked under the prior scope."""
     app = _build_test_app()
@@ -2209,9 +2220,10 @@ async def test_management_scope_invalidates_reader_return_to_read_failure_is_hon
         assert pane.new_items_note == ""
         assert pane.page_loading is False
         assert pane.display is False
-        assert _static_text(
-            screen.query_one("#watchlists-items-retry-state")
-        ) == "Couldn't load Unassigned. Retry to load Feed Items."
+        assert (
+            _static_text(screen.query_one("#watchlists-items-retry-state"))
+            == "Couldn't load Unassigned. Retry to load Feed Items."
+        )
         retry = screen.query_one("#watchlists-items-retry-button", Button)
         assert str(retry.label) == "Retry"
         assert retry.disabled is False
@@ -2219,6 +2231,7 @@ async def test_management_scope_invalidates_reader_return_to_read_failure_is_hon
         assert screen.query_one("#watchlists-content-pane", ContentPane).item is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_copy_renders_hostile_scope_label_literally():
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2237,6 +2250,7 @@ async def test_reader_retry_copy_renders_hostile_scope_label_literally():
         assert getattr(rendered, "plain", str(rendered)) == expected
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_click_successfully_publishes_committed_scope():
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2259,6 +2273,7 @@ async def test_reader_retry_click_successfully_publishes_committed_scope():
             screen.query_one("#watchlists-items-retry-state")
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_repeated_failure_retains_scoped_retry_authority():
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2272,14 +2287,16 @@ async def test_reader_retry_repeated_failure_retains_scoped_retry_authority():
         await _settle(pilot, host)
 
         assert failed.await_count == 2
-        assert _static_text(
-            screen.query_one("#watchlists-items-retry-state")
-        ) == "Couldn't load Unassigned. Retry to load Feed Items."
-        assert screen.query_one(
-            "#watchlists-items-retry-button", Button
-        ).disabled is False
+        assert (
+            _static_text(screen.query_one("#watchlists-items-retry-state"))
+            == "Couldn't load Unassigned. Retry to load Feed Items."
+        )
+        assert (
+            screen.query_one("#watchlists-items-retry-button", Button).disabled is False
+        )
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_rapid_presses_coalesce_around_one_producer():
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2307,9 +2324,9 @@ async def test_reader_retry_rapid_presses_coalesce_around_one_producer():
 
         assert retry_loader.await_count == 1
         assert screen._items_retry_message is not None
-        assert screen.query_one(
-            "#watchlists-items-retry-button", Button
-        ).disabled is True
+        assert (
+            screen.query_one("#watchlists-items-retry-button", Button).disabled is True
+        )
 
         release.set()
         await _settle(pilot, host)
@@ -2319,6 +2336,7 @@ async def test_reader_retry_rapid_presses_coalesce_around_one_producer():
             screen.query_one("#watchlists-items-retry-state")
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_scheduling_failure_keeps_retry_available(monkeypatch):
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2338,14 +2356,16 @@ async def test_reader_retry_scheduling_failure_keeps_retry_available(monkeypatch
         screen.query_one("#watchlists-items-retry-button", Button).press()
         await pilot.pause()
 
-        assert _static_text(
-            screen.query_one("#watchlists-items-retry-state")
-        ) == "Couldn't load Unassigned. Retry to load Feed Items."
-        assert screen.query_one(
-            "#watchlists-items-retry-button", Button
-        ).disabled is False
+        assert (
+            _static_text(screen.query_one("#watchlists-items-retry-state"))
+            == "Couldn't load Unassigned. Retry to load Feed Items."
+        )
+        assert (
+            screen.query_one("#watchlists-items-retry-button", Button).disabled is False
+        )
 
 
+@pytest.mark.bootstrap_profile
 async def test_layout_persist_scheduler_and_thread_handoff_failures_are_retryable(
     monkeypatch,
 ) -> None:
@@ -2390,6 +2410,7 @@ async def test_layout_persist_scheduler_and_thread_handoff_failures_are_retryabl
         assert screen._layout_persist_draining is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_management_expansion_failure_preserves_parked_feed_preference(
     monkeypatch,
 ) -> None:
@@ -2410,9 +2431,7 @@ async def test_management_expansion_failure_preserves_parked_feed_preference(
         pilot,
         host,
     ):
-        fallback = RegionLayout(
-            collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS})
-        )
+        fallback = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS}))
         screen._apply_layout(fallback)
         await _settle(pilot, host)
         persisted.clear()
@@ -2452,6 +2471,7 @@ async def test_management_expansion_failure_preserves_parked_feed_preference(
         assert screen.query("#wl-region-left_rail")
 
 
+@pytest.mark.bootstrap_profile
 async def test_section_factory_failure_rolls_back_mode_and_can_retry(
     monkeypatch,
 ) -> None:
@@ -2480,9 +2500,7 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
         reader = screen.query_one("#watchlists-content-pane", ContentPane)
         items_grip = screen.query_one("#wl-grip-items", WatchlistsPaneGrip)
         before_layout = screen._effective_region_layout
-        assert before_layout.collapsed == frozenset(
-            {Region.LEFT_RAIL, Region.ITEMS}
-        )
+        assert before_layout.collapsed == frozenset({Region.LEFT_RAIL, Region.ITEMS})
         original_factory = screen._build_detail_pane
         fail = True
 
@@ -2503,9 +2521,7 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
         assert workbench.read_mode is True
         assert workbench.region_layout == before_layout
         assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
-        assert screen.query_one(
-            "#wl-grip-items", WatchlistsPaneGrip
-        ) is items_grip
+        assert screen.query_one("#wl-grip-items", WatchlistsPaneGrip) is items_grip
         assert screen._responsive_priority_lease == parked_lease
         assert screen._responsive_region_layout == before_layout
         assert persisted == []

@@ -9,6 +9,7 @@ from textual.widgets import Button
 from textual.worker import WorkerState
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.background_signals import wait_for_signal
 from Tests.UI.test_settings_tool_profiles import (
     DestinationHarness,
     ToolProfileListing,
@@ -117,9 +118,12 @@ async def test_settings_cancellation_preserves_shared_profile_initialization(
     async with host.run_test(size=(120, 35)) as pilot:
         await host.workers.wait_for_complete()
         host.start_composition(threaded)
-        await host.started.wait()
-        other_observer = host.run_worker(host.composition.wait(), exit_on_error=False)
+        other_observer = None
         try:
+            await wait_for_signal(host.started, what="shared Tool Profiles composition")
+            other_observer = host.run_worker(
+                host.composition.wait(), exit_on_error=False
+            )
             screen = host.screen
             screen._select_category("tool-profiles")
             await pilot.pause()
@@ -133,8 +137,11 @@ async def test_settings_cancellation_preserves_shared_profile_initialization(
         finally:
             host.release.set()
             host.thread_release.set()
-        await host.composition.wait()
-        await other_observer.wait()
+            try:
+                await host.composition.wait()
+            finally:
+                if other_observer is not None:
+                    await other_observer.wait()
         if departure == "remove":
             await host.push_screen(SettingsScreen(app))
             await _open_settings_category(pilot, "#settings-category-tool-profiles")

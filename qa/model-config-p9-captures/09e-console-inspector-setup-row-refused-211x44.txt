@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                               Speak replies   ▌   Hands-free   ▌     Not ready · refused :18633
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                              │ Conversation | Chat 1                                                                                                                   │
+                   Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                       │  ▸ Inspect
+   Terminal                   │                                                                                                                                         │         Choose folder · Project
+ ───────────────────────────  │                                                                                                                                         │ ┏What happens if I send now?           ┓
+ Workspaces              ▸    │                                                                                                                                         │ ┃Where: Default › Chat 1               ┃
+ ───────────────────────────  │                                                                                                                                         │ ┃Scope: Everything available           ┃
+ Conversations           ▾    │                                                                                                                                         │ ┃Run: Recovery required                ┃
+     Archive this chat        │                                                                                                                                         │ ┃Sources: None staged                  ┃
+       Archived chats         │                                                                                                                                         │ ┗Approvals: None pending               ┛
+     Search all chats…        │                                                                                                                                         │  (Prompts off)
+   Chat 1                     │                                                                                                                                         │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+                              │                                                                                                                                         │  ▊  Ask Library sources before       ▎ ▅
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                         │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+  ▊  Filter       ▎           │                                                                                                                                         │    Search Library
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                         │
+                              │                                                                                                                                         │  Scope: everything            Narrow…
+   New conversation           │                                                            No messages yet.                                                             │                                        ▄
+  Chats                  ▾    │                                                                                                                                         │ Run
+    Today                     │      Retry connection                                                                                                                   │ Run recipe: llama.cpp / model-a /
+   Chat 1               💬    │                                                                                                                                         │ sources not staged / tools 0 /
+                              │                                                                                                                                         │ approvals 0
+ ───────────────────────────  │                                                                                                                                         │ Live work: No active work
+ Character · No chats    ▸    │                                                                                                                                         │ Setup: Not ready · refused :18633
+ ───────────────────────────  │                                                                                                                                         │ Blocked impact: Send is blocked until
+ Model                   ▸    │                                                                                                                                         │ setup is finished. - Provider setup
+ ───────────────────────────  │                                                                                                                                         │ needed: endpoint unreachable
+ Agent                   ▸    │                                                                                                                                         │ Next action: Retry connection
+ ───────────────────────────  │                                                                                                                                         │ Provider: blocked - Provider setup
+ Details                 ▸    │                                                                                                                                         │ needed: endpoint unreachable
+                              │                                                                                                                                         │
+                              │                                                                                                                                         │ ▼ more sections — scroll
+                              │                                                                                                                                         │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent access off     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Ctx 0% · Now $0.00
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                 Send blocked — retry the connection to continue ›       Send         Dictate
+
+  Esc composer · F6 panes | n/p Sections | Ctrl+Shift+F focus | F1 help | Alt+M switch model | Ctrl+O chat settings | Alt+I inspect | Alt+A approval | Alt+C context rail | F6 · Ctrl+P · Ctrl+Q

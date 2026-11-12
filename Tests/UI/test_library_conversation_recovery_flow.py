@@ -37,6 +37,7 @@ async def wait_for_button(pilot, screen, selector):
     return screen.query_one(selector, Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(100, 30), (160, 44)])
 async def test_real_saved_body_search_archive_restore_resume_and_undo(size, tmp_path):

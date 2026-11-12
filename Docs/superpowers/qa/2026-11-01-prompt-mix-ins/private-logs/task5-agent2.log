@@ -1,0 +1,7 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+1.08s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-False]
+1.04s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-True]
+
+(10 durations < 1s hidden.)
+4 passed in 5.79s

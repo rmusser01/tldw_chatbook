@@ -31,6 +31,7 @@ def _source(db: SubscriptionsDB, number: int) -> int:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_source_acceptance_validates_the_whole_batch_before_writing(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
@@ -44,6 +45,7 @@ async def test_source_acceptance_validates_the_whole_batch_before_writing(tmp_pa
     assert rows == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_source_acceptance_returns_the_database_winner_without_reexecution(
     tmp_path,
@@ -58,7 +60,9 @@ async def test_source_acceptance_returns_the_database_winner_without_reexecution
     assert first["run_id"] == second["run_id"]
     assert first["_claim_acquired"] is True
     assert second["_claim_acquired"] is False
-    assert db.conn.execute("SELECT COUNT(*) FROM local_watchlist_runs").fetchone()[0] == 1
+    assert (
+        db.conn.execute("SELECT COUNT(*) FROM local_watchlist_runs").fetchone()[0] == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -83,6 +87,7 @@ async def test_briefing_acceptance_is_durable_before_exact_execution(tmp_path):
     assert finished["status"] == "empty"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_coordinator_caps_checks_at_four_and_keeps_strong_receipt_tasks(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
@@ -124,6 +129,7 @@ async def test_coordinator_caps_checks_at_four_and_keeps_strong_receipt_tasks(tm
     } == {"completed"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_coordinator_submission_reuses_one_task_and_receipt(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
@@ -151,14 +157,13 @@ async def test_duplicate_coordinator_submission_reuses_one_task_and_receipt(tmp_
 
     assert first["run_id"] == second["run_id"]
     assert calls == 1
-    assert coordinator.active_receipt_ids == (
-        f"local:watchlist_run:{first['run_id']}",
-    )
+    assert coordinator.active_receipt_ids == (f"local:watchlist_run:{first['run_id']}",)
 
     release.set()
     await coordinator.wait_idle(timeout=2)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shutdown_stops_acceptance_and_terminalizes_cancelled_receipts(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
@@ -185,6 +190,7 @@ async def test_shutdown_stops_acceptance_and_terminalizes_cancelled_receipts(tmp
         await coordinator.accept_checks([second_id])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_coordinator_scrubs_unexpected_check_failures(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
@@ -209,6 +215,7 @@ async def test_coordinator_scrubs_unexpected_check_failures(tmp_path):
     assert secret not in str(row)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_coordinator_reconciles_receipts_stranded_before_startup(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
@@ -227,6 +234,7 @@ async def test_coordinator_reconciles_receipts_stranded_before_startup(tmp_path)
     assert (await service.get_run(receipt["run_id"]))["status"] == "failed"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shutdown_timeout_stops_waiting_for_cancellation_ignoring_task(
     tmp_path,
@@ -273,6 +281,7 @@ async def test_shutdown_timeout_stops_waiting_for_cancellation_ignoring_task(
     assert operation_id not in coordinator.active_receipt_ids
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_ownership_survives_failed_terminal_write_and_duplicate_retries(
     tmp_path, monkeypatch
@@ -440,6 +449,7 @@ async def test_ownerless_duplicate_does_not_interrupt_live_other_coordinator_bri
     assert winner.active_receipt_ids == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ownerless_queued_check_waits_for_startup_boundary_reconciliation(
     tmp_path,
@@ -489,6 +499,7 @@ async def test_startup_boundary_terminalizes_process_orphan_briefing(tmp_path):
     assert coordinator.active_receipt_ids == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ownerless_duplicate_does_not_interrupt_live_other_coordinator_check(
     tmp_path,

@@ -1,0 +1,11 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+4.83s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority[refusal]
+2.97s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[False]
+2.96s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[True]
+2.77s call     Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority[refusal]
+1.71s call     Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority[cancellation]
+1.39s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_composes_existing_transform_without_changing_its_source
+
+(9 durations < 1s hidden.)
+5 passed in 21.62s

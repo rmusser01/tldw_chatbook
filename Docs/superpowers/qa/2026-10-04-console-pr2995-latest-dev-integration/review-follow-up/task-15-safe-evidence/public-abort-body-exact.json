@@ -1,0 +1,8 @@
+{
+  "path": "tldw_chatbook/DB/automatic_work.py",
+  "BASE": "100fa9d8191620645e003b2e9ec5e076b7763ad2",
+  "signature_and_body_byte_exact": true,
+  "sha256": "416f6a9c299956aca7f86b2633e0bb15b35d7810ca0de9ae3f213650f66d0de3",
+  "bytes": 1017,
+  "strict_public_unknown_foreign_bool_controls": "existing.xml"
+}

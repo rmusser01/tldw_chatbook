@@ -1,0 +1,13 @@
+......F............................                                      [100%]
+=================================== FAILURES ===================================
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker0] _
+Tests/Chat/test_console_prompt_mixin_forks.py:263: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    assert any(
+E   assert False
+E    +  where False = any(<generator object test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers.<locals>.<genexpr> at 0x114970450>)
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker0]
+1 failed, 34 passed in 20.89s

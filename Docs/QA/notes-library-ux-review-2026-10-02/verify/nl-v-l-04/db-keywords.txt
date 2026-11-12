@@ -1,0 +1,8 @@
+# DB keywords for exported items (run copy, read-only)
+media|8|reference,markdown
+media|22|language,japanese
+note|Meeting Notes 2026-09-30|meeting
+note|Index — start here|moc
+note|Ideas inbox|ideas
+conv|Japanese practice — particles は vs が|japanese
+conv|Release notes draft v1.0|launch

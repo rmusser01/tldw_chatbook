@@ -12,6 +12,8 @@ from urllib.parse import urlsplit, urlunsplit
 LOCAL_TOOL_RESULT_KEY = "_tldw_local_tool_result"
 EXCHANGE_CONTINUATION_KEY = "_tldw_exchange_continuation"
 _LOCAL_FAMILIES = {
+    "strata": "strata",
+    "polystrata": "polystrata",
     "llama_cpp": "llama_cpp",
     "local_llamacpp": "llama_cpp",
     "local-llm": "llama_cpp",

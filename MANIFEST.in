@@ -8,7 +8,7 @@ include pyproject.toml
 include requirements.txt
 
 # Include explicit runtime and source-distribution data
-recursive-include tldw_chatbook/Config_Files *.json *.md rag_pipelines.toml
+recursive-include tldw_chatbook/Config_Files *.json *.md rag_pipelines.toml default_config.toml
 recursive-include tldw_chatbook/Evals/config *.yaml
 recursive-include tldw_chatbook/Evals/eval_datasets *.json
 recursive-include tldw_chatbook/Image_Generation/workflows *.json
@@ -64,3 +64,7 @@ global-exclude __pycache__
 # Bundled pixel-migu character resources.
 recursive-include tldw_chatbook/assets/characters/pixel_migu *.json *.png *.md
 recursive-include tldw_chatbook/assets/persona_visual/pixel_migu *.json *.png *.md
+
+# Fixed primary-agent review recipes (ADR-240).
+include tldw_chatbook/Agents/code_review_guides/review.md
+include tldw_chatbook/Agents/code_review_guides/verify.md

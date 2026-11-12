@@ -186,7 +186,9 @@ async def _assert_visual_snapshot_is_healthy(
     app: TldwCli, destination_id: str, size_label: str, pilot
 ) -> None:
     nav_bar = app.screen.query_one(MainNavigationBar)
-    nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(".nav-button"))
+    nav_ids = tuple(
+        button.id.removeprefix("nav-") for button in nav_bar.query(".nav-button")
+    )
     assert nav_ids == TOP_LEVEL_DESTINATION_IDS
     assert nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active")
     overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
@@ -231,6 +233,7 @@ def _markdown_table_row(markdown: str, first_cell_text: str) -> list[str]:
     raise AssertionError(f"Missing markdown table row for {first_cell_text!r}")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(("size_label", "size"), TERMINAL_SIZE_MATRIX)
 @pytest.mark.asyncio
 async def test_phase6_visual_chrome_survives_release_terminal_size_matrix(
@@ -285,6 +288,7 @@ def test_phase6_visual_body_selectors_cover_top_level_destinations() -> None:
     assert set(DESTINATION_BODY_SELECTORS) == set(TOP_LEVEL_DESTINATION_IDS)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action() -> (
     None

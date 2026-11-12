@@ -272,11 +272,6 @@ class ServerStudyService:
         response = await self._require_client().get_flashcard(card_id)
         return self._model_to_dict(response)
 
-
-
-
-
-
     async def list_review_sessions(
         self,
         *,
@@ -355,8 +350,6 @@ class ServerStudyService:
         )
         return self._model_to_dict(response)
 
-
-
     async def create_flashcards_bulk(
         self, cards: list[Mapping[str, Any]]
     ) -> dict[str, Any]:
@@ -365,8 +358,6 @@ class ServerStudyService:
             [self._flashcard_create_request(card) for card in cards]
         )
         return self._model_to_dict(response)
-
-
 
     async def import_flashcards(
         self,
@@ -406,13 +397,6 @@ class ServerStudyService:
             max_items=max_items,
             max_field_length=max_field_length,
         )
-
-
-
-
-
-
-
 
     async def move_flashcard(
         self,

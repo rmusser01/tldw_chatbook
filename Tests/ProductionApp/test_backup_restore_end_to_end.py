@@ -486,6 +486,20 @@ def test_f9_created_archive_restores_and_opens_through_actual_controls(
     tmp_path, encrypted, credentials, selected_groups, native_package
 ):
     """Keep the real terminal suspend path while driving finite native fixtures."""
+    _run_f9_journey(tmp_path, encrypted, credentials, selected_groups, native_package)
+
+
+def _run_f9_journey(
+    tmp_path,
+    encrypted,
+    credentials,
+    selected_groups,
+    native_package,
+    *,
+    flow=_FLOW,
+    open_child=_OPEN,
+):
+    """Run one installed native terminal journey with explicit child assertions."""
     for name in ("home", "config", "data"):
         (tmp_path / name).mkdir(mode=0o700)
     environment = dict(
@@ -507,7 +521,7 @@ def test_f9_created_archive_restores_and_opens_through_actual_controls(
             (str(native_package), str(Path(__file__).resolve().parents[2]))
         ),
     )
-    script = "OPEN_CHILD=" + repr(_OPEN) + "\n" + _FLOW
+    script = "OPEN_CHILD=" + repr(open_child) + "\n" + flow
     if sys.platform == "win32":
         _run_windows_console(tmp_path, script, environment)
     else:

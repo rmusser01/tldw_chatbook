@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 import pytest
 from textual.widgets import TextArea
 
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -38,7 +39,9 @@ CONSOLE_RUN_ALREADY_RUNNING_COPY = "A run is already running in this tab."
 async def _open_edit_modal(console, pilot, message_id: str):
     """Select ``message_id`` and click its Edit action; return the pushed modal."""
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    await _wait_for_selector(console, pilot, f"#console-message-{message_id}")
     transcript.select_message(message_id)
+    assert transcript.selected_message_id == message_id
     await console._sync_native_console_chat_ui()
     await _wait_for_selector(
         console, pilot, f"#console-message-action-edit-{message_id}"
@@ -59,6 +62,7 @@ async def _wait_until(predicate, pilot, *, attempts: int = 80) -> None:
     raise AssertionError("Condition never became true.")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_modal_offers_resend_only_for_user_message():
     """A USER message's edit modal shows the resend button; an ASSISTANT
@@ -90,6 +94,7 @@ async def test_edit_modal_offers_resend_only_for_user_message():
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_save_still_routes_to_update_message_content_in_place():
     """``resend=False`` (Save) must still land through the ORIGINAL in-place
@@ -122,12 +127,14 @@ async def test_edit_save_still_routes_to_update_message_content_in_place():
     spy_resend.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_and_resend_dispatches_controller_edit_and_resend_message():
     """``resend=True`` (Edit & resend) routes to
     ``controller.edit_and_resend_message`` via a ``console-run`` worker,
     leaving the original message untouched (the controller forks a branch)."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -161,6 +168,7 @@ async def test_edit_and_resend_dispatches_controller_edit_and_resend_message():
     assert store.get_message(message.id).content == "original"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_edit_modal_notifies_and_returns_on_stale_message_id():
     """Qodo PR #811 finding 3: ``_open_console_message_edit_modal`` calls
@@ -203,6 +211,7 @@ async def test_open_edit_modal_notifies_and_returns_on_stale_message_id():
         ) in notices
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_and_resend_blocked_while_a_run_is_already_active():
     """Mirrors retry/regenerate/continue's mid-run gate (TASK-232): a

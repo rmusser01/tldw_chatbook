@@ -22,6 +22,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_ROOT_CHANGED_REFUSAL,
+    LOCAL_RUN_WORKTREE_RELEASED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
 )
@@ -272,6 +273,8 @@ def test_direct_controller_review_results_name_who_refused(
         (LOCAL_GATE_ERROR_REFUSAL, "blocked"),
         (LOCAL_ROOT_CHANGED_REFUSAL, "blocked"),
         (LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL, "blocked"),
+        # TASK-34351: a sub-agent call that outlived its worktree.
+        (LOCAL_RUN_WORKTREE_RELEASED_REFUSAL, "blocked"),
         (MCP_DENY_REFUSAL, "blocked_off"),
         (MCP_USER_DENY_REFUSAL, "denied"),
         (MCP_UNRESOLVED_REFUSAL, "blocked"),

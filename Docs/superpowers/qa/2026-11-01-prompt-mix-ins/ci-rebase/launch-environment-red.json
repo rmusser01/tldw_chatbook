@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Backup_Recovery/test_profile_launch_environment.py",
+    "-q",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp",
+    "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-env-c9uukie6/red-pytest"
+  ],
+  "returncode": 1,
+  "raw_text": "..FFF                                                                    [100%]\n=================================== FAILURES ===================================\n__________ test_fresh_profile_keeps_native_snapshot_temp_parent[TEMP] __________\nTests/Backup_Recovery/test_profile_launch_environment.py:43: in test_fresh_profile_keeps_native_snapshot_temp_parent\n    private_temp.mkdir(mode=0o700)\n../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/pathlib.py:1311: in mkdir\n    os.mkdir(self, mode)\nE   FileExistsError: [Errno 17] File exists: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-env-c9uukie6/red-pytest/test_fresh_profile_keeps_nativ0/private-temp'\n__________ test_fresh_profile_keeps_native_snapshot_temp_parent[TMP] ___________\nTests/Backup_Recovery/test_profile_launch_environment.py:43: in test_fresh_profile_keeps_native_snapshot_temp_parent\n    private_temp.mkdir(mode=0o700)\n../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/pathlib.py:1311: in mkdir\n    os.mkdir(self, mode)\nE   FileExistsError: [Errno 17] File exists: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-env-c9uukie6/red-pytest/test_fresh_profile_keeps_nativ1/private-temp'\n_________ test_fresh_profile_keeps_native_snapshot_temp_parent[TMPDIR] _________\nTests/Backup_Recovery/test_profile_launch_environment.py:43: in test_fresh_profile_keeps_native_snapshot_temp_parent\n    private_temp.mkdir(mode=0o700)\n../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/pathlib.py:1311: in mkdir\n    os.mkdir(self, mode)\nE   FileExistsError: [Errno 17] File exists: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-env-c9uukie6/red-pytest/test_fresh_profile_keeps_nativ2/private-temp'\n============================= slowest 25 durations =============================\n\n(15 durations < 1s hidden.)\n=========================== short test summary info ============================\nFAILED Tests/Backup_Recovery/test_profile_launch_environment.py::test_fresh_profile_keeps_native_snapshot_temp_parent[TEMP]\nFAILED Tests/Backup_Recovery/test_profile_launch_environment.py::test_fresh_profile_keeps_native_snapshot_temp_parent[TMP]\nFAILED Tests/Backup_Recovery/test_profile_launch_environment.py::test_fresh_profile_keeps_native_snapshot_temp_parent[TMPDIR]\n3 failed, 2 passed in 0.58s\n",
+  "sha256": "502a772b12facf1e66212bc78ece44ab1b422c688351a837625fbd2a716b9948"
+}

@@ -1,0 +1,74 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="4" skipped="0" tests="10" time="96.666" timestamp="2026-10-25T11:00:55.752003-07:00" hostname="DESKTOP-BISU2HE">
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_pending_start_delivers_dashboard_and_presents_result[shell]" time="10.262">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task2-red-cleanup\pytest\test_pending_start_delivers_da0\private-profile-process\pytest.log&#10;--- child failure: TimeoutError&#10;predicate = &lt;function test_pending_start_delivers_dashboard_and_presents_result.&lt;locals&gt;.&lt;lambda&gt; at 0x00000220343A0040&gt;&#10;seconds = 1&#10;&#10;    async def until(predicate, seconds=5):&#10;        async with asyncio.timeout(seconds):&#10;            while not predicate():&#10;&gt;               await asyncio.sleep(0.01)&#10;&#10;Tests\UI\test_study_quiz_start_responsiveness.py:105: &#10;_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _&#10;&#10;delay = 0.01, result = None&#10;&#10;    async def sleep(delay, result=None):&#10;        &quot;&quot;&quot;Coroutine that completes after a given time (in seconds).&quot;&quot;&quot;&#10;        if delay &lt;= 0:&#10;            await __sleep0()&#10;            return result&#10;    &#10;        ">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task2-red-cleanup\pytest\test_pending_start_delivers_da0\private-profile-process\pytest.log
+E   --- child failure: TimeoutError
+E   predicate = &lt;function test_pending_start_delivers_dashboard_and_presents_result.&lt;locals&gt;.&lt;lambda&gt; at 0x00000220343A0040&gt;
+E   seconds = 1
+E   
+E       async def until(predicate, seconds=5):
+E           async with asyncio.timeout(seconds):
+E         </failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_pending_start_delivers_dashboard_and_presents_result[inner]" time="9.047" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_repeated_start_preserves_one_admitted_request[shell-shell]" time="9.036" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_repeated_start_preserves_one_admitted_request[inner-inner]" time="9.188">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task2-red-cleanup\pytest\test_repeated_start_preserves_1\private-profile-process\pytest.log&#10;--- child failure: assert (2 == 1)&#10; +  where 2 = &lt;Tests.UI.test_study_quiz_start_responsiveness.Client object at 0x000001E70F071B20&gt;.calls&#10;request = &lt;FixtureRequest for &lt;Coroutine test_repeated_start_preserves_one_admitted_request[inner-inner]&gt;&gt;&#10;first = 'inner', second = 'inner'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&#10;        &quot;first,second&quot;,&#10;        [(&quot;shell&quot;, &quot;shell&quot;), (&quot;inner&quot;, &quot;inner&quot;), (&quot;shell&quot;, &quot;inner&quot;), (&quot;inner&quot;, &quot;shell&quot;)],&#10;    )&#10;    @private_profile_test&#10;    async def test_repeated_start_preserves_one_admitted_request(request, first, second):&#10;        client = Client()&#10;        app = Host(client)&#10;        try:&#10;            async with app.run_test(size=(180, 80)) as pilot, r">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task2-red-cleanup\pytest\test_repeated_start_preserves_1\private-profile-process\pytest.log
+E   --- child failure: assert (2 == 1)
+E    +  where 2 = &lt;Tests.UI.test_study_quiz_start_responsiveness.Client object at 0x000001E70F071B20&gt;.calls
+E   request = &lt;FixtureRequest for &lt;Coroutine test_repeated_start_preserves_one_admitted_request[inner-inner]&gt;&gt;
+E   first = 'inner', second = </failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_repeated_start_preserves_one_admitted_request[shell-inner]" time="9.689">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task2-red-cleanup\pytest\test_repeated_start_preserves_2\private-profile-process\pytest.log&#10;--- child failure: assert (2 == 1)&#10; +  where 2 = &lt;Tests.UI.test_study_quiz_start_responsiveness.Client object at 0x00000231B4EE59D0&gt;.calls&#10;request = &lt;FixtureRequest for &lt;Coroutine test_repeated_start_preserves_one_admitted_request[shell-inner]&gt;&gt;&#10;first = 'shell', second = 'inner'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&#10;        &quot;first,second&quot;,&#10;        [(&quot;shell&quot;, &quot;shell&quot;), (&quot;inner&quot;, &quot;inner&quot;), (&quot;shell&quot;, &quot;inner&quot;), (&quot;inner&quot;, &quot;shell&quot;)],&#10;    )&#10;    @private_profile_test&#10;    async def test_repeated_start_preserves_one_admitted_request(request, first, second):&#10;        client = Client()&#10;        app = Host(client)&#10;        try:&#10;            async with app.run_test(size=(180, 80)) as pilot, r">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task2-red-cleanup\pytest\test_repeated_start_preserves_2\private-profile-process\pytest.log
+E   --- child failure: assert (2 == 1)
+E    +  where 2 = &lt;Tests.UI.test_study_quiz_start_responsiveness.Client object at 0x00000231B4EE59D0&gt;.calls
+E   request = &lt;FixtureRequest for &lt;Coroutine test_repeated_start_preserves_one_admitted_request[shell-inner]&gt;&gt;
+E   first = 'shell', second = </failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_repeated_start_preserves_one_admitted_request[inner-shell]" time="10.253">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task2-red-cleanup\pytest\test_repeated_start_preserves_3\private-profile-process\pytest.log&#10;--- child failure: assert (2 == 1)&#10; +  where 2 = &lt;Tests.UI.test_study_quiz_start_responsiveness.Client object at 0x000002188E3613D0&gt;.calls&#10;request = &lt;FixtureRequest for &lt;Coroutine test_repeated_start_preserves_one_admitted_request[inner-shell]&gt;&gt;&#10;first = 'inner', second = 'shell'&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&#10;        &quot;first,second&quot;,&#10;        [(&quot;shell&quot;, &quot;shell&quot;), (&quot;inner&quot;, &quot;inner&quot;), (&quot;shell&quot;, &quot;inner&quot;), (&quot;inner&quot;, &quot;shell&quot;)],&#10;    )&#10;    @private_profile_test&#10;    async def test_repeated_start_preserves_one_admitted_request(request, first, second):&#10;        client = Client()&#10;        app = Host(client)&#10;        try:&#10;            async with app.run_test(size=(180, 80)) as pilot, r">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\task2-red-cleanup\pytest\test_repeated_start_preserves_3\private-profile-process\pytest.log
+E   --- child failure: assert (2 == 1)
+E    +  where 2 = &lt;Tests.UI.test_study_quiz_start_responsiveness.Client object at 0x000002188E3613D0&gt;.calls
+E   request = &lt;FixtureRequest for &lt;Coroutine test_repeated_start_preserves_one_admitted_request[inner-shell]&gt;&gt;
+E   first = 'inner', second = </failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_refusal_or_failure_allows_retry[request-shell]" time="9.232" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_refusal_or_failure_allows_retry[request-inner]" time="9.336" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_refusal_or_failure_allows_retry[policy-shell]" time="9.675" />
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_refusal_or_failure_allows_retry[policy-inner]" time="9.559" />
+  </testsuite>
+</testsuites>

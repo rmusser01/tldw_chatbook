@@ -191,6 +191,88 @@ def test_fireworks_tool_turn_reasoning_is_kept_and_replayed(monkeypatch: pytest.
     assert payload["messages"][1]["reasoning_content"] == "PRIVATE"
 
 
+_CONSOLE_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+
+@pytest.mark.parametrize("level", ["none", "low", "high", "xhigh"])
+def test_fireworks_sends_a_documented_reasoning_effort_level(level: str) -> None:
+    """Fireworks takes reasoning_effort as-is, and never a thinking field.
+
+    Args:
+        level: A level Fireworks documents.
+    """
+    payload = _payload(FIREWORKS, "accounts/fireworks/models/deepseek-v3p1", reasoning_effort=level)
+    assert payload["reasoning_effort"] == level
+    assert "thinking" not in payload
+
+
+def test_fireworks_sends_console_minimal_as_its_smallest_level() -> None:
+    """Fireworks has no "minimal"; Console's "minimal" is sent as "low" (Qodo #2970)."""
+    payload = _payload(FIREWORKS, "accounts/fireworks/models/deepseek-v3p1", reasoning_effort="minimal")
+    assert payload["reasoning_effort"] == "low"
+
+
+def test_fireworks_refuses_an_undocumented_level_locally() -> None:
+    """A level outside Fireworks' documented set never reaches the wire."""
+    with pytest.raises(ChatBadRequestError):
+        _payload(FIREWORKS, "accounts/fireworks/models/deepseek-v3p1", reasoning_effort="max-ish")
+
+
+def test_fireworks_offers_every_console_level_and_the_rebase_carries_it() -> None:
+    """Every Console level is really sent (minimal as low), so Settings offers
+    all of them and the draft rebase keeps the field."""
+    from tldw_chatbook.Chat.console_provider_support import (
+        reasoning_effort_values_sent,
+        supported_generation_fields,
+    )
+
+    assert reasoning_effort_values_sent("fireworks", _CONSOLE_LEVELS) == _CONSOLE_LEVELS
+    assert reasoning_effort_values_sent("fireworks", ("minimal", "max-ish")) == ("minimal",)
+    assert "reasoning_effort" in supported_generation_fields("fireworks", "accounts/fireworks/models/qwen3p8")
+
+
+@pytest.mark.parametrize(("chosen", "sent"), [("minimal", "low"), ("high", "high"), ("none", "none")])
+def test_a_console_level_reaches_the_fireworks_request(
+    chosen: str, sent: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Through the Console's dispatch (param map -> engine), the chosen level is sent.
+
+    Args:
+        chosen: The level picked in Console.
+        sent: The level Fireworks receives.
+        monkeypatch: Replaces resolution and transport.
+    """
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine
+
+    model = "accounts/fireworks/models/deepseek-v3p1"
+    resolution = HostedProviderResolution(
+        provider="fireworks", model=model, api_key="secret", base_url=FIREWORKS.default_base_url,
+        timeout=10.0, retries=0, retry_delay=0.0, streaming=False,
+    )
+    monkeypatch.setattr(hosted_provider_engine, "resolve_hosted_request", lambda _r, **_k: resolution)
+    captured: dict[str, Any] = {}
+
+    def fake_post(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return {"id": "c", "object": "chat.completion", "created": 1, "model": model,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}]}
+
+    monkeypatch.setattr(hosted_provider_engine, "owned_json_post", fake_post)
+    chat_api_call("fireworks", messages_payload=[{"role": "user", "content": "hi"}], api_key="secret",
+                  model=model, streaming=False, reasoning_effort=chosen)
+    assert captured["payload"]["reasoning_effort"] == sent
+
+
+def test_only_fireworks_restricts_reasoning_effort_levels() -> None:
+    """The allowlist and the level map are per record, not a new global rule."""
+    assert {r.key for r in ALL_RECORDS if r.reasoning_effort_values is not None} == {"fireworks"}
+    assert {r.key: dict(r.reasoning_effort_map) for r in ALL_RECORDS if r.reasoning_effort_map} == {
+        "fireworks": {"minimal": "low"}
+    }
+
+
 # --- TASK-33500: Cerebras tools go out without strict ---
 
 

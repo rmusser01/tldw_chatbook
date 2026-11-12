@@ -1,0 +1,94 @@
+"""Private qualification of the preexisting slice-41 duplicate Button dispatch."""
+from __future__ import annotations
+import dictation_probe as shared
+import asyncio
+import json
+from types import SimpleNamespace
+from textual.widgets import Button, Static
+
+async def run_case(use_button):
+    recorder = shared.Recorder()
+    service = shared.LazyLiveDictationService(
+        transcription_provider='faster-whisper',
+        recorder_factory=lambda **kwargs: recorder,
+        transcription_service_factory=lambda: SimpleNamespace(create_streaming_transcriber=lambda **kwargs: None),
+    )
+    module = shared.widget_module
+    originals = (module.LazyLiveDictationService, module.ImprovedDictationWindow.on_button_pressed)
+    deliveries = []
+    start_calls = []
+    stop_calls = []
+    original_start = service.start_dictation
+    original_stop = service.stop_dictation
+    def traced_start(*args, **kwargs):
+        start_calls.append(True)
+        return original_start(*args, **kwargs)
+    def traced_stop(*args, **kwargs):
+        stop_calls.append(True)
+        return original_stop(*args, **kwargs)
+    service.start_dictation = traced_start
+    service.stop_dictation = traced_stop
+    def traced_handler(self, event):
+        before = self.is_dictating
+        result = originals[1](self, event)
+        if event.button.id == 'dictation-toggle-btn':
+            deliveries.append({'event_identity': id(event), 'before': before, 'after': self.is_dictating})
+        return result
+    module.LazyLiveDictationService = lambda **kwargs: service
+    module.ImprovedDictationWindow.on_button_pressed = traced_handler
+    app = shared.SpeechHost()
+    try:
+        async with app.run_test(size=(130, 55)) as pilot:
+            await shared.until(lambda: bool(app.window.query(module.ImprovedDictationWindow)), 'real Dictation view mounted')
+            view = app.window.query_one(module.ImprovedDictationWindow)
+            await pilot.pause()
+            view.query_one('#dictation-toggle-btn', Button).focus()
+            if use_button:
+                click_result = await pilot.click('#dictation-toggle-btn')
+                await shared.until(lambda: len(deliveries) == 2, 'two deliveries from one button press')
+            else:
+                click_result = None
+                await pilot.press('ctrl+d')
+                await shared.until(lambda: recorder.is_recording, 'keyboard-start capture')
+            await pilot.pause()
+            result = {
+                'case': 'one_mouse_click' if use_button else 'one_ctrl_d_control',
+                'mouse_click_count': 1 if use_button else 0,
+                'pilot_click_return': click_result,
+                'button_handler_deliveries': deliveries,
+                'service_start_calls': len(start_calls),
+                'service_stop_calls': len(stop_calls),
+                'recorder_is_recording': recorder.is_recording,
+                'processor_alive': service.processing_thread is not None and service.processing_thread.is_alive(),
+                'widget_is_dictating': view.is_dictating,
+                'service_state': service.state,
+                'toggle_label': str(view.query_one('#dictation-toggle-btn', Button).label),
+            }
+            print(json.dumps(result), flush=True)
+            return result
+    finally:
+        service.on_state_change = None
+        service.on_error = None
+        service.on_partial_transcript = None
+        service.on_final_transcript = None
+        service.abandon()
+        if service.processing_thread:
+            service.processing_thread.join(2)
+            assert not service.processing_thread.is_alive()
+        module.LazyLiveDictationService, module.ImprovedDictationWindow.on_button_pressed = originals
+
+async def main():
+    cases = [await run_case(use_button) for use_button in (True, False)]
+    report = {'cases': cases, 'blocked_network_attempts': shared.guards.network_guard.blocked_attempts(), 'profile_violations': shared.guards._real_profile_guard.take_violations()}
+    (shared.OUT / 'dictation-dispatch.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+    button, key = cases
+    assert len(button['button_handler_deliveries']) == 2
+    assert len({row['event_identity'] for row in button['button_handler_deliveries']}) == 1
+    assert button['service_start_calls'] == button['service_stop_calls'] == 1
+    assert not button['recorder_is_recording'] and not button['widget_is_dictating']
+    assert key['service_start_calls'] == 1 and key['service_stop_calls'] == 0
+    assert key['recorder_is_recording'] and key['widget_is_dictating'] and key['processor_alive']
+    assert not report['blocked_network_attempts'] and not report['profile_violations']
+if __name__ == '__main__':
+    asyncio.run(main())
+

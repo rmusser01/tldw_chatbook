@@ -1,8 +1,9 @@
 ---
 id: TASK-15512
 title: Six Settings, Console and Library tests are red on dev
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '[rmusser01]'
 labels:
   - test-health
   - settings
@@ -96,12 +97,33 @@ legitimately changed and nobody updated:
   now asserts against `library_rag_profile_top_k()` rather than a literal that
   encoded "no profile exists".
 
+## Implementation Plan
+
+Re-triage at dev `f80d3e0090` (2026-10-02), closing the last open AC ("All six
+pass on dev"):
+
+1. Re-run the six named tests at this base and classify each: fixed since
+   filing / live defect / member of a known documented class.
+2. Expected shape from the coordinator's session map: the config-admission
+   `RecoveryRequired("raw_source_selection_changed")` mask (TASK-32873 /
+   ADR-179-era enrollment pattern) now trips at setup for real-app-mounting
+   tests that read config through the guarded loader under the per-test
+   sandbox. Fix per the established pattern: per-node
+   `@pytest.mark.bootstrap_profile` on exactly the six named tests (the
+   TASK-32873 per-NODE recommendation for mostly-sandbox modules; the
+   settings-hub module already carries four such per-test decorators).
+3. Post-enrollment, verify each test reaches its real assertions and passes;
+   any still-red gets triaged on its own merits (the 2026-08-11 fixes and
+   task-15740's Done status predict all six go green).
+4. Targeted runs only; close with per-test evidence, `ADR required: no`
+   (existing enrollment pattern, no product change).
+
 ## Acceptance Criteria
 
 - [x] Each of the six failures is attributed to its causing change, with the commit identified
 - [x] It is established whether the three save-related failures are stale contracts or a genuine break in the Settings save path, with evidence either way
 - [x] Any genuine product break found is fixed rather than absorbed into the tests' expectations (the log-call crash is fixed; the save refusal is filed as task-15740 rather than absorbed)
-- [ ] All six pass on dev
+- [x] All six pass on dev
 
 ## Loose end handed off
 
@@ -121,3 +143,74 @@ went red on dev between `537451cb8` (green in this branch's runs there) and
 collapsed footer at 70 cols". Same class as this task's six: a dev merge in
 that range changed footer behaviour without its contract test. Left for the
 usual triage rather than absorbed here.
+
+## Implementation Notes
+
+**Closeout of the last open AC ("All six pass on dev") at `origin/dev` tip
+`f80d3e0090`, 2026-10-02.** The red landscape shifted twice since the
+2026-08-11 triage: task-15740 (the product bug under the two provider-save
+reds) landed Done, and the config-admission mask
+(`RecoveryRequired("raw_source_selection_changed")`, TASK-32873 / ADR-179-era
+per-test sandbox vs. guarded config loader) now trips at SETUP for every
+real-app-mounting test in this set, hiding the original assertions entirely.
+
+### Re-triage at this base (all six red at pristine `f80d3e0090`)
+
+| Test | Base state | Classification | Treatment |
+|---|---|---|---|
+| `test_console_registers_footer_workbench_shortcuts` | setup: `RecoveryRequired: raw_source_selection_changed` | known class (config-admission mask) | per-node `@pytest.mark.bootstrap_profile` |
+| `test_settings_ownership_records_cover_categories_and_runtime_boundaries` | setup: same mask | known class, PLUS one live stale contract underneath | enrollment + tuple refresh (see below) |
+| `test_settings_console_behavior_saves_display_name_exactly` | setup: same mask | known class (original 2026-08-11 fix held) | per-node marker |
+| `test_settings_provider_category_saves_provider_defaults_without_sampling` | setup: same mask | known class (task-15740 fix held) | per-node marker |
+| `test_settings_provider_switch_does_not_save_stale_endpoint` | setup: same mask | known class (task-15740 fix held) | per-node marker |
+| `test_library_shell_rail_search_submit_runs_search_canvas_query` | setup: same mask | known class (original 2026-08-11 fix held) | per-node marker |
+
+Enrollment uses the TASK-32873 per-NODE recommendation (mostly-sandbox modules
+containing real-app mounts) — the same form the settings-hub module already
+carries for four other tests, and the same per-node form TASK-14877's agent
+applied to the Chat baseline reds (`584fdcbc2e`, sibling branch). No conftest
+filename-set change, no module-level pytestmark: these three modules are large
+(64/395/660 tests) and mostly sandboxed.
+
+### The one live defect under the mask: stale ownership tuple, again
+
+Post-enrollment, five of six passed immediately. The ownership test failed on
+its real assertion (proving enrollment unmasks rather than vacuates): the
+PROVIDERS_MODELS `owns_config_sections` tuple is missing two sections that
+`2bb226428b` (feat: expose manual prompt-cache snapshots in Models and
+Settings, 2026-09-04) legitimately added — `llamacpp_snapshots.enabled` and
+`llamacpp_snapshots.keep_count`, written by the screen at
+`_save_provider_category` (settings_screen.py:5903-5904). Identical
+stale-contract class to the `2d88425ba` finding in this task's original
+triage: feature added owned sections, exhaustive tuple left behind. The tuple
+now carries both entries with an attribution comment; no product code changed.
+
+### Evidence
+
+- Pristine base: six-test combined run → `6 failed`, all
+  `tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed`
+  (raw_participants.py:132, in setup, before any test assertion).
+- After enrollment, before tuple fix: `1 failed, 5 passed` — the one failure
+  at the ownership tuple assertion (Tests/UI/test_settings_configuration_hub.py:1179).
+- Final: same six-node combined run → `6 passed in 19.24s`.
+- Mutation controls (mutation → FAIL → restore, cp-based; never `git stash`):
+  footer expected `Enter send` (dropped `/ queue`) → FAIL; library expected
+  `top_k: library_rag_profile_top_k() + 1` → FAIL; provider-save expected
+  `model: "WRONG"` → FAIL. The ownership test's non-vacuity is the observed
+  real-assertion failure itself.
+- No-leak A/B: neighbor `test_library_shell_rail_search_placeholder_is_unconditional`
+  failed in a run alongside my marked test; `git checkout HEAD --` swap proved
+  it fails identically at pristine base (same admission signature) —
+  pre-existing, out of this task's six, not caused by the markers. Same known
+  class; `test_library_shell.py` plainly carries more real-app-mount tests in
+  it — a module-level enrollment decision belongs to that class's owner, not
+  this task.
+
+Modified files: `Tests/UI/test_console_workbench_contract.py`,
+`Tests/UI/test_settings_configuration_hub.py`, `Tests/UI/test_library_shell.py`
+(per-node markers + one tuple refresh). No product code changed.
+
+ADR required: no — test-only closeout using the existing, documented
+bootstrap-profile enrollment pattern (TASK-32873 conftest marker +
+`72a80e0b64`/`584fdcbc2e` precedents); no storage, sync, provider-boundary or
+UX-structure decision was made here.

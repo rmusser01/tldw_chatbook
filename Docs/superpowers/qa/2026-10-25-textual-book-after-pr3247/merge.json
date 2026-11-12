@@ -1,0 +1,304 @@
+{
+  "headRefOid": "cc9bad412444c7142e44f848d9404ffcf46868b2",
+  "mergeCommit": {
+    "oid": "79da83a8dca98eab6ca854a7505b8abd264eb959"
+  },
+  "mergedAt": "2026-10-25T19:15:26Z",
+  "state": "MERGED",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:54:22Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253153922",
+      "name": "PR Fast Lane",
+      "startedAt": "2026-10-25T18:26:42Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T19:16:03Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40225165628/job/121264871790",
+      "name": "Merge queue",
+      "startedAt": "2026-10-25T19:15:32Z",
+      "status": "COMPLETED",
+      "workflowName": "Merge Queue"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:34:17Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268430/job/121253153998",
+      "name": "UI latency guardrails",
+      "startedAt": "2026-10-25T18:26:43Z",
+      "status": "COMPLETED",
+      "workflowName": "Perf Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:52:15Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154102",
+      "name": "PR Fast Lane (admission-sensitive)",
+      "startedAt": "2026-10-25T18:26:43Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:39:05Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154139",
+      "name": "PR Fast Lane (admission-sensitive 2)",
+      "startedAt": "2026-10-25T18:26:42Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:39:03Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154417",
+      "name": "UI Fast Lane (1)",
+      "startedAt": "2026-10-25T18:26:43Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:42:25Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154314",
+      "name": "UI Fast Lane (2)",
+      "startedAt": "2026-10-25T18:26:42Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:39:41Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154312",
+      "name": "UI Fast Lane (3)",
+      "startedAt": "2026-10-25T18:26:42Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:41:58Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154174",
+      "name": "UI Fast Lane (4)",
+      "startedAt": "2026-10-25T18:26:43Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:41:33Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154269",
+      "name": "UI Fast Lane (5)",
+      "startedAt": "2026-10-25T18:27:42Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:42:25Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154181",
+      "name": "UI Fast Lane (6)",
+      "startedAt": "2026-10-25T18:26:43Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:41:28Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154202",
+      "name": "UI Fast Lane (7)",
+      "startedAt": "2026-10-25T18:26:42Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:47:42Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154517",
+      "name": "UI Fast Lane (8)",
+      "startedAt": "2026-10-25T18:31:51Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:41:54Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154216",
+      "name": "UI Fast Lane (9)",
+      "startedAt": "2026-10-25T18:26:43Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:45:04Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154391",
+      "name": "UI Fast Lane (10)",
+      "startedAt": "2026-10-25T18:28:02Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:46:48Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154580",
+      "name": "UI Fast Lane (11)",
+      "startedAt": "2026-10-25T18:32:40Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:42:24Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154447",
+      "name": "UI Fast Lane (12)",
+      "startedAt": "2026-10-25T18:29:19Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:40:45Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154266",
+      "name": "UI Fast Lane (13)",
+      "startedAt": "2026-10-25T18:26:43Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:38:27Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154412",
+      "name": "UI Fast Lane (14)",
+      "startedAt": "2026-10-25T18:26:42Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:47:30Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154498",
+      "name": "UI Fast Lane (15)",
+      "startedAt": "2026-10-25T18:32:37Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:40:23Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154222",
+      "name": "UI Fast Lane (16)",
+      "startedAt": "2026-10-25T18:26:43Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:49:08Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154374",
+      "name": "UI Fast Lane (17)",
+      "startedAt": "2026-10-25T18:34:02Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:46:39Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154242",
+      "name": "Console P0 regression gate",
+      "startedAt": "2026-10-25T18:32:37Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:31:49Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154204",
+      "name": "Dreams and Guardian boundary contracts",
+      "startedAt": "2026-10-25T18:26:42Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:32:38Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154170",
+      "name": "Dreams tracking tests",
+      "startedAt": "2026-10-25T18:26:43Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:59:39Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121259820198",
+      "name": "Derived artifacts reproduce from their sources",
+      "startedAt": "2026-10-25T18:54:24Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T19:00:09Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121261040401",
+      "name": "Merge queue tick",
+      "startedAt": "2026-10-25T18:59:41Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-25T18:26:45Z",
+      "conclusion": "NEUTRAL",
+      "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/3247",
+      "name": "cubic · AI code reviewer",
+      "startedAt": "2026-10-25T18:26:42Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-10-25T18:26:45Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    }
+  ],
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/3247",
+  "audited_dev": "79da83a8dca98eab6ca854a7505b8abd264eb959",
+  "rebase_base": "1850d2599c58af9a0c1a8721e6c0a31e431d92fa",
+  "rebase_result": "Already up to date",
+  "merge_tree_equals_tested_head": true,
+  "unresolved_review_threads_before_arming": 0,
+  "review_method": "superpowers:requesting-code-review, Qodo replaced per user instruction"
+}

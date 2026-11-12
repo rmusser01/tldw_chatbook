@@ -8,8 +8,8 @@ import pytest
 
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_operation,
-    _retire_current_thread_caches,
+    core_operation,
+    retire_current_thread_caches,
 )
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root as _local_root
 
@@ -50,7 +50,7 @@ def test_current_thread_cache_retires_and_reopens(held_service):
     connection = get()
     pause = storage._begin_local_pause()
     try:
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
             connection.execute("SELECT 1")
         assert pause.drain(time.monotonic() + 1)
@@ -65,14 +65,14 @@ def test_current_thread_cache_retires_and_reopens(held_service):
 def test_admitted_borrower_defers_cache_retirement(held_service, borrower):
     owner, get = held_service
     connection = get()
-    operation = _core_operation(owner) if borrower == "operation" else None
+    operation = core_operation(owner) if borrower == "operation" else None
     if operation is not None:
         operation.__enter__()
     else:
         connection.execute("BEGIN")
     pause = storage._begin_local_pause()
     try:
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert connection.execute("SELECT 1").fetchone()[0] == 1
         assert not pause.drain(time.monotonic())
         if operation is not None:
@@ -80,7 +80,7 @@ def test_admitted_borrower_defers_cache_retirement(held_service, borrower):
             operation = None
         else:
             connection.rollback()
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert pause.drain(time.monotonic() + 1)
     finally:
         if operation is not None:
@@ -108,7 +108,7 @@ def test_foreign_thread_cache_remains_owned_by_its_worker(held_service):
     assert entered.wait(5)
     pause = storage._begin_local_pause()
     try:
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert not pause.drain(time.monotonic())
         release.set()
         thread.join(5)

@@ -1,0 +1,97 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+................FF....                                                   [100%]
+================================== FAILURES ===================================
+_ test_controller_retry_retains_reservation_after_repreparation_failure[fresh] _
+Tests\Chat\test_console_chat_controller.py:8693: in test_controller_retry_retains_reservation_after_repreparation_failure
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+Tests\Chat\test_console_chat_controller.py:8159: in test_two_saved_turns_keep_history_references_through_production_trace
+    controller = ConsoleChatController(
+tldw_chatbook\Chat\console_chat_controller.py:3897: in __init__
+    auxiliary_timeout_seconds=get_cli_setting(
+tldw_chatbook\config.py:9812: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+tldw_chatbook\config.py:7287: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:945: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:357: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+tldw_chatbook\Backup_Recovery\raw_participants.py:307: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_ test_controller_retry_retains_reservation_after_repreparation_failure[agent] _
+Tests\Chat\test_console_chat_controller.py:8693: in test_controller_retry_retains_reservation_after_repreparation_failure
+    await test_two_saved_turns_keep_history_references_through_production_trace(
+Tests\Chat\test_console_chat_controller.py:8159: in test_two_saved_turns_keep_history_references_through_production_trace
+    controller = ConsoleChatController(
+tldw_chatbook\Chat\console_chat_controller.py:3897: in __init__
+    auxiliary_timeout_seconds=get_cli_setting(
+tldw_chatbook\config.py:9812: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+tldw_chatbook\config.py:7287: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:945: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:357: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+tldw_chatbook\Backup_Recovery\raw_participants.py:307: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+96.67s call     Tests/UI/test_workspace_project_index_settings.py::test_actual_settings_card_enable_build_clear_preserves_library[textual-dark-size0]
+89.28s call     Tests/UI/test_workspace_project_index_settings.py::test_actual_settings_card_enable_build_clear_preserves_library[textual-light-size1]
+50.78s call     Tests/Chat/test_console_workspace_guidance.py::test_pending_project_turn_stays_with_owning_tab[initial-fenced]
+43.35s call     Tests/Chat/test_console_workspace_guidance.py::test_pending_project_turn_stays_with_owning_tab[retry-native]
+42.02s call     Tests/Workspaces/test_project_index_service.py::test_real_app_shutdown_without_console_drains_index_writer
+38.95s call     Tests/Chat/test_console_workspace_guidance.py::test_pending_project_turn_stays_with_owning_tab[initial-native]
+38.67s call     Tests/Chat/test_console_workspace_guidance.py::test_pending_project_turn_stays_with_owning_tab[retry-fenced]
+30.02s call     Tests/Chat/test_console_library_runtime_policy.py::test_project_turn_preserves_all_library_policy_combinations[allowed-automatic]
+29.78s call     Tests/Chat/test_console_library_runtime_policy.py::test_project_turn_preserves_all_library_policy_combinations[blocked-never]
+29.62s call     Tests/Chat/test_console_library_runtime_policy.py::test_project_turn_preserves_all_library_policy_combinations[blocked-automatic]
+28.42s call     Tests/Chat/test_console_library_runtime_policy.py::test_project_turn_preserves_all_library_policy_combinations[allowed-never]
+17.64s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_ownership_rows_are_sourced_from_record
+16.61s call     Tests/UI/test_workspace_project_index_settings.py::test_saved_policy_and_stale_actions
+11.50s call     Tests/UI/test_console_project_index_status.py::test_console_status_binding_fence_and_safe_settings_route[textual-dark-size0]
+9.22s call     Tests/UI/test_console_project_index_status.py::test_console_status_binding_fence_and_safe_settings_route[textual-light-size1]
+6.39s call     Tests/UI/test_settings_configuration_hub.py::test_settings_ownership_records_cover_categories_and_runtime_boundaries
+3.93s call     Tests/Chat/test_console_workspace_guidance.py::test_dispatch_retry_provider_payload_allows_workspace_grounding
+2.75s call     Tests/Chat/test_console_chat_controller.py::test_dispatch_recovery_preflight_preserves_prior_generation_token[stopped]
+2.58s call     Tests/Chat/test_console_chat_controller.py::test_dispatch_recovery_preflight_preserves_prior_generation_token[failed]
+2.06s call     Tests/Chat/test_console_workspace_guidance.py::test_automatic_evidence_provider_payload_allows_workspace_grounding
+1.76s call     Tests/Chat/test_console_chat_controller.py::test_controller_retry_retains_reservation_after_repreparation_failure[agent]
+1.41s call     Tests/Chat/test_console_chat_controller.py::test_controller_retry_retains_reservation_after_repreparation_failure[fresh]
+
+(3 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Chat/test_console_chat_controller.py::test_controller_retry_retains_reservation_after_repreparation_failure[fresh]
+FAILED Tests/Chat/test_console_chat_controller.py::test_controller_retry_retains_reservation_after_repreparation_failure[agent]
+2 failed, 20 passed, 2 warnings in 617.23s (0:10:17)

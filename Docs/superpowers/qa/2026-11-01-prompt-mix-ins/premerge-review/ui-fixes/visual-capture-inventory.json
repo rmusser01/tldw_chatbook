@@ -1,0 +1,32 @@
+[
+  {
+    "path": "/private/tmp/task7-captures/mixin-120x40-clean.svg",
+    "sha256": "7f4d4121737ec8469185b1c100c60788b5582a929340bc4dea8e6b2db74ff6e0",
+    "bytes": 129276
+  },
+  {
+    "path": "/private/tmp/task7-captures/mixin-120x40-dirty.svg",
+    "sha256": "3a25530b89c061189cdeabc6cc2ee6427140ad4619b47dc559a9e53eb498dc4c",
+    "bytes": 128754
+  },
+  {
+    "path": "/private/tmp/task7-captures/mixin-170x48-clean.svg",
+    "sha256": "9ab87785424effc15f00db6567f724963f554e3398054066ae448e77d427e34e",
+    "bytes": 208484
+  },
+  {
+    "path": "/private/tmp/task7-captures/mixin-170x48-dirty.svg",
+    "sha256": "de2668f60f3f59c71f31227fe467b511a019b9762b6c61ea307d4e2712ce482a",
+    "bytes": 209220
+  },
+  {
+    "path": "/private/tmp/task7-captures/mixin-80x24-clean.svg",
+    "sha256": "f2b9256833dbb814494beb2c0c91815f083902918d4d6507ebbd65d3bfe83b47",
+    "bytes": 42962
+  },
+  {
+    "path": "/private/tmp/task7-captures/mixin-80x24-dirty.svg",
+    "sha256": "d18a9034f8e73a0e417d91915f26e5bb5580de4c4f5942e942d33fd0315881d1",
+    "bytes": 43478
+  }
+]

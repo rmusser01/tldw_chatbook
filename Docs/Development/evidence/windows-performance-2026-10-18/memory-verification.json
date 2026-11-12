@@ -1,0 +1,42 @@
+{
+  "product_revision": "9220460203a5eab1293af7442701088188b22c09",
+  "verified_profile_processes": 7,
+  "successful_journeys": 42,
+  "final_processes_with_eight_source_hashes": 6,
+  "guard_events": 0,
+  "baseline_test_processes_with_both_original_source_hashes": 6,
+  "distinct_targeted_passes": 104,
+  "counting": "44 final context/source checks + 48 additional integration checks (55 minus seven overlap) + 10 settings owners + 1 wiring + 1 mounted banner",
+  "test_log_results": {
+    "memory-final-new.log": "9 passed, 1 warning in 21.22s",
+    "memory-green-final.log": "2 passed, 1 warning in 6.76s",
+    "memory-green.log": "1 failed, 1 passed, 1 warning in 7.43s",
+    "memory-integration.log": "55 passed, 2 warnings in 125.42s (0:02:05)",
+    "memory-mounted-baseline.log": "1 failed, 2 warnings in 9.80s",
+    "memory-mounted-fixed.log": "1 failed, 2 warnings in 8.09s",
+    "memory-mounted-forced-baseline.log": "1 passed, 2 warnings in 34.27s",
+    "memory-mounted-forced.log": "1 passed, 2 warnings in 35.60s",
+    "memory-mounted-private-baseline.log": "1 failed, 2 warnings in 39.84s",
+    "memory-mounted-private.log": "1 failed, 2 warnings in 39.09s",
+    "memory-mounted.log": "1 failed, 2 warnings in 8.37s",
+    "memory-owners.log": "3 failed, 10 passed, 2 warnings in 198.48s (0:03:18)",
+    "memory-red.log": "2 failed, 1 warning in 7.15s",
+    "memory-source-green.log": "44 passed, 2 warnings in 77.63s (0:01:17)",
+    "memory-source-red.log": "2 failed, 7 deselected, 1 warning in 8.03s",
+    "memory-tabs-baseline.log": "3 failed, 2 warnings in 131.65s (0:02:11)",
+    "memory-targeted-final.log": "42 passed, 2 warnings in 73.50s (0:01:13)",
+    "memory-targeted.log": "1 failed, 39 passed, 2 warnings in 58.52s",
+    "memory-wiring.log": "1 passed, 2 warnings in 22.28s"
+  },
+  "open_validation": "Three unchanged tab-publication controls fail on current and exact original sources at different warmup/held-reader stages. Neither identical causes nor passing tab-publication/retirement parity is established.",
+  "independent_review": "Cadence, async-reader qualification, optional tuple boundary and restored-source memo invalidation findings addressed; final product review found no further required changes.",
+  "full_suite_run": false,
+  "safety_rechecked": "Fourteen modules, thirty projection definitions, snapshot methods except key, and all other ChatScreen methods match original; six final profile receipts match current disk hashes.",
+  "final_static_checks": {
+    "ruff_check_changed_test_and_harness_files": "exit 0, All checks passed",
+    "ruff_format_new_test_and_harness_files": "exit 0, 8 files already formatted",
+    "product_and_existing_fixture_debt": "per-file baseline/current finding multiplicities and formatter diff line counts equal",
+    "git_diff_check": "exit 0"
+  },
+  "final_independent_evidence_review": "No required evidence corrections; mixed adverse results, 104-pass arithmetic, source receipts and three unqualified controls accurately stated."
+}

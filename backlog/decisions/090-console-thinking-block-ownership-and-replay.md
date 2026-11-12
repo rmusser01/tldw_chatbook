@@ -4,7 +4,7 @@ Status: Accepted
 Date: 2026-08-26
 Related Task: [TASK-18932](../tasks/task-18932%20-%20Console-toggleable-live-reasoning-display.md)
 Related Spec: [Console Thinking Blocks](../../Docs/superpowers/specs/2026-08-26-console-thinking-blocks-design.md)
-Extends: ADR-063 and ADR-066
+Extends: ADR-063 and ADR-311
 Amends: [Durable Provider Tool Continuation Design](../../Docs/superpowers/specs/2026-08-12-durable-provider-tool-continuation-design.md)
 
 ## Context
@@ -96,9 +96,9 @@ a content-free proprietary-evidence marker intact; edit or deletion removes it.
 
 ### Amendment recorded 2026-08-27: deletion ownership supersedes sidecar retention
 
-For retained soft-delete rows, the later ADR-097 accepted mutation contract
+For retained soft-delete rows, the later ADR-337 accepted mutation contract
 supersedes this amendment; see its
-[retained soft-delete clarification](097-console-reference-backed-semantic-trace-ledger.md#clarification-recorded-2026-09-05-retained-soft-delete-envelopes).
+[retained soft-delete clarification](337-console-reference-backed-semantic-trace-ledger.md#clarification-recorded-2026-09-05-retained-soft-delete-envelopes).
 
 For Console assistant-generation deletion, this ADR supersedes the older continuation
 design statement that a soft-deleted row retains its provider continuation sidecar.
@@ -143,10 +143,10 @@ continuation Discard or the retention of a distinct, non-deleted off-branch vari
 ## Links
 
 - [ADR-006: Provider-Aware Generation Settings](006-provider-aware-generation-settings.md)
-- [ADR-031: TUI Keybinding and Footer Hint Conventions](031-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-299: TUI Keybinding and Footer Hint Conventions](299-tui-keybinding-and-footer-hint-conventions.md)
 - [ADR-063: Hosted Wire and Durable Tool Continuation](063-hosted-provider-wire-and-durable-tool-continuation.md)
 - [ADR-064: DeepSeek Dual API Provider Boundary](064-deepseek-dual-api-provider-boundary.md)
-- [ADR-066: Local Provider Thinking Controls](066-local-provider-thinking-controls.md)
+- [ADR-311: Local Provider Thinking Controls](311-local-provider-thinking-controls.md)
 - [Console Assistant Turn Grouping](../../Docs/superpowers/specs/2026-08-21-console-assistant-turn-grouping-design.md)
 
 

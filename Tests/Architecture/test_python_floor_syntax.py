@@ -106,8 +106,10 @@ def _reports_version(interpreter: str) -> tuple[int, int] | None:
     # module exists to avoid.
     for line in probe.stdout.splitlines():
         fields = line.split()
-        if len(fields) == 3 and fields[0] == "FLOORPROBE" and all(
-            field.isdigit() for field in fields[1:]
+        if (
+            len(fields) == 3
+            and fields[0] == "FLOORPROBE"
+            and all(field.isdigit() for field in fields[1:])
         ):
             return int(fields[1]), int(fields[2])
     return None

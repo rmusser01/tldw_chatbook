@@ -61,7 +61,10 @@ class _FakeApp:
         self.notify_calls = []
         self.library_rag_search_service = object()
 
-    def notify(self, message, severity="information", timeout=None):
+    def notify(self, message, severity="information", timeout=None,
+               markup=True):
+        # ``markup`` mirrors Textual's ``App.notify``; the notification
+        # helper passes False for runtime text (TASK-34803).
         self.notify_calls.append(
             {"message": message, "severity": severity, "timeout": timeout}
         )
@@ -101,6 +104,7 @@ def db(tmp_path):
         database.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recurring_question_end_to_end(db, monkeypatch):
     # -- Fake the two Library RAG boundaries only (module attributes on the
@@ -158,6 +162,7 @@ async def test_recurring_question_end_to_end(db, monkeypatch):
         db,
         handlers={"automation_definition": handler},
         clock=lambda: first_next_run_at,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     loop.queue.load()
 

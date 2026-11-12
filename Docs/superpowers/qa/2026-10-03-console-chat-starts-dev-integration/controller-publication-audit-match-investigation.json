@@ -1,0 +1,49 @@
+[
+  {
+    "artifact": "Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/source-archives/latest-merge-source-detail.json.gz",
+    "matching_credential_fields": [
+      "image_generation.openrouter.api_key",
+      "image_generation.novita.api_key",
+      "image_generation.together.api_key",
+      "image_generation.modelstudio.api_key",
+      "api_settings.google.api_key"
+    ],
+    "matches": [
+      {
+        "credential_field": "image_generation.openrouter.api_key",
+        "credential_length": 14,
+        "container_key": "calls.17.output",
+        "diff_owner": null,
+        "masked_line": "    # `\"<REDACTED_LOCAL_CREDENTIAL>\"`. Pointing this lookup at the real table (finding"
+      },
+      {
+        "credential_field": "image_generation.novita.api_key",
+        "credential_length": 14,
+        "container_key": "calls.17.output",
+        "diff_owner": null,
+        "masked_line": "    # `\"<REDACTED_LOCAL_CREDENTIAL>\"`. Pointing this lookup at the real table (finding"
+      },
+      {
+        "credential_field": "image_generation.together.api_key",
+        "credential_length": 14,
+        "container_key": "calls.17.output",
+        "diff_owner": null,
+        "masked_line": "    # `\"<REDACTED_LOCAL_CREDENTIAL>\"`. Pointing this lookup at the real table (finding"
+      },
+      {
+        "credential_field": "image_generation.modelstudio.api_key",
+        "credential_length": 14,
+        "container_key": "calls.17.output",
+        "diff_owner": null,
+        "masked_line": "    # `\"<REDACTED_LOCAL_CREDENTIAL>\"`. Pointing this lookup at the real table (finding"
+      },
+      {
+        "credential_field": "api_settings.google.api_key",
+        "credential_length": 14,
+        "container_key": "calls.17.output",
+        "diff_owner": null,
+        "masked_line": "    # `\"<REDACTED_LOCAL_CREDENTIAL>\"`. Pointing this lookup at the real table (finding"
+      }
+    ]
+  }
+]

@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any, Awaitable, Mapping, Optional, Sequence
 
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+from tldw_chatbook.Utils.egress import UrlProvenance
 
 from .media_reading_normalizers import (
     normalize_file_artifact,
@@ -2149,6 +2150,7 @@ class MediaReadingScopeService:
         method_name: str,
         urls: list[str] | None = None,
         file_paths: list[str] | None = None,
+        url_provenance: UrlProvenance | None = None,
         **options: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
@@ -2169,6 +2171,13 @@ class MediaReadingScopeService:
             self._processing_action_id(kind, "process", normalized_mode)
         )
         service_method = getattr(service, method_name)
+        # (TASK-20973) Provenance reaches the LOCAL backend only. It seeds
+        # THIS process's egress policy; the server backend ships its URLs
+        # to a remote process whose own policy this parameter cannot
+        # reach, and a trust claim crossing a process boundary could never
+        # be verified there anyway -- so it is simply not forwarded.
+        if url_provenance is not None and normalized_mode == MediaReadingBackend.LOCAL:
+            options = {**options, "url_provenance": url_provenance}
         return self._to_plain(
             await self._maybe_await(
                 service_method(urls=urls, file_paths=file_paths, **options)
@@ -2181,14 +2190,26 @@ class MediaReadingScopeService:
         mode: MediaReadingBackend | str | None = None,
         urls: list[str] | None = None,
         file_paths: list[str] | None = None,
+        url_provenance: UrlProvenance = UrlProvenance.UNKNOWN,
         **options: Any,
     ) -> Any:
+        """Process video URLs/local files through the selected backend.
+
+        (TASK-20973) ``url_provenance`` is the trust decision for any URL
+        in ``urls``, expressed HERE at the public seam rather than inferred
+        from the caller set: the default is ``UNKNOWN`` (fail closed at the
+        local backend's egress check -- this method's URL parameter is one
+        of the caller-supplied-URL seams that used to self-trust
+        unconditionally), and a caller that has established user entry
+        passes ``UrlProvenance.USER_ENTERED`` explicitly.
+        """
         return await self._process_existing_no_db_media(
             mode=mode,
             kind="video",
             method_name="process_video",
             urls=urls,
             file_paths=file_paths,
+            url_provenance=url_provenance,
             **options,
         )
 

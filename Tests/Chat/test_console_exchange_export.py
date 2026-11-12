@@ -149,6 +149,7 @@ def test_non_full_profiles_report_why_full_is_unavailable_for_safe_capture() -> 
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_split_stream_binary_never_reaches_sqlite_or_full_export() -> None:
     db = CharactersRAGDB(":memory:", "split-stream-binary")
     try:
@@ -217,6 +218,7 @@ def test_split_stream_binary_never_reaches_sqlite_or_full_export() -> None:
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_gateway_controller_store_sentinels_across_all_owners(
     tmp_path,

@@ -160,6 +160,8 @@ def create_rag_service_from_config(
 
 # Compatibility aliases
 create_auto_rag_service = create_rag_service_from_config
+
+
 def get_available_profiles():
     from ..config_profiles import get_profile_manager
 

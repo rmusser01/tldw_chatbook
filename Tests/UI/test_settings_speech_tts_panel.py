@@ -4,6 +4,7 @@ import asyncio
 import builtins
 import importlib
 import struct
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,10 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+)
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -41,6 +46,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_package_scanner import scan_audio_cpp_package_root
 from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
 from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
@@ -49,9 +55,9 @@ from tldw_chatbook.TTS.openai_compatible_config import (
 from tldw_chatbook.UI.Lab_Modules import lab_speech_status as lab_speech_status_module
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     CredentialIntent,
@@ -156,6 +162,7 @@ class _PanelHarness(App[None]):
         *,
         configure_provider: str = "audio_cpp",
         state=None,
+        config_snapshot: dict[str, object] | None = None,
         profiles: object = _PROFILES_UNSET,
         profiles_unavailable: bool = False,
         observation: TTSNativeCapabilityObservation | None = None,
@@ -166,6 +173,7 @@ class _PanelHarness(App[None]):
         super().__init__()
         self.configure_provider = configure_provider
         self.state = state or load_global_speech_tts_state({})
+        self.config_snapshot = {} if config_snapshot is None else config_snapshot
         self.profiles = (
             list(_DEFAULT_TEST_PROFILES) if profiles is _PROFILES_UNSET else profiles
         )
@@ -180,6 +188,7 @@ class _PanelHarness(App[None]):
     def compose(self) -> ComposeResult:
         yield SpeechTTSSettingsPanel(
             state=self.state,
+            config_snapshot=self.config_snapshot,
             configure_provider=self.configure_provider,
             profiles=self.profiles,
             profiles_unavailable=self.profiles_unavailable,
@@ -295,6 +304,7 @@ class _StyledPanelHarness(_PanelHarness):
     CSS_PATH = [_BUNDLE, _SETTINGS_SHEET]
 
 
+@pytest.mark.bootstrap_profile
 def test_speech_tts_is_a_first_class_core_settings_category() -> None:
     screen = SettingsScreen(_build_test_app())
 
@@ -309,6 +319,7 @@ def test_speech_tts_is_a_first_class_core_settings_category() -> None:
     assert SettingsCategoryId.SPEECH_TTS in dict(screen._category_groups())["Core"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
 async def test_production_settings_actions_cross_the_pushed_screen_boundary(
@@ -413,6 +424,7 @@ async def test_production_settings_actions_cross_the_pushed_screen_boundary(
             await pilot.pause(0.01)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "query",
     (
@@ -440,6 +452,7 @@ def test_settings_search_indexes_required_speech_vocabulary(query: str) -> None:
     assert screen._category_matches_search(summary, query)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bounded_speech_settings_deep_link_restores_provider_without_action() -> (
     None
@@ -477,6 +490,7 @@ async def test_bounded_speech_settings_deep_link_restores_provider_without_actio
         assert panel._latest_request_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("trigger", ("deep-link", "search"))
 async def test_dirty_same_category_provider_target_cancel_survives_recompose(
@@ -543,6 +557,7 @@ async def test_dirty_same_category_provider_target_cancel_survives_recompose(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "extra",
     (
@@ -568,6 +583,7 @@ def test_speech_settings_deep_link_rejects_extra_payload(
     assert screen._speech_tts_configure_provider is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_search_opens_speech_tts_with_named_provider_selected() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -592,6 +608,7 @@ async def test_provider_search_opens_speech_tts_with_named_provider_selected() -
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_global_panel_states_scope_and_mounts_only_selected_provider() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -616,7 +633,7 @@ async def test_scope_banner_points_to_the_two_profile_surfaces() -> None:
     """The pointer card names where profiles actually live (task 1, slice 4).
 
     Voice profiles are a Speech Lab concept and per-character assignment
-    lives in the Roleplay character editor (ADR-039 scope separation) --
+    lives in the Roleplay character editor (ADR-304 scope separation) --
     neither is managed from this panel. The card is a two-line static
     note; the single "Open Speech Lab" action lives with the Save actions.
     """
@@ -1048,6 +1065,8 @@ async def test_first_settings_mount_probes_local_speech_dependencies_once(
         "kokoro_onnx",
         "chatterbox",
         "boson_multimodal",
+        "onnxruntime",
+        "tokenizers",
     ]
     assert imported_local_runtimes == []
 
@@ -1095,20 +1114,30 @@ async def test_dirty_global_link_failed_save_keeps_owner_draft_and_focus() -> No
         panel._ask_leave_choice = AsyncMock(return_value="save")
 
         leave_task = asyncio.create_task(panel.confirm_leave())
-        for _ in range(100):
-            if app.events:
-                break
-            await pilot.pause(0.01)
-        assert app.events
-        panel.receive_stts_settings_save_result(
-            STTSSettingsSaveResult(
-                request_id=app.events[0].request_id or 0,
-                persisted=False,
-                provider_statuses={},
-                failure_phase="before_replace",
+        try:
+            for _ in range(100):
+                if app.events:
+                    break
+                await pilot.pause(0.01)
+            assert app.events
+            panel.receive_stts_settings_save_result(
+                STTSSettingsSaveResult(
+                    request_id=app.events[0].request_id or 0,
+                    persisted=False,
+                    provider_statuses={},
+                    failure_phase="before_replace",
+                )
             )
-        )
-        allowed = await leave_task
+            allowed = await await_background_task(
+                leave_task, what="speech Settings leave decision"
+            )
+        finally:
+            if not leave_task.done():
+                leave_task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(leave_task, return_exceptions=True),
+                timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+            )
         if allowed:
             await panel._open_lab(
                 SpeechTTSNavigationTarget(
@@ -1138,21 +1167,31 @@ async def test_dirty_global_link_successful_save_continues_with_bounded_intent()
         panel._ask_leave_choice = AsyncMock(return_value="save")
 
         leave_task = asyncio.create_task(panel.confirm_leave())
-        for _ in range(100):
-            if app.events:
-                break
-            await pilot.pause(0.01)
-        assert app.events
-        panel.receive_stts_settings_save_result(
-            STTSSettingsSaveResult(
-                request_id=app.events[0].request_id or 0,
-                persisted=True,
-                provider_statuses={"audio_cpp": "applied"},
-                provider_configuration_revisions={"audio_cpp": 5},
-                provider_runtime_revisions={"audio_cpp": 9},
+        try:
+            for _ in range(100):
+                if app.events:
+                    break
+                await pilot.pause(0.01)
+            assert app.events
+            panel.receive_stts_settings_save_result(
+                STTSSettingsSaveResult(
+                    request_id=app.events[0].request_id or 0,
+                    persisted=True,
+                    provider_statuses={"audio_cpp": "applied"},
+                    provider_configuration_revisions={"audio_cpp": 5},
+                    provider_runtime_revisions={"audio_cpp": 9},
+                )
             )
-        )
-        allowed = await leave_task
+            allowed = await await_background_task(
+                leave_task, what="speech Settings leave decision"
+            )
+        finally:
+            if not leave_task.done():
+                leave_task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(leave_task, return_exceptions=True),
+                timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+            )
         if allowed:
             await panel._open_lab(
                 SpeechTTSNavigationTarget(
@@ -1190,23 +1229,34 @@ async def test_every_leave_guard_waits_for_an_existing_save_instead_of_discardin
         panel._ask_leave_choice = AsyncMock(return_value="discard")
 
         leave_task = asyncio.create_task(panel.confirm_leave())
-        await pilot.pause()
+        try:
+            await pilot.pause()
 
-        assert leave_task.done() is False
-        panel._ask_leave_choice.assert_not_awaited()
-        assert field.value == "321"
+            assert leave_task.done() is False
+            panel._ask_leave_choice.assert_not_awaited()
+            assert field.value == "321"
 
-        panel.receive_stts_settings_save_result(
-            STTSSettingsSaveResult(
-                request_id=request_id,
-                persisted=True,
-                provider_statuses={"audio_cpp": "applied"},
-                provider_configuration_revisions={"audio_cpp": 1},
-                provider_runtime_revisions={"audio_cpp": 1},
+            panel.receive_stts_settings_save_result(
+                STTSSettingsSaveResult(
+                    request_id=request_id,
+                    persisted=True,
+                    provider_statuses={"audio_cpp": "applied"},
+                    provider_configuration_revisions={"audio_cpp": 1},
+                    provider_runtime_revisions={"audio_cpp": 1},
+                )
             )
-        )
 
-        assert await leave_task is True
+            allowed = await await_background_task(
+                leave_task, what="speech Settings leave decision"
+            )
+        finally:
+            if not leave_task.done():
+                leave_task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(leave_task, return_exceptions=True),
+                timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+            )
+        assert allowed is True
         panel._ask_leave_choice.assert_not_awaited()
         assert panel.has_unsaved_changes() is False
 
@@ -1246,6 +1296,7 @@ async def test_dirty_provider_switch_discard_removes_hidden_draft(request) -> No
         ).value == str(original_timeout)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_dismissal_cancel_preserves_dirty_speech_owner() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -1473,6 +1524,7 @@ async def test_delayed_save_completion_cannot_replace_newer_lab_runtime_evidence
         assert "Unavailable" not in runtime
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_stylesheet_keeps_fields_usable_and_outer_detail_scrollable() -> (
     None
@@ -1527,6 +1579,7 @@ async def test_real_stylesheet_keeps_fields_usable_and_outer_detail_scrollable()
         assert 0 <= save.region.y < pilot.app.size.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
 async def test_real_stylesheet_keeps_managed_setup_reachable_at_supported_widths(
@@ -1576,6 +1629,7 @@ async def test_real_stylesheet_keeps_managed_setup_reachable_at_supported_widths
         assert 0 <= save.region.y < pilot.app.size.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_category_reloads_the_latest_runtime_config_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -1612,6 +1666,7 @@ async def test_category_reloads_the_latest_runtime_config_snapshot(monkeypatch) 
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_each_provider_form_mounts_its_complete_bounded_inventory() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -1633,6 +1688,7 @@ async def test_each_provider_form_mounts_its_complete_bounded_inventory() -> Non
                 ), f"{provider_id} is missing {field_id}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_panel_exposes_mode_specific_managed_audio_cpp_setup_controls() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -2005,7 +2061,9 @@ async def test_guided_scan_late_cancelled_root_cannot_mutate_newer_draft(
     newer_root = tmp_path / "Supertonic"
     newer_root.mkdir()
     (newer_root / "supertonic-3-orig.gguf").write_bytes(b"GGUF" + struct.pack("<I", 3))
-    real_scan = speech_tts_settings_panel_module.scan_audio_cpp_package_root_async
+    scans = {
+        root: scan_audio_cpp_package_root(root) for root in (older_root, newer_root)
+    }
     older_started = asyncio.Event()
     release_older = asyncio.Event()
 
@@ -2018,7 +2076,7 @@ async def test_guided_scan_late_cancelled_root_cannot_mutate_newer_draft(
                 # Model an uncooperative filesystem call that completes after its
                 # worker was cancelled; the revision fence must still reject it.
                 pass
-        return await real_scan(path, request_revision=request_revision)
+        return replace(scans[path], request_revision=request_revision)
 
     monkeypatch.setattr(
         speech_tts_settings_panel_module,
@@ -2032,12 +2090,14 @@ async def test_guided_scan_late_cancelled_root_cannot_mutate_newer_draft(
         app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
         await pilot.pause()
 
-        panel._audio_cpp_package_picker_result(older_root)
-        await asyncio.wait_for(older_started.wait(), timeout=1.0)
-        panel._audio_cpp_package_picker_result(newer_root)
-        await pilot.pause()
-        release_older.set()
-        await _settle(pilot)
+        try:
+            panel._audio_cpp_package_picker_result(older_root)
+            await asyncio.wait_for(older_started.wait(), timeout=1.0)
+            panel._audio_cpp_package_picker_result(newer_root)
+            await pilot.pause()
+        finally:
+            release_older.set()
+            await _settle(pilot)
 
         model_ids = {
             package.public_model_id for package in panel._audio_cpp_guided_packages()
@@ -2055,7 +2115,7 @@ async def test_guided_source_round_trip_fences_an_inflight_package_scan(
     (package_root / "supertonic-3-orig.gguf").write_bytes(
         b"GGUF" + struct.pack("<I", 3)
     )
-    real_scan = speech_tts_settings_panel_module.scan_audio_cpp_package_root_async
+    scans = {package_root: scan_audio_cpp_package_root(package_root)}
     scan_started = asyncio.Event()
     release_scan = asyncio.Event()
 
@@ -2066,7 +2126,7 @@ async def test_guided_source_round_trip_fences_an_inflight_package_scan(
         except asyncio.CancelledError:
             # A blocking filesystem call may still return after cancellation.
             pass
-        return await real_scan(path, request_revision=request_revision)
+        return replace(scans[path], request_revision=request_revision)
 
     monkeypatch.setattr(
         speech_tts_settings_panel_module,
@@ -2080,18 +2140,20 @@ async def test_guided_source_round_trip_fences_an_inflight_package_scan(
         app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
         await pilot.pause()
 
-        panel._audio_cpp_package_picker_result(package_root)
-        await asyncio.wait_for(scan_started.wait(), timeout=1.0)
-        source = app.query_one(
-            "#settings-speech-audio_cpp-managed-setup-source",
-            Select,
-        )
-        source.value = "user_json"
-        await pilot.pause()
-        source.value = "guided"
-        await pilot.pause()
-        release_scan.set()
-        await _settle(pilot)
+        try:
+            panel._audio_cpp_package_picker_result(package_root)
+            await asyncio.wait_for(scan_started.wait(), timeout=1.0)
+            source = app.query_one(
+                "#settings-speech-audio_cpp-managed-setup-source",
+                Select,
+            )
+            source.value = "user_json"
+            await pilot.pause()
+            source.value = "guided"
+            await pilot.pause()
+        finally:
+            release_scan.set()
+            await _settle(pilot)
 
         assert panel._audio_cpp_guided_packages() == ()
 
@@ -2278,6 +2340,7 @@ async def test_invalid_managed_binary_is_adjacent_safe_and_posts_no_save(
         assert str(missing) not in error
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
     monkeypatch,
@@ -2306,6 +2369,7 @@ async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
     assert calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounting_external_audio_cpp_settings_never_starts_managed_child(
     monkeypatch: pytest.MonkeyPatch,
@@ -2333,6 +2397,7 @@ async def test_mounting_external_audio_cpp_settings_never_starts_managed_child(
     assert launches == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_reads_only_existing_cached_audio_cpp_observation(
     monkeypatch,
@@ -3216,6 +3281,7 @@ async def test_dirty_provider_switch_cancel_preserves_visible_owner_and_draft(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_generic_save_and_revert_actions_route_to_speech_panel() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -3662,18 +3728,16 @@ async def test_realtime_semantic_mode_deletes_the_server_vad_keys(
 ) -> None:
     """Switching back to semantic must not leave stale server_vad numbers
     in config for a later reader to hand the provider."""
-    monkeypatch.setattr(
-        speech_tts_settings_panel_module,
-        "_read_realtime_turn_detection",
-        lambda: "server_vad",
-    )
     calls: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         speech_tts_settings_panel_module,
         "save_settings_to_cli_config",
         lambda *args, **kwargs: calls.append((args, kwargs)) or True,
     )
-    app = _PanelHarness(configure_provider="audio_cpp")
+    app = _PanelHarness(
+        configure_provider="audio_cpp",
+        config_snapshot={"realtime": {"turn_detection": "server_vad"}},
+    )
     async with app.run_test(size=(150, 60)) as pilot:
         await _settle(pilot)
         app.query_one(
@@ -3703,16 +3767,16 @@ async def test_realtime_unsupported_configured_provider_is_not_silently_rewritte
     unsupported provider made the panel report unsaved changes the instant
     it opened -- and Save silently rewrote the user's value to "openai"
     without anyone touching the field."""
-    monkeypatch.setattr(
-        speech_tts_settings_panel_module, "_read_realtime_provider", lambda: "gemini"
-    )
     calls: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         speech_tts_settings_panel_module,
         "save_settings_to_cli_config",
         lambda *args, **kwargs: calls.append((args, kwargs)) or True,
     )
-    app = _PanelHarness(configure_provider="audio_cpp")
+    app = _PanelHarness(
+        configure_provider="audio_cpp",
+        config_snapshot={"realtime": {"provider": "gemini"}},
+    )
     async with app.run_test(size=(150, 60)) as pilot:
         panel = app.query_one("#panel", SpeechTTSSettingsPanel)
         await _settle(pilot)
@@ -4073,13 +4137,15 @@ async def test_guided_save_keeps_later_realtime_edits_dirty(
         realtime_model = app.query_one("#settings-speech-realtime-model", Input)
         realtime_model.value = "snapshot-a"
         await pilot.pause()
-        await pilot.click("#settings-speech-save")
-        await asyncio.wait_for(validation_started.wait(), timeout=2.0)
+        try:
+            await pilot.click("#settings-speech-save")
+            await asyncio.wait_for(validation_started.wait(), timeout=2.0)
 
-        realtime_model.value = "later-edit-b"
-        await pilot.pause()
-        release_validation.set()
-        await _settle(pilot)
+            realtime_model.value = "later-edit-b"
+            await pilot.pause()
+        finally:
+            release_validation.set()
+            await _settle(pilot)
 
         assert persisted[0][0][0]["realtime"]["model"] == "snapshot-a"
         assert len(app.events) == 1
@@ -4516,7 +4582,7 @@ def test_optional_number_validator_rejects_non_finite_values():
     """PR #2638 Qodo #5: NaN compares False to every bound and infinity
     passes a positive lower bound, yet neither belongs in config -- the
     shared helper every realtime numeric knob uses must refuse them."""
-    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         GlobalSpeechTTSValidationError,
     )
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
@@ -4534,3 +4600,27 @@ def test_optional_number_validator_rejects_non_finite_values():
                 high=None,
                 exclusive_low=True,
             )
+
+
+# --- review fix (PR #3089): drift pin for the mirrored panel constants ------
+
+
+def test_panel_default_constants_match_the_voice_input_source():
+    """The four compose-time placeholder constants in the panel are mirrors
+    of `console_voice_input`'s (inlined there to keep the settings
+    pre-import route light — PR #3089). This pin turns the "verified
+    2026-10-12" provenance comment into an enforced contract: a source
+    change without a panel update fails here, not silently in the UI."""
+    from tldw_chatbook.Chat import console_voice_input as source
+    from tldw_chatbook.Widgets.Settings_Widgets import speech_tts_settings_panel as panel
+
+    assert (
+        panel.DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+        == source.DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+    )
+    assert (
+        panel.DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES
+        == source.DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES
+    )
+    assert panel.DEFAULT_REALTIME_MODEL == source.DEFAULT_REALTIME_MODEL
+    assert panel.DEFAULT_REALTIME_PROVIDER == source.DEFAULT_REALTIME_PROVIDER

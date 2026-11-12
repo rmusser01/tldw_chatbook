@@ -50,7 +50,10 @@ def test_markdown_table_parsing_preserves_empty_cells():
     """Markdown table parser should preserve empty cells and column counts."""
     sa = StructureAwareChunkingStrategy()
     table_md = (
-        "| Col1 | Col2 | Col3 |\n" "|------|------|------|\n" "|  a   |      |  c   |\n" "|      |  b   |      |\n"
+        "| Col1 | Col2 | Col3 |\n"
+        "|------|------|------|\n"
+        "|  a   |      |  c   |\n"
+        "|      |  b   |      |\n"
     )
 
     table = sa._parse_markdown_table(table_md)

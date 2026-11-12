@@ -7,6 +7,8 @@ import shutil
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
+
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 from tldw_chatbook.Workspaces.registry_service import (
@@ -16,7 +18,7 @@ from tldw_chatbook.Workspaces.registry_service import (
 )
 
 
-def build_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
+def build_registry(tmp_path: Path, request) -> LocalWorkspaceRegistryService:
     """Build a registry backed by a fresh ``WorkspaceDB`` under ``tmp_path``.
 
     Real callers always place ``WorkspaceDB`` under ``get_user_data_dir()``,
@@ -30,17 +32,30 @@ def build_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
     caller's directory is guaranteed to exist.
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
-    return LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="folder-tests")
-    )
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="folder-tests")
+    request.addfinalizer(db.close)
+    return LocalWorkspaceRegistryService(db)
 
 
 @pytest.fixture()
-def service(tmp_path: Path) -> LocalWorkspaceRegistryService:
-    registry = build_registry(tmp_path)
+def service(tmp_path: Path, request) -> LocalWorkspaceRegistryService:
+    registry = build_registry(tmp_path, request)
     registry.ensure_default_workspace()
     registry.create_workspace(workspace_id="ws-a", name="Client A")
     return registry
+
+
+@pytest.fixture
+def protected_profile(tmp_path: Path, monkeypatch):
+    from tldw_chatbook.RAG_Search import config_profiles
+    from tldw_chatbook.RAG_Search.simplified import config as rag_config
+
+    profile = tmp_path / "protected-profile"
+    profile.mkdir(mode=0o700)
+    with monkeypatch.context() as selection:
+        yield select_config_source(
+            selection, profile / "config.toml", vars(config_profiles), vars(rag_config)
+        )
 
 
 def test_add_folder_binding_stores_canonical_ro_binding(
@@ -53,7 +68,10 @@ def test_add_folder_binding_stores_canonical_ro_binding(
 
     assert binding.locator == str(folder.resolve())
     assert binding.label == "project"
-    assert str(binding.binding_kind) in ("local-filesystem", "RuntimeBindingKind.LOCAL_FILESYSTEM")
+    assert str(binding.binding_kind) in (
+        "local-filesystem",
+        "RuntimeBindingKind.LOCAL_FILESYSTEM",
+    )
     assert binding.metadata["access"] == "ro"
     assert str(binding.status) in ("ready", "RuntimeBindingStatus.READY")
 
@@ -95,7 +113,7 @@ def test_add_folder_binding_validation_matrix(
 
 
 def test_add_folder_binding_rejects_sensitive_paths(
-    service: LocalWorkspaceRegistryService,
+    service: LocalWorkspaceRegistryService, protected_profile,
 ) -> None:
     """TASK-857: folder binding must consult the sensitive-path denylist,
     not just the filesystem root and home directory. Every candidate here
@@ -103,16 +121,14 @@ def test_add_folder_binding_rejects_sensitive_paths(
     per the AC, so this can't silently drift the way the read-time
     denylist's own literals once did.
     """
-    from tldw_chatbook import config as app_config
-
     # Case 1: root IS a protected directory (this app's own config dir).
-    config_dir = app_config._get_effective_config_path().parent
+    config_dir = protected_profile._get_effective_config_path().parent
     config_dir.mkdir(parents=True, exist_ok=True)
     with pytest.raises(WorkspaceRegistryServiceError):
         service.add_folder_binding("ws-a", config_dir)
 
     # Case 2: root IS a protected directory (this app's own data dir).
-    user_data_dir = app_config.get_user_data_dir()
+    user_data_dir = protected_profile.get_user_data_dir()
     user_data_dir.mkdir(parents=True, exist_ok=True)
     with pytest.raises(WorkspaceRegistryServiceError):
         service.add_folder_binding("ws-a", user_data_dir)
@@ -133,13 +149,11 @@ def test_add_folder_binding_rejects_sensitive_paths(
 
 
 def test_add_folder_binding_rejection_names_the_protected_path(
-    service: LocalWorkspaceRegistryService,
+    service: LocalWorkspaceRegistryService, protected_profile,
 ) -> None:
     """The rejection must be actionable -- name what was protected -- not a
     silent failure or a bare/opaque exception."""
-    from tldw_chatbook import config as app_config
-
-    user_data_dir = app_config.get_user_data_dir()
+    user_data_dir = protected_profile.get_user_data_dir()
     user_data_dir.mkdir(parents=True, exist_ok=True)
 
     with pytest.raises(WorkspaceRegistryServiceError) as excinfo:
@@ -171,7 +185,7 @@ def test_add_folder_binding_rejects_default_workspace(
 
 
 def test_add_folder_binding_rejects_duplicates_and_nesting(
-    service: LocalWorkspaceRegistryService, tmp_path: Path
+    service: LocalWorkspaceRegistryService, tmp_path: Path, request
 ) -> None:
     parent = tmp_path / "parent"
     child = parent / "child"
@@ -184,7 +198,7 @@ def test_add_folder_binding_rejects_duplicates_and_nesting(
         service.add_folder_binding("ws-a", child)  # nested under existing
 
     # And the reverse direction: existing child blocks a new parent root.
-    other = build_registry(tmp_path / "second-db")
+    other = build_registry(tmp_path / "second-db", request)
     other.create_workspace(workspace_id="ws-b", name="Client B")
     other.add_folder_binding("ws-b", child)
     with pytest.raises(WorkspaceRegistryServiceError):

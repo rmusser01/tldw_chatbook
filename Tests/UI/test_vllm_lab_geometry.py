@@ -459,6 +459,7 @@ async def _wait_for_profile_mutation_idle(screen: LLMScreen, pilot) -> None:
     raise AssertionError("profile mutation did not settle")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", VLLM_GEOMETRY_SIZES)
 @pytest.mark.parametrize("state", VLLM_GEOMETRY_STATES)
 async def test_every_visible_focusable_is_inside_its_owner(size, state):
@@ -524,6 +525,7 @@ async def test_every_visible_focusable_is_inside_its_owner(size, state):
             assert "more below" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", VLLM_GEOMETRY_SIZES)
 async def test_profile_delete_confirmation_is_contained_and_keyboard_cancelable(size):
     """Removing the real modal or clipping either action must fail this contract."""
@@ -577,6 +579,7 @@ async def test_profile_delete_confirmation_is_contained_and_keyboard_cancelable(
         assert after == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", VLLM_GEOMETRY_SIZES)
 @pytest.mark.parametrize("state", VLLM_GEOMETRY_STATES)
 async def test_complete_tab_walk_stays_in_active_vllm_provider(size, state):
@@ -608,6 +611,7 @@ async def test_complete_tab_walk_stays_in_active_vllm_provider(size, state):
         assert hidden_provider_ids.isdisjoint(visited)
 
 
+@pytest.mark.bootstrap_profile
 async def test_background_projection_preserves_focus_but_explicit_transition_moves_it():
     async with _run_vllm_geometry_app((100, 30)) as (app, pilot):
         screen, view = await _mounted_vllm_view(app, pilot)

@@ -71,7 +71,6 @@ def speech_local_dependency_availability(
                 for module_name in (
                     "nemo_toolkit",
                     "faster_whisper",
-                    "lightning_whisper_mlx",
                     "parakeet_mlx",
                 )
             ),
@@ -156,9 +155,7 @@ def _speech_capability_lines(
         if getattr(dependencies, attribute):
             lines.append(f"{label}: ready")
         else:
-            lines.append(
-                f'{label}: missing - pip install "tldw_chatbook[{extra}]"'
-            )
+            lines.append(f'{label}: missing - pip install "tldw_chatbook[{extra}]"')
     return tuple(lines)
 
 

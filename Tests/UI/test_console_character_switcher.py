@@ -11,7 +11,13 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+    wait_for_signal,
+)
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.textual_test_helpers import wait_for_worker
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterConversationPage,
     CharacterConversationRow,
@@ -612,19 +618,24 @@ async def test_character_activation_freezes_exact_target_and_closes_only_on_open
     async with app.run_test(size=size) as pilot:
         await pilot.pause()
         app.screen.query_one(".console-switcher-result", Button).focus()
-        await pilot.press("enter", "enter")
-        await entered.wait()
-        assert app.screen._committed_character_result is not None
-        assert app.screen._committed_character_result.target == _target(
-            "conversation-a"
-        )
-        assert "Finishing" in str(
-            app.screen.query_one("#console-switcher-status", Static).renderable
-        )
-        await pilot.press("escape")
-        assert app.screen is not app
-        release.set()
-        await pilot.pause()
+        modal = app.screen
+        try:
+            await pilot.press("enter", "enter")
+            await wait_for_signal(entered, what="character open reaching the commit handoff")
+            assert app.screen._committed_character_result is not None
+            assert app.screen._committed_character_result.target == _target(
+                "conversation-a"
+            )
+            assert "Finishing" in str(
+                app.screen.query_one("#console-switcher-status", Static).renderable
+            )
+            await pilot.press("escape")
+            assert app.screen is not app
+        finally:
+            release.set()
+            if modal._activation_task is not None:
+                await await_background_task(modal._activation_task, what="character open")
+            await pilot.pause()
 
     assert len(attempts) == 1
     assert attempts[0].data_revision == 9
@@ -735,14 +746,22 @@ async def test_escape_cancels_character_open_only_before_commit() -> None:
     )
     async with app.run_test(size=(52, 20)) as pilot:
         await pilot.pause()
-        await pilot.press("down", "enter")
-        await entered.wait()
-        await pilot.press("escape")
-        await pilot.pause()
+        modal = app.screen
+        try:
+            await pilot.press("down", "enter")
+            await wait_for_signal(entered, what="cancellable character open")
+            await pilot.press("escape")
+            await pilot.pause()
 
-        assert isinstance(app.screen, ConsoleSessionSwitcherModal)
-        assert app.screen._activation_phase.value == "idle"
-        assert app.result == "unset"
+            assert isinstance(app.screen, ConsoleSessionSwitcherModal)
+            assert app.screen._activation_phase.value == "idle"
+            assert app.result == "unset"
+        finally:
+            if modal._activation_cancellation is not None:
+                modal._activation_cancellation.set()
+            if modal._activation_task is not None:
+                await await_background_task(modal._activation_task, what="character open")
+            await pilot.pause()
 
 
 @pytest.mark.parametrize(
@@ -877,22 +896,27 @@ async def test_pending_character_query_cannot_activate_a_stale_row(
         row = app.screen.query_one(".console-switcher-result", Button)
         if gesture == "focused-enter":
             row.focus()
-        app.screen.query_one("#console-switcher-query", Input).value = "new query"
-        await entered.wait()
+        try:
+            app.screen.query_one("#console-switcher-query", Input).value = "new query"
+            await wait_for_signal(entered, what="replacement character search")
 
-        assert row.disabled is True
-        if gesture == "click":
-            # Exercise the generation fence independently of the disabled
-            # presentation guard (e.g. a queued Pressed message).
-            row.disabled = False
-            row.press()
-        else:
-            await pilot.press("enter")
-        await pilot.pause()
-        assert attempts == []
+            assert row.disabled is True
+            if gesture == "click":
+                # Exercise the generation fence independently of the disabled
+                # presentation guard (e.g. a queued Pressed message).
+                row.disabled = False
+                row.press()
+            else:
+                await pilot.press("enter")
+            await pilot.pause()
+            assert attempts == []
 
-        release.set()
-        await pilot.pause()
+        finally:
+            release.set()
+            assert await wait_for_worker(
+                pilot, timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS
+            )
+            await pilot.pause()
 
 
 @pytest.mark.asyncio
@@ -916,17 +940,22 @@ async def test_pending_history_query_uses_the_same_exact_generation_fence() -> N
     async with app.run_test(size=(52, 20)) as pilot:
         await pilot.pause()
         row = app.screen.query_one(".console-switcher-result", Button)
-        app.screen.query_one("#console-switcher-query", Input).value = "new query"
-        await entered.wait()
+        try:
+            app.screen.query_one("#console-switcher-query", Input).value = "new query"
+            await wait_for_signal(entered, what="replacement history search")
 
-        assert row.disabled is True
-        row.disabled = False
-        row.press()
-        await pilot.pause()
-        assert app.result == "unset"
+            assert row.disabled is True
+            row.disabled = False
+            row.press()
+            await pilot.pause()
+            assert app.result == "unset"
 
-        release.set()
-        await pilot.pause()
+        finally:
+            release.set()
+            assert await wait_for_worker(
+                pilot, timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS
+            )
+            await pilot.pause()
 
 
 @pytest.mark.asyncio
@@ -1341,13 +1370,21 @@ async def test_character_opening_repaints_row_and_accessible_action() -> None:
     )
     async with app.run_test(size=(52, 20)) as pilot:
         await pilot.pause()
-        await pilot.press("down", "enter")
-        await entered.wait()
-        button = app.screen.query_one(".console-switcher-result", Button)
-        assert "OPENING" in str(button.label)
-        assert str(button.tooltip).startswith("OPENING:")
-        await pilot.press("escape")
-        await pilot.pause()
+        modal = app.screen
+        try:
+            await pilot.press("down", "enter")
+            await wait_for_signal(entered, what="character open before row repaint")
+            button = app.screen.query_one(".console-switcher-result", Button)
+            assert "OPENING" in str(button.label)
+            assert str(button.tooltip).startswith("OPENING:")
+            await pilot.press("escape")
+            await pilot.pause()
+        finally:
+            if modal._activation_cancellation is not None:
+                modal._activation_cancellation.set()
+            if modal._activation_task is not None:
+                await await_background_task(modal._activation_task, what="character open")
+            await pilot.pause()
 
 
 @pytest.mark.asyncio

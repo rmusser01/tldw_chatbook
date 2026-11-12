@@ -1,0 +1,276 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 3 items
+
+Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close] FAILED [ 33%]
+
+================================== FAILURES ===================================
+_ test_actual_close_publishes_real_tabs_before_stock_read_release[after_close] _
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\pytest-of-GDesktop-1\pytest-0\test_actual_close_publishes_re0\private-profile-process\pytest.log
+E   --- child failure: AssertionError: released original held reader never returned; {"entered": true, "future_cancelled": false, "future_capture": "qualified_original_work_item", "future_done": false, "future_running": true, "future_source_current": true, "held_entry_wait": {"captured_actual_Thread_object_id": 2416243864544, "defining_source_hashes": {"contextlib": "a53b1db774f19c6b1e4320c2bc64058c49e3fba58b20b9c1158e5a8d02069890", "tldw_chatbook.Backup_Recovery.admission": "fb8428d787227b0cd2cd521c17f8520ce19dc60151cdf0bba32a6196d9a7117d", "tldw_chatbook.Backup_Recovery.config_participants": "76e27574151f9f3b44b479348960802594a8ec03225edc743053f2a96799a76b", "tldw_chatbook.Backup_Recovery.control_records": "d2f3c472936b5cdbf7751cac480e027bdc02a3d149e6fdf57cb3e6bb190e4c81", "tldw_chatbook.Backup_Recovery.raw_participants": "ab8fc5f6b1a5713ec733f2ffafbf09e8e2a727ac77cafcc8f6666ab071c167d4", "tldw_chatbook.Backup_Recovery.storage_admission": "54c3236de4f7720d0924a7b65edf1fe2e1639fba0bbf5419d5946af1e91e205d", "tldw_chatbook.UI.Console_Modules.console_spend_projection": "b4ede033e4e7f3e1093cee57859afe2d1fcb4283b90b460b1d0bfd70e546a330", "tldw_chatbook.Utils.windows_files": "3b908d245b25f8797816c28d18d138ebc37c74dc1ae6ca813e5af22fcabc66c9"}, "frames": [{"current_line": 441, "definition_line": 434, "instruction_offset": 350, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Utils.windows_files", "qualname": "_Native.info"}, {"current_line": 601, "definition_line": 528, "instruction_offset": 1532, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Utils.windows_files", "qualname": "_Native.open_handle"}, {"current_line": 676, "definition_line": 650, "instruction_offset": 696, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Utils.windows_files", "qualname": "_parent"}, {"current_line": 137, "definition_line": 132, "instruction_offset": 56, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "contextlib", "qualname": "_GeneratorContextManager.__enter__"}, {"current_line": 790, "definition_line": 776, "instruction_offset": 412, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Utils.windows_files", "qualname": "WindowsOS.stat"}, {"current_line": 395, "definition_line": 366, "instruction_offset": 908, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.admission", "qualname": "Admission._tokens"}, {"current_line": 220, "definition_line": 199, "instruction_offset": 542, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.control_records", "qualname": "_existing_admission_authority"}, {"current_line": 196, "definition_line": 172, "instruction_offset": 476, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.control_records", "qualname": "admission_authority"}, {"current_line": 1525, "definition_line": 1406, "instruction_offset": 2284, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.storage_admission", "qualname": "_acquire_storage"}, {"current_line": 1403, "definition_line": 1387, "instruction_offset": 82, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.storage_admission", "qualname": "acquire_storage"}, {"builtin_RLock_metadata": [{"local_name": "source_lock", "object_id": 2417764971456, "owned_by_observing_UI_thread": false, "owner_count_repr": "<locked _thread.RLock object owner=232296 count=2 at 0x00000232EE05B3C0>"}], "current_line": 1057, "definition_line": 767, "instruction_offset": 5372, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.raw_participants", "qualname": "_scope"}, {"current_line": 137, "definition_line": 132, "instruction_offset": 48, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "contextlib", "qualname": "_GeneratorContextManager.__enter__"}, {"builtin_RLock_metadata": [{"local_name": "lock", "object_id": 2417764971456, "owned_by_observing_UI_thread": false, "owner_count_repr": "<locked _thread.RLock object owner=232296 count=2 at 0x00000232EE05B3C0>"}], "current_line": 436, "definition_line": 378, "instruction_offset": 1078, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.config_participants", "qualname": "operation"}, {"current_line": 137, "definition_line": 132, "instruction_offset": 48, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "contextlib", "qualname": "_GeneratorContextManager.__enter__"}, {"current_line": 249, "definition_line": 226, "instruction_offset": 238, "is_exact_held_reader": true, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.UI.Console_Modules.console_spend_projection", "qualname": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current"}], "no_locals_or_values_saved_except_builtin_lock_metadata": true, "no_permission_or_deadlock_verdict": true, "observing_UI_Thread_ident": 159056, "only_exact_held_thread_ancestry_saved": true, "qualified": true, "thread_ident": 232296}, "held_frame_is_original": true, "held_last_source_line": 249, "native_calls_exact_held_ancestry": 341, "reader_returned": false, "released": true, "return_callback_seen": false}
+E   assert False
+E   request = <FixtureRequest for <Coroutine test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]>>
+E   phase = 'after_close'
+E   
+E       @pytest.mark.ui
+E       @pytest.mark.asyncio
+E       @pytest.mark.timeout(180)
+E       @pytest.mark.parametrize("phase", ["after_close", "coalesced", "same_session_drain"])
+E       @private_profile_test
+E       async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+E           request, phase
+E       ):
+E           from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+E       
+E           app = _ready_app()
+E           host = ProductionConsoleHarness(app)
+E           gate, held_sync = None, None
+E           warming = surface = entry = drain_context = drain_facts = None
+E           lock_owned = False
+E           async with host.run_test(size=_SIZE) as pilot:
+E               console = await _mounted_console(host, pilot, "#console-native-composer")
+E               controller = console._ensure_console_chat_controller()
+E               keeper = controller.store.active_session_id
+E               doomed = controller.new_session(title="Read barrier Close")
+E               controller.switch_session(keeper)
+E               await _show_tabs(console, pilot, {keeper, doomed.id})
+E               projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+E               assert type(projection) is spend.ConsoleReadinessConfigProjection
+E               assert projection.max_age == 1.0
+E               assert await _settle(
+E                   pilot,
+E                   lambda: not projection.pending
+E                   and not console._console_sync_in_progress
+E                   and not getattr(console, "_console_control_bar_replay_whole_sync", False),
+E               )
+E               if phase == "after_close":
+E                   controller.switch_session(doomed.id)
+E                   await _show_tabs(console, pilot, {keeper, doomed.id})
+E                   assert await projection.warm()
+E                   assert projection.key[5] == doomed.id
+E                   assert await _settle(
+E                       pilot,
+E                       lambda: not projection.pending
+E                       and not console._console_sync_in_progress,
+E                   )
+E               gate = _OriginalReadGate(
+E                   projection, controller.store, doomed.id,
+E                   "coalesced" if phase == "same_session_drain" else phase,
+E               )
+E               gate.start()
+E               try:
+E                   if phase in {"coalesced", "same_session_drain"}:
+E                       if phase == "same_session_drain":
+E                           controller.switch_session(doomed.id)
+E                           drain_context = _original_close_read_drain(console._console_runtime(), doomed.id)
+E                           drain_facts = drain_context.__enter__()
+E                       else:
+E                           # A real surviving-session settings transition makes its
+E                           # display cold without lending its lifetime to the closing tab.
+E                           settings = controller.store.session_settings(keeper)
+E                           controller.store.replace_session_settings(
+E                               keeper, replace(settings, temperature=settings.temperature + 0.01)
+E                           )
+E                       from Tests.UI.test_console_tab_publication_maintenance import (
+E                           _OriginalSurfaceEntry,
+E                       )
+E                       from tldw_chatbook.Widgets.Console.console_session_surface import (
+E                           ConsoleSessionSurface,
+E                       )
+E       
+E                       surface = console.query_one("#console-session-surface", ConsoleSessionSurface)
+E                       await surface._session_sync_lock.acquire()
+E                       lock_owned = True
+E                       entry = _OriginalSurfaceEntry(console, surface)
+E                       entry.start()
+E                       held_sync = asyncio.create_task(console._sync_native_console_chat_ui())
+E                       entry.task = held_sync
+E                       # Current FULL returns False for cold readiness. Hold its real
+E                       # earlier Surface await, and admit the original read separately.
+E                       warming = asyncio.create_task(projection.warm())
+E                       assert await _settle(pilot, entry.entered.is_set)
+E                       assert await _settle(
+E                           pilot, gate.entered.is_set
+E                       ), "original reader was never admitted"
+E                       assert console._console_sync_in_progress
+E                       assert doomed.id in _session_ids(controller.store)
+E                   await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+E                   if phase == "same_session_drain":
+E                       assert await _settle(pilot, drain_facts["entered"].is_set)
+E                       assert doomed.id in _session_ids(controller.store)
+E                       assert not gate.release.is_set() and not gate.completed_checked_read
+E                       assert all(not item.retired.done() for item in drain_facts["reads"])
+E                       gate.release.set()
+E                   assert await _settle(
+E                       pilot, lambda: doomed.id not in _session_ids(controller.store)
+E                   )
+E                   assert await _settle(
+E                       pilot, gate.entered.is_set
+E                   ), "no held original post-Close reader"
+E                   assert gate.release.is_set() == (phase == "same_session_drain")
+E                   assert gate.reader_actor is not threading.current_thread()
+E                   if phase in {"coalesced", "same_session_drain"}:
+E                       assert await _settle(pilot, lambda: console._console_session_tabs_sync_calls >= 2)
+E                       surface._session_sync_lock.release()
+E                       lock_owned = False
+E                   await _await_tabs(console, pilot, {keeper})
+E                   assert _open_tab_ids(console) == {keeper}
+E                   if phase == "same_session_drain":
+E                       assert gate.completed_checked_read
+E                       assert all(item.retired.done() and not item.retired.cancelled() for item in drain_facts["reads"])
+E                   else:
+E                       assert not gate.completed_checked_read, "tab assertion happened after reader completion"
+E               finally:
+E                   gate.release.set()
+E                   if lock_owned:
+E                       surface._session_sync_lock.release()
+E                   try:
+E                       reader_returned = await _settle(pilot, gate.reader_returned.is_set)
+E   >                   assert reader_returned, (
+E                           "released original held reader never returned; "
+E                           + json.dumps(gate.reader_diagnostic(), sort_keys=True)
+E                       )
+E   E                   AssertionError: released original held reader never returned; {"entered": true, "future_cancelled": false, "future_capture": "qualified_original_work_item", "future_done": false, "future_running": true, "future_source_current": true, "held_entry_wait": {"captured_actual_Thread_object_id": 2416243864544, "defining_source_hashes": {"contextlib": "a53b1db774f19c6b1e4320c2bc64058c49e3fba58b20b9c1158e5a8d02069890", "tldw_chatbook.Backup_Recovery.admission": "fb8428d787227b0cd2cd521c17f8520ce19dc60151cdf0bba32a6196d9a7117d", "tldw_chatbook.Backup_Recovery.config_participants": "76e27574151f9f3b44b479348960802594a8ec03225edc743053f2a96799a76b", "tldw_chatbook.Backup_Recovery.control_records": "d2f3c472936b5cdbf7751cac480e027bdc02a3d149e6fdf57cb3e6bb190e4c81", "tldw_chatbook.Backup_Recovery.raw_participants": "ab8fc5f6b1a5713ec733f2ffafbf09e8e2a727ac77cafcc8f6666ab071c167d4", "tldw_chatbook.Backup_Recovery.storage_admission": "54c3236de4f7720d0924a7b65edf1fe2e1639fba0bbf5419d5946af1e91e205d", "tldw_chatbook.UI.Console_Modules.console_spend_projection": "b4ede033e4e7f3e1093cee57859afe2d1fcb4283b90b460b1d0bfd70e546a330", "tldw_chatbook.Utils.windows_files": "3b908d245b25f8797816c28d18d138ebc37c74dc1ae6ca813e5af22fcabc66c9"}, "frames": [{"current_line": 441, "definition_line": 434, "instruction_offset": 350, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Utils.windows_files", "qualname": "_Native.info"}, {"current_line": 601, "definition_line": 528, "instruction_offset": 1532, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Utils.windows_files", "qualname": "_Native.open_handle"}, {"current_line": 676, "definition_line": 650, "instruction_offset": 696, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Utils.windows_files", "qualname": "_parent"}, {"current_line": 137, "definition_line": 132, "instruction_offset": 56, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "contextlib", "qualname": "_GeneratorContextManager.__enter__"}, {"current_line": 790, "definition_line": 776, "instruction_offset": 412, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Utils.windows_files", "qualname": "WindowsOS.stat"}, {"current_line": 395, "definition_line": 366, "instruction_offset": 908, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.admission", "qualname": "Admission._tokens"}, {"current_line": 220, "definition_line": 199, "instruction_offset": 542, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.control_records", "qualname": "_existing_admission_authority"}, {"current_line": 196, "definition_line": 172, "instruction_offset": 476, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.control_records", "qualname": "admission_authority"}, {"current_line": 1525, "definition_line": 1406, "instruction_offset": 2284, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.storage_admission", "qualname": "_acquire_storage"}, {"current_line": 1403, "definition_line": 1387, "instruction_offset": 82, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.storage_admission", "qualname": "acquire_storage"}, {"builtin_RLock_metadata": [{"local_name": "source_lock", "object_id": 2417764971456, "owned_by_observing_UI_thread": false, "owner_count_repr": "<locked _thread.RLock object owner=232296 count=2 at 0x00000232EE05B3C0>"}], "current_line": 1057, "definition_line": 767, "instruction_offset": 5372, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.raw_participants", "qualname": "_scope"}, {"current_line": 137, "definition_line": 132, "instruction_offset": 48, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "contextlib", "qualname": "_GeneratorContextManager.__enter__"}, {"builtin_RLock_metadata": [{"local_name": "lock", "object_id": 2417764971456, "owned_by_observing_UI_thread": false, "owner_count_repr": "<locked _thread.RLock object owner=232296 count=2 at 0x00000232EE05B3C0>"}], "current_line": 436, "definition_line": 378, "instruction_offset": 1078, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.config_participants", "qualname": "operation"}, {"current_line": 137, "definition_line": 132, "instruction_offset": 48, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "contextlib", "qualname": "_GeneratorContextManager.__enter__"}, {"current_line": 249, "definition_line": 226, "instruction_offset": 238, "is_exact_held_reader": true, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.UI.Console_Modules.console_spend_projection", "qualname": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current"}], "no_locals_or_values_saved_except_builtin_lock_metadata": true, "no_permission_or_deadlock_verdict": true, "observing_UI_Thread_ident": 159056, "only_exact_held_thread_ancestry_saved": true, "qualified": true, "thread_ident": 232296}, "held_frame_is_original": true, "held_last_source_line": 249, "native_calls_exact_held_ancestry": 341, "reader_returned": false, "released": true, "return_callback_seen": false}
+E   E                   assert False
+E   
+E   Tests\UI\test_console_tab_publication_read_barrier.py:719: AssertionError
+E   --- child log tail ---
+E   repr": "<locked _thread.RLock object owner=232296 count=2 at 0x00000232EE05B3C0>"}], "current_line": 436, "definition_line": 378, "instruction_offset": 1078, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.Backup_Recovery.config_participants", "qualname": "operation"}, {"current_line": 137, "definition_line": 132, "instruction_offset": 48, "is_exact_held_reader": false, "is_original_gate_callback": false, "matches_defining_source": true, "module": "contextlib", "qualname": "_GeneratorContextManager.__enter__"}, {"current_line": 249, "definition_line": 226, "instruction_offset": 238, "is_exact_held_reader": true, "is_original_gate_callback": false, "matches_defining_source": true, "module": "tldw_chatbook.UI.Console_Modules.console_spend_projection", "qualname": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current"}], "no_locals_or_values_saved_except_builtin_lock_metadata": true, "no_permission_or_deadlock_verdict": true, "observing_UI_Thread_ident": 159056, "only_exact_held_thread_ancestry_saved": true, "qualified": true, "thread_ident": 232296}, "held_frame_is_original": true, "held_last_source_line": 249, "native_calls_exact_held_ancestry": 341, "reader_returned": false, "released": true, "return_callback_seen": false}
+E   E                   assert False
+E   
+E   Tests\UI\test_console_tab_publication_read_barrier.py:719: AssertionError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-31 13:18:10.037 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-31 13:18:10.068 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-31 13:18:10.068 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-31 13:18:10.069 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ---------------------------- Captured stderr call -----------------------------
+E   2026-10-31 13:18:10.787 | INFO     | tldw_chatbook.app:__init__:1289 - Loaded app_config - strip_thinking_tags: True
+E   2026-10-31 13:18:11.277 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-10-31 13:18:11.277 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-10-31 13:18:11.277 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-10-31 13:18:11.277 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'media_db' completed in 0.000s
+E   2026-10-31 13:18:11.450 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - LibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\tldw-chatbook-test-rnle_c_h\library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-31 13:18:12.163 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\tldw-chatbook-test-rnle_c_h\workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-31 13:18:13.554 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - SubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\tldw-chatbook-test-rnle_c_h\subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-31 13:18:13.838 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-10-31 13:18:13.841 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\tldw-chatbook-test-rnle_c_h\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-10-31 13:18:13.841 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\tldw-chatbook-test-rnle_c_h\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-10-31 13:18:14.153 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-10-31 13:18:14.244 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-10-31 13:18:14.335 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-10-31 13:18:14.434 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-10-31 13:18:14.534 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-10-31 13:18:14.625 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-10-31 13:18:14.625 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - ScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\tldw-chatbook-test-rnle_c_h\scheduled_tasks.sqlite [Client: default]
+E   2026-10-31 13:18:15.452 | DEBUG    | tldw_chatbook.app:__init__:1468 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-10-31 13:18:15.452 | DEBUG    | tldw_chatbook.app:__init__:1471 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-10-31 13:18:15.545 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\pytest-of-GDesktop-1\pytest-0\test_actual_close_publishes_re0\private-profile-process\profile\config\eval_overrides.yaml
+E   2026-10-31 13:18:15.871 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:614 - Created EvalsDB schema version 7
+E   2026-10-31 13:18:15.871 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\pytest-of-GDesktop-1\pytest-0\test_actual_close_publishes_re0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\evals.db
+E   2026-10-31 13:18:15.871 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-10-31 13:18:16.496 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-10-31 13:18:16.496 | INFO     | tldw_chatbook.app:_init_worker_handlers:2220 - Worker handler registry initialized with all handlers
+E   2026-10-31 13:18:16.496 | INFO     | tldw_chatbook.app:__init__:1662 - === STARTUP TIMING SUMMARY ===
+E   2026-10-31 13:18:16.496 | INFO     | tldw_chatbook.app:__init__:1663 - Total initialization time: 6.272 seconds
+E   2026-10-31 13:18:16.496 | INFO     | tldw_chatbook.app:__init__:1669 -   basic_init: 1.041s (16.6%)
+E   2026-10-31 13:18:16.496 | INFO     | tldw_chatbook.app:__init__:1669 -   attribute_init: 0.000s (0.0%)
+E   2026-10-31 13:18:16.496 | INFO     | tldw_chatbook.app:__init__:1669 -   parallel_init: 0.002s (0.0%)
+E   2026-10-31 13:18:16.496 | INFO     | tldw_chatbook.app:__init__:1682 -     - notes_service: 0.000s (0.4% of parallel_init)
+E   2026-10-31 13:18:16.496 | INFO     | tldw_chatbook.app:__init__:1682 -     - providers_models: 0.000s (0.3% of parallel_init)
+E   2026-10-31 13:18:16.496 | INFO     | tldw_chatbook.app:__init__:1682 -     - media_db: 0.000s (0.2% of parallel_init)
+E   2026-10-31 13:18:16.497 | INFO     | tldw_chatbook.app:__init__:1682 -     - prompts_service: 0.000s (0.1% of parallel_init)
+E   2026-10-31 13:18:16.497 | INFO     | tldw_chatbook.app:__init__:1686 - ==============================
+E   2026-10-31 13:18:17.058 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   2026-10-31 13:18:17.788 | DEBUG    | tldw_chatbook.Chat.console_runtime:ensure_chat_controller:5017 - ensure_chat_controller: ignoring runtime-owned kwargs supplied by caller: ['default_session_settings', 'global_user_display_name', 'library_provider_factory', 'provider_config', 'rag_capture_provider', 'turn_context_provider']
+E   2026-10-31 13:18:17.980 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:4037 - Local persisted conversation service is unavailable
+E   2026-10-31 13:18:17.981 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12860 - No Console workspace context tray available for sync
+E   2026-10-31 13:18:17.981 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12860 - No Console workspace context tray available for sync
+E   2026-10-31 13:18:17.981 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1478 - wake recovery failed (exception_type=AttributeError)
+E   2026-10-31 13:18:17.981 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9795 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E   2026-10-31 13:18:19.752 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:910 - Sidebar temperature input not found for sync
+E   2026-10-31 13:18:19.799 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:720 - Screen chat mounted
+E   2026-10-31 13:18:19.802 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:22830 - Chat screen resuming
+E   2026-10-31 13:18:22.020 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:9100 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E   2026-10-31 13:18:22.155 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:9155 - Successfully replaced settings file at C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\pytest-of-GDesktop-1\pytest-0\test_actual_close_publishes_re0\private-profile-process\profile\config\config.toml
+E   2026-10-31 13:18:22.176 | INFO     | tldw_chatbook.config:_load_settings_uncached:2321 - Determined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook
+E   2026-10-31 13:18:22.176 | INFO     | tldw_chatbook.config:_load_settings_uncached:2324 - Determined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook
+E   2026-10-31 13:18:22.182 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2347 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-10-31 13:18:22.750 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3912 - Ensured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\pytest-of-GDesktop-1\pytest-0\test_actual_close_publishes_re0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\chat_dicts
+E   2026-10-31 13:18:22.750 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3943 - load_settings: Configuration cached for future use
+E   2026-10-31 13:18:22.753 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:9185 - Global configuration caches invalidated and reloaded.
+E   2026-10-31 13:18:31.222 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 10 pricing patterns for provider anthropic
+E   2026-10-31 13:18:31.223 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 18 pricing patterns for provider openai
+E   2026-10-31 13:18:31.234 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 5 pricing patterns for provider cohere
+E   2026-10-31 13:18:31.235 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 5 pricing patterns for provider google
+E   2026-10-31 13:18:31.235 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 4 pricing patterns for provider mistral
+E   2026-10-31 13:18:31.235 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 4 pricing patterns for provider mistralai
+E   2026-10-31 13:18:31.235 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 2 pricing patterns for provider deepseek
+E   2026-10-31 13:18:31.235 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:689 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E   2026-10-31 13:18:32.782 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:4037 - Local persisted conversation service is unavailable
+E   2026-10-31 13:18:33.737 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:22830 - Chat screen resuming
+E   2026-10-31 13:18:35.308 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:24291 - No collapsible states to restore
+E   2026-10-31 13:18:37.792 | INFO     | tldw_chatbook.UI.Screens.chat_screen:on_button_pressed:24115 - ChatScreen on_button_pressed called with button: console-close-session-tab-642dcb1b-1dca-4321-8d31-9dd4c24bab0e
+E   2026-10-31 13:18:48.588 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:751 - Screen chat unmounted
+E   ------------------------------ Captured log call ------------------------------
+E   INFO     root:app.py:1423 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1530 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1551 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   -------------------------- Captured stderr teardown ---------------------------
+E   2026-10-31 13:18:49.560 | INFO     | tldw_chatbook.Chat.console_runtime:_dispose_owned:6596 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+E   ============================== warnings summary ===============================
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   ..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+E       import audioop
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.tmp-pr3166-review-289c2c95f297\temp\pytest-of-GDesktop-1\pytest-0\test_actual_close_publishes_re0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   38.51s call     Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]
+E   
+E   (2 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]
+E   1 failed, 2 warnings in 47.48s
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+55.50s call     Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!
+================== 1 failed, 2 warnings in 65.05s (0:01:05) ===================

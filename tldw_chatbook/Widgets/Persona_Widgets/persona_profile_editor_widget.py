@@ -7,6 +7,7 @@ from typing import Any, Dict, Literal, get_args
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, Select, Static, Switch, TextArea
@@ -316,7 +317,10 @@ class PersonaProfileEditorWidget(Container):
         self.new_persona(runtime_source="local")
         self._actor_pack_mode = True
         selector = self.query_one("#personas-editor-character-portrait", Select)
-        selector.set_options(list(portrait_options))
+        # TASK-34400: character names are user text; a str prompt parses as markup.
+        selector.set_options(
+            [(Content(name), value) for name, value in portrait_options]
+        )
         selector.value = portrait_options[0][1] if portrait_options else Select.BLANK
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
@@ -381,6 +385,7 @@ class PersonaProfileEditorWidget(Container):
         host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
         if content.parent is host:
             await content.remove()
+
     @property
     def persona_id(self) -> str | None:
         """The currently loaded persona's id, if any (Task 11 wiring)."""
@@ -395,18 +400,18 @@ class PersonaProfileEditorWidget(Container):
         self._version = version  # type: ignore[assignment]
         self._loaded_snapshot = self._form_snapshot()
 
-    def mark_saved(self, record: Dict[str, Any]) -> None:
-        """Re-baseline dirty state to a just-persisted persona (save-in-place).
-
-        Adopts the saved ``id``/``version`` as the new base (so the next Save
-        carries the incremented optimistic-lock version) and resets the dirty
-        snapshot from the CURRENT form (which already shows the saved
-        values). Does NOT repopulate the form - the user's saved edits stay
-        on screen.
+    def mark_saved(
+        self, record: Dict[str, Any], *, submitted_snapshot: tuple | None = None
+    ) -> bool:
+        """Adopt saved identity/version and acknowledge the submitted raw form.
 
         Args:
-            record: The just-persisted persona record (carries the
-                incremented optimistic-lock ``version``).
+            record: Persisted persona, including its actual id and version.
+            submitted_snapshot: Raw form at submission. Omit for synchronous
+                callers acknowledging the current form.
+
+        Returns:
+            Whether newer form edits remain unsaved.
         """
         self._persona_visual_session_token += 1
         self._persona_id = str(record.get("id", "")) or self._persona_id
@@ -421,9 +426,12 @@ class PersonaProfileEditorWidget(Container):
         )
         if policy_editor.display:
             policy_editor.show_rules(record.get("policy_rules"))
-        self._loaded_snapshot = self._form_snapshot()
-        self._dirty_posted = False
+        self._loaded_snapshot = (
+            self._form_snapshot() if submitted_snapshot is None else submitted_snapshot
+        )
+        self._dirty_posted = self._form_snapshot() != self._loaded_snapshot
         self.query_one("#personas-editor-validation", Static).update("")
+        return self._dirty_posted
 
     @property
     def persona_visual_session_token(self) -> int:
@@ -496,7 +504,9 @@ class PersonaProfileEditorWidget(Container):
                 fields, self._loaded_snapshot, strict=True
             ):
                 setattr(
-                    self.query_one(f"#personas-editor-{name}", widget_type), attribute, value
+                    self.query_one(f"#personas-editor-{name}", widget_type),
+                    attribute,
+                    value,
                 )
         finally:
             self._loading = False
@@ -627,7 +637,11 @@ class PersonaProfileEditorWidget(Container):
         self._user_touched = True
         if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
-        self.post_message(PersonaProfileSaveRequested(self.collect()))
+        self.post_message(
+            PersonaProfileSaveRequested(
+                self.collect(), submitted_snapshot=self._form_snapshot()
+            )
+        )
 
     @on(Button.Pressed, "#personas-editor-cancel")
     def _cancel_pressed(self, event: Button.Pressed) -> None:

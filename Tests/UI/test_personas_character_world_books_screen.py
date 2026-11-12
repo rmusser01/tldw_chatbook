@@ -6,8 +6,8 @@ Mirrors two existing harnesses rather than inventing a third:
 - ``test_personas_character_attach.py`` for character-selection plumbing
   (``PersonasTestApp``, a ``stub_characters``-style monkeypatch of
   ``ccp_character_handler.fetch_all_characters`` /
-  ``fetch_character_by_id``, and clicking a
-  ``#personas-library-row-character-<id>`` row).
+  ``fetch_character_by_id``, and a real click on the ``character:<id>``
+  option of the items list, via ``select_roleplay_item``).
 - ``test_personas_lore.py``'s Task 6 section for the real-``chachanotes_db``
   pattern (``mock_app_instance.chachanotes_db = <real CharactersRAGDB>``),
   since ``WorldBookManager.get_world_books_for_character`` (the panel's real
@@ -112,7 +112,11 @@ async def _mounted(pilot):
 
 async def _select_seeded_character(pilot, char_id):
     screen = await _mounted(pilot)
-    await pilot.click(f"#personas-library-row-character-{char_id}")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(
+        pilot, pilot.app.screen, f"character:{char_id}", via="click"
+    )
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()
@@ -120,6 +124,7 @@ async def _select_seeded_character(pilot, char_id):
 
 
 class TestCharacterWorldBooksScreenWiring:
+    @pytest.mark.bootstrap_profile
     async def test_selecting_character_shows_attached_world_books(
         self,
         mock_app_instance,
@@ -147,6 +152,7 @@ class TestCharacterWorldBooksScreenWiring:
             table = panel.query_one("#personas-char-worldbooks-table", DataTable)
             assert table.row_count == 1
 
+    @pytest.mark.bootstrap_profile
     async def test_character_without_worldbooks_shows_empty_panel(
         self,
         mock_app_instance,
@@ -234,6 +240,7 @@ def stub_character_for_standalone_worldbook(
 
 
 class TestCharacterWorldBookAttachDetach:
+    @pytest.mark.bootstrap_profile
     async def test_attach_via_picker_then_detach_real_db(
         self,
         mock_app_instance,
@@ -277,8 +284,7 @@ class TestCharacterWorldBookAttachDetach:
             manager = WorldBookManager(worldbooks_db)
             attached = manager.get_world_books_for_character(char_id)
             assert any(b["name"] == "Lore" for b in attached), (
-                "attach must persist a real snapshot in the real db, "
-                f"got {attached!r}"
+                f"attach must persist a real snapshot in the real db, got {attached!r}"
             )
 
             table = screen.query_one("#personas-char-worldbooks-table", DataTable)
@@ -341,6 +347,7 @@ class TestEditorSyncWorldBooks:
 
 
 class TestAttachmentSectionsFlowGeometry:
+    @pytest.mark.bootstrap_profile
     @pytest.mark.parametrize("size", [(100, 30), (160, 50)])
     async def test_flowing_sections_do_not_clip_card(
         self,
@@ -366,9 +373,7 @@ class TestAttachmentSectionsFlowGeometry:
 
             assert card.size.height > 0, f"card clipped at size={size}"
             assert wb.size.height > 0, f"world-books section clipped at size={size}"
-            assert dicts.size.height > 0, (
-                f"dictionaries section clipped at size={size}"
-            )
+            assert dicts.size.height > 0, f"dictionaries section clipped at size={size}"
             # The card fills the viewport; the sections flow below it in
             # document order (no dock, no dead void between them).
             assert card.region.height == stack.region.height
@@ -396,6 +401,7 @@ class TestAttachmentSectionsFlowGeometry:
 
 
 class TestCharacterAttachmentsWrapperGating:
+    @pytest.mark.bootstrap_profile
     async def test_initial_mount_hides_wrapper_before_any_selection(
         self,
         mock_app_instance,
@@ -425,6 +431,7 @@ class TestCharacterAttachmentsWrapperGating:
                 "before any character is selected"
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_leaving_the_card_view_hides_the_wrapper(
         self,
         mock_app_instance,

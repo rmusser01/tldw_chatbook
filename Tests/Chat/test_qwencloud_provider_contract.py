@@ -236,7 +236,10 @@ def test_chat_api_call_forwards_qwencloud_mode_base_and_tools(
         "api_mode",
     }
 
-    for endpoint in ("openai", "deepseek"):
+    # TASK-38966, rewritten on purpose: deepseek forwards api_mode since
+    # f5a63125ff (ADR 064's explicit DeepSeek mode), so the providers that
+    # must never receive it are two whose param maps have no api_mode.
+    for endpoint in ("openai", "anthropic"):
         other: dict[str, object] = {}
 
         def representative_handler(**kwargs: object) -> dict[str, object]:

@@ -40,3 +40,37 @@ Reason: session-scoped presentation over the existing model-selection seam (ADR-
 3. Alt+M popover UI: affordance, armed indicator, cancel
 4. Tests + User Guide console.md model-selection section update
 <!-- SECTION:PLAN:END -->
+
+## Deferral note (2026-10-11, dev `9f8533686c`)
+
+DEFERRED from the t2-hermes porting slice for capacity: this is a
+multi-seam change (popover UI + session settings store + send-path
+preparation + status chips + mid-run guard), and the Alt+M/model-config
+surface is the fleet's most active area right now — tldw_chatbook PR #3057
+(model-config phase 7) is open against the model-switcher/settings test
+family, so landing a popover affordance into the same seam mid-programme
+invites the exact collision the slice was told to avoid.
+
+Seam map gathered while scoping (all verified in code at dev `9f8533686c`),
+so the next session starts warm:
+
+- **Popover entry**: `UI/Console_Modules/model_switcher.py::open_model_switcher`
+  — commits through `screen._commit_console_settings_submission_live(submission)`
+  with `origin = store.capture_console_settings_origin(session_id)`; the
+  one-turn affordance wants a second commit mode that arms an override slot
+  instead of writing the session settings draft.
+- **Popover widget**: `Widgets/Console/console_model_popover.py` (~2000
+  lines; `action_pairs` / pick-mode vs live-commit modes are the precedent
+  for an "apply for next send only" action; `refuse_live_commit` shows the
+  refusal pattern).
+- **Session state**: `store.session_settings(session_id)` +
+  `console_settings_apply.QUICK_MODEL_DEFAULT_FIELDS` define the pair the
+  override must shadow for exactly one accepted send.
+- **Display**: the Model section/status chip surfaces read from the same
+  settings draft path (chat_screen Model section rows) — the armed
+  indicator ("model (next send only)") belongs beside those reads.
+- **Consumption/revert**: the accepted-send preparation path in
+  `Chat/console_chat_controller.py` (where `_record_prompt_history` fires on
+  accepted sends) is where the override applies for one turn and reverts;
+  AC#3's failed/stopped-turn non-consumption must hook the same
+  accept/refuse branches the prompt-history recording uses.

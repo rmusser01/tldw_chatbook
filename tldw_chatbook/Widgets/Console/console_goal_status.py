@@ -1,0 +1,433 @@
+"""Explicit private selected-goal view; no scheduling, polling, or ledger ownership."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime
+
+from textual import on, work
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Button, Select, Static
+
+from tldw_chatbook.Agents.goal_models import RecoveryResolution
+
+
+class ConsoleGoalStatus(ModalScreen[None]):
+    BINDINGS = (("escape", "close", "Close"),)
+
+    def __init__(
+        self, coordinator, goal_id: str, *, review_changes=None, app_instance=None
+    ) -> None:
+        super().__init__()
+        self.coordinator, self.goal_id = coordinator, goal_id
+        self.review_changes = review_changes
+        self.app_instance = app_instance or coordinator.controller.app
+        self.snapshot = None
+        self._unsubscribe = None
+        self._review_identity = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="goal-dialog-panel"):
+            with VerticalScroll(classes="goal-dialog-scroll"):
+                yield Static(
+                    "Goal runs",
+                    id="goal-state",
+                    markup=False,
+                    classes="goal-dialog-text",
+                )
+                yield Static(
+                    "", id="goal-accounting", markup=False, classes="goal-dialog-text"
+                )
+                yield Static(
+                    "", id="goal-reason", markup=False, classes="goal-dialog-text"
+                )
+                yield Select([], prompt="Select saved iteration", id="goal-iteration")
+                yield Static(
+                    "", id="goal-report", markup=False, classes="goal-dialog-text"
+                )
+                yield Static(
+                    "", id="goal-evidence", markup=False, classes="goal-dialog-text"
+                )
+                yield Static(
+                    "", id="goal-error", markup=False, classes="goal-dialog-text"
+                )
+            with Horizontal(classes="goal-dialog-actions"):
+                yield Button(
+                    "Retry setup", id="goal-retry-setup", classes="goal-dialog-action"
+                )
+                yield Button("Pause", id="goal-pause", classes="goal-dialog-action")
+                yield Button("Stop", id="goal-stop", classes="goal-dialog-action")
+                yield Button("Resume", id="goal-resume", classes="goal-dialog-action")
+                yield Button(
+                    "Review",
+                    id="goal-review",
+                    variant="primary",
+                    classes="goal-dialog-action",
+                )
+                yield Button("Changes", id="goal-changes", classes="goal-dialog-action")
+            with Horizontal(classes="goal-dialog-actions"):
+                yield Button(
+                    "Accept result",
+                    id="goal-accept",
+                    variant="success",
+                    classes="goal-dialog-action",
+                )
+                yield Button(
+                    "Reject result", id="goal-reject", classes="goal-dialog-action"
+                )
+                yield Button(
+                    "Close uncertain", id="goal-recovery", classes="goal-dialog-action"
+                )
+                yield Button(
+                    "Remove payloads", id="goal-remove", classes="goal-dialog-action"
+                )
+                yield Button("Close", id="goal-close", classes="goal-dialog-action")
+
+    def on_mount(self) -> None:
+        self._unsubscribe = self.coordinator.subscribe(self._changed)
+        self.load_goal()
+
+    def on_unmount(self) -> None:
+        if self._unsubscribe:
+            self._unsubscribe()
+
+    def _changed(self, goal_id: str) -> None:
+        if self.is_mounted and goal_id == self.goal_id:
+            self.load_goal()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    @work(exclusive=True, group="goal-read")
+    async def load_goal(self) -> None:
+        try:
+            goal = await self.coordinator.service.call(
+                self.coordinator.service.get, self.goal_id
+            )
+        except Exception:  # noqa: BLE001 - private view failures must not crash the app
+            if self.is_current and self.query("#goal-error"):
+                self.query("#goal-error").first(Static).update(
+                    "Goal history is unavailable. Close and reopen to retry."
+                )
+            return
+        if not self.is_current:
+            return
+        names = (
+            "state",
+            "accounting",
+            "reason",
+            "iteration",
+            "report",
+            "evidence",
+            "error",
+            "retry-setup",
+            "pause",
+            "stop",
+            "resume",
+            "review",
+            "changes",
+            "accept",
+            "reject",
+            "recovery",
+            "remove",
+        )
+        found = {name: self.query(f"#goal-{name}") for name in names}
+        if not all(found.values()):
+            return
+        widgets = {name: query.first() for name, query in found.items()}
+        self.snapshot = goal
+        if self._review_identity and self._review_identity[0] != goal.revision:
+            self._review_identity = None
+        running = self.coordinator.active_goal_id == goal.id
+        widgets["state"].update(
+            f"{goal.request.objective if goal.request else 'Removed goal'}\nGoal {goal.id}\n{goal.status.replace('_', ' ')}"
+            + (" · executing" if running else "")
+        )
+        a = goal.accounting
+        deadline = (
+            datetime.fromtimestamp(a.deadline_at)
+            .astimezone()
+            .isoformat(timespec="seconds")
+            if a.deadline_at
+            else "starts at first acceptance"
+        )
+        widgets["accounting"].update(
+            f"Iterations {goal.iteration_count}; calls {a.used['model_call']}; tokens used {a.used['tokens']}, reserved/unknown {a.reserved['tokens']}\nElapsed deadline: {deadline}. Pauses and waits count; Resume never refills."
+        )
+        reason = (goal.pause_reason or "").replace("_", " ")
+        if goal.status == "recovery_required":
+            reason += "\nExecution may have had effects. Close uncertain keeps unknown accounting and never authorizes replay or payload removal."
+        widgets["reason"].update(
+            reason or "Results and changes remain saved across navigation."
+        )
+        available = {
+            "retry-setup": goal.status == "starting",
+            "pause": goal.status == "ready",
+            "stop": goal.status in {"ready", "paused", "pause_requested", "stopping"},
+            "resume": goal.status in {"paused", "ready"} and not running,
+            "review": goal.status == "awaiting_result_review",
+            "changes": bool(goal.checkpoints) and self.review_changes is not None,
+            "recovery": goal.status == "recovery_required",
+            "remove": goal.status
+            in {"paused", "stopped", "completed", "awaiting_result_review"}
+            and not running,
+            "accept": self._review_identity is not None
+            and goal.status == "awaiting_result_review",
+            "reject": self._review_identity is not None
+            and goal.status == "awaiting_result_review",
+        }
+        for key, visible in available.items():
+            widgets[key].display = visible
+        select = widgets["iteration"]
+        old = select.value
+        with select.prevent(Select.Changed):
+            select.set_options(
+                [(f"Iteration {c.ordinal} · {c.id}", c.id) for c in goal.checkpoints]
+            )
+            select.display = bool(goal.checkpoints)
+            select.value = (
+                old
+                if old in {c.id for c in goal.checkpoints}
+                else (goal.checkpoints[-1].id if goal.checkpoints else Select.NULL)
+            )
+        await self.show_iteration()
+
+    @on(Select.Changed, "#goal-iteration")
+    async def iteration_selected(self) -> None:
+        self._review_identity = None
+        self.query_one("#goal-accept", Button).display = False
+        self.query_one("#goal-reject", Button).display = False
+        self.query_one("#goal-error", Static).update("")
+        await self.show_iteration()
+
+    async def show_iteration(self) -> None:
+        if self.snapshot is None or not self.is_current:
+            return
+        checkpoint = self.selected_checkpoint()
+        text = (
+            self.snapshot.request.objective
+            if self.snapshot.request
+            else "Private payloads removed. Accounting is retained."
+        )
+        if checkpoint:
+            text += f"\nCheckpoint {checkpoint.id}\nArtifact {checkpoint.artifact_digest}\n{checkpoint.report.summary}\n{checkpoint.report.candidate_draft}"
+        report = self.query("#goal-report")
+        if not report:
+            return
+        report.first(Static).update(text)
+        try:
+            evidence = await self.coordinator.service.call(
+                self.coordinator.service.evidence, self.goal_id
+            )
+        except Exception:  # noqa: BLE001 - an evidence read must not close the app
+            if self.is_current and self.query("#goal-error"):
+                self.query("#goal-error").first(Static).update(
+                    "Evidence is unavailable. Reopen this goal to retry."
+                )
+            return
+        if (
+            not self.is_current
+            or not self.query("#goal-evidence")
+            or not self.query("#goal-iteration")
+            or checkpoint != self.selected_checkpoint()
+        ):
+            return
+        selected = [e for e in evidence if checkpoint and e.attempt_id == checkpoint.id]
+        self.query("#goal-evidence").first(Static).update(
+            "\n\n".join(
+                f"{e.id} · run {e.run_id} · {e.verifier_id}\n{e.reason}; passed={e.passed}; checked version {e.source_digest}\nstdout:\n{e.stdout}\nstderr:\n{e.stderr}"
+                for e in selected
+            )
+        )
+
+    def selected_checkpoint(self):
+        select = self.query("#goal-iteration")
+        if not select:
+            return None
+        selected = select.first(Select).value
+        return (
+            next((c for c in self.snapshot.checkpoints if c.id == selected), None)
+            if self.snapshot
+            else None
+        )
+
+    @on(Button.Pressed)
+    async def control_pressed(self, event: Button.Pressed) -> None:
+        action = (event.button.id or "").removeprefix("goal-")
+        if action == "close":
+            self.action_close()
+            return
+        if self.snapshot is None:
+            return
+        event.stop()
+        service, goal = self.coordinator.service, self.snapshot
+        try:
+            if action == "retry-setup":
+                await asyncio.shield(
+                    self.coordinator.launch(
+                        goal.request, goal.launch_id, app=self.app_instance
+                    )
+                )
+            elif action in {"pause", "stop", "remove"}:
+                method = (
+                    service.remove_payloads
+                    if action == "remove"
+                    else getattr(service, action)
+                )
+                await self.coordinator.service.call(method, goal.id)
+            elif action == "resume":
+                self.resume_goal(goal)
+                return
+            elif action == "review":
+                checkpoint = self.selected_checkpoint()
+                if checkpoint is None:
+                    raise ValueError("Select an iteration to review.")
+                decision = await self.coordinator.service.call(
+                    service.completion_check,
+                    goal.id,
+                    checkpoint_id=checkpoint.id,
+                    artifact_digest=checkpoint.artifact_digest,
+                )
+                if not self.is_current or not self.query("#goal-error"):
+                    return
+                self._review_identity = (
+                    goal.revision,
+                    checkpoint.id,
+                    checkpoint.artifact_digest,
+                )
+                self.query("#goal-error").first(Static).update(
+                    f"Fresh checks: {decision.reason.replace('_', ' ')}\nAccept records quality for this exact artifact. It cannot resolve uncertain execution or supply missing proof."
+                )
+                self.query("#goal-error").first().scroll_visible()
+            elif action in {"accept", "reject"} and self._review_identity:
+                revision, checkpoint_id, artifact = self._review_identity
+                await self.coordinator.service.call(
+                    service.review_result,
+                    goal.id,
+                    expected_revision=revision,
+                    checkpoint_id=checkpoint_id,
+                    artifact_digest=artifact,
+                    accepted=action == "accept",
+                )
+                self._review_identity = None
+            elif action == "recovery":
+                await self.coordinator.service.call(
+                    service.resolve_recovery,
+                    goal.id,
+                    expected_revision=goal.revision,
+                    resolution=RecoveryResolution.CLOSE_UNCERTAIN,
+                )
+            elif action == "changes":
+                checkpoint = self.selected_checkpoint()
+                if checkpoint:
+                    self.review_changes(goal, checkpoint)
+            self.coordinator.notify_goal_changed(goal.id)
+        except Exception as exc:  # noqa: BLE001 - display a bounded save failure
+            if not self.is_current or not self.query("#goal-error"):
+                return
+            self.query("#goal-error").first(Static).update(
+                str(exc)
+                if isinstance(exc, (ValueError, RuntimeError))
+                else "Goal action could not be saved. Reopen this goal to inspect its current state."
+            )
+
+    @work(exclusive=True, group="goal-resume")
+    async def resume_goal(self, goal) -> None:
+        try:
+            await asyncio.shield(
+                self.coordinator.resume(
+                    goal.id, expected_revision=goal.revision, app=self.app_instance
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - owner retains paused state on failure
+            if self.is_current and self.query("#goal-error"):
+                self.query("#goal-error").first(Static).update(
+                    str(exc)
+                    if isinstance(exc, (ValueError, RuntimeError))
+                    else "Goal conversation could not be restored. Reopen this goal to retry."
+                )
+
+
+class ConsoleGoalHistory(ModalScreen[None]):
+    """Body-free history; private data is loaded only after explicit selection."""
+
+    BINDINGS = (("escape", "close", "Close"),)
+
+    def __init__(self, rows, *, open_goal, new_goal, older=None, newer=None, page=1):
+        super().__init__()
+        self.rows, self.open_goal, self.new_goal = rows, open_goal, new_goal
+        self.older, self.newer, self.page = older, newer, page
+
+    def compose(self):
+        with Vertical(classes="goal-dialog-panel"):
+            yield Static(
+                f"Goal runs · page {self.page}",
+                markup=False,
+                classes="goal-dialog-text",
+            )
+            yield Select(
+                [(f"{r.status.replace('_', ' ')} · {r.id}", r.id) for r in self.rows],
+                prompt="Select a saved goal",
+                id="goal-history",
+            )
+            if not self.rows:
+                yield Static(
+                    "No saved goals on this page.",
+                    markup=False,
+                    classes="goal-dialog-text",
+                )
+            if self.older or self.newer:
+                with Horizontal(classes="goal-dialog-actions"):
+                    yield Button(
+                        "Newer",
+                        id="goal-history-newer",
+                        disabled=self.newer is None,
+                        classes="goal-dialog-action",
+                    )
+                    yield Button(
+                        "Older",
+                        id="goal-history-older",
+                        disabled=self.older is None,
+                        classes="goal-dialog-action",
+                    )
+            with Horizontal(classes="goal-dialog-actions"):
+                yield Button(
+                    "New goal",
+                    id="goal-history-new",
+                    variant="primary",
+                    classes="goal-dialog-action",
+                )
+                yield Button(
+                    "Open",
+                    id="goal-history-open",
+                    disabled=not bool(self.rows),
+                    classes="goal-dialog-action",
+                )
+                yield Button(
+                    "Close", id="goal-history-close", classes="goal-dialog-action"
+                )
+
+    def action_close(self):
+        self.dismiss(None)
+
+    @on(Button.Pressed)
+    def pressed(self, event):
+        if event.button.id in {"goal-history-older", "goal-history-newer"}:
+            callback = (
+                self.older if event.button.id == "goal-history-older" else self.newer
+            )
+            if callback:
+                self.dismiss(None)
+                callback()
+        elif event.button.id == "goal-history-new":
+            self.dismiss(None)
+            self.new_goal()
+        elif event.button.id == "goal-history-open":
+            value = self.query_one("#goal-history", Select).value
+            if value is not Select.NULL:
+                self.dismiss(None)
+                self.open_goal(value)
+        else:
+            self.dismiss(None)

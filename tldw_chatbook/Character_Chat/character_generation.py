@@ -163,7 +163,9 @@ def build_field_generation_messages(
         # Narrow mode: the base description only. Deliberately excludes
         # personality/scenario/etc so the two modes actually differ.
         context_lines = (
-            _labelled_context(record, ("description",)) if field != "description" else []
+            _labelled_context(record, ("description",))
+            if field != "description"
+            else []
         )
     if context_lines:
         parts.append("")

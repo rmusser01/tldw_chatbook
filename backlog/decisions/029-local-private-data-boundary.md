@@ -1,6 +1,6 @@
 # ADR-029: Local Private Data Boundary
 
-Status: Accepted (amended 2026-09-08 for credential/PII-only application logging — TASK-32047)
+Status: Accepted (amended 2026-09-08 for credential/PII-only application logging — TASK-32047; amended 2026-10-03 for the OS keychain as an opt-in location for provider keys — TASK-34100.17)
 Date: 2026-07-23
 Related Tasks: [TASK-943](../tasks/task-943%20-%20Establish-private-path-boundary-and-harden-config-bootstrap.md), [TASK-489](../tasks/task-489%20-%20Apply-private-storage-boundary-to-every-SQLite-owner-and-backup.md), [TASK-490](../tasks/task-490%20-%20Harden-persistent-log-and-tool-cache-file-lifecycles.md), [TASK-491](../tasks/task-491%20-%20Make-config-persistence-use-one-effective-path-and-live-runtime-boundary.md), [TASK-492](../tasks/task-492%20-%20Remove-private-payloads-from-persistent-diagnostics-and-tool-history.md), [TASK-493](../tasks/task-493%20-%20Contain-legacy-Notes-sync-paths-and-preserve-file-modes.md), [TASK-494](../tasks/task-494%20-%20Complete-metadata-only-boundary-across-remaining-production-diagnostics.md)
 Supersedes: N/A
@@ -242,3 +242,30 @@ Why: the six totals changed with any logger edit, so any two PRs touching diagno
 edited the same lines. 102 of 127 real two-sided sync merges (2026-09-19..26)
 conflicted. Replayed without the totals, 17 did, and those 17 are genuine same-file
 overlaps. See `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`.
+
+## Amendment (2026-10-03, TASK-34100.17) — the OS keychain as an opt-in location for provider keys
+
+Source: the [first-run setup shape spec](../../Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md), D9 as amended by the owner's
+ruling on its Q3 (keychain storage must be optional, not the default), and
+[TASK-34100.17](../tasks/task-34100.17%20-%20Owner-approved-design-spec-for-the-setup-flow-Quick-track-tldw-server-re-run-dashboard-Say-hello.md).
+
+The rejected alternative "Replace config TOML with keyring/encrypted storage" stays
+rejected: config.toml, an owner-only file, remains the default location for provider
+keys. What changes is narrower.
+
+- **Permitted location.** The OS keychain becomes a permitted location for provider
+  credentials, per key and only by the user's choice.
+- **Which keychains count.** Only secure backends from the
+  `runtime_policy/server_credentials.py` allowlist are offered: macOS, Windows,
+  Secret Service, libsecret and KWallet. A choice is confirmed by a
+  write/read/delete canary before anything is saved. Fail, null, plaintext and file
+  backends never count.
+- **Reads.** Keychain reads run off the UI loop and outside the config write lock,
+  with a timeout and a short TTL. A timeout is never cached.
+- **Never copied out.** A keychain value is never logged, never written to a draft
+  or diagnostic, and never written back to config.toml by any writer.
+- **Threat model.** The keychain protects against copying, syncing, backing up and
+  sharing config.toml. It does not protect against software running as the user.
+- **Ownership.** `config.toml` remains the sole persistence owner for configuration
+  (this ADR's Decision), and the credential-store owner is the sole writer of
+  provider keys in the keychain.

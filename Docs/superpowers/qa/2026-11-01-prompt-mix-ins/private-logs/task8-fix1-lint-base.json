@@ -1,0 +1,928 @@
+[
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 47,
+      "row": 285
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 285
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 285,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 639
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 639
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 639,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 76,
+      "row": 792
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 792
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 792,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 76,
+      "row": 820
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 820
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 820,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 854
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 854
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 854,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 908
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 908
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 908,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 29,
+      "row": 1287
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ChatScreen",
+          "end_location": {
+            "column": 29,
+            "row": 1287
+          },
+          "location": {
+            "column": 17,
+            "row": 1287
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 17,
+      "row": 1287
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1287,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "PLE1205",
+    "end_location": {
+      "column": 27,
+      "row": 1647
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 1647
+    },
+    "message": "Too many arguments for `logging` format string",
+    "name": "logging-too-many-args",
+    "noqa_row": 1647,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/logging-too-many-args"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 1945
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 1945
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1945,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 37,
+      "row": 1953
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Mapping[str, Any] | None",
+          "end_location": {
+            "column": 37,
+            "row": 1953
+          },
+          "location": {
+            "column": 10,
+            "row": 1953
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 10,
+      "row": 1953
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 1953,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "SIM102",
+    "end_location": {
+      "column": 15,
+      "row": 2069
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "        if destination == \"replace_snapshot\" and (\n            not isinstance(captured_snapshot, ComposerDraftSnapshot)\n            or captured_snapshot.fingerprint != application.composer_fingerprint\n            or composer.capture_draft_snapshot() != captured_snapshot\n        ):\n            self._warn_prompt_application(stale_copy)\n            return False",
+          "end_location": {
+            "column": 29,
+            "row": 2071
+          },
+          "location": {
+            "column": 1,
+            "row": 2064
+          }
+        }
+      ],
+      "message": "Combine `if` statements using `and`"
+    },
+    "location": {
+      "column": 9,
+      "row": 2064
+    },
+    "message": "Use a single `if` statement instead of nested `if` statements",
+    "name": "collapsible-if",
+    "noqa_row": 2064,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/collapsible-if"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 2106
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2106
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2106,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 21,
+      "row": 2110
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 2109
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 2109,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 2109
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 2109
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2109,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 21,
+      "row": 2114
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 2113
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 2113,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 2113
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 2113
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2113,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 25,
+      "row": 2120
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 2119
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 2119,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 2119
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 2119
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2119,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 21,
+      "row": 2124
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 2123
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 2123,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 2123
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 2123
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2123,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 2136
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 2136
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2136,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 2141
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2141
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2141,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 69,
+      "row": 2263
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Mapping[str, Any] | None",
+          "end_location": {
+            "column": 69,
+            "row": 2263
+          },
+          "location": {
+            "column": 42,
+            "row": 2263
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 42,
+      "row": 2263
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 2263,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 2369
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2369
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2369,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 69,
+      "row": 2486
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Mapping[str, Any] | None",
+          "end_location": {
+            "column": 69,
+            "row": 2486
+          },
+          "location": {
+            "column": 42,
+            "row": 2486
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 42,
+      "row": 2486
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 2486,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "UP045",
+    "end_location": {
+      "column": 54,
+      "row": 2519
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "str | None",
+          "end_location": {
+            "column": 54,
+            "row": 2519
+          },
+          "location": {
+            "column": 41,
+            "row": 2519
+          }
+        }
+      ],
+      "message": "Convert to `X | None`"
+    },
+    "location": {
+      "column": 41,
+      "row": 2519
+    },
+    "message": "Use `X | None` for type annotations",
+    "name": "non-pep604-annotation-optional",
+    "noqa_row": 2519,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep604-annotation-optional"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 2571
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2571
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2571,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 2589
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/UI/Console_Modules/prompts.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2589
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2589,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "RUF012",
+    "end_location": {
+      "column": 60,
+      "row": 222
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 222
+    },
+    "message": "Mutable default value for class attribute",
+    "name": "mutable-class-default",
+    "noqa_row": 222,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/mutable-class-default"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 963
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 963
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 963,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 1065
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 1065
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1065,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 1232
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 1232
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1232,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 1388
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 1388
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1388,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 1545
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 1545
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1545,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "B009",
+    "end_location": {
+      "column": 10,
+      "row": 1634
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "context.composer_snapshot",
+          "end_location": {
+            "column": 10,
+            "row": 1634
+          },
+          "location": {
+            "column": 68,
+            "row": 1632
+          }
+        }
+      ],
+      "message": "Replace `getattr` with attribute access"
+    },
+    "location": {
+      "column": 68,
+      "row": 1632
+    },
+    "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "get-attr-with-constant",
+    "noqa_row": 1632,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/get-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 1673
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 1673
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1673,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 1781
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 1781
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1781,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 2232
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2232
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2232,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 25,
+      "row": 2287
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 2286
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 2286,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 2286
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 2286
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2286,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 2318
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2318
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2318,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "RUF022",
+    "end_location": {
+      "column": 2,
+      "row": 2757
+    },
+    "filename": "/private/tmp/task8-fix1-lint-base/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "[\n    \"ConsolePromptsApplyOutcome\",\n    \"ConsolePromptsModal\",\n    \"ConsolePromptsResult\",\n    \"ConsoleRecipeApplyGuard\",\n    \"ConsoleSavedPromptApplyGuard\",\n]",
+          "end_location": {
+            "column": 2,
+            "row": 2757
+          },
+          "location": {
+            "column": 11,
+            "row": 2751
+          }
+        }
+      ],
+      "message": "Apply an isort-style sorting to `__all__`"
+    },
+    "location": {
+      "column": 11,
+      "row": 2751
+    },
+    "message": "`__all__` is not sorted",
+    "name": "unsorted-dunder-all",
+    "noqa_row": 2751,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-all"
+  }
+]

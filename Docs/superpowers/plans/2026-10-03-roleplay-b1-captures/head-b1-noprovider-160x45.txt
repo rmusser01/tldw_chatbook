@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Roleplay  Characters › Ada (Debugging Partner)                                                                          No chat provider · Settings ›   Local
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                         <  ││                     ▸ Try a test chat (nothing saved)                      ││                                     │ │
+│ │  Search...                          ││ Character                                                                  ││  Inspector                       >  │ │
+│ │                 New                 ││  Name: Ada (Debugging Partner)                                             ││ Selected: Ada (Debugging Partner)   │ │
+│ │           New Actor Pack            ││                                                                            ││ Type: character                     │ │
+│ │               Import                ││  Description: A patient senior engineer who helps you debug by asking      ││ Validation: OK                      │ │
+│ │          Import Actor Pack          ││  questions rather than giving answers.                                     ││ Conversations (0)                   │ │
+│ │              Duplicate              ││  Personality: Socratic, calm, precise.                                     ││   Search this character's chats     │ │
+│ │             Sort: Name              ││                                                                            ││  No saved conversations.            │ │
+│ │              Tag: All               ││  First message: What did you expect to happen, and what happened           ││                                     │ │
+│ │  Ada (Debugging Partner)            ││  instead?                                                                  ││ Readiness                           │ │
+│ │  A patient senior engineer who h…   ││  System prompt: Ask one diagnostic question at a time.                     ││ Chat now blocked: openai is not     │ │
+│ │  ARIA-7                             ││                                                                            ││ ready: Missing API key. Set         │ │
+│ │  A ship AI that has quietly beco…   ││ Tags: assistant, coding                                                    ││ OPENAI_API_KEY or add api_key under │ │
+│ │  Brother Anselm                     ││ Alternate greetings: 0                                                     ││ [api_settings.openai].              │ │
+│ │  A monastery brewer with strong …   ││                                                                            ││              Chat now               │ │
+│ │  Captain Isolde Varga               ││  Voice & Speech                                                            ││        Send to Console draft        │ │
+│ │  Captain Isolde Varga commands t…   ││  Use global default                                                   ▼    ││             Export JSON             │ │
+│ │  Chef Auguste                     ▂ ││  Using the global speech default.                                          ││             Export PNG              │ │
+│ │  A temperamental Parisian chef w…   ││    Create                                                                  ││          Export Actor Pack          │ │
+│ │  Coach Pemberton                    ││ Avatar: none                                                               ││               Delete                │ │
+│ │  A relentlessly upbeat running c…   ││                                                                            ││            Manage Buddy             │ │
+│ │  Default Assistant                  ││                                                                            ││             Show Buddy              │ │
+│ │  The built-in Default Assistant …   ││                                                                            ││             Close Buddy             │ │
+│ │  Detective Rosa Calderón            ││                                                                            ││            Disable Buddy            │ │
+│ │  A sharp, sardonic homicide dete…   ││                                                                            ││                                     │ │
+│ │  Dungeon Master Vex                 ││                                                                            ││                                     │ │
+│ │  A theatrical game master who ru…   ││                                                                            ││                                     │ │
+│ │  Grumpy Barista Bot                 ││                                                                            ││                                     │ │
+│ │  A coffee-machine AI that resent…   ││                                                                            ││                                     │ │
+│ │  Hana Kobayashi                     ││                                                                            ││                                     │ │
+│ │  A ceramicist in Kyoto who teach…   ││                                                                          ▇ ││                                     │ │
+│ │                                     ││    Edit     Conversations (0)                                              ││                                     │ │
+│ ╰─────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit

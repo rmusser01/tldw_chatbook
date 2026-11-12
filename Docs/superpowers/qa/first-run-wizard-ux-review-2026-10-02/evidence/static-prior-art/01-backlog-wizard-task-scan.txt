@@ -1,0 +1,123 @@
+Backlog scan of backlog/{tasks,drafts,archive} for first-run-wizard terms (strong pattern), worktree @ origin/dev 2d34cbf80d, 2026-10-02
+Counter({'Done': 94, 'To Do': 19, 'In Progress': 2})
+
+== To Do ==
+2026-08-06 | TASK-2156 | prio=First-run wizard: speech-step install button never lays out in local test env (pre-existing) | hits=2 | tasks/task-2156 - First-run-wizard-speech-step-install-button-never-lays-out-in-local-test-env-pre-existing.md
+2026-08-07 | TASK-19903 | prio=Console: focus-tour stop-count test fails in local env (empty-provider state) | hits=1 | tasks/task-19903 - Console-focus-tour-stop-count-test-fails-in-local-env-empty-provider-state.md
+2026-08-21 | TASK-19570 | prio=Test isolation and anti-patterns — mounted-app tests touch the real keyring, vacuous tests that pass if deleted, and 2,770 timed pauses | hits=1 | tasks/task-19570 - Test isolation and anti-patterns - real keyring access vacuous tests and 2770 timed pauses.md
+2026-08-31 | TASK-26991 | prio=Clean Ruff formatter debt for ruff-state-sync-wizards-tests | hits=4 | tasks/task-26991 - Clean Ruff formatter debt for ruff-state-sync-wizards-tests.md
+2026-08-31 | TASK-27009 | prio=Clean Ruff formatter debt for ruff-ui-wizards | hits=2 | tasks/task-27009 - Clean Ruff formatter debt for ruff-ui-wizards.md
+2026-08-31 | TASK-26837 | prio=Provider setup can report a successful connection test yet write no api_settings block | hits=2 | tasks/task-26837 - Provider-setup-can-report-a-successful-connection-test-yet-write-no-api_settings-block.md
+2026-09-02 | TASK-28019 | prio=First-run wizard - offer a media-first path | hits=2 | tasks/task-28019 - First-run-wizard-offer-a-media-first-path.md
+2026-09-14 | TASK-32465 | prio=Radio groups outside Library and the setup wizard show the chosen option in colour only | hits=1 | tasks/task-32465 - Radio-groups-outside-Library-and-the-setup-wizard-show-the-chosen-option-in-colour-only.md
+2026-09-26 | TASK-33008 | prio=Phase 8: First run connects in place and always returns to Console | hits=7 | tasks/task-33008 - Phase-8-First-run-connects-in-place-and-always-returns-to-Console.md
+2026-09-26 | TASK-33008.5 | prio=Show the wizard''s model-step status messages as text, not radio options | hits=8 | tasks/task-33008.5 - Show-the-wizard-s-model-step-status-messages-as-text-not-radio-options.md
+2026-09-26 | TASK-33001.10 | prio=Start chatting on a fresh profile warns that provider settings changed although setup applied | hits=5 | tasks/task-33001.10 - Start-chatting-on-a-fresh-profile-warns-that-provider-settings-changed.md
+2026-09-27 | TASK-33079 | prio=Verify concurrent Parakeet and OmniVoice model installs | hits=3 | tasks/task-33079 - Verify-concurrent-Parakeet-and-OmniVoice-model-installs.md
+2026-09-27 | TASK-33002.13 | prio=First-run provider list hides the execution-only Custom Hosted key | hits=4 | tasks/task-33002.13 - First-run-provider-list-hides-the-execution-only-Custom-Hosted-key.md
+2026-09-30 | TASK-33620.2 | prio=Console: Attaching an image with Claude Haiku 4.5 says 'Send blocked - choose a model to continue' and links to first-run setup | hits=4 | tasks/task-33620.2 - Console-Attaching-an-image-with-Claude-Haiku-4.5-says-Send-blocked-choose-a-model-to-continue-and-links-to-first-run-setup.md
+2026-09-30 | TASK-33620.3 | prio=Console: A failed turn commit reads 'finish provider setup' and leaves the chat stuck on 'Running | hits=1 | tasks/task-33620.3 - Console-A-failed-turn-commit-reads-finish-provider-setup-and-leaves-the-chat-stuck-on-Running.md
+2026-09-30 | TASK-33621.32 | prio=First-run wizard previews a wrong Z.ai chat URL (/api/paas/v4/v1/chat/completions) and may persist it | hits=2 | tasks/task-33621.32 - First-run-wizard-previews-a-wrong-Z.ai-chat-URL-api-paas-v4-v1-chat-completions-and-may-persist-it.md
+2026-09-30 | TASK-33621.36 | prio=Console test-suite drift on dev found by the P0 fix batches | hits=1 | tasks/task-33621.36 - Console-test-suite-drift-on-dev-found-by-the-P0-fix-batches.md
+2026-10-01 | TASK-33621.37 | prio=First-run Provider step: a failure after the new provider is selected is wiped before the user sees it | hits=3 | tasks/task-33621.37 - First-run-Provider-step-a-failure-after-the-new-provider-is-selected-is-wiped-before-the-user-sees-it.md
+2026-10-02 | TASK-33005.9 | prio=Home, Library and the first-run wizard read shared connection evidence | hits=4 | tasks/task-33005.9 - Home-Library-and-the-first-run-wizard-read-shared-connection-evidence.md
+
+== In Progress ==
+ | task-22250 | prio=CI runs are swept by simultaneous burst cancellations | hits=1 | tasks/task-22250 - CI runs are swept by simultaneous burst cancellations.md
+2026-09-18 | TASK-32809.2 | prio=Add size budgets for the unbudgeted god modules | hits=1 | tasks/task-32809.2 - Add-size-budgets-for-the-unbudgeted-god-modules.md
+
+== Done ==
+2026-05-05 | TASK-8.4 | prio=Product Maturity Phase 1.4: Keyboard And Focus Sweep | hits=2 | tasks/task-8.4 - Product-Maturity-Phase-1.4-Keyboard-And-Focus-Sweep.md
+2026-07-12 | TASK-183 | prio=First-run setup card fixes: button label, honest step states, local-provider path | hits=1 | tasks/task-183 - First-run-setup-card-fixes-button-label-honest-step-states-local-provider-path.md
+2026-07-12 | TASK-188 | prio=Auto-detect local LLM servers during onboarding and populate models from /v1/models | hits=1 | tasks/task-188 - Auto-detect-local-LLM-servers-during-onboarding-and-populate-models-from-v1-models.md
+2026-07-20 | TASK-346 | prio=Guard Console layout at small terminal sizes - composer clipped out entirely at 97x30 cells | hits=1 | tasks/task-346 - Guard-Console-layout-at-small-terminal-sizes-composer-clipped-out-entirely-at-97x30-cells.md
+2026-07-21 | TASK-425 | prio=Character chat provider falls back to chat_defaults when character_defaults is unset | hits=1 | tasks/task-425 - Character-chat-provider-falls-back-to-chat_defaults-when-character_defaults-is-unset.md
+2026-07-24 | TASK-2803 | prio=Rewrite README for newcomers | hits=2 | tasks/task-2803 - Rewrite-README-for-newcomers.md
+2026-07-24 | TASK-594 | prio=Build shared model artifact descriptors and lifecycle | hits=1 | tasks/task-594 - Build-shared-model-artifact-descriptors-and-lifecycle.md
+2026-07-24 | TASK-598 | prio=Use descriptor-verified external Parakeet ONNX bundles | hits=1 | tasks/task-598 - Use-descriptor-verified-external-Parakeet-ONNX-bundles.md
+2026-07-24 | TASK-602 | prio=Integrate Parakeet ONNX batch routing | hits=1 | tasks/task-602 - Integrate-Parakeet-ONNX-batch-routing.md
+2026-07-28 | TASK-1264 | prio=First-run setup wizard (hermes-modeled onboarding) | hits=22 | tasks/task-1264 - First-run-setup-wizard-hermes-modeled-onboarding.md
+2026-07-29 | TASK-1301 | prio=Add Speech model setup to the first-run wizard | hits=3 | tasks/task-1301 - Add-Speech-model-setup-to-the-first-run-wizard.md
+2026-07-29 | TASK-1374 | prio=ModelStep re-run prefill is dead code on the only reachable path | hits=8 | tasks/task-1374 - ModelStep-re-run-prefill-is-dead-code-on-the-only-reachable-path.md
+2026-07-29 | TASK-1566 | prio=Wizard step compose() crash policy from spec §5 unimplemented | hits=11 | tasks/task-1566 - Wizard-step-compose-crash-policy-from-spec-§5-unimplemented.md
+2026-07-29 | TASK-1267 | prio=Wizard ctrl+n/ctrl+b silently inert on steps without a focused widget | hits=4 | tasks/task-1267 - Wizard-ctrln-ctrlb-silently-inert-on-steps-without-a-focused-widget.md
+2026-07-31 | TASK-1495 | prio=Wizard step viewport clips without scrolling; primary inputs and CTAs invisible | hits=2 | tasks/task-1495 - Wizard-step-viewport-clips-without-scrolling-primary-inputs-and-CTAs-invisible.md
+2026-07-31 | TASK-1496 | prio=Wizard keyboard input can land on off-screen widgets silently | hits=1 | tasks/task-1496 - Wizard-keyboard-input-can-land-on-off-screen-widgets-silently.md
+2026-07-31 | TASK-1501 | prio=Wizard tools step: broken switch row layout and bare tool labels | hits=1 | tasks/task-1501 - Wizard-tools-step-broken-switch-row-layout-and-bare-tool-labels.md
+2026-07-31 | TASK-1502 | prio=Wizard RAG step: hide disabled model list when deps missing; fix backtick copy | hits=1 | tasks/task-1502 - Wizard-RAG-step-hide-disabled-model-list-when-deps-missing-fix-backtick-copy.md
+2026-07-31 | TASK-1503 | prio=Wizard model step: display-cased provider name and recommended-model marker | hits=1 | tasks/task-1503 - Wizard-model-step-display-cased-provider-name-and-recommended-model-marker.md
+2026-08-02 | TASK-2016 | prio=Library ingest P3 polish batch | hits=1 | tasks/task-2016 - Library-ingest-P3-polish-batch.md
+2026-08-03 | TASK-2040 | prio=First-run wizard crashes every fresh-profile boot (app_instance read before init) | hits=7 | tasks/task-2040 - First-run-wizard-crashes-every-fresh-profile-boot.md
+2026-08-04 | TASK-2314 | prio=First-run wizard honors early Escape | hits=7 | tasks/task-2314 - First-run wizard honors early Escape.md
+2026-08-05 | TASK-2154.13 | prio=Console: unify feature naming (CN-01..CN-06) | hits=4 | tasks/task-2154.13 - Console-unify-feature-naming-CN-01..CN-06.md
+2026-08-05 | TASK-2154.9 | prio=Wizard: clarify exit paths (FR-01, FR-02) | hits=9 | tasks/task-2154.9 - Wizard-clarify-exit-paths-FR-01-FR-02.md
+2026-08-06 | TASK-2720 | prio=Escaped screen-navigation exception silently kills all tab navigation until restart | hits=1 | tasks/task-2720 - Escaped screen-navigation exception silently kills all tab navigation until restart.md
+2026-08-06 | TASK-2721 | prio=Footer-status timer crashes with NoMatches on splash and first-run wizard screens | hits=3 | tasks/task-2721 - Footer-status timer crashes with NoMatches on splash and first-run wizard screens.md
+2026-08-06 | TASK-2724 | prio=First-run wizard summary claims choices the user never made | hits=4 | tasks/task-2724 - First-run wizard summary claims choices the user never made.md
+2026-08-06 | TASK-2710 | prio=Audit remaining super().on_mount() calls over BaseAppScreen | hits=6 | tasks/task-2710 - Audit-remaining-super.on_mount-calls-over-BaseAppScreen.md
+2026-08-07 | TASK-3222 | prio=Settings Tools screen does not show the web_deep_search gate | hits=1 | tasks/task-3222 - Settings-Tools-screen-does-not-show-the-web_deep_search-gate.md
+2026-08-07 | TASK-3240 | prio=Tool gate switches are unreachable in the running app | hits=1 | tasks/task-3240 - Tool-gate-switches-are-unreachable-in-the-running-app.md
+2026-08-09 | TASK-13157 | prio=Config boot-rewrite can write invalid TOML (duplicate key), silently degrading to default_user profile | hits=1 | tasks/task-13157 - Config-boot-rewrite-can-write-invalid-TOML-duplicate-key-silently-degrading-to-default_user-profile.md
+2026-08-14 | TASK-16174 | prio=Agentic document expansion: a gated chunk-to-document expand tool, the agent policy, and its evaluation question | hits=2 | tasks/task-16174 - Agentic-document-expansion-a-gated-chunk-to-document-expand-tool-the-agent-policy-and-its-evaluation-question.md
+2026-08-14 | TASK-16300 | prio=Navigation under a pushed screen leaves the outgoing content screen resident in the stack | hits=1 | tasks/task-16300 - Navigation-under-a-pushed-screen-leaves-the-outgoing-content-screen-resident-in-the-stack.md
+2026-08-14 | TASK-16271 | prio=Pass explicit speech precision through wizard allowlist test | hits=1 | tasks/task-16271 - Pass-explicit-speech-precision-through-wizard-allowlist-test.md
+2026-08-15 | TASK-3070.9 | prio=Extract Console first-chat handoff ownership | hits=1 | tasks/task-3070.9 - Extract-Console-first-chat-handoff-ownership.md
+2026-08-17 | TASK-18705 | prio=Project skills (.SKILLS/) folder discovery and prompt-driven import | hits=2 | tasks/task-18705 - Project-skills-SKILLS-folder-discovery-and-prompt-driven-import.md
+2026-08-21 | TASK-19550 | prio=Chatbook import "Create backup" checkbox writes a success message and takes no backup | hits=1 | tasks/task-19550 - Chatbook import Create backup checkbox writes a success message and takes no backup.md
+2026-08-22 | TASK-21115 | prio=CSS parse-cache headroom - bundle-ride the 34 new DEFAULT_CSS classes and add a static allowlist ratchet | hits=2 | tasks/task-21115 - CSS-parse-cache-headroom-bundle-ride-the-34-new-DEFAULT_CSS-classes-and-add-a-static-allowlist-ratchet.md
+2026-08-23 | TASK-21591 | prio=The splash skip on keypress setting is documented but cannot fire | hits=2 | tasks/task-21591 - The splash skip-on-keypress setting is documented but cannot fire.md
+2026-08-23 | TASK-21280 | prio=Library tests see the compact starter rail because the test app factory builds a brand-new profile | hits=2 | tasks/task-21280 - Library-tests-see-the-compact-starter-rail-because-the-test-app-factory-builds-a-brand-new-profile.md
+2026-08-25 | TASK-22281 | prio=Fix wizard soft-lock on cold entry to Speech step | hits=7 | tasks/task-22281 - Fix-wizard-soft-lock-on-cold-entry-to-Speech-step.md
+2026-08-25 | TASK-21140 | prio=Wizard step errors: always-visible surface | hits=6 | tasks/task-21140 - Wizard-step-errors-always-visible-surface.md
+2026-08-25 | TASK-21142 | prio=Wizard keyboard model: Enter, focus order, radio selection | hits=1 | tasks/task-21142 - Wizard-keyboard-model-Enter-focus-order-radio-selection.md
+2026-08-25 | TASK-21143 | prio=Provider trust chain: probe outcomes drive tracker, model step, and summary | hits=14 | tasks/task-21143 - Provider-trust-chain-probe-outcomes-drive-tracker-model-step-and-summary.md
+2026-08-25 | TASK-21144 | prio=Local provider probe feedback and auto-detect | hits=1 | tasks/task-21144 - Local-provider-probe-feedback-and-auto-detect.md
+2026-08-25 | TASK-21146 | prio=Fold model-lists consent into wizard summary | hits=4 | tasks/task-21146 - Fold-model-lists-consent-into-wizard-summary.md
+2026-08-25 | TASK-21147 | prio=Quiet startup logging and env-key first-run notice | hits=3 | tasks/task-21147 - Quiet-startup-logging-and-env-key-first-run-notice.md
+2026-08-25 | TASK-21148 | prio=Wizard layout and density pass | hits=7 | tasks/task-21148 - Wizard-layout-and-density-pass.md
+2026-08-25 | TASK-21149 | prio=Wizard copy pass | hits=1 | tasks/task-21149 - Wizard-copy-pass.md
+2026-08-27 | TASK-23022 | prio=Invisible ProgressBars run a 15 Hz timer forever - 88% of the Lab screen's idle CPU | hits=1 | tasks/task-23022 - Invisible-ProgressBars-run-a-15-Hz-timer-forever-88-of-the-Lab-screen-s-idle-CPU.md
+2026-08-28 | TASK-23089 | prio=First-run discovery succeeds but the wizard rejects a real-sized catalog, so a valid cloud key reads as unreachable | hits=8 | tasks/task-23089 - First-run-discovery-succeeds-but-the-wizard-rejects-a-real-sized-catalog-so-a-valid-cloud-key-reads-as-unreachable.md
+2026-08-28 | TASK-23091 | prio=Model step reports the real discovery failure instead of a hardcoded 'request failed | hits=1 | tasks/task-23091 - Model-step-reports-the-real-discovery-failure-instead-of-a-hardcoded-request-failed.md
+2026-08-28 | TASK-24652 | prio=Wizard suite has order/load-dependent flakes: a different test fails on most full sweeps | hits=1 | tasks/task-24652 - Wizard-suite-has-order-load-dependent-flakes-a-different-test-fails-on-most-full-sweeps.md
+2026-08-30 | TASK-24407 | prio=Chain optional Personal Context interviews after setup and workspace creation | hits=3 | tasks/task-24407 - Chain-optional-Personal-Context-interviews-after-setup-and-workspace-creation.md
+2026-08-30 | TASK-2803.1 | prio=Replace inaccurate README Console screenshot | hits=1 | tasks/task-2803.1 - Replace-inaccurate-README-Console-screenshot.md
+2026-08-31 | TASK-25818 | prio=First-run stepper marks steps complete that were never configured | hits=1 | tasks/task-25818 - First-run-stepper-marks-steps-complete-that-were-never-configured.md
+2026-08-31 | TASK-25819 | prio=First-run wizard discards the provider endpoint the user entered and tested | hits=6 | tasks/task-25819 - First-run-wizard-discards-the-provider-endpoint-the-user-entered-and-tested.md
+2026-08-31 | TASK-25820 | prio=First-run model step leaves the only recommended model unselected | hits=6 | tasks/task-25820 - First-run-model-step-leaves-the-only-recommended-model-unselected.md
+2026-08-31 | TASK-25821 | prio=First-run wizard's final step removes every exit affordance | hits=1 | tasks/task-25821 - First-run-wizards-final-step-removes-every-exit-affordance.md
+2026-08-31 | TASK-25831 | prio=Toggle controls use three different state encodings across the app | hits=1 | tasks/task-25831 - Toggle-controls-use-three-different-state-encodings-across-the-app.md
+2026-08-31 | TASK-25832 | prio=Provider list renders its selected row dimmer than unselected rows | hits=1 | tasks/task-25832 - Provider-list-renders-its-selected-row-dimmer-than-unselected-rows.md
+2026-08-31 | TASK-25835 | prio=Composer collapse hides the only input while the footer still advertises sending | hits=1 | tasks/task-25835 - Composer-collapse-hides-the-only-input-while-the-footer-still-advertises-sending.md
+2026-08-31 | TASK-26019 | prio=Console: context breakdown by category | hits=1 | tasks/task-26019 - Console-context-breakdown-by-category.md
+2026-09-04 | TASK-31813 | prio=First-run wizard cancel lands on the Console | hits=3 | tasks/task-31813 - First-run-wizard-cancel-lands-on-the-Console.md
+2026-09-05 | TASK-31807 | prio=First-run wizard intermittently self-dismisses to Home with zero input when splash is enabled | hits=4 | tasks/task-31807 - First-run-wizard-intermittently-self-dismisses-to-Home-with-zero-input-when-splash-is-enabled.md
+2026-09-05 | TASK-31820 | prio=First-run wizard: Esc dead after provider discovery + contradictory key-required copy | hits=8 | tasks/task-31820 - First-run-wizard-Esc-dead-after-provider-discovery-contradictory-key-required-copy.md
+2026-09-08 | TASK-32059 | prio=Library Get started is skipped for any profile whose config file already existed at launch | hits=2 | tasks/task-32059 - Library-Get-started-is-skipped-for-any-profile-whose-config-file-already-existed-at-launch.md
+2026-09-08 | TASK-32072 | prio=First-run hand-off to Library: the wizard never mentions Library; Get started names steps with no controls | hits=2 | tasks/task-32072 - First-run-hand-off-to-Library-the-wizard-never-mentions-Library-Get-started-names-steps-with-no-controls.md
+2026-09-08 | TASK-32140 | prio=First-run hand-off: the wizard Summary and Get started offer no start-with-notes path for a user without a provider | hits=9 | tasks/task-32140 - First-run-hand-off-the-wizard-Summary-and-Get-started-offer-no-start-with-notes-path-for-a-user-without-a-provider.md
+2026-09-10 | TASK-32266 | prio=First-run wizard completion toast overlays the Summary action bar | hits=11 | tasks/task-32266 - First-run-wizard-completion-toast-overlays-the-Summary-action-bar.md
+2026-09-10 | TASK-32341 | prio=Console boot crash when a keyless provider has an api_key configured | hits=1 | tasks/task-32341 - Console-boot-crash-when-a-keyless-provider-has-an-api_key-configured.md
+2026-09-10 | TASK-32284 | prio=Tool gates pane: text state, humanised labels, consistent restart note | hits=5 | tasks/task-32284 - Tool-gates-pane-text-state-humanised-labels-consistent-restart-note.md
+2026-09-10 | TASK-32289 | prio=First-run tools copy: Quick setup and the first high-risk card | hits=7 | tasks/task-32289 - First-run-tools-copy-Quick-setup-and-the-first-high-risk-card.md
+2026-09-10 | TASK-32290 | prio=Docs: approvals and MCP permissions pages match shipped behaviour | hits=3 | tasks/task-32290 - Docs-approvals-and-MCP-permissions-pages-match-shipped-behaviour.md
+2026-09-11 | TASK-32473 | prio=Console settings modal P0 UX quick wins (endpoint copy, provider order, llama.cpp port) | hits=1 | tasks/task-32473 - Console-settings-modal-P0-UX-quick-wins-endpoint-copy-provider-order-llama.cpp-port.md
+2026-09-12 | TASK-32464 | prio=Console: the library-access modal paints a blocked glyph for an unselected radio | hits=1 | tasks/task-32464 - Console-the-library-access-modal-paints-a-blocked-glyph-for-an-unselected-radio.md
+2026-09-13 | TASK-32533 | prio=Library Notes: the app exits with an unhandled InvalidSelectValueError during the first-timer edit journey, and the crash handler records no | hits=2 | tasks/task-32533 - Library-Notes-the-app-exits-with-an-unhandled-InvalidSelectValueError-during-the-first-timer-edit-journey-and-the-crash-handler-records-no-site.md
+2026-09-13 | TASK-32555 | prio=Library Notes: first-run hand-off — the Console card's rows have no button affordance, "Library tools are now available." means nothing to a | hits=6 | tasks/task-32555 - Library-Notes-first-run-hand-off-affordances.md
+2026-09-16 | TASK-32678 | prio=Integrate hook input transformations and post-event barriers | hits=1 | tasks/task-32678 - Integrate-hook-input-transformations-and-post-event-barriers.md
+2026-09-17 | TASK-32711 | prio=Keep all identified provider credential UI surfaces responsive | hits=2 | tasks/task-32711 - Keep-all-identified-provider-credential-UI-surfaces-responsive.md
+2026-09-25 | TASK-32958 | prio=Add OmniVoice to the first-run Voice step | hits=9 | tasks/task-32958 - Add-OmniVoice-to-the-first-run-Voice-step.md
+2026-09-26 | TASK-32959 | prio=Setup Summary shows what the Voice step saved | hits=7 | tasks/task-32959 - Setup-Summary-shows-what-the-Voice-step-saved.md
+2026-09-26 | TASK-33001 | prio=Model config P1: root-cause fixes, no layout change | hits=2 | tasks/task-33001 - Model-config-P1-root-cause-fixes-no-layout-change.md
+2026-09-26 | TASK-33001.5 | prio=Untouched open chats follow newly saved defaults (D1) | hits=7 | tasks/task-33001.5 - Untouched-open-chats-follow-newly-saved-defaults-D1.md
+2026-09-26 | TASK-33002.5 | prio=Console names providers by display name from one catalog | hits=1 | tasks/task-33002.5 - Console-names-providers-by-display-name-from-one-catalog.md
+2026-09-26 | TASK-33003.1 | prio=Scope the leaked global Collapsible and Select rules to their owning features | hits=2 | tasks/task-33003.1 - Scope-the-leaked-global-Collapsible-and-Select-rules-to-their-owning-features.md
+2026-09-26 | TASK-33005 | prio=Phase 5: Shared readiness evidence and an explicit cloud key check | hits=3 | tasks/task-33005 - Phase-5-Shared-readiness-evidence-and-an-explicit-cloud-key-check.md
+2026-09-26 | TASK-33005.4 | prio=Check cloud keys, and endpoints with no model yet, on Settings ''t'' without generating | hits=2 | tasks/task-33005.4 - Check-cloud-keys-and-endpoints-with-no-model-yet-on-Settings-t-without-generating.md
+2026-09-29 | TASK-33510 | prio=Settings cannot save a key or endpoint for any engine preset except Databricks | hits=2 | tasks/task-33510 - Settings-cannot-save-a-key-or-endpoint-for-any-engine-preset-except-Databricks.md
+2026-09-29 | TASK-33511 | prio=Readiness and first-run look for the wrong env var when a preset's settings table is absent | hits=2 | tasks/task-33511 - Readiness-and-first-run-look-for-the-wrong-env-var-when-a-presets-settings-table-is-absent.md
+2026-09-30 | TASK-33620.4 | prio=Console: Every healthy run reads 'Run: Blocked' and 'Provider setup needed' in Inspect, and the composer links to setup mid-send | hits=5 | tasks/task-33620.4 - Console-Every-healthy-run-reads-Run-Blocked-and-Provider-setup-needed-in-Inspect-and-the-composer-links-to-setup-mid-send.md
+2026-09-30 | TASK-33621.14 | prio=Console: First-run wizard blanks the Provider step on most Cloud providers, strands the keyboard, and Next then quits the app | hits=24 | tasks/task-33621.14 - Console-First-run-wizard-blanks-the-Provider-step-on-most-Cloud-providers-strands-the-keyboard-and-Next-then-quits-the-app.md
+2026-09-30 | TASK-33622.10 | prio=Console: Ctrl+Q is ignored while any modal is open | hits=1 | tasks/task-33622.10 - Console-CtrlQ-is-ignored-while-any-modal-is-open.md
+2026-10-02 | TASK-33005.6 | prio=Owner rulings before Phase 5 merges: live cloud-key evidence, keyless verified and shipped-default probing | hits=1 | tasks/task-33005.6 - Owner-rulings-before-Phase-5-merges.md

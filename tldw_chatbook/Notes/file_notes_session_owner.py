@@ -14,6 +14,8 @@ from types import MappingProxyType
 from typing import Literal, Protocol
 from weakref import WeakSet
 
+from loguru import logger
+
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitRecoveryProjection,
     CommitReviewChangeType,
@@ -105,6 +107,13 @@ _PUSH_CHANGE_TYPE_ORDER: tuple[CommitReviewChangeType, ...] = (
     "Moved",
 )
 
+#: task-11: bound on retained session-change records per root binding.
+#: The list previously grew for the whole life of the binding (cleared only
+#: on root change) and was re-coalesced by the workspace poll every tick.
+#: See ``_append_session_change_locked`` for why keeping the newest window
+#: is safe for ``coalesce_session_changes`` consumers.
+SESSION_CHANGE_RECORD_LIMIT = 500
+
 
 @dataclass(frozen=True, slots=True)
 class SessionChange:
@@ -146,10 +155,10 @@ def _sanitize_display_path(path: str) -> str:
             display.append(f"\\x{codepoint:02x}")
         elif 0xDC80 <= codepoint <= 0xDCFF:
             display.append(f"\\x{codepoint - 0xDC00:02x}")
-        elif (
-            unicodedata.category(character) in {"Cf", "Cs"}
-            or codepoint in {0x2028, 0x2029}
-        ):
+        elif unicodedata.category(character) in {"Cf", "Cs"} or codepoint in {
+            0x2028,
+            0x2029,
+        }:
             escape_width = 4 if codepoint <= 0xFFFF else 8
             escape_prefix = "u" if escape_width == 4 else "U"
             display.append(f"\\{escape_prefix}{codepoint:0{escape_width}x}")
@@ -707,19 +716,12 @@ class GitStatusAdmission:
         if (self.lease is None) == (self.reason is None):
             raise ValueError("Status admission requires exactly one outcome")
         if self.lease is not None:
-            if (
-                self.invalidation_generation
-                != self.lease.invalidation_generation
-            ):
-                raise ValueError(
-                    "Successful status admission requires its generation"
-                )
+            if self.invalidation_generation != self.lease.invalidation_generation:
+                raise ValueError("Successful status admission requires its generation")
         elif (self.reason == "status_active") != (
             self.invalidation_generation is not None
         ):
-            raise ValueError(
-                "Only active-status refusal carries a generation"
-            )
+            raise ValueError("Only active-status refusal carries a generation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -885,6 +887,8 @@ class FileNotesSessionOwner:
 
     __slots__ = (
         "_binding",
+        "_change_limit_logged",
+        "_change_log_version",
         "_changes",
         "_commit_publication_closed",
         "_commit_quarantine",
@@ -958,9 +962,7 @@ class FileNotesSessionOwner:
         self._destination_policy_fingerprint: tuple[object, ...] | None = None
         self._destination_policy_generation = 0
         self._destination_authorization: PushAuthorizationHandle | None = None
-        self._destination_authorization_capture: (
-            _DestinationPolicyCapture | None
-        ) = None
+        self._destination_authorization_capture: _DestinationPolicyCapture | None = None
         self._destination_authorization_epoch = 0
         self._push_review: PushReviewHandle | None = None
         self._push_review_capture: _PushReviewCapture | None = None
@@ -979,6 +981,13 @@ class FileNotesSessionOwner:
         self._issued_commit_recovery = False
         self._changes: list[SequencedSessionChange] = []
         self._next_sequence = 1
+        # task-11: monotonic count of session-change log mutations (append,
+        # compaction, commit retirement, root clear). Pollers compare it
+        # to skip re-coalescing an unchanged log; it is deliberately global
+        # to the owner, not per binding, so any owner-side movement --
+        # including another workspace sharing this owner -- wakes them.
+        self._change_log_version = 0
+        self._change_limit_logged = False
         self._trusted_repository: RepositoryIdentity | None = None
         self._git_status: SessionGitStatus | None = None
         self._staging_ownership: dict[int, StagingOwnership] = {}
@@ -1133,16 +1142,112 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._shutdown or binding != self._binding:
                 return False
-            self._changes.append(
-                SequencedSessionChange(
-                    sequence=self._next_sequence,
-                    change=change,
-                )
-            )
-            self._next_sequence += 1
+            self._append_session_change_locked(change)
             self._clear_git_status_locked(invalidate_authority=False)
             self._invalidate_git_authority_locked()
             return True
+
+    def _append_session_change_locked(self, change: SessionChange) -> None:
+        """Append one change and keep the log bounded (task-11).
+
+        Below ``SESSION_CHANGE_RECORD_LIMIT`` the log is strictly
+        append-only: commit-authority captures detect drift by comparing
+        lineage ``sequence_ids`` (see ``_request_commit_authority`` and
+        ``_captured_sequences_are_present_locked``), so every recorded
+        mutation must keep its own sequence until retirement -- merging
+        same-path records unconditionally would blind that machinery.
+
+        Once the bound is exceeded, compaction runs BEFORE oldest-drop:
+        per-(action, path) non-moved duplicates collapse to their NEWEST
+        record. That merge provably preserves ``coalesce_session_changes``
+        output for the collapsed records -- they were in the SAME lineage
+        group anyway (same path, no move edge between them), so endpoints,
+        move edges, current path, and latest action are unchanged; only the
+        group's earliest sequence -- its ``group_id`` -- moves to the
+        retained record. Records with move edges never collapse. If the
+        log is still over the bound afterwards, oldest records drop.
+
+        Oldest-drop safety: unlike compaction, oldest-drop can remove a
+        lineage ENTIRELY -- a burst of more than the limit of distinct
+        paths drops single-record lineages whole (their only record is old
+        enough to fall outside the window). That is safe because the log
+        is a session-scoped PROJECTION of Chatbook-initiated mutations:
+        disk bytes and the recovery replica stay authoritative, so what is
+        lost is the change's entry in the session's commit-review listing,
+        never file content. The machinery that could double-apply --
+        ``_staging_ownership`` keys and commit captures referencing
+        group_id, a lineage's EARLIEST sequence -- fails closed when a
+        referenced group is gone: ``_current_ownership_sequences_locked``
+        returns ``None`` and the commit publication is refused into the
+        recovery flow. That needs a Stage capture outstanding across a
+        burst of 500+ change records; bounded memory wins that trade.
+        """
+        self._changes.append(
+            SequencedSessionChange(
+                sequence=self._next_sequence,
+                change=change,
+            )
+        )
+        self._next_sequence += 1
+        if len(self._changes) > SESSION_CHANGE_RECORD_LIMIT:
+            self._compact_session_changes_locked()
+            if len(self._changes) > SESSION_CHANGE_RECORD_LIMIT:
+                del self._changes[: len(self._changes) - SESSION_CHANGE_RECORD_LIMIT]
+                if not self._change_limit_logged:
+                    self._change_limit_logged = True
+                    logger.warning(
+                        "File Notes session change log bounded at {} newest "
+                        "records; records outside the window leave the "
+                        "session listing (disk and the replica stay "
+                        "authoritative)",
+                        SESSION_CHANGE_RECORD_LIMIT,
+                    )
+        self._change_log_version += 1
+
+    def _compact_session_changes_locked(self) -> None:
+        """Collapse same-(action, path) duplicates to their newest record.
+
+        Only non-moved records are eligible: a moved record is its
+        lineage's topology fact, and collapsing onto or across one would
+        lose move edges the per-tick coalescer depends on.
+        """
+        newest: dict[tuple[str, str], int] = {}
+        for index, record in enumerate(self._changes):
+            change = record.change
+            if change.destination_path is None:
+                newest[(change.action, change.relative_path)] = index
+        self._changes[:] = [
+            record
+            for index, record in enumerate(self._changes)
+            if record.change.destination_path is not None
+            or newest.get(
+                (record.change.action, record.change.relative_path),
+                index,
+            )
+            == index
+        ]
+
+    def change_log_version(self) -> int:
+        """Return the monotonic session-change log mutation count (task-11).
+
+        Lets a poller decide "nothing was appended, merged, retired, or
+        cleared since I last looked" with one integer compare under the
+        lock, instead of snapshotting and re-coalescing the whole log.
+        """
+        with self._lock:
+            return self._change_log_version
+
+    def session_revision(self) -> tuple[int, int]:
+        """Return the poller-relevant owner revision (task-11).
+
+        ``(change-log version, git authority generation)`` read under one
+        lock. Trust publication and status-authority moves bump the
+        authority generation without touching the change log, so a poller
+        that skips refresh work while BOTH hold still also skips work that
+        could not have observed anything new.
+        """
+        with self._lock:
+            return self._change_log_version, self._git_authority_generation
 
     def snapshot(self, binding: SessionBinding) -> FileNotesSessionSnapshot:
         """Return an immutable snapshot without exposing another generation."""
@@ -1154,9 +1259,7 @@ class FileNotesSessionOwner:
                 changes=tuple(self._changes),
                 trusted_repository=self._trusted_repository,
                 git_status=self._git_status,
-                staging_ownership=MappingProxyType(
-                    dict(self._staging_ownership)
-                ),
+                staging_ownership=MappingProxyType(dict(self._staging_ownership)),
                 git_authority_generation=self._git_authority_generation,
                 commit_recovery=(
                     None
@@ -1171,9 +1274,7 @@ class FileNotesSessionOwner:
                 push_candidate_generation=self._push_candidate_generation,
                 repository_trust_generation=self._repository_trust_generation,
                 destination_policy_generation=self._destination_policy_generation,
-                destination_authorization_epoch=(
-                    self._destination_authorization_epoch
-                ),
+                destination_authorization_epoch=(self._destination_authorization_epoch),
                 push_review_generation=self._push_review_generation,
                 push_recovery=self._push_recovery_projection,
                 push_recovery_candidate=(
@@ -1350,8 +1451,7 @@ class FileNotesSessionOwner:
             ):
                 return False
             changed = (
-                replacement != self._staging_ownership
-                or self._git_status is not None
+                replacement != self._staging_ownership or self._git_status is not None
             )
             self._staging_ownership = replacement
             self._clear_git_status_locked(invalidate_authority=False)
@@ -1375,8 +1475,7 @@ class FileNotesSessionOwner:
                 or repository != self._trusted_repository
                 or self._commit_quarantine is not None
                 or any(
-                    self._staging_ownership.get(group_id)
-                    != expected.get(group_id)
+                    self._staging_ownership.get(group_id) != expected.get(group_id)
                     for group_id in selected
                 )
             ):
@@ -1439,18 +1538,13 @@ class FileNotesSessionOwner:
                 )
             ):
                 return None
-            if any(
-                note.group_id not in sequence_ids
-                for note in notes
-            ):
+            if any(note.group_id not in sequence_ids for note in notes):
                 return None
             try:
                 seed = PushCandidateSeed(
                     binding=binding,
                     repository=repository,
-                    repository_trust_generation=(
-                        self._repository_trust_generation
-                    ),
+                    repository_trust_generation=(self._repository_trust_generation),
                     parent_head=head,
                     subject=subject,
                     included_notes=notes,
@@ -1491,8 +1585,7 @@ class FileNotesSessionOwner:
                 or self._issued_commit_publication_token is not None
                 or not self._lease_is_active_locked(lease)
                 or prior_capture.binding != self._binding
-                or prior_capture.authority_generation
-                != self._git_authority_generation
+                or prior_capture.authority_generation != self._git_authority_generation
                 or prior_capture.repository_trust_generation
                 != self._repository_trust_generation
                 or prior_capture.repository != self._trusted_repository
@@ -1507,9 +1600,7 @@ class FileNotesSessionOwner:
             capture = CommitAuthorityCapture(
                 binding=prior_capture.binding,
                 authority_generation=prior_capture.authority_generation,
-                repository_trust_generation=(
-                    prior_capture.repository_trust_generation
-                ),
+                repository_trust_generation=(prior_capture.repository_trust_generation),
                 repository=prior_capture.repository,
                 head=prior_capture.head,
                 ownership=prior_capture.ownership,
@@ -1583,9 +1674,7 @@ class FileNotesSessionOwner:
             capture = _PushCandidateCapture(
                 binding=candidate.binding,
                 repository=candidate.repository,
-                repository_trust_generation=(
-                    candidate.repository_trust_generation
-                ),
+                repository_trust_generation=(candidate.repository_trust_generation),
                 candidate_generation=candidate.generation,
                 candidate=candidate.candidate,
                 change_types=candidate.change_types,
@@ -1624,8 +1713,7 @@ class FileNotesSessionOwner:
         if (
             len(candidate_tree_oid) not in {40, 64}
             or any(
-                character not in "0123456789abcdef"
-                for character in candidate_tree_oid
+                character not in "0123456789abcdef" for character in candidate_tree_oid
             )
             or not any(character != "0" for character in candidate_tree_oid)
             or type(destination) is not PushDestinationProjection
@@ -1715,8 +1803,7 @@ class FileNotesSessionOwner:
                 self._shutdown
                 or capture is not self._destination_policy_capture
                 or capture.candidate_capture is not self._push_candidate_capture
-                or capture.policy_generation
-                != self._destination_policy_generation
+                or capture.policy_generation != self._destination_policy_generation
                 or capture.repository_trust_generation
                 != self._repository_trust_generation
             ):
@@ -1745,8 +1832,7 @@ class FileNotesSessionOwner:
                 and capture.candidate_capture is self._push_candidate_capture
                 and authorization is self._destination_authorization
                 and self._destination_authorization_capture is capture
-                and capture.policy_generation
-                == self._destination_policy_generation
+                and capture.policy_generation == self._destination_policy_generation
                 and capture.repository_trust_generation
                 == self._repository_trust_generation
             )
@@ -1780,8 +1866,7 @@ class FileNotesSessionOwner:
                 or candidate_capture is not self._push_candidate_capture
                 or authorization is not self._destination_authorization
                 or self._destination_authorization_capture is not policy
-                or policy.policy_generation
-                != self._destination_policy_generation
+                or policy.policy_generation != self._destination_policy_generation
                 or policy.repository_trust_generation
                 != self._repository_trust_generation
                 or parent_oid != candidate_capture.candidate.parent_oid
@@ -1841,8 +1926,7 @@ class FileNotesSessionOwner:
                 and capture.candidate_capture is self._push_candidate_capture
                 and capture.policy_capture is self._destination_policy_capture
                 and capture.authorization is self._destination_authorization
-                and capture.authorization_epoch
-                == self._destination_authorization_epoch
+                and capture.authorization_epoch == self._destination_authorization_epoch
                 and capture.review_generation == self._push_review_generation
                 and capture.policy_capture.policy_generation
                 == self._destination_policy_generation
@@ -1903,9 +1987,7 @@ class FileNotesSessionOwner:
                     candidate_capture.repository_trust_generation
                 ),
                 destination_policy_generation=policy.policy_generation,
-                destination_authorization_epoch=(
-                    review.authorization_epoch
-                ),
+                destination_authorization_epoch=(review.authorization_epoch),
                 generation=self._push_recovery_generation,
             )
             handle = _issue_push_recovery_handle()
@@ -2062,10 +2144,7 @@ class FileNotesSessionOwner:
         """Compare-and-clear only one exact private candidate capability."""
         with self._lock:
             candidate = self._push_candidate
-            if (
-                candidate is None
-                or capture is not self._push_candidate_capture
-            ):
+            if candidate is None or capture is not self._push_candidate_capture:
                 return False
             self._revoke_push_candidate_locked()
             return True
@@ -2115,6 +2194,8 @@ class FileNotesSessionOwner:
                 self._changes = [
                     change for change in self._changes if change.sequence not in retired
                 ]
+                # task-11: retirement changed the log pollers compare against.
+                self._change_log_version += 1
                 self._staging_ownership.clear()
                 self._commit_quarantine = None
                 self._publish_commit_status_locked(publication.refreshed_status)
@@ -2219,9 +2300,7 @@ class FileNotesSessionOwner:
                 _candidate_seed=quarantine.capture._candidate_seed,
             )
             self._issued_commit_capture = capture
-            self._issued_commit_identity = (
-                quarantine._guarded_commit_identity
-            )
+            self._issued_commit_identity = quarantine._guarded_commit_identity
             self._issued_commit_publication_token = token
             self._issued_commit_recovery = True
             return CommitRecoveryAdmission(
@@ -2509,15 +2588,11 @@ class FileNotesSessionOwner:
         ownership: Mapping[int, StagingOwnership],
     ) -> dict[int, tuple[int, ...]] | None:
         groups = {
-            group.group_id: group
-            for group in coalesce_session_changes(self._changes)
+            group.group_id: group for group in coalesce_session_changes(self._changes)
         }
         if any(group_id not in groups for group_id in ownership):
             return None
-        return {
-            group_id: groups[group_id].sequence_ids
-            for group_id in ownership
-        }
+        return {group_id: groups[group_id].sequence_ids for group_id in ownership}
 
     def _supplied_ownership_sequences_match_locked(
         self,
@@ -2539,9 +2614,7 @@ class FileNotesSessionOwner:
         ownership: Mapping[int, StagingOwnership],
         group_sequence_ids: Mapping[int, tuple[int, ...]],
     ) -> bool:
-        current_sequence_ids = self._current_ownership_sequences_locked(
-            ownership
-        )
+        current_sequence_ids = self._current_ownership_sequences_locked(ownership)
         return not (
             head.kind != "attached"
             or head.object_id is None
@@ -2580,29 +2653,26 @@ class FileNotesSessionOwner:
             or self._issued_commit_publication_token is not lease._token
             or capture.binding != self._binding
             or capture.authority_generation != self._git_authority_generation
-            or capture.repository_trust_generation
-            != self._repository_trust_generation
+            or capture.repository_trust_generation != self._repository_trust_generation
             or capture.repository != self._trusted_repository
         ):
             return False
 
         quarantine = self._commit_quarantine
         if quarantine is None:
-            return (
-                dict(capture.ownership) == self._staging_ownership
-                and self._commit_capture_facts_match_locked(
-                    capture.repository,
-                    capture.head,
-                    capture.ownership,
-                    capture.group_sequence_ids,
-                )
+            return dict(
+                capture.ownership
+            ) == self._staging_ownership and self._commit_capture_facts_match_locked(
+                capture.repository,
+                capture.head,
+                capture.ownership,
+                capture.group_sequence_ids,
             )
 
         original = quarantine.capture
         return (
             not self._staging_ownership
-            and self._issued_commit_identity
-            is quarantine._guarded_commit_identity
+            and self._issued_commit_identity is quarantine._guarded_commit_identity
             and original.binding == capture.binding
             and original.repository == capture.repository
             and original.head == capture.head
@@ -2715,8 +2785,7 @@ class FileNotesSessionOwner:
             seed is capture._candidate_seed
             and seed.binding == capture.binding
             and seed.repository == capture.repository
-            and seed.repository_trust_generation
-            == capture.repository_trust_generation
+            and seed.repository_trust_generation == capture.repository_trust_generation
             and seed.parent_head == capture.head
             and all(
                 group_id in capture.group_sequence_ids
@@ -2789,13 +2858,10 @@ class FileNotesSessionOwner:
         head = status.head
         if candidate is None or head is None:
             return
-        if (
-            status.repository == candidate.repository
-            and (
-                head.kind != "attached"
-                or head.branch != candidate.candidate.local_branch_ref
-                or head.object_id != candidate.candidate.candidate_oid
-            )
+        if status.repository == candidate.repository and (
+            head.kind != "attached"
+            or head.branch != candidate.candidate.local_branch_ref
+            or head.object_id != candidate.candidate.candidate_oid
         ):
             self._revoke_push_candidate_locked()
 
@@ -2832,8 +2898,7 @@ class FileNotesSessionOwner:
 
     def _revoke_push_review_locked(self) -> None:
         had_review = (
-            self._push_review is not None
-            or self._push_review_capture is not None
+            self._push_review is not None or self._push_review_capture is not None
         )
         if self._push_review is not None and self._push_review_capture is not None:
             self._retired_push_review = _RetiredPushReview(
@@ -2866,10 +2931,7 @@ class FileNotesSessionOwner:
 
     def _invalidate_git_authority_locked(self) -> None:
         self._git_authority_generation += 1
-        if (
-            self._mutation_token is None
-            and self._commit_quarantine is None
-        ):
+        if self._mutation_token is None and self._commit_quarantine is None:
             self._issued_commit_capture = None
             self._issued_commit_identity = None
             self._issued_commit_publication_token = None
@@ -2942,6 +3004,9 @@ class FileNotesSessionOwner:
         self._binding = SessionBinding(root_key, self._generation)
         self._changes.clear()
         self._next_sequence = 1
+        # task-11: the cleared log is a new fact for version-gated pollers.
+        self._change_log_version += 1
+        self._change_limit_logged = False
         self._revoke_push_candidate_locked()
         self._trusted_repository = None
         self._repository_trust_generation += 1

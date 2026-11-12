@@ -1,0 +1,480 @@
+{
+  "audited_head": "96cae7eec00473bbfb5687ccfd0685eba2785add",
+  "completed_utc": "2026-10-24T17:35:32.434946+00:00",
+  "merge": {
+    "pr": 3228,
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/3228",
+    "mergedAt": "2026-10-24T17:16:42Z",
+    "commit": "96cae7eec00473bbfb5687ccfd0685eba2785add",
+    "head": "9a89a23ba1156e48ece70b540202afe81e798303",
+    "live_dev": "96cae7eec00473bbfb5687ccfd0685eba2785add",
+    "ancestor_verified": true,
+    "tree_identical_to_qualified_head": true,
+    "runs": {
+      "40109377531": {
+        "name": "Derived Artifacts",
+        "conclusion": "success",
+        "attempt": 1,
+        "jobs": 25
+      },
+      "40109377513": {
+        "name": "Perf Guard",
+        "conclusion": "success",
+        "attempt": 1,
+        "jobs": 1
+      }
+    }
+  },
+  "book": {
+    "filename": "textual-1.pdf",
+    "pdf_pages": 455,
+    "sha256": "798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6",
+    "reference_not_instructions": true
+  },
+  "tasks": [
+    {
+      "key": "dictation-retirement",
+      "rank": 1,
+      "priority": "medium",
+      "severity": "P2",
+      "title": "Retire Speech Recognition capture when its foreground view closes",
+      "why": "Leaving Speech Recognition removes its Stop control while the widget-owned recorder and real processing thread remain active, with callbacks still targeting the detached widget. End that foreground capture through the existing owner lifecycle.",
+      "measured": "Actual STTSWindow request_view(effects) detaches the real DictationWindow. Injected recorder remains recording with stop_calls=0; real DictationProcessor remains alive and cancellation unset. Explicit Stop before the same navigation retires both. Physical microphone hardware was not opened.",
+      "related": [
+        "1283",
+        "15470",
+        "16266",
+        "31993.17",
+        "31993.21"
+      ],
+      "adr": [
+        "025-shared-stt-artifacts-and-runtime-routing.md",
+        "033-application-session-state-ownership.md"
+      ],
+      "owners": [
+        "tldw_chatbook/UI/Dictation_Window_Improved.py",
+        "tldw_chatbook/UI/STTS_Window.py",
+        "tldw_chatbook/Audio/dictation_service_lazy.py"
+      ],
+      "ac": [
+        "Leaving or unmounting Speech Recognition retires the capture and processor owned by that view, so returning cannot leave an inaccessible earlier recorder running.",
+        "Callbacks belonging to the departed view cannot publish into detached or replacement controls; teardown does not block the UI with a processing-thread join.",
+        "Ordinary explicit Stop retains its existing completion semantics; visiting another Speech view without starting capture has no recording side effect.",
+        "Mounted active-leave and explicit-Stop controls verify recorder retirement and the real owned processing thread using private profiles and injected audio I/O."
+      ],
+      "existing_task_records": [
+        {
+          "id": "1283",
+          "path": "backlog/tasks/task-1283 - _release-frees-the-microphone-but-never-stops-the-DictationProcessor-thread-leaking-it-on-every-abandon.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "15470",
+          "path": "backlog/tasks/task-15470 - Config-persistence---batch-writes-and-take-them-off-the-click-path.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "16266",
+          "path": "backlog/tasks/task-16266 - Harden-Speech-view-switching-and-first-run-test-seam.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "31993.17",
+          "path": "backlog/tasks/task-31993.17 - Settle-dictation-dispatch-before-live-backup-capture.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "31993.21",
+          "path": "backlog/tasks/task-31993.21 - Settle-speech-handlers-and-shared-TTS-service-for-live-capture.md",
+          "status": "status: Done"
+        }
+      ],
+      "book_basis": "PDF145–146 / printed136–137 describes widget message ownership; PDF335 / printed326 demonstrates cancellation-aware publication. The foreground capture lifetime follows this application’s exclusive view ownership and disappearing Stop control, rather than an explicit book microphone policy.",
+      "dedup": "TASK-1283 is Done and repairs the Console capture owner’s processor retirement. TASK-15470 owns settings-write flushing; TASK-16266 owns partial-mount view switching. TASK-31993.17/.21 own backup-capture settlement. None owns ordinary departure from the widget-owned foreground Dictation session.",
+      "adr_reason": "Routine retirement of the existing view-owned service and callbacks, using existing session ownership. Re-evaluate ADR need if background capture or ownership policy changes.",
+      "id": 36693,
+      "path": "backlog/tasks/task-36693 - Retire-Speech-Recognition-capture-when-its-foreground-view-closes.md"
+    },
+    {
+      "key": "dictation-dispatch",
+      "rank": 2,
+      "priority": "medium",
+      "severity": "P2",
+      "title": "Handle each Speech Recognition button activation once",
+      "why": "One ordinary Start Dictation button event is handled by the child and then manually forwarded to it again by the Speech container. Capture starts and immediately stops. Give handled child messages a single action delivery.",
+      "measured": "One real Pilot click delivers the same Button event object twice: false-to-true then true-to-false; start_calls=1, stop_calls=1 and the final UI is idle. Existing keyboard-action control starts once and remains listening. The prior slice-41 QA correctness side-find has no matching backlog owner.",
+      "related": [
+        "16266",
+        "33284",
+        "15470"
+      ],
+      "adr": [
+        "025-shared-stt-artifacts-and-runtime-routing.md",
+        "031-tui-keybinding-and-footer-hint-conventions.md"
+      ],
+      "owners": [
+        "tldw_chatbook/UI/Dictation_Window_Improved.py",
+        "tldw_chatbook/UI/STTS_Window.py"
+      ],
+      "ac": [
+        "A single mouse click or normal Enter/Space activation of Start starts one dictation session and leaves the foreground view listening until a distinct Stop action.",
+        "Stop and other handled Speech Recognition buttons execute their intended action once, without a bubbled event reversing the result.",
+        "Other Speech views and container-owned controls retain their routing and ADR-031-compliant keyboard behavior.",
+        "Mounted controls exercise the actual parent and child handlers with the same event identity and bounded audio collaborators, including ordinary Start and Stop."
+      ],
+      "existing_task_records": [
+        {
+          "id": "16266",
+          "path": "backlog/tasks/task-16266 - Harden-Speech-view-switching-and-first-run-test-seam.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "33284",
+          "path": "backlog/tasks/task-33284 - PERF-25-Other-screens---Evals-Change-Review-Speech-video-player-splash.md",
+          "status": "status: To Do"
+        },
+        {
+          "id": "15470",
+          "path": "backlog/tasks/task-15470 - Config-persistence---batch-writes-and-take-them-off-the-click-path.md",
+          "status": "status: Done"
+        }
+      ],
+      "book_basis": "PDF145–146 / printed136–137 explains message bubbling and stopping; PDF253 / printed244 uses event.stop() to keep a handled button from reaching its parent.",
+      "dedup": "The September27 slice41 QA correctness side-find1 (data/items.md:4507) recorded the duplicate dispatch, but is not a numbered finding with a task owner. TASK-33284/PERF25 owns blocking-latency findings and a ≤50ms performance outcome, not this correctness defect. TASK-16266 and TASK-15470 cover view-switch lifecycle and settings flushing.",
+      "adr_reason": "Routine correction of handled-message delivery within existing Speech routing; no new application structure or keybinding policy.",
+      "id": 36694,
+      "path": "backlog/tasks/task-36694 - Handle-each-Speech-Recognition-button-activation-once.md"
+    },
+    {
+      "key": "chunking-sample-read",
+      "rank": 3,
+      "priority": "medium",
+      "severity": "P2",
+      "title": "Keep later Chunking Lab sample edits when an earlier file load finishes",
+      "why": "A pending sample file read publishes its captured text after later editing has already changed the live sample and canonical session. Preserve the newest accepted sample intent when older asynchronous reads finish.",
+      "measured": "Real file_operation/sample-file reads a private UTF-8 file through its actual to_thread boundary. While delivery is held, a real keyboard x changes seed to xseed in both editor and canonical session. Releasing the read replaces both with selected file content. Untouched-file control passes. The file-dialog gesture and natural race frequency were not measured. Fresh merged-dev ordinary control passes. The later-edit child records the intended retention assertion failure plus a separate native-worker teardown error; it is not claimed as a clean whole-process regression result. Observational/worker-drain retries are retained as qualified or excluded evidence in the audit.",
+      "related": [
+        "31645",
+        "31640",
+        "31642",
+        "31428",
+        "36363"
+      ],
+      "adr": [
+        "118-chunking-lab-local-execution-and-recovery.md",
+        "033-application-session-state-ownership.md"
+      ],
+      "owners": [
+        "tldw_chatbook/UI/Screens/chunking_lab_screen.py",
+        "tldw_chatbook/UI/Chunking_Lab_Modules/sample_region.py"
+      ],
+      "ac": [
+        "An older sample file or explicit-excerpt completion does not replace later accepted sample edits, including clearing the field; live text and canonical sample remain coherent.",
+        "An untouched, still-applicable load publishes the selected text and truthful source provenance normally.",
+        "Replacement sample intent and read failure preserve the current authored state, recovery ownership and existing file-size/UTF-8 validation.",
+        "Targeted mounted controls witness real accepted keyboard input and canonical state before releasing actual asynchronous file-read publication, with ordinary-load and later-edit cases."
+      ],
+      "existing_task_records": [
+        {
+          "id": "31645",
+          "path": "backlog/tasks/task-31645 - Chunking-Lab-Library-screen-and-recoverable-authoring-flow.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "31640",
+          "path": "backlog/tasks/task-31640 - Chunking-Lab-durable-profile-local-session-checkpoints.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "31642",
+          "path": "backlog/tasks/task-31642 - Chunking-Lab-bounded-local-A-B-execution-lifecycle.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "31428",
+          "path": "backlog/tasks/task-31428 - Chunking-Lab-Library-screen-and-recoverable-authoring-flow.md",
+          "status": "status: To Do"
+        },
+        {
+          "id": "36363",
+          "path": "backlog/tasks/task-36363 - Keep-newer-audiobook-source-edits-when-a-pending-file-import-completes.md",
+          "status": "status: Done"
+        }
+      ],
+      "book_basis": "PDF145–146 and158 / printed136–137 and149 explains independent queues and awaited handlers. Preserving newer accepted text at an older completion is an application-specific applicability requirement.",
+      "dedup": "TASK-31645 is Done and implements ordinary file/clipboard imports and recovery, without a pending-read/newer-edit outcome. TASK-31640 owns recovery and TASK-31642 run lifecycle. TASK-31428 is an older planning task, not a second implementation owner. TASK-36363 protects audiobook authorship under a different owner.",
+      "adr_reason": "Routine publication applicability repair within the existing Chunking Lab coordinator, sample ownership, validation and recovery contracts.",
+      "id": 36695,
+      "path": "backlog/tasks/task-36695 - Keep-later-Chunking-Lab-sample-edits-when-an-earlier-file-load-finishes.md"
+    },
+    {
+      "key": "mcp-import-read",
+      "rank": 4,
+      "priority": "medium",
+      "severity": "P2",
+      "title": "Keep pending MCP file reads from replacing newer import drafts",
+      "why": "MCP file-import completion looks up whichever import panel currently exists and replaces its text. Later typing, or Cancel followed by a fresh import form, can therefore lose its draft to an older file selection.",
+      "measured": "Actual Import -> From file -> picker Path callback -> real to_thread read. Both same-panel typing and Cancel/reopen replacement retain later-draft before release, then receive older fixture JSON. Untouched-panel control loads normally. Fake hub only supplies catalog; no credentials or network.",
+      "related": [
+        "32791",
+        "32780",
+        "32787",
+        "32839",
+        "36361"
+      ],
+      "adr": [
+        "033-application-session-state-ownership.md",
+        "240-mcp-destination-retirement-tools-hub-in-settings.md"
+      ],
+      "owners": [
+        "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+        "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py"
+      ],
+      "ac": [
+        "An untouched originating import panel receives its explicitly selected file normally.",
+        "Typing or clearing the import text after file selection remains visible when the older read completes, including invalid raw drafts.",
+        "Cancel, replacement or reopening invalidates the old panel read so it cannot publish into a new import panel.",
+        "Mounted checks cover the actual picker callback and filesystem await with same-panel, replacement and ordinary controls."
+      ],
+      "existing_task_records": [
+        {
+          "id": "32791",
+          "path": "backlog/tasks/task-32791 - Preserve-MCP-root-drafts-and-ordered-save-outcomes.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "32780",
+          "path": "backlog/tasks/task-32780 - Keep-Tool-Profile-reviews-within-the-initiating-Settings-visit.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "32787",
+          "path": "backlog/tasks/task-32787 - Preserve-Tool-Profile-writes-across-Settings-recreation.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "32839",
+          "path": "backlog/tasks/task-32839 - Keep-restored-MCP-review-completion-scoped-and-refresh-passive-views.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "36361",
+          "path": "backlog/tasks/task-36361 - Preserve-newer-Appearance-Storage-and-Console-Behavior-drafts-after-pending-Saves.md",
+          "status": "status: Done"
+        }
+      ],
+      "book_basis": "PDF145–146 and158 / printed136–137 and149 explains widget queues and asynchronous handlers. Originating panel/draft identity is an application-specific deduction.",
+      "dedup": "TASK-32791 covers workspace-root drafts, TASK-32780/32787 Tool Pack review/write lifetimes, TASK-32839 recovery-review completion and TASK-36361 other Settings drafts. Their complete acceptance criteria do not own MCP server JSON file-import publication.",
+      "adr_reason": "Routine stale UI publication repair within existing import-panel/workbench ownership and the canonical Settings host; no new service or permission boundary.",
+      "id": 36696,
+      "path": "backlog/tasks/task-36696 - Keep-pending-MCP-file-reads-from-replacing-newer-import-drafts.md"
+    },
+    {
+      "key": "mcp-import-validation",
+      "rank": 5,
+      "priority": "medium",
+      "severity": "P2",
+      "title": "Reject malformed MCP import shapes without losing the editable panel",
+      "why": "The MCP JSON importer assumes args is iterable and env is a mapping. Valid JSON with malformed field containers escapes Preview validation, causing the error keepalive to retire the import panel and its editable draft.",
+      "measured": "Real Preview of args:42 raises TypeError; env:[not-an-object] raises AttributeError. Valid args:[]/env:{} control passes. Installed keepalive guard keeps the host alive while the failing panel/editor detach. No verified whole-app production crash claim.",
+      "related": [
+        "241",
+        "26013",
+        "14922",
+        "32533",
+        "33621.13"
+      ],
+      "adr": [
+        "161-component-pattern-library.md",
+        "240-mcp-destination-retirement-tools-hub-in-settings.md"
+      ],
+      "owners": [
+        "tldw_chatbook/MCP/mcp_import.py",
+        "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py"
+      ],
+      "ac": [
+        "Malformed args/env container shapes produce a clear import validation error without an uncaught handler exception.",
+        "Rejected source text stays editable, Import remains disabled, and stale preview candidates cannot be submitted.",
+        "Correcting the text and pressing Preview recovers normally; supported valid and omitted field shapes retain existing behavior.",
+        "Parser and mounted Preview regressions cover both observed malformed shapes, a valid control and the installed keepalive semantics."
+      ],
+      "existing_task_records": [
+        {
+          "id": "241",
+          "path": "backlog/tasks/task-241 - MCP-Hub-engineering-follow-ups-from-Phase-2-3-ledgers.md",
+          "status": "status: To Do"
+        },
+        {
+          "id": "26013",
+          "path": "backlog/tasks/task-26013 - MCP-server-spawn-configuration-guard.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "14922",
+          "path": "backlog/tasks/task-14922 - Resolve-PR-1490-post-merge-review-findings.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "32533",
+          "path": "backlog/tasks/task-32533 - Library-Notes-the-app-exits-with-an-unhandled-InvalidSelectValueError-during-the-first-timer-edit-journey-and-the-crash-handler-records-no-site.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "33621.13",
+          "path": "backlog/tasks/task-33621.13 - Console-Choose-folder-for-project-instructions-freezes-the-whole-app-Esc-clicks-and-CtrlQ-ignored.md",
+          "status": "status: Done"
+        }
+      ],
+      "book_basis": "Collateral concrete input-boundary defect found while tracing the book’s queued Preview/panel lifecycle model. Container validation is an existing application requirement, rather than a specific book design.",
+      "dedup": "TASK-241 remains open for regex alignment, mutation remount, slot confirmation and lifecycle cancellation; its complete criteria do not cover malformed containers. TASK-26013 validates spawn-command shapes, TASK-14922 protocol/packaging. TASK-32533 and TASK-33621.13 keep handler errors alive while retiring failing pumps; they do not validate these JSON shapes.",
+      "adr_reason": "Routine validation and recoverable errors within the existing importer and host; no new service or security policy.",
+      "id": 36697,
+      "path": "backlog/tasks/task-36697 - Reject-malformed-MCP-import-shapes-without-losing-the-editable-panel.md"
+    },
+    {
+      "key": "image-demo-publication",
+      "rank": 6,
+      "priority": "low",
+      "severity": "P3",
+      "title": "Ignore superseded Image Gen demo worker results and errors",
+      "why": "The Image Gen demo uses an exclusive thread worker, but the canceled old worker still publishes success or failure. A slow earlier request can replace the newest image, metadata or success status.",
+      "measured": "Real Generate clicks admit OLD then NEW. After NEW publishes, OLD has actual Worker.is_cancelled=True; releasing it replaces metadata/image with OLD or changes Done to OLD adapter failure. Serial control retains NEW. This is the live palette-accessible developer demo, not the production media-generation pipeline.",
+      "related": [
+        "497",
+        "34935",
+        "36098"
+      ],
+      "adr": [
+        "176-one-media-generation-core.md",
+        "033-application-session-state-ownership.md"
+      ],
+      "owners": [
+        "tldw_chatbook/UI/Screens/image_gen_demo_screen.py",
+        "tldw_chatbook/UI/image_gen_command_provider.py"
+      ],
+      "ac": [
+        "A superseded or canceled demo request cannot replace the current image, metadata or status on success or failure.",
+        "The newest still-applicable request publishes its normal success or error outcome.",
+        "Ordinary serial generation and the existing command-palette entry keep working without real API calls in regression tests.",
+        "Mounted held-old/new controls exercise the actual exclusive worker and UI publication for both old success and old failure, with a serial control."
+      ],
+      "existing_task_records": [
+        {
+          "id": "497",
+          "path": "backlog/tasks/task-497 - Image-generation-Phase-1-polish-follow-ups.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "34935",
+          "path": "backlog/tasks/task-34935 - Move-image-gen-demo-PIL-decode-off-the-UI-thread.md",
+          "status": "status: Done"
+        },
+        {
+          "id": "36098",
+          "path": "backlog/tasks/task-36098 - Preserve-newer-Image-and-Video-Settings-drafts-after-pending-saves.md",
+          "status": "status: Done"
+        }
+      ],
+      "book_basis": "PDF335 / printed326 explicitly checks the current worker cancellation state before posting a thread result to the UI. Both success and failure publication must remain applicable to the current demo request.",
+      "dedup": "TASK-497 is Done; it marshals status to the UI thread and intentionally defers other demo polish. TASK-34935 offloads image decoding and TASK-36098 owns Image/Video Settings drafts. None owns canceled demo request publication.",
+      "adr_reason": "Routine applicability checks within the existing demo worker and media-generation core; no new runtime or provider boundary.",
+      "id": 36698,
+      "path": "backlog/tasks/task-36698 - Ignore-superseded-Image-Gen-demo-worker-results-and-errors.md"
+    }
+  ],
+  "source_pins": [
+    {
+      "path": "tldw_chatbook/UI/Dictation_Window_Improved.py",
+      "native_sha256": "0c10109d0b099e20ac2b86e91307f2149c454841b40b91c02fe2ec08d473aceb",
+      "lf_sha256": "67ecb3c152edca73c6581993b541d3514d63679199f6f283abdb2a4b4aa172e4"
+    },
+    {
+      "path": "tldw_chatbook/UI/STTS_Window.py",
+      "native_sha256": "11d29ce7d497bfbfc4c515abf8bde66e537a22d045a5c7f81671e8e9e85e38fa",
+      "lf_sha256": "ff5a52fb64092cc133ceffa7fc693bb87c82c2000e8d491fa7c2dfaf022a2f6e"
+    },
+    {
+      "path": "tldw_chatbook/Audio/dictation_service_lazy.py",
+      "native_sha256": "84be95c78e7df6995e5d26e10f1ff59bb726f3db6d04ac66302b6b752437bd6c",
+      "lf_sha256": "a2de1c6d1b9ab573cc816f93008462bc5714c4926b4a8a865aa78b21e4764ee2"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chunking_lab_screen.py",
+      "native_sha256": "d33e5ff6b5e3a853d90d6d3e69c6c2c3f5602658f05e007f8e6785abbe703cbf",
+      "lf_sha256": "0a7a95a157a319d03751a6a00c58f6999c279b132674aa46b8ee0440578577ff"
+    },
+    {
+      "path": "tldw_chatbook/UI/Chunking_Lab_Modules/sample_region.py",
+      "native_sha256": "5f225806ca71e44b17c1f088e910e907794f3e5d69c137a6a84f8f498b3e68a2",
+      "lf_sha256": "6137dce3b9beec92f3fcdfb9af2b22fb5a2e5a140870b69fa82efb4df115fa2e"
+    },
+    {
+      "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+      "native_sha256": "4cb3ccd87da48c85d2abab5ed94e8c26dffcee0faaa6a551de53eb339e89e5f7",
+      "lf_sha256": "60cb1048910c571122f9eb259d070ba8ea850bbd20eb88f78d4bb1b95b28ba69"
+    },
+    {
+      "path": "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py",
+      "native_sha256": "e787ac315d6d6bd88a3598e8ecee0ec88a6803e6bb58ebe71254109dc133cba5",
+      "lf_sha256": "8bd1b0d408cd5cd13b17e09d37b2f040ecbb9c65e7f55a7079e5cadd8b8c8fa4"
+    },
+    {
+      "path": "tldw_chatbook/MCP/mcp_import.py",
+      "native_sha256": "68982787e656a6e27190d2796d3e6f0a4b21a0edaac72edf97d31aa5f744495b",
+      "lf_sha256": "6384f1675ac73a3881da01e74df8cc41b17cbd8056ec6c9c94ea4c6e7eca5b73"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/image_gen_demo_screen.py",
+      "native_sha256": "30af61c6356f63109143400438c767f348407ec36412810ea28a28b5785e4fb4",
+      "lf_sha256": "1444d338c89dc5e05acb802b689f6cb6700f3df43990a7a4a10b4bd9c5ffc925"
+    },
+    {
+      "path": "tldw_chatbook/UI/image_gen_command_provider.py",
+      "native_sha256": "680541076d01609772f1889c693b63a910cb106da3ec4b7a79919494c3455bb9",
+      "lf_sha256": "a114bf505a52799b07346e02b14f6f17b3b108f47ae05ae0a24f7173694c434b"
+    }
+  ],
+  "duplicate_review": {
+    "open_pr_count": 33,
+    "overlapping_prs": [
+      {
+        "number": 3156,
+        "head": "58d8425296c3d2c095a574331249dbd0e9c736ac",
+        "files": [
+          "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py"
+        ]
+      },
+      {
+        "number": 3148,
+        "head": "97ac608aba159bd8696ea50d279261867d97e16a",
+        "files": [
+          "tldw_chatbook/UI/MCP_Modules/mcp_profile_form.py",
+          "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py"
+        ]
+      }
+    ],
+    "newer_title_claim": "TASK-36663 focus contrast; no overlap",
+    "allocation": {
+      "ids": [
+        36693,
+        36694,
+        36695,
+        36696,
+        36697,
+        36698
+      ],
+      "max_seen": 36663,
+      "lead": 30,
+      "sweep": "id-claims-immediate-before-filing-02.json",
+      "audited_head": "96cae7eec00473bbfb5687ccfd0685eba2785add"
+    }
+  },
+  "evidence_manifest": "Docs/superpowers/qa/2026-10-24-textual-book-after-pr3228/manifest.json",
+  "limits": [
+    "No production fixes in this audit.",
+    "Chunking product assertion and native-worker teardown error are both retained; no clean expected-red-only batch claim.",
+    "No physical microphone, full unmodified app, native Chunking picker or race-incidence certification."
+  ],
+  "adr_required": false,
+  "adr_reason": "Bounded repairs within linked existing owners; implementation re-evaluates expanded boundaries."
+}

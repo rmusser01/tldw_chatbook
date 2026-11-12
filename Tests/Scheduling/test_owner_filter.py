@@ -100,6 +100,7 @@ def test_tick_never_dispatches_server_scoped_rows(db):
         handlers={"reminder": handler},
         clock=lambda: NOW + timedelta(minutes=5),
         missed_fire_grace_seconds=60.0,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     loop.queue.load()
     asyncio.run(loop.tick())

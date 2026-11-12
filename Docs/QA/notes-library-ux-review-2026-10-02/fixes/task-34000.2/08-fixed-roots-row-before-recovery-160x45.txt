@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N    N   Library notes · Manage sync folders                                                                                                               │
+│   a    o   Nothing chosen yet.                                                                                                                               │
+│   v    t   Sync folder (name unavailable before cutover)                                                                                                     │
+│        e   ⚠ Needs attention · Next: Resolve recovery                                                                                                        │
+│        s                                                                      Recovery                                                                       │
+│                                                                            Check changes                                                                     │
+│                                                                                Pause                                                                         │
+│                                                             ○ Retarget unavailable — not in this release                                                     │
+│                                                            ○ Disconnect unavailable — not in this release                                                    │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│            Receipts                                                                                                                                          │
+│            2026-10-03 13:48 · Created note from file · ideas.md · ideas                                                                                      │
+│ --->       2026-10-03 13:48 · Created note from file · travel lisbon.md · travel lisbon                                                                      │
+│            2026-10-03 13:48 · Created note from file · meeting 2026-09-30.md · meeting 2026-09-30                                                            │
+│            2026-10-03 13:48 · Created note from file · books to read.md · books to read                                                                      │
+│            2026-10-03 13:48 · Created note from file · shopping.md · shopping                                                                                │
+│            2026-10-03 13:48 · Created note from file · README.txt.md · README.txt                                                                            │
+│      --->  2026-10-03 13:48 · Created note from file · recipe pancakes.md · recipe pancakes                                                                  │
+│            2026-10-03 13:48 · Created note from file · passwords-hint.md · passwords-hint                                                                    │
+│            2026-10-03 13:48 · Created note from file · work todo.md · work todo                                                                              │
+│            2026-10-03 13:48 · Created note from file · quotes.md · quotes                                                                                    │
+│                                                                                                                                                              │
+│ --->                                                                                                                                                         │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│            Retarget/Disconnect unavailable — not in this release; nothing on disk or in Notes changes.                                                       │
+│             ┃   ‹ Notes    ┃                                                                                                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter run action | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

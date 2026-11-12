@@ -65,6 +65,7 @@ async def test_reader_keeps_usable_panes_and_five_cell_click_targets(profile, wi
         assert app.toggles == ["library", "items"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("width", [100, 124, 160])
 async def test_real_media_reader_preserves_visible_list_after_opening_item(
     width, tmp_path

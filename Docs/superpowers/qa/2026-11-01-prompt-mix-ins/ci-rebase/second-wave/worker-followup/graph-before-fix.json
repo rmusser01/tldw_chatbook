@@ -1,0 +1,57 @@
+{
+  "baseline": {
+    "reply_resolution": [
+      {
+        "key": "tldw_chatbook/Chat/console_chat_controller.py::ConsoleChatController._run_agent_reply",
+        "class_context": "ConsoleChatController",
+        "callback_targets": [
+          [
+            "bound",
+            "tldw_chatbook/Chat/console_chat_controller.py::ConsoleChatController._select_project_instruction_binding"
+          ]
+        ],
+        "callback_sites": [],
+        "function_sites": []
+      }
+    ],
+    "two_reported_root_rows": []
+  },
+  "current": {
+    "reply_resolution": [
+      {
+        "key": "tldw_chatbook/Chat/console_agent_reply.py::_run_agent_reply",
+        "class_context": null,
+        "callback_targets": [
+          [
+            "defs",
+            "_select_project_instruction_binding"
+          ]
+        ],
+        "callback_sites": [
+          "tldw_chatbook/UI/Console_Modules/session.py::ConsoleSessionController._select_project_instruction_binding"
+        ],
+        "function_sites": [
+          "tldw_chatbook/UI/Console_Modules/session.py::ConsoleSessionController._select_project_instruction_binding"
+        ]
+      },
+      {
+        "key": "tldw_chatbook/Chat/console_chat_controller.py::ConsoleChatController._run_agent_reply",
+        "class_context": "ConsoleChatController",
+        "callback_targets": [
+          [
+            "bound",
+            "tldw_chatbook/Chat/console_chat_controller.py::ConsoleChatController._select_project_instruction_binding"
+          ]
+        ],
+        "callback_sites": [],
+        "function_sites": [
+          "tldw_chatbook/UI/Console_Modules/session.py::ConsoleSessionController._select_project_instruction_binding"
+        ]
+      }
+    ],
+    "two_reported_root_rows": [
+      "tldw_chatbook/Chat/console_chat_start.py::ConsoleChatStartCoordinator.start->_run => tldw_chatbook/UI/Console_Modules/session.py::ConsoleSessionController._select_project_instruction_binding",
+      "tldw_chatbook/Web_Server/mobile_service.py::MobileChatService.send->_run_turn => tldw_chatbook/UI/Console_Modules/session.py::ConsoleSessionController._select_project_instruction_binding"
+    ]
+  }
+}

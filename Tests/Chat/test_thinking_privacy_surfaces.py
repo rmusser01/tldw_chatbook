@@ -395,6 +395,7 @@ def test_real_durable_owners_keep_thinking_and_private_continuation_separate(
         target.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_chatbook_archive_and_import_preserve_only_approved_sensitive_fields(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> None:

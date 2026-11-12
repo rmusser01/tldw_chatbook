@@ -1,0 +1,4 @@
+Tests/Chat/test_console_chat_create_integration.py: formatter-required hunk overlaps changed lines
+tldw_chatbook/Chat/console_agent_bridge.py: formatter-required hunk overlaps changed lines
+tldw_chatbook/Chat/console_agent_bridge.py: normalized formatter debt grew from 160 to 162
+tldw_chatbook/Chat/console_chat_controller.py: formatter-required hunk overlaps changed lines

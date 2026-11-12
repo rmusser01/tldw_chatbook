@@ -1,7 +1,7 @@
 ---
 id: TASK-32897
 title: "Work stream: repair the three guards that are green without proving anything"
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-21 23:05'
 labels:
@@ -88,3 +88,15 @@ Follow-up filed as TASK-32897.1: `canvas_shell.js`/`.css`/`.html` (51 KB + 10 KB
 `gateway.py:126-130`) are under no integrity check at all, and `canvas_shell.js` is the code that reads the
 gateway's bootstrap **token** from the URL fragment. Larger exposure than the hole just closed.
 <!-- SECTION:NOTES:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+Implemented on `fix/tier2-guards` (f3bb728761) and merged via PR #2798 (2026-09-23):
+"fix(guards): repair three CI-required checks that passed without checking (TASK-32897)".
+Implementation Notes record all three guards real; guard 3 was understated, the laundering path
+(vendor_canvas_mermaid --output-dir) closed.
+
+AC checkboxes are left as found; this section is the audit's evidence record.

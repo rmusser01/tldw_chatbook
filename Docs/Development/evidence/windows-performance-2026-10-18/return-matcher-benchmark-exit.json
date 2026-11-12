@@ -1,0 +1,11 @@
+{
+  "tag": "benchmark",
+  "original": false,
+  "checkout_revision": "48339e4d6d2fa82b561e6fa1651f8e82928177b2",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "17fabad938cb43559f2ad9eb9bee1b551238239fbafa2190bac1801614bb2fc1",
+    "tldw_chatbook/Utils/textual_css_fastpath.py": "945b9a897bf9a22c467fa9b6cbd8da6e8e986a6f0a224a8036f47288e132bd15"
+  },
+  "exit_code": 0,
+  "seconds": 40.5
+}

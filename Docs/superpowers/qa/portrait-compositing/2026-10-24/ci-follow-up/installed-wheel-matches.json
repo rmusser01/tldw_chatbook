@@ -1,0 +1,14 @@
+[
+  {
+    "journey": "portrait-ci-installed-isolated",
+    "wheel_sha256": "7104bb8fab1ee302f115b6f76722073cf663b519db9fbbd0be4d3d51e99631f2",
+    "production_files_checked": 52,
+    "mismatches": []
+  },
+  {
+    "journey": "portrait-ci-native-final",
+    "wheel_sha256": "f78cd67ba6a44ad386036f037e03e6e1f6fbf0deb22917eb8d7dbdad404d6202",
+    "production_files_checked": 52,
+    "mismatches": []
+  }
+]

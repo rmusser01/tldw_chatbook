@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="1.627" timestamp="2026-10-03T22:01:25.789720-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_late_recovery_cleanup_preserves_new_owner_uncertainty[False]" time="0.984"><failure message="AttributeError: 'AgentRunsDB' object has no attribute 'close_connection'. Did you mean: '_get_connection'?">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10fc974a0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e7b02f0&gt;
+unknown_root = False
+
+    @pytest.mark.parametrize("unknown_root", [False, True])
+    def test_late_recovery_cleanup_preserves_new_owner_uncertainty(
+        db, monkeypatch, unknown_root
+    ):
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        old = db.automatic_work
+        peer = AgentRunsDB(db.db_path, client_id="replacement", reconcile_on_init=False)
+        committed, release = threading.Event(), threading.Event()
+        transaction = old.transaction
+    
+        @contextmanager
+        def pause_after_real_commit():
+            with transaction() as conn:
+                yield conn
+            committed.set()
+            assert release.wait(10)
+    
+        monkeypatch.setattr(old, "transaction", pause_after_real_commit)
+    
+        def recover_old():
+            try:
+                return old.recover(current_owner_id="first-recovery")
+            finally:
+                db.close_connection()
+    
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            recovery = pool.submit(recover_old)
+            try:
+                assert committed.wait(5)
+                ledger = peer.automatic_work
+                ledger.recover(current_owner_id="replacement")
+                root = chain(peer, conversation="replacement-source", submission="replacement")
+                source = peer.create_run(
+                    conversation_id="replacement-source", agent_kind="primary", work_chain_id=root
+                )
+                start = prepare(peer, source, "target", "uncertain", owner_id="replacement")
+                assert ledger.accept_chat_start(start.id, owner_id="replacement")
+                ledger._restrict_chat_start(
+                    start.id, owner_id="replacement", chain_id=None if unknown_root else root
+                )
+                before = ledger.snapshot(root)
+                assert before.status == "active" and before.used["generation"] == 1
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    ledger.check_active(root, owner_id="replacement")
+                release.set()
+                assert recovery.result(timeout=5) == 0
+                assert ledger.read_chat_start_attempt(start.id, owner_id="replacement").state == "accepted"
+                assert ledger.snapshot(root).used == before.used
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    ledger.check_active(root, owner_id="replacement")
+                # Same-owner recovery has not reconciled the accepted uncertainty.
+                ledger.recover(current_owner_id="replacement")
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    prepare(peer, source, "sibling", "sibling", owner_id="replacement")
+                assert not ledger.abort_chat_start(start.id, owner_id="replacement")
+                assert not ledger.accept_chat_start(start.id, owner_id="replacement")
+                # Verified settlement retains the original charge and root pause.
+                assert ledger.mark_chat_start_review_required(start.id, owner_id="replacement")
+                with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+                    ledger.check_active(root, owner_id="replacement")
+                assert ledger.snapshot(root).used == before.used
+                ledger.recover(current_owner_id="sequential-replacement")
+                healthy = chain(peer, conversation="healthy", submission="healthy")
+                assert ledger.check_active(healthy, owner_id="sequential-replacement").status == "active"
+            finally:
+                release.set()
+&gt;               recovery.result(timeout=5)
+
+Tests/DB/test_automatic_chat_starts.py:574: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+Tests/DB/test_automatic_chat_starts.py:553: in test_late_recovery_cleanup_preserves_new_owner_uncertainty
+    assert recovery.result(timeout=5) == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def recover_old():
+        try:
+            return old.recover(current_owner_id="first-recovery")
+        finally:
+&gt;           db.close_connection()
+            ^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'AgentRunsDB' object has no attribute 'close_connection'. Did you mean: '_get_connection'?
+
+Tests/DB/test_automatic_chat_starts.py:531: AttributeError</failure></testcase><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_late_recovery_cleanup_preserves_new_owner_uncertainty[True]" time="0.395"><failure message="AttributeError: 'AgentRunsDB' object has no attribute 'close_connection'. Did you mean: '_get_connection'?">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10fe7f800&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10fbf8860&gt;
+unknown_root = True
+
+    @pytest.mark.parametrize("unknown_root", [False, True])
+    def test_late_recovery_cleanup_preserves_new_owner_uncertainty(
+        db, monkeypatch, unknown_root
+    ):
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        old = db.automatic_work
+        peer = AgentRunsDB(db.db_path, client_id="replacement", reconcile_on_init=False)
+        committed, release = threading.Event(), threading.Event()
+        transaction = old.transaction
+    
+        @contextmanager
+        def pause_after_real_commit():
+            with transaction() as conn:
+                yield conn
+            committed.set()
+            assert release.wait(10)
+    
+        monkeypatch.setattr(old, "transaction", pause_after_real_commit)
+    
+        def recover_old():
+            try:
+                return old.recover(current_owner_id="first-recovery")
+            finally:
+                db.close_connection()
+    
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            recovery = pool.submit(recover_old)
+            try:
+                assert committed.wait(5)
+                ledger = peer.automatic_work
+                ledger.recover(current_owner_id="replacement")
+                root = chain(peer, conversation="replacement-source", submission="replacement")
+                source = peer.create_run(
+                    conversation_id="replacement-source", agent_kind="primary", work_chain_id=root
+                )
+                start = prepare(peer, source, "target", "uncertain", owner_id="replacement")
+                assert ledger.accept_chat_start(start.id, owner_id="replacement")
+                ledger._restrict_chat_start(
+                    start.id, owner_id="replacement", chain_id=None if unknown_root else root
+                )
+                before = ledger.snapshot(root)
+                assert before.status == "active" and before.used["generation"] == 1
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    ledger.check_active(root, owner_id="replacement")
+                release.set()
+                assert recovery.result(timeout=5) == 0
+                assert ledger.read_chat_start_attempt(start.id, owner_id="replacement").state == "accepted"
+                assert ledger.snapshot(root).used == before.used
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    ledger.check_active(root, owner_id="replacement")
+                # Same-owner recovery has not reconciled the accepted uncertainty.
+                ledger.recover(current_owner_id="replacement")
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    prepare(peer, source, "sibling", "sibling", owner_id="replacement")
+                assert not ledger.abort_chat_start(start.id, owner_id="replacement")
+                assert not ledger.accept_chat_start(start.id, owner_id="replacement")
+                # Verified settlement retains the original charge and root pause.
+                assert ledger.mark_chat_start_review_required(start.id, owner_id="replacement")
+                with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+                    ledger.check_active(root, owner_id="replacement")
+                assert ledger.snapshot(root).used == before.used
+                ledger.recover(current_owner_id="sequential-replacement")
+                healthy = chain(peer, conversation="healthy", submission="healthy")
+                assert ledger.check_active(healthy, owner_id="sequential-replacement").status == "active"
+            finally:
+                release.set()
+&gt;               recovery.result(timeout=5)
+
+Tests/DB/test_automatic_chat_starts.py:574: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+Tests/DB/test_automatic_chat_starts.py:553: in test_late_recovery_cleanup_preserves_new_owner_uncertainty
+    assert recovery.result(timeout=5) == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def recover_old():
+        try:
+            return old.recover(current_owner_id="first-recovery")
+        finally:
+&gt;           db.close_connection()
+            ^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'AgentRunsDB' object has no attribute 'close_connection'. Did you mean: '_get_connection'?
+
+Tests/DB/test_automatic_chat_starts.py:531: AttributeError</failure></testcase></testsuite></testsuites>

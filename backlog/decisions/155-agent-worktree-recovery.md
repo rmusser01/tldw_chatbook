@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-09-12
 Tasks: TASK-31210, TASK-31211
-Related: ADR-067, ADR-069, ADR-082, ADR-101, ADR-129, ADR-139, ADR-150
+Related: ADR-314, ADR-317, ADR-082, ADR-101, ADR-129, ADR-139, ADR-348
 
 ## Current decision: restore ordinary local Git operations
 
@@ -31,7 +31,7 @@ Recorded unresolved and uncertain work survives GC even when clean. Unknown agen
 
 Mutation occurs through a narrow extension to ADR-101's contained one-shot worker: closed internal create/preview/apply/merge/discard operations, strict app-originated identity records, no arbitrary Git argv/shell/executable/config. Git inherits pinned cwd and existing containment. Adding these specific internal mutating operations is authorized by this ADR, not by ADR-101 alone; public read-only git_* tools remain read-only. Two-root operations must retain both admitted source and destination identities, with supported-platform evidence or fail-closed refusal.
 
-A visible exact-request Allow is required for landing/destruction; permission/binding gates still apply. Worktree confirmations retain ADR-139's separate host path and ADR-067 human-wait behavior. Recovery owns an independent retained operation/cancellation signal rather than borrowing the already-finished primary turn's event. Navigation parks presentation; closing the owning session cancels pre-admission work; ambiguous post-admission outcomes remain uncertain.
+A visible exact-request Allow is required for landing/destruction; permission/binding gates still apply. Worktree confirmations retain ADR-139's separate host path and ADR-314 human-wait behavior. Recovery owns an independent retained operation/cancellation signal rather than borrowing the already-finished primary turn's event. Navigation parks presentation; closing the owning session cancels pre-admission work; ambiguous post-admission outcomes remain uncertain.
 
 A terminal DB run is necessary but insufficient for destructive recovery: existing runtime can terminalize an abandoned live thread. Reuse the existing ExecutionOwner/OwnedOperation ledger: one-shot callbacks run outside its lock after root and every physical tool/model operation finish, persisting writer_state drained. A sticky cleanup-unproven flag instead persists uncertain; prior-process held records reopen as uncertain. No second ownership registry is introduced; unproven abandoned execution remains non-actionable. Logical fleet pruning cannot erase these fences.
 

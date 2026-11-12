@@ -492,6 +492,7 @@ async def test_server_writing_service_re_resolves_provider_without_service_local
         assert all(value is not built_client for value in vars(service).values())
 
 
+@pytest.mark.bootstrap_profile
 def test_server_writing_service_from_config_returns_provider_backed_service():
     service = ServerWritingService.from_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}

@@ -1,0 +1,32 @@
+[
+  {
+    "owner": "<class 'tldw_chatbook.UI.Screens.evals_screen.EvalsScreen'>",
+    "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\UI\\Screens\\evals_screen.py",
+    "sha256": "71f910ebe96bbbeec8baa0b8ab57661afdde0400188d7f424b05083d168f4cb0"
+  },
+  {
+    "owner": "<class 'tldw_chatbook.UI.Evals.character_bench_editor.CharacterBenchEditor'>",
+    "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\UI\\Evals\\character_bench_editor.py",
+    "sha256": "601b4960ed0a4e06fe1a83ea63a788710bc08f270e2091de59140498dc68f845"
+  },
+  {
+    "owner": "<class 'tldw_chatbook.DB.Evals_DB.EvalsDB'>",
+    "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\DB\\Evals_DB.py",
+    "sha256": "7286022519abcc41ec6c87a9d99d15ffab8fefe86d8b8de570d93e2a2b55461d"
+  },
+  {
+    "owner": "<class 'tldw_chatbook.DB.ChaChaNotes_DB.CharactersRAGDB'>",
+    "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\DB\\ChaChaNotes_DB.py",
+    "sha256": "f52f1c970ad29989c77eda13963d0e74e8b2d8722a9af49bc7347e2d3665ea59"
+  },
+  {
+    "owner": "<function load_character_bench at 0x000002206FAD1B20>",
+    "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Evals\\character_probe\\storage.py",
+    "sha256": "3418063ead93c10f5e2eb37e211c3b30a33adf15b95975b9ee9ec067c55cb8ae"
+  },
+  {
+    "owner": "<class 'tldw_chatbook.UI.Evals.card_picker.CardPicker'>",
+    "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\UI\\Evals\\card_picker.py",
+    "sha256": "f1b220072620dedcf9374f7a607e16b0081feae81854c841c4829cda506a1400"
+  }
+]

@@ -11,9 +11,15 @@ tmp_path files -- never the real user config/data dirs.
 import sqlite3
 from contextlib import closing
 
-from tldw_chatbook.Subscriptions.site_config_manager import SiteConfig, SiteConfigManager
+import pytest
+
+from tldw_chatbook.Subscriptions.site_config_manager import (
+    SiteConfig,
+    SiteConfigManager,
+)
 
 
+@pytest.mark.bootstrap_profile
 def test_fresh_db_manager_can_save_and_load_config(request, tmp_path):
     db_path = str(tmp_path / "subs.db")
     manager = SiteConfigManager(db_path)
@@ -29,6 +35,7 @@ def test_fresh_db_manager_can_save_and_load_config(request, tmp_path):
     assert reloaded.rate_limit_requests == 30
 
 
+@pytest.mark.bootstrap_profile
 def test_idempotent_across_multiple_manager_constructions(request, tmp_path):
     # "Already migrated" case at the manager level: a second SiteConfigManager
     # (fresh Python object, fresh CharactersRAGDB/SubscriptionsDB instances)
@@ -61,6 +68,7 @@ def test_idempotent_across_multiple_manager_constructions(request, tmp_path):
     assert domains == {"example.com", "other.example.com"}
 
 
+@pytest.mark.bootstrap_profile
 def test_manager_survives_legacy_db_with_existing_site_configs_rows(request, tmp_path):
     # A database created before this relocation: site_configs already exists
     # (created on demand by the old SiteConfigManager._create_tables path)
@@ -104,6 +112,7 @@ def test_manager_survives_legacy_db_with_existing_site_configs_rows(request, tmp
     assert domains == {"legacy.example.com", "new.example.com"}
 
 
+@pytest.mark.bootstrap_profile
 def test_apply_preset_and_delete_still_work(request, tmp_path):
     # Smoke-covers the public surface SiteConfigSettings/web_scraping_pipelines
     # exercise, so a regression in either would show up here too.

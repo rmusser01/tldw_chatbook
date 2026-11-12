@@ -69,6 +69,7 @@ def _png(tmp_path: pathlib.Path, width: int, height: int) -> pathlib.Path:
     return path
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_image_under_the_pixel_cap_is_accepted(tmp_path, low_pixel_cap):
     payload, mime = await ChatImageHandler.process_image_file(
@@ -78,6 +79,7 @@ async def test_an_image_under_the_pixel_cap_is_accepted(tmp_path, low_pixel_cap)
     assert mime == "image/png"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("width", "height", "band"),
@@ -93,6 +95,7 @@ async def test_an_oversized_by_pixels_image_is_refused(
         await ChatImageHandler.process_image_file(str(_png(tmp_path, width, height)))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_refusal_is_not_swallowed_by_the_original_bytes_fallback(
     tmp_path, low_pixel_cap

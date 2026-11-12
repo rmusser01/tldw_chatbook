@@ -1,0 +1,56 @@
+{
+  "head": "96cae7eec00473bbfb5687ccfd0685eba2785add",
+  "branch": "codex/textual-book-followups-after-3228",
+  "trackedStatus": [],
+  "sources": [
+    {
+      "path": "tldw_chatbook/UI/Screens/image_gen_demo_screen.py",
+      "unchangedFromPrior": true,
+      "sha256": "30af61c6356f63109143400438c767f348407ec36412810ea28a28b5785e4fb4"
+    },
+    {
+      "path": "tldw_chatbook/UI/image_gen_command_provider.py",
+      "unchangedFromPrior": true,
+      "sha256": "680541076d01609772f1889c693b63a910cb106da3ec4b7a79919494c3455bb9"
+    },
+    {
+      "path": "tldw_chatbook/UI/Dictation_Window_Improved.py",
+      "unchangedFromPrior": true,
+      "sha256": "0c10109d0b099e20ac2b86e91307f2149c454841b40b91c02fe2ec08d473aceb"
+    },
+    {
+      "path": "tldw_chatbook/UI/STTS_Window.py",
+      "unchangedFromPrior": true,
+      "sha256": "11d29ce7d497bfbfc4c515abf8bde66e537a22d045a5c7f81671e8e9e85e38fa"
+    },
+    {
+      "path": "tldw_chatbook/Audio/dictation_service_lazy.py",
+      "unchangedFromPrior": true,
+      "sha256": "84be95c78e7df6995e5d26e10f1ff59bb726f3db6d04ac66302b6b752437bd6c"
+    }
+  ],
+  "outcomes": [
+    {
+      "caseGroup": "image",
+      "cases": 3,
+      "exitCode": 0,
+      "blockedNetworkAttempts": [],
+      "profileViolations": []
+    },
+    {
+      "caseGroup": "navigation",
+      "cases": 2,
+      "exitCode": 0,
+      "blockedNetworkAttempts": [],
+      "profileViolations": []
+    },
+    {
+      "caseGroup": "dispatch",
+      "cases": 2,
+      "exitCode": 0,
+      "blockedNetworkAttempts": [],
+      "profileViolations": []
+    }
+  ],
+  "totalCases": 7.0
+}

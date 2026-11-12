@@ -37,6 +37,11 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 )
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 async def trace_harness(tmp_path, monkeypatch, request):
@@ -119,14 +124,13 @@ async def trace_harness(tmp_path, monkeypatch, request):
         append = store.append_stream_chunk
 
         def record_partial(message_id, chunk):
-            result = append(message_id, chunk)
+            append(message_id, chunk)
             harness.partial_received.set()
-            return result
 
         monkeypatch.setattr(store, "append_stream_chunk", record_partial)
     controller.provider_gateway = gateway
-    controller._chat_dictionary_applier = lambda _conversation, text: text.replace(
-        "alias", "expanded"
+    controller._chat_dictionary_applier = (
+        lambda _conversation, text, _frozen_inputs=None: text.replace("alias", "expanded")
     )
     _force_capture_on(monkeypatch)
     harness.gateway = gateway
@@ -216,8 +220,8 @@ async def test_source_pin_never_authorizes_changed_history(
     )
     substitute = harness.controller._apply_skill_substitution
 
-    async def tamper(rows):
-        result = await substitute(rows)
+    async def tamper(rows, *args, **kwargs):
+        result = await substitute(rows, *args, **kwargs)
         if change == "historical_text":
             result[0][0] = {**result[0][0], "content": "changed history"}
         elif change == "current_role":

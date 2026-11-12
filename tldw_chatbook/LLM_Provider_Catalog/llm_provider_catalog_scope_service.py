@@ -378,9 +378,7 @@ class LLMProviderCatalogScopeService:
         }
         if not use_shared_cache:
             discovery_kwargs["use_shared_cache"] = False
-        result = await self._maybe_await(
-            service.discover_models(**discovery_kwargs)
-        )
+        result = await self._maybe_await(service.discover_models(**discovery_kwargs))
         if isinstance(result, ModelDiscoveryResult):
             return result
         raise TypeError(

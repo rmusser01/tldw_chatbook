@@ -8,6 +8,7 @@ from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "resolution", [ConflictResolution.SKIP, ConflictResolution.RENAME]
 )

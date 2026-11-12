@@ -132,6 +132,7 @@ def _task(subscription_id: int) -> dict:
 # --- AC#1: one instance -----------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_service_resolves_its_db_factory_exactly_once(tmp_path):
     """Every service method used to reconstruct the database.
@@ -215,6 +216,7 @@ def test_concurrent_threads_still_construct_the_database_exactly_once(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reassigning_db_factory_repoints_the_service(tmp_path):
     """The injectable factory seam survives the caching.
@@ -241,6 +243,7 @@ async def test_reassigning_db_factory_repoints_the_service(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_source_deleted_mid_launch_still_raises_keyerror(tmp_path):
     """The `launch_run` contract survives its own widened window.
@@ -274,6 +277,7 @@ async def test_a_source_deleted_mid_launch_still_raises_keyerror(tmp_path):
 # --- AC#2: nothing synchronous on the loop ----------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("source_type", "body", "content_type"),
     [
@@ -317,8 +321,7 @@ async def test_a_scheduled_check_runs_no_sqlite_on_the_event_loop(
         db.conn.set_trace_callback(None)
 
     assert not loop_statements, (
-        "a scheduled check ran SQL on the event-loop thread: "
-        f"{loop_statements[:3]}"
+        f"a scheduled check ran SQL on the event-loop thread: {loop_statements[:3]}"
     )
 
     # Never vacuous: the check must really have done its work.
@@ -361,7 +364,12 @@ async def test_the_feed_parse_runs_off_the_event_loop_thread(
     setattr(monitor, parser, spy)
 
     items = await monitor.check_feed(
-        {"id": 1, "name": "Feed", "type": source_type, "source": "https://example.com/feed"}
+        {
+            "id": 1,
+            "name": "Feed",
+            "type": source_type,
+            "source": "https://example.com/feed",
+        }
     )
 
     assert items, "the parse must have produced items, or the spy proves nothing"
@@ -402,6 +410,7 @@ async def test_url_html_extraction_runs_off_the_event_loop(monkeypatch):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_changed_item_cpu_work_runs_off_the_event_loop_without_changing_semantics(
     tmp_path, monkeypatch
@@ -532,6 +541,7 @@ async def test_changed_item_cpu_work_runs_off_the_event_loop_without_changing_se
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_below_threshold_cpu_work_stops_before_significant_change_details(
     tmp_path, monkeypatch
@@ -610,6 +620,7 @@ async def test_below_threshold_cpu_work_stops_before_significant_change_details(
     assert [row["extracted_content"] for row in snapshots] == [previous_text]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_change_worker_does_not_resume_check_or_mutate_state(
     tmp_path, monkeypatch
@@ -691,6 +702,7 @@ async def test_cancelled_change_worker_does_not_resume_check_or_mutate_state(
     assert worker_threads[0] != loop_thread
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failing_change_worker_propagates_and_records_breaker_failure(
     tmp_path, monkeypatch
@@ -786,6 +798,7 @@ async def test_offload_preserves_call_order_and_propagates_errors(tmp_path):
         await run_db_off_loop(db, boom)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_every_db_call_a_scheduled_check_makes_runs_off_the_loop_thread(
     tmp_path, monkeypatch

@@ -35,9 +35,10 @@ from tldw_chatbook.Widgets.Console.console_setup_modal import (
 
 def test_wizard_summary_offers_write_your_first_note() -> None:
     """The Summary step offers a notes path beside "Add your first document"."""
-    from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+    # TASK-34100.1: the Summary step moved to its own module.
+    from tldw_chatbook.UI.Wizards import first_run_summary_step as summary_module
 
-    source = inspect.getsource(wizard_module)
+    source = inspect.getsource(summary_module)
     assert '"Write your first note", id="setup-exit-library-notes"' in source
     assert '@on(Button.Pressed, "#setup-exit-library-notes")' in source
 
@@ -118,6 +119,7 @@ async def _mount_wizard_notes_handoff():
     return LibraryHarness(app, screen=screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_wizard_notes_handoff_parks_focus_on_blank_note() -> None:
     """task-32245 AC#1/AC#3: the hand-off lands ready for the first Enter.
@@ -153,6 +155,7 @@ async def test_wizard_notes_handoff_parks_focus_on_blank_note() -> None:
         assert ("enter", "create note") in screen._library_notes_footer_shortcuts()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_wizard_notes_handoff_items_pane_leaves_the_loading_state() -> None:
     """task-32245 AC#2: the Items pane resolves once the snapshot lands.

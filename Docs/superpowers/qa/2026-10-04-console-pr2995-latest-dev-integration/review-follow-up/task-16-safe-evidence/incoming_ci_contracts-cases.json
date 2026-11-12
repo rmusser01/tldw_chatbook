@@ -1,0 +1,152 @@
+{
+  "actual_cases": 24,
+  "cases": [
+    {
+      "classname": "Tests.CI.test_derived_artifacts_workflow",
+      "name": "test_workflow_has_one_fast_prerequisite_and_one_required_aggregator",
+      "outcome": "passed",
+      "time": "1.288"
+    },
+    {
+      "classname": "Tests.CI.test_derived_artifacts_workflow",
+      "name": "test_required_aggregator_fails_when_either_lane_fails",
+      "outcome": "passed",
+      "time": "0.011"
+    },
+    {
+      "classname": "Tests.CI.test_derived_artifacts_workflow",
+      "name": "test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards",
+      "outcome": "passed",
+      "time": "0.011"
+    },
+    {
+      "classname": "Tests.CI.test_derived_artifacts_workflow",
+      "name": "test_required_check_name_is_stable",
+      "outcome": "passed",
+      "time": "0.009"
+    },
+    {
+      "classname": "Tests.CI.test_derived_artifacts_workflow",
+      "name": "test_dispatch_input_lets_the_queue_name_the_pr",
+      "outcome": "passed",
+      "time": "0.011"
+    },
+    {
+      "classname": "Tests.CI.test_derived_artifacts_workflow",
+      "name": "test_queue_tick_runs_after_ci_and_is_never_required",
+      "outcome": "passed",
+      "time": "0.020"
+    },
+    {
+      "classname": "Tests.CI.test_derived_artifacts_workflow",
+      "name": "test_branch_dispatch_without_pr_runs_the_gate",
+      "outcome": "passed",
+      "time": "0.009"
+    },
+    {
+      "classname": "Tests.CI.test_ci_queue_pressure_contract",
+      "name": "test_fast_lane_is_one_serial_minimal_python_312_job",
+      "outcome": "passed",
+      "time": "0.009"
+    },
+    {
+      "classname": "Tests.CI.test_ci_queue_pressure_contract",
+      "name": "test_required_context_fails_closed_and_keeps_artifact_checks_install_free",
+      "outcome": "passed",
+      "time": "0.010"
+    },
+    {
+      "classname": "Tests.CI.test_ci_queue_pressure_contract",
+      "name": "test_required_aggregation_contract_rejects_missing_prerequisite",
+      "outcome": "passed",
+      "time": "0.010"
+    },
+    {
+      "classname": "Tests.CI.test_ci_queue_pressure_contract",
+      "name": "test_required_aggregation_contract_rejects_partial_failure_check",
+      "outcome": "passed",
+      "time": "0.011"
+    },
+    {
+      "classname": "Tests.CI.test_ci_queue_pressure_contract",
+      "name": "test_required_aggregation_contract_rejects_continue_on_error[pr-fast-lane-None]",
+      "outcome": "passed",
+      "time": "0.011"
+    },
+    {
+      "classname": "Tests.CI.test_ci_queue_pressure_contract",
+      "name": "test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-None]",
+      "outcome": "passed",
+      "time": "0.010"
+    },
+    {
+      "classname": "Tests.CI.test_ci_queue_pressure_contract",
+      "name": "test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-Require successful PR fast lane]",
+      "outcome": "passed",
+      "time": "0.012"
+    },
+    {
+      "classname": "Tests.CI.test_ci_queue_pressure_contract",
+      "name": "test_required_aggregation_contract_rejects_continue_on_error[derived-artifacts-Generated stylesheets reproduce from their sources]",
+      "outcome": "passed",
+      "time": "0.011"
+    },
+    {
+      "classname": "Tests.CI.test_pr_workflows_dispatch_safe",
+      "name": "test_there_are_pull_request_workflows",
+      "outcome": "passed",
+      "time": "0.099"
+    },
+    {
+      "classname": "Tests.CI.test_pr_workflows_dispatch_safe",
+      "name": "test_every_pull_request_workflow_is_dispatchable",
+      "outcome": "passed",
+      "time": "0.088"
+    },
+    {
+      "classname": "Tests.CI.test_pr_workflows_dispatch_safe",
+      "name": "test_pr_context_job_guards_also_admit_dispatch",
+      "outcome": "passed",
+      "time": "0.083"
+    },
+    {
+      "classname": "Tests.CI.test_pr_workflows_dispatch_safe",
+      "name": "test_pr_head_checkouts_fall_back_to_github_sha",
+      "outcome": "passed",
+      "time": "0.073"
+    },
+    {
+      "classname": "Tests.CI.test_merge_queue_workflow",
+      "name": "test_triggers_are_dev_events_only",
+      "outcome": "passed",
+      "time": "0.002"
+    },
+    {
+      "classname": "Tests.CI.test_merge_queue_workflow",
+      "name": "test_write_permissions_are_job_level_only",
+      "outcome": "passed",
+      "time": "0.002"
+    },
+    {
+      "classname": "Tests.CI.test_merge_queue_workflow",
+      "name": "test_runs_devs_script_only_when_enabled_and_never_for_forks",
+      "outcome": "passed",
+      "time": "0.003"
+    },
+    {
+      "classname": "Tests.CI.test_merge_queue_actions",
+      "name": "test_dry_mode_makes_no_mutating_calls",
+      "outcome": "passed",
+      "time": "0.002"
+    },
+    {
+      "classname": "Tests.CI.test_merge_queue_actions",
+      "name": "test_the_queue_can_never_merge_arm_or_push",
+      "outcome": "passed",
+      "time": "0.002"
+    }
+  ],
+  "outcomes": {
+    "passed": 24
+  }
+}

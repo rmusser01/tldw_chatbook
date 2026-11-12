@@ -1,0 +1,1365 @@
+{
+  "discovery": {
+    "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-pb_8muxe",
+    "console_resume": [
+      {
+        "iteration": 0,
+        "resume_to_input_ms": 427.7511999825947,
+        "resume_to_attach_ms": 1908.6367999843787,
+        "input_ms": 138.72879999689758,
+        "max_loop_overshoot_ms": 257.13009998435155,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1921.3351999933366
+      },
+      {
+        "iteration": 1,
+        "resume_to_input_ms": 195.4117999994196,
+        "resume_to_attach_ms": 2557.9298999800812,
+        "input_ms": 39.94079999392852,
+        "max_loop_overshoot_ms": 124.19959998806007,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2557.9616999893915
+      },
+      {
+        "iteration": 2,
+        "resume_to_input_ms": 302.7074999990873,
+        "resume_to_attach_ms": 1264.9457000079565,
+        "input_ms": 53.72729999362491,
+        "max_loop_overshoot_ms": 217.6642999984324,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1318.6065000190865
+      },
+      {
+        "iteration": 3,
+        "resume_to_input_ms": 186.19209999451414,
+        "resume_to_attach_ms": 1174.1696000099182,
+        "input_ms": 46.68539998237975,
+        "max_loop_overshoot_ms": 108.2204999984242,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1222.6915000064764
+      },
+      {
+        "iteration": 4,
+        "resume_to_input_ms": 156.7773999995552,
+        "resume_to_attach_ms": 1131.1887000047136,
+        "input_ms": 33.967800001846626,
+        "max_loop_overshoot_ms": 91.51769999880344,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1166.5184999874327
+      },
+      {
+        "iteration": 5,
+        "resume_to_input_ms": 160.67670000484213,
+        "resume_to_attach_ms": 833.0446000036318,
+        "input_ms": 32.98960000392981,
+        "max_loop_overshoot_ms": 96.42470002290793,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 865.5795000086073
+      }
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0,
+    "observed_process_exit": 0,
+    "median_input_ms": 190.80194999696687,
+    "median_attach_ms": 1219.5576500089373,
+    "experiments": {},
+    "native_spans": {}
+  },
+  "draft-trace": {
+    "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-x9rwphzg",
+    "console_resume": [
+      {
+        "iteration": 0,
+        "resume_to_input_ms": 290.4514000110794,
+        "resume_to_attach_ms": 2343.7239000049885,
+        "input_ms": 28.682000003755093,
+        "max_loop_overshoot_ms": 230.4057000146713,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2365.8819000120275
+      },
+      {
+        "iteration": 1,
+        "resume_to_input_ms": 204.3241999926977,
+        "resume_to_attach_ms": 1270.7215000118595,
+        "input_ms": 30.679099989356473,
+        "max_loop_overshoot_ms": 142.37040001899004,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1316.6326000064146
+      },
+      {
+        "iteration": 2,
+        "resume_to_input_ms": 164.0338999859523,
+        "resume_to_attach_ms": 1381.8288999900687,
+        "input_ms": 39.54539998085238,
+        "max_loop_overshoot_ms": 93.19400001550093,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1402.4439999775495
+      },
+      {
+        "iteration": 3,
+        "resume_to_input_ms": 208.17040000110865,
+        "resume_to_attach_ms": 1467.035899986513,
+        "input_ms": 56.32350000087172,
+        "max_loop_overshoot_ms": 120.57780000031926,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1503.6197000008542
+      },
+      {
+        "iteration": 4,
+        "resume_to_input_ms": 167.54920000676066,
+        "resume_to_attach_ms": 1253.9345999830402,
+        "input_ms": 47.57690001861192,
+        "max_loop_overshoot_ms": 88.68540002731606,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1280.662699980894
+      },
+      {
+        "iteration": 5,
+        "resume_to_input_ms": 164.56070001004264,
+        "resume_to_attach_ms": 1303.4076000039931,
+        "input_ms": 38.58860000036657,
+        "max_loop_overshoot_ms": 94.68739997828379,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1350.3373000130523
+      }
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0,
+    "observed_process_exit": 0,
+    "median_input_ms": 185.93669999972917,
+    "median_attach_ms": 1342.618249997031,
+    "experiments": {},
+    "native_spans": {}
+  },
+  "queue-trace": {
+    "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-m0qdkp3k",
+    "console_resume": [
+      {
+        "iteration": 0,
+        "resume_to_input_ms": 153.98620002088137,
+        "resume_to_attach_ms": 1962.1808000083547,
+        "input_ms": 29.31929999613203,
+        "max_loop_overshoot_ms": 93.3589999913238,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1975.399999995716
+      },
+      {
+        "iteration": 1,
+        "resume_to_input_ms": 180.24070002138615,
+        "resume_to_attach_ms": 1222.9654999973718,
+        "input_ms": 44.31060000206344,
+        "max_loop_overshoot_ms": 104.6280000009574,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1261.5630000072997
+      },
+      {
+        "iteration": 2,
+        "resume_to_input_ms": 138.00179999088868,
+        "resume_to_attach_ms": 1007.1728999901097,
+        "input_ms": 9.479800006374717,
+        "max_loop_overshoot_ms": 97.22209998290055,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1044.4932999962475
+      },
+      {
+        "iteration": 3,
+        "resume_to_input_ms": 169.22909999266267,
+        "resume_to_attach_ms": 1260.9500999969896,
+        "input_ms": 38.88619999634102,
+        "max_loop_overshoot_ms": 99.04500000993721,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1293.601099983789
+      },
+      {
+        "iteration": 4,
+        "resume_to_input_ms": 156.69999999227002,
+        "resume_to_attach_ms": 1106.3586999953259,
+        "input_ms": 38.043899985495955,
+        "max_loop_overshoot_ms": 87.38219999941066,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1137.2934999817517
+      },
+      {
+        "iteration": 5,
+        "resume_to_input_ms": 163.2841999817174,
+        "resume_to_attach_ms": 1158.1706999859307,
+        "input_ms": 35.94570001587272,
+        "max_loop_overshoot_ms": 96.07220001635142,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1190.8200999896508
+      }
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0,
+    "observed_process_exit": 0,
+    "median_input_ms": 159.9920999869937,
+    "median_attach_ms": 1190.5680999916513,
+    "experiments": {},
+    "native_spans": {
+      "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current": {
+        "queue_samples_ms": [
+          73.21410000440665,
+          77.21119999769144,
+          40.63140001380816,
+          64.69299999298528,
+          164.93289999198169,
+          153.2141999923624
+        ],
+        "body_samples_ms": [
+          887.3912999988534,
+          429.1718000022229,
+          244.48530000518076,
+          326.35620000655763,
+          339.6012000157498,
+          334.80370001052506
+        ]
+      },
+      "AttentionMarksRead": {
+        "queue_samples_ms": [
+          325.71949998964556,
+          0.6611999997403473,
+          91.35829997831024,
+          32.63490000972524,
+          56.85699998866767,
+          10.567399993306026,
+          180.40169999585487,
+          9.855100011918694,
+          109.6728999982588
+        ],
+        "body_samples_ms": [
+          397.23180001601577,
+          522.4054999998771,
+          396.30120000219904,
+          672.262200008845,
+          238.98490000283346,
+          590.5936000053771
+        ]
+      },
+      "SkillServiceWiringMixin._build_local_skill_trust_service": {
+        "queue_samples_ms": [],
+        "body_samples_ms": []
+      },
+      "_read_console_skill_context.<locals>.<lambda>": {
+        "queue_samples_ms": [
+          248.5201999952551,
+          8.676700002979487,
+          34.55240000039339
+        ],
+        "body_samples_ms": [
+          587.286399997538,
+          868.8839999958873,
+          768.1358999980148
+        ]
+      },
+      "HookPermissions.visit_snapshot": {
+        "queue_samples_ms": [],
+        "body_samples_ms": []
+      },
+      "read_context_presentation_inputs.<locals>.finite.<locals>.native": {
+        "queue_samples_ms": [
+          56.24520001583733,
+          100.44000000925735,
+          222.5992000021506,
+          170.23560000234284,
+          104.54120000940748,
+          85.54369999910705
+        ],
+        "body_samples_ms": [
+          112.01519999303855,
+          196.55880000209436,
+          218.66499999305233,
+          106.08610001509078,
+          94.20959997805767,
+          124.80379999033175
+        ]
+      },
+      "ConsoleCharacterContextController._await_database_work.<locals>.invoke": {
+        "queue_samples_ms": [
+          57.72380001144484
+        ],
+        "body_samples_ms": [
+          567.3300999915227
+        ]
+      },
+      "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read": {
+        "queue_samples_ms": [
+          29.41419999115169,
+          232.44449999765493,
+          145.63080001971684,
+          18.471899995347485,
+          139.7265999985393,
+          97.29659999720752
+        ],
+        "body_samples_ms": [
+          97.92410000227392,
+          246.78940000012517,
+          194.05249998089857,
+          158.09890002128668,
+          157.08750000339933,
+          338.18259998224676
+        ]
+      },
+      "partial": {
+        "queue_samples_ms": [
+          132.76140001835302
+        ],
+        "body_samples_ms": [
+          233.30649998388253
+        ]
+      }
+    }
+  },
+  "timer-experiment": {
+    "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-kw2ir4ku",
+    "console_resume": [
+      {
+        "iteration": 0,
+        "resume_to_input_ms": 185.62560001737438,
+        "resume_to_attach_ms": 1291.159400017932,
+        "input_ms": 43.02260000258684,
+        "max_loop_overshoot_ms": 111.04280001018196,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1304.0079000056721
+      },
+      {
+        "iteration": 1,
+        "resume_to_input_ms": 147.49080000910908,
+        "resume_to_attach_ms": 1799.3533000117168,
+        "input_ms": 17.218599998159334,
+        "max_loop_overshoot_ms": 98.98179999436252,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1840.613400010625
+      },
+      {
+        "iteration": 2,
+        "resume_to_input_ms": 197.57899999967776,
+        "resume_to_attach_ms": 2442.028699995717,
+        "input_ms": 26.398200017865747,
+        "max_loop_overshoot_ms": 139.87919999635778,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2486.6200999822468
+      },
+      {
+        "iteration": 3,
+        "resume_to_input_ms": 222.09890000522137,
+        "resume_to_attach_ms": 2115.615799993975,
+        "input_ms": 55.29620000743307,
+        "max_loop_overshoot_ms": 183.65200000698678,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2118.0290000047535
+      },
+      {
+        "iteration": 4,
+        "resume_to_input_ms": 313.0910999898333,
+        "resume_to_attach_ms": 3058.583699981682,
+        "input_ms": 73.36660000146367,
+        "max_loop_overshoot_ms": 208.34370001102798,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 3066.50859999354
+      },
+      {
+        "iteration": 5,
+        "resume_to_input_ms": 344.3245999806095,
+        "resume_to_attach_ms": 2554.6406999928877,
+        "input_ms": 10.754499991890043,
+        "max_loop_overshoot_ms": 302.16680001467466,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2594.3662999779917
+      }
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0,
+    "observed_process_exit": 0,
+    "median_input_ms": 209.83895000244956,
+    "median_attach_ms": 2278.822249994846,
+    "experiments": {
+      "cooperative_timers_experiment": true
+    },
+    "native_spans": {
+      "AttentionMarksRead": {
+        "queue_samples_ms": [
+          1.6873000131454319,
+          3.1402999884448946,
+          14.868800004478544,
+          20.052799984114245,
+          4.768999991938472,
+          0.172699976246804,
+          12.080900021828711,
+          1.1335000162944198,
+          8.558500005165115,
+          0.17670000670477748,
+          11.497800005599856
+        ],
+        "body_samples_ms": [
+          316.0247000050731,
+          964.2113000154495,
+          1071.032500010915,
+          874.7580000199378,
+          1020.5157999880612,
+          1544.793299981393,
+          1287.2838999901433,
+          767.2671000182163
+        ]
+      },
+      "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current": {
+        "queue_samples_ms": [
+          8.21979998727329,
+          10.149699985049665,
+          2.990899985888973,
+          16.522499994607642,
+          0.4749999789055437,
+          3.433500009123236
+        ],
+        "body_samples_ms": [
+          869.987999991281,
+          1600.0109000015073,
+          442.51449999865144,
+          1303.9644999953452,
+          522.6759000215679,
+          992.0393000065815
+        ]
+      },
+      "read_context_presentation_inputs.<locals>.finite.<locals>.native": {
+        "queue_samples_ms": [
+          0.31790000502951443,
+          1.6413000121247023,
+          11.205100017832592,
+          0.2691999834496528,
+          3.2303000043611974,
+          4.457499977434054,
+          32.10800001397729
+        ],
+        "body_samples_ms": [
+          253.58540000161156,
+          214.0441999945324,
+          195.65169999259524,
+          985.2490000193939,
+          427.38029998145066,
+          363.8626000029035,
+          599.8554000107106
+        ]
+      },
+      "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read": {
+        "queue_samples_ms": [
+          0.3907000063918531,
+          0.7590000168420374,
+          4.346700006863102,
+          0.7294999959412962,
+          0.8127999899443239,
+          11.853300005896017
+        ],
+        "body_samples_ms": [
+          361.97379999794066,
+          375.22349998471327,
+          358.88149999664165,
+          788.8039000099525,
+          453.2257000100799,
+          699.8731999774463
+        ]
+      },
+      "CollectionsServiceWiringMixin._reconcile_collections_capture_startup.<locals>.reconcile_in_worker": {
+        "queue_samples_ms": [],
+        "body_samples_ms": []
+      },
+      "SkillServiceWiringMixin._build_local_skill_trust_service": {
+        "queue_samples_ms": [
+          1.46980001591146
+        ],
+        "body_samples_ms": [
+          1650.9744999930263
+        ]
+      },
+      "HookPermissions.visit_snapshot": {
+        "queue_samples_ms": [
+          0.20129999029450119,
+          0.6350000039674342,
+          0.38759998278692365,
+          0.9421000140719116
+        ],
+        "body_samples_ms": [
+          4691.009700007271,
+          16.88750000903383,
+          17.265600006794557
+        ]
+      },
+      "ConsoleCharacterContextController._await_database_work.<locals>.invoke": {
+        "queue_samples_ms": [
+          1.1019999801646918,
+          7.894599984865636,
+          5.261300015263259,
+          12.853599997470155,
+          11.030099994968623,
+          13.203700014855713
+        ],
+        "body_samples_ms": [
+          1069.9962000071537,
+          1529.7427000186872,
+          2111.000500008231,
+          1598.4241999976803
+        ]
+      },
+      "_read_console_skill_context.<locals>.<lambda>": {
+        "queue_samples_ms": [
+          1.0684000153560191,
+          7.905000005848706,
+          1.4526000013574958,
+          11.669900006381795,
+          11.908799991942942,
+          12.803900026483461
+        ],
+        "body_samples_ms": [
+          1756.9596999965142,
+          1840.1115000015125,
+          1817.3226999933831,
+          3296.098399994662,
+          1694.2150000249967
+        ]
+      },
+      "partial": {
+        "queue_samples_ms": [
+          5.535400006920099
+        ],
+        "body_samples_ms": []
+      }
+    }
+  },
+  "handoff-experiment": {
+    "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-n_s5vfca",
+    "console_resume": [
+      {
+        "iteration": 0,
+        "resume_to_input_ms": 1725.7850000169128,
+        "resume_to_attach_ms": 3568.3292000030633,
+        "input_ms": 544.570099998964,
+        "max_loop_overshoot_ms": 1149.4395000045188,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 3576.89730002312
+      },
+      {
+        "iteration": 1,
+        "resume_to_input_ms": 1331.1054999940097,
+        "resume_to_attach_ms": 3732.2380999976303,
+        "input_ms": 218.10840000398457,
+        "max_loop_overshoot_ms": 1081.5584000083618,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 3850.4348999995273
+      },
+      {
+        "iteration": 2,
+        "resume_to_input_ms": 818.9392999920528,
+        "resume_to_attach_ms": 2349.7440999781247,
+        "input_ms": 281.6473999992013,
+        "max_loop_overshoot_ms": 505.9897000028286,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2415.0502999837045
+      },
+      {
+        "iteration": 3,
+        "resume_to_input_ms": 897.4954999866895,
+        "resume_to_attach_ms": 1889.8620999825653,
+        "input_ms": 152.47629999066703,
+        "max_loop_overshoot_ms": 713.6835999845061,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1917.4103999976069
+      },
+      {
+        "iteration": 4,
+        "resume_to_input_ms": 400.2407999942079,
+        "resume_to_attach_ms": 1431.6760000074282,
+        "input_ms": 168.56170000392012,
+        "max_loop_overshoot_ms": 200.36590000381693,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1469.1987999831326
+      },
+      {
+        "iteration": 5,
+        "resume_to_input_ms": 1066.7333000164945,
+        "resume_to_attach_ms": 2144.460200011963,
+        "input_ms": 185.11940000462346,
+        "max_loop_overshoot_ms": 849.9732000054792,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2185.8173000218812
+      }
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0,
+    "observed_process_exit": 0,
+    "median_input_ms": 982.114400001592,
+    "median_attach_ms": 2247.102149995044,
+    "experiments": {
+      "read_handoff_experiment": 0.0001
+    },
+    "native_spans": {
+      "ConsoleCharacterContextController._await_database_work.<locals>.invoke": {
+        "queue_samples_ms": [
+          74.61630000034347,
+          0.7336999988183379,
+          95.44659999664873
+        ],
+        "body_samples_ms": [
+          400.3017999930307,
+          313.01430001622066
+        ]
+      },
+      "AttentionMarksRead": {
+        "queue_samples_ms": [
+          0.4397000011522323,
+          7.943400007206947,
+          0.2491000050213188,
+          0.1680999994277954,
+          0.22029998945072293,
+          17.408200015779585,
+          0.31460000900551677,
+          10.90170000679791,
+          17.93169998563826,
+          0.3994000144302845,
+          0.23509998572990298,
+          88.21099999477156
+        ],
+        "body_samples_ms": [
+          1118.3763000008184,
+          1195.0701999885496,
+          834.8620000178926,
+          940.695199999027,
+          712.9838000109885,
+          677.553200017428
+        ]
+      },
+      "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current": {
+        "queue_samples_ms": [
+          10.361799999373034,
+          7.8156000236049294,
+          561.858500004746,
+          0.1999999803956598,
+          0.16399999731220305,
+          510.5539999785833
+        ],
+        "body_samples_ms": [
+          918.3698999986518,
+          1266.6520000202581,
+          521.6979999968316,
+          417.3490000248421,
+          167.07799999858253
+        ]
+      },
+      "CollectionsServiceWiringMixin._reconcile_collections_capture_startup.<locals>.reconcile_in_worker": {
+        "queue_samples_ms": [],
+        "body_samples_ms": []
+      },
+      "read_context_presentation_inputs.<locals>.finite.<locals>.native": {
+        "queue_samples_ms": [
+          89.15609997347929,
+          63.742400001501665,
+          140.41779999388382,
+          104.02369999792427,
+          46.22160000144504,
+          5.515099997865036
+        ],
+        "body_samples_ms": [
+          304.1621000156738,
+          314.12639998598024,
+          231.88370000571012,
+          75.35130000906065,
+          165.04940000595525
+        ]
+      },
+      "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read": {
+        "queue_samples_ms": [
+          1.14380000741221,
+          116.9831000152044,
+          175.20800000056624,
+          18.347099976381287,
+          142.46219999040477,
+          1.3343000027816743
+        ],
+        "body_samples_ms": [
+          517.8323999862187,
+          375.2766999823507,
+          412.3120000003837,
+          118.96120000164956,
+          196.99530000798404,
+          418.4409999870695
+        ]
+      },
+      "SkillServiceWiringMixin._build_local_skill_trust_service": {
+        "queue_samples_ms": [],
+        "body_samples_ms": []
+      },
+      "HookPermissions.visit_snapshot": {
+        "queue_samples_ms": [],
+        "body_samples_ms": [
+          5905.293700023321
+        ]
+      },
+      "_read_console_skill_context.<locals>.<lambda>": {
+        "queue_samples_ms": [
+          150.04159999080002,
+          12.792299996362999,
+          19.257100007962435,
+          32.708700018702075
+        ],
+        "body_samples_ms": [
+          594.3184999923687,
+          1886.7131999868434,
+          1720.4198999970686,
+          929.6309000055771
+        ]
+      },
+      "partial": {
+        "queue_samples_ms": [
+          209.40449999761768
+        ],
+        "body_samples_ms": [
+          486.45979998400435
+        ]
+      }
+    }
+  },
+  "request-trace": {
+    "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-4qd7uh99",
+    "console_resume": [
+      {
+        "iteration": 0,
+        "resume_to_input_ms": 148.51320002344437,
+        "resume_to_attach_ms": 1066.0271000233479,
+        "input_ms": 18.09040000080131,
+        "max_loop_overshoot_ms": 99.13700001197867,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1102.4404000199866
+      },
+      {
+        "iteration": 1,
+        "resume_to_input_ms": 159.51830000267364,
+        "resume_to_attach_ms": 890.7536999904551,
+        "input_ms": 39.69609999330714,
+        "max_loop_overshoot_ms": 88.53189999354072,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 933.7955999944825
+      },
+      {
+        "iteration": 2,
+        "resume_to_input_ms": 182.98179999692366,
+        "resume_to_attach_ms": 1031.2148999946658,
+        "input_ms": 48.42040000949055,
+        "max_loop_overshoot_ms": 103.2761000096798,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1037.6975999970455
+      },
+      {
+        "iteration": 3,
+        "resume_to_input_ms": 146.78080001613125,
+        "resume_to_attach_ms": 1450.4309000039939,
+        "input_ms": 2.0444999972824007,
+        "max_loop_overshoot_ms": 113.46140000387095,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1497.057100001257
+      },
+      {
+        "iteration": 4,
+        "resume_to_input_ms": 141.15290000336245,
+        "resume_to_attach_ms": 1287.4115000013262,
+        "input_ms": 3.8973999908193946,
+        "max_loop_overshoot_ms": 105.98019999451935,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1311.2686999957077
+      },
+      {
+        "iteration": 5,
+        "resume_to_input_ms": 166.36979999020696,
+        "resume_to_attach_ms": 1267.7053000079468,
+        "input_ms": 44.60099997231737,
+        "max_loop_overshoot_ms": 90.47260001534596,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1314.4428000086918
+      }
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0,
+    "observed_process_exit": 0,
+    "median_input_ms": 154.015750013059,
+    "median_attach_ms": 1166.8662000156473,
+    "experiments": {},
+    "native_spans": {
+      "AttentionMarksRead": {
+        "queue_samples_ms": [
+          46.29379999823868,
+          49.098100018454716,
+          84.53890000237152,
+          16.272800014121458,
+          15.565299981972203,
+          15.047399996547028,
+          219.1115999885369,
+          0.516200001584366,
+          129.49439999647439,
+          57.24189997999929,
+          116.10379998455755
+        ],
+        "body_samples_ms": [
+          246.52429998968728,
+          969.7197999921627,
+          254.33850000263192,
+          278.93630001926795,
+          669.8670999903698,
+          510.25099999969825,
+          438.774000009289
+        ]
+      },
+      "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current": {
+        "queue_samples_ms": [
+          62.400099996011704,
+          81.83459998690523,
+          90.3831000032369,
+          66.59830000717193,
+          190.24700002046302,
+          188.35919999401085
+        ],
+        "body_samples_ms": [
+          400.8695999800693,
+          335.25960001861677,
+          312.9876999882981,
+          220.62239999650046,
+          549.3302999821026,
+          376.1979000119027
+        ]
+      },
+      "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read": {
+        "queue_samples_ms": [
+          67.89089998346753,
+          160.82590000587516,
+          222.86489998805337,
+          0.4045999958179891,
+          141.47240002057515,
+          93.35780001129024
+        ],
+        "body_samples_ms": [
+          358.0421000078786,
+          166.64899999159388,
+          230.3851000033319,
+          139.0259000181686,
+          207.15370000107214,
+          196.19409998995252
+        ]
+      },
+      "_read_console_skill_context.<locals>.<lambda>": {
+        "queue_samples_ms": [
+          7.375800021691248,
+          52.72720000357367
+        ],
+        "body_samples_ms": [
+          1114.7774999844842,
+          1498.0217999836896
+        ]
+      },
+      "ConsoleCharacterContextController._await_database_work.<locals>.invoke": {
+        "queue_samples_ms": [
+          6.917199993040413
+        ],
+        "body_samples_ms": []
+      },
+      "read_context_presentation_inputs.<locals>.finite.<locals>.native": {
+        "queue_samples_ms": [
+          173.27869997825474,
+          232.72829997586086,
+          79.34389999718405,
+          217.61329998844303
+        ],
+        "body_samples_ms": [
+          215.7193000020925,
+          141.61820002482273,
+          64.19170001754537,
+          109.50049999519251
+        ]
+      },
+      "HookPermissions.visit_snapshot": {
+        "queue_samples_ms": [],
+        "body_samples_ms": []
+      },
+      "partial": {
+        "queue_samples_ms": [
+          26.555199990980327
+        ],
+        "body_samples_ms": [
+          453.02190000074916
+        ]
+      }
+    },
+    "full_sync_spans": [
+      {
+        "stage": "console-resume-0",
+        "ms": 32907.23769998294,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-0",
+        "ms": 32911.5975999739,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-0",
+        "ms": 32911.82069998467,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-0",
+        "ms": 33385.22749999538,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-0",
+        "ms": 33385.79099997878,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-0",
+        "ms": 33394.41199999419,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-1",
+        "ms": 34528.32219999982,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-1",
+        "ms": 34534.88729998935,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-1",
+        "ms": 34535.10519998963,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-1",
+        "ms": 34961.618599976646,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-1",
+        "ms": 34962.13759999955,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-1",
+        "ms": 34978.24209998362,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-2",
+        "ms": 36022.17899999232,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-2",
+        "ms": 36026.499200001126,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-2",
+        "ms": 36026.68299997458,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-2",
+        "ms": 36447.828699980164,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-2",
+        "ms": 36448.374999978114,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-2",
+        "ms": 36458.38789999834,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 37619.2109999829,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 37624.43559998064,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 37624.664799979655,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 38134.24509999459,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": false,
+        "replay": true,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 38329.00219998555,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 38330.98569998401,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": false,
+        "replay": true,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 38531.450599984964,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 38533.18159998162,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": false,
+        "replay": true,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 38733.47699997248,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-3",
+        "ms": 38747.51449999167,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-4",
+        "ms": 39697.70509999944,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-4",
+        "ms": 39701.324199995724,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-4",
+        "ms": 39701.53069999651,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-4",
+        "ms": 40452.787399990484,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-4",
+        "ms": 40453.5637999943,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-4",
+        "ms": 40473.248800000874,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-5",
+        "ms": 41574.02079997701,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-5",
+        "ms": 41580.921999993734,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-5",
+        "ms": 41581.13979999325,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": true,
+        "replay": false,
+        "attached": false,
+        "worker": "console-manual-read-return"
+      },
+      {
+        "stage": "console-resume-5",
+        "ms": 42148.289799981285,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": false,
+        "sync": false,
+        "replay": true,
+        "attached": false,
+        "worker": "console-attach-reconciliation"
+      },
+      {
+        "stage": "console-resume-5",
+        "ms": 42172.545599984005,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "begin",
+        "result": null,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      },
+      {
+        "stage": "console-resume-5",
+        "ms": 42189.019999990705,
+        "name": "_sync_native_console_chat_ui",
+        "edge": "end",
+        "result": true,
+        "sync": false,
+        "replay": false,
+        "attached": false,
+        "worker": "console-sync"
+      }
+    ]
+  }
+}

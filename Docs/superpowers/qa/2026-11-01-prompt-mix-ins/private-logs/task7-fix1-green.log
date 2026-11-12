@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+3.85s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_conflict_export_and_dirty_escape
+3.51s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[save_as_new]
+3.19s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate]
+3.16s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_create_and_filtered_pagination_totals
+
+(8 durations < 1s hidden.)
+4 passed, 18 deselected in 16.10s

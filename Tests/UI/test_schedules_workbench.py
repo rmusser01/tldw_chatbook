@@ -84,6 +84,7 @@ from Tests.UI.schedules_test_helpers import (
     rendered_row_cells,
     settle_schedules_workbench,
 )
+from Tests.test_utilities import wait_for_condition
 
 
 # task-31711 AC#1: a definition row's absolute next-run timestamp must
@@ -91,6 +92,9 @@ from Tests.UI.schedules_test_helpers import (
 # (`_row_subtitle`'s definition branch had none -- unlike the reminder
 # branch, which deliberately drops it via `_format_next_run(compact=True)`,
 # task-23111).
+# ``bootstrap_profile``: see the same note in test_schedules_disabled_state.py
+# (pure, but its setup imports the app; whole-PR review of Phase 9, round 2).
+@pytest.mark.bootstrap_profile
 def test_definition_row_subtitle_carries_a_timezone_label() -> None:
     now = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
     row = UnifiedRow(
@@ -110,7 +114,7 @@ def test_definition_row_subtitle_carries_a_timezone_label() -> None:
     )
     subtitle = _row_subtitle(row, now)
     assert "2026-09-06 09:00 UTC" in subtitle
-    assert subtitle == "Daily at 09:00 UTC · 2026-09-06 09:00 UTC (in 21h)"
+    assert subtitle == "2026-09-06 09:00 UTC (in 21h) · Daily at 09:00 UTC"
 
 
 class WorkbenchTestApp(ConsolidatedCSSApp):
@@ -223,6 +227,7 @@ class WorkbenchTestAppWithMixedService(ConsolidatedCSSApp):
     scheduling_service = MockSchedulingServiceWithWatchlist()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_schedules_workbench_renders_panes():
     app = WorkbenchTestApp()
@@ -236,6 +241,7 @@ async def test_schedules_workbench_renders_panes():
         assert pilot.app.screen.query_one("#scheduling-inspector-pane") is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_owner_requires_an_active_server_id():
     """A lazy server-service wrapper is not itself an available connection."""
@@ -270,6 +276,7 @@ async def test_server_owner_requires_an_active_server_id():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_task_updates_detail():
     """Selecting a task row updates the detail pane with task information."""
@@ -285,6 +292,7 @@ async def test_select_task_updates_detail():
         assert "Test" in title.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_follow_selector_exists():
     app = WorkbenchTestApp()
@@ -293,6 +301,7 @@ async def test_console_follow_selector_exists():
         assert pilot.app.screen.query_one("#schedules-follow-in-console") is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_task_detail_renders_selected_task():
     """The TaskDetail widget renders the selected reminder's metadata."""
@@ -506,7 +515,7 @@ async def test_task_detail_notifications_row_explains_its_permanent_read_only_st
 
         value = detail.query_one("#scheduling-detail-notifications", Static)
         assert value.tooltip is not None
-        assert "no per-reminder" in str(value.tooltip).lower()
+        assert "no per-task setting" in str(value.tooltip).lower()
 
 
 @pytest.mark.asyncio
@@ -975,6 +984,7 @@ async def test_locked_row_activation_shows_lock_reason_and_opens_no_editor():
         assert "moving between this device and the server" in error.render_line(0).text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_repeat_edit_persists_and_repaints_pane_and_queue_list(
     tmp_path,
@@ -1048,6 +1058,7 @@ async def test_committing_repeat_edit_persists_and_repaints_pane_and_queue_list(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_edit_on_a_server_owned_row_persists_under_its_own_owner(
     tmp_path,
@@ -1095,6 +1106,7 @@ async def test_committing_edit_on_a_server_owned_row_persists_under_its_own_owne
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_junk_at_value_shows_inline_error_and_restores_old_display(tmp_path):
     """A junk At submission surfaces the bridge's field error inline and
@@ -1145,6 +1157,7 @@ async def test_junk_at_value_shows_inline_error_and_restores_old_display(tmp_pat
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_locked_row_via_real_service_refuses_edit_and_leaves_row_unchanged(
     tmp_path,
@@ -1194,6 +1207,7 @@ async def test_locked_row_via_real_service_refuses_edit_and_leaves_row_unchanged
 # --- task-31823: detail-pane Duplicate/View-runs/View-results affordance --
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_button_creates_a_disambiguated_local_copy_via_the_service(
     tmp_path,
@@ -1988,6 +2002,7 @@ async def test_pause_resume_button_disabled_and_reason_shown_when_locked():
 # --- integration: real DB + service + full workbench -----------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_generation_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
@@ -2075,6 +2090,7 @@ async def test_committing_generation_edit_persists_and_repaints_the_definition_p
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_repeat_edit_resends_whole_schedule_preserving_timezone(
     tmp_path,
@@ -2135,6 +2151,7 @@ async def test_committing_repeat_edit_resends_whole_schedule_preserving_timezone
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_timezone_edit_preserves_cron(tmp_path):
     """Companion pin: a Timezone edit must not drop the schedule's cron."""
@@ -2190,6 +2207,7 @@ async def test_committing_timezone_edit_preserves_cron(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_model_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
@@ -2256,6 +2274,7 @@ async def test_committing_model_edit_persists_and_repaints_the_definition_pane(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_finding_policy_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
@@ -2327,6 +2346,7 @@ async def test_committing_finding_policy_edit_persists_and_repaints_the_definiti
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_sources_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
@@ -2405,6 +2425,7 @@ async def test_committing_sources_edit_persists_and_repaints_the_definition_pane
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_notifications_edit_persists_and_repaints_the_definition_pane(
     tmp_path,
@@ -2471,6 +2492,7 @@ async def test_committing_notifications_edit_persists_and_repaints_the_definitio
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_committing_at_edit_persists_and_repaints_the_definition_pane(tmp_path):
     """At row commit persists `run_at` on a one-time definition and
@@ -2533,6 +2555,7 @@ async def test_committing_at_edit_persists_and_repaints_the_definition_pane(tmp_
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_edit_on_a_daily_automation_edits_time_of_day_not_run_at(tmp_path):
     """Qodo finding 8: the `At` row commits the field THIS schedule kind
@@ -2633,6 +2656,7 @@ async def test_at_edit_on_a_daily_automation_edits_time_of_day_not_run_at(tmp_pa
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_row_is_read_only_for_an_interval_automation(tmp_path):
     """Qodo finding 8, the other half: an `interval` schedule has no
@@ -2680,6 +2704,7 @@ async def test_at_row_is_read_only_for_an_interval_automation(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_fields_of_one_definition_both_land_without_a_lost_update(tmp_path):
     """Qodo finding 7: the edit worker groups per DEFINITION, not per
@@ -2755,6 +2780,7 @@ async def test_two_fields_of_one_definition_both_land_without_a_lost_update(tmp_
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_only_target_round_trips_through_an_unchanged_submit(tmp_path):
     """Qodo finding 10: a stored `model` with no `provider` must survive
@@ -2820,6 +2846,7 @@ async def test_model_only_target_round_trips_through_an_unchanged_submit(tmp_pat
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_non_recurring_question_definition_exposes_no_editors(tmp_path):
     """Qodo finding 11: the pane only authors `recurring_question`, and
@@ -2898,6 +2925,7 @@ def test_stale_definition_row_error_is_not_painted_on_another_row(tmp_path):
         assert painted == ["boom"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
     """The Model row's 'Not set'/blank honesty (task-4 brief AC) survives
@@ -3004,6 +3032,7 @@ async def test_not_set_model_preserved_across_an_unrelated_edit(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_on_server_owned_row_with_unreachable_seam_queues_a_mutation(
     tmp_path,
@@ -3106,6 +3135,7 @@ async def test_edit_on_server_owned_row_with_unreachable_seam_queues_a_mutation(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lifecycle_toggle_pauses_a_local_automation_and_the_button_flips(
     tmp_path,
@@ -3155,6 +3185,7 @@ async def test_lifecycle_toggle_pauses_a_local_automation_and_the_button_flips(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lifecycle_toggle_on_server_owned_row_survives_a_racing_pull(tmp_path):
     """Pinned (task-4 brief): the pause/resume toggle's DB write races a
@@ -3242,6 +3273,7 @@ async def test_lifecycle_toggle_on_server_owned_row_survives_a_racing_pull(tmp_p
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_task_inspector_renders_metadata():
     """The TaskInspector widget shows sync, last-run, owner, and conflict text."""
@@ -3269,6 +3301,7 @@ async def test_task_inspector_renders_metadata():
         assert "conflict" not in conflict_card.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_task_inspector_empty_state_distinguishes_no_selection():
     """31712 AC#6: "no task selected" now shows a distinct placeholder
@@ -3352,6 +3385,7 @@ class WorkbenchTestAppWithFailingService(ConsolidatedCSSApp):
     scheduling_service = FailingMockSchedulingService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_button_opens_confirmation_dialog():
     """Clicking the Delete button opens the delete confirmation dialog."""
@@ -3372,6 +3406,7 @@ async def test_delete_button_opens_confirmation_dialog():
         assert isinstance(pilot.app.screen, DeleteConfirmationDialog)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_d_opens_confirmation_dialog():
     """The d binding opens the delete confirmation dialog for the selected task."""
@@ -3388,6 +3423,7 @@ async def test_ctrl_d_opens_confirmation_dialog():
         assert isinstance(pilot.app.screen, DeleteConfirmationDialog)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_queue_shows_friendly_empty_state():
     """An empty queue shows the friendly empty-queue copy."""
@@ -3403,6 +3439,7 @@ async def test_empty_queue_shows_friendly_empty_state():
         assert "Press n" in empty_state.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_task_selected_shows_friendly_copy():
     """With no scheduling service, the detail pane prompts task selection."""
@@ -3418,6 +3455,7 @@ async def test_no_task_selected_shows_friendly_copy():
         assert "press n" in empty_state.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_status_badge_has_expected_class_for_waiting_task():
     """The status badge carries the CSS class matching the task status."""
@@ -3432,6 +3470,7 @@ async def test_status_badge_has_expected_class_for_waiting_task():
         assert "waiting" in badge.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_shows_distinct_metadata():
     """The inspector surfaces sync version, server id, last run, and owner."""
@@ -3454,6 +3493,7 @@ async def test_inspector_shows_distinct_metadata():
         assert "user-1 / server srv-123" in owner.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflict_card_shows_for_conflict_status():
     """The inspector conflict card renders when the task status is CONFLICT."""
@@ -3495,6 +3535,7 @@ async def test_conflict_card_shows_for_conflict_status():
         assert "Conflicted Task" in conflict_text.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_follow_console_ignored_when_disabled():
     """Pressing the disabled Follow-in-Console button does nothing."""
@@ -3516,6 +3557,7 @@ async def test_follow_console_ignored_when_disabled():
         assert not isinstance(pilot.app.screen, DeleteConfirmationDialog)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_tasks_service_error_notifies_and_uses_empty_state():
     """A service failure surfaces an error notification; on the very
@@ -3558,6 +3600,7 @@ async def test_load_tasks_service_error_notifies_and_uses_empty_state():
 # receives a `ScheduledTask` projection at all and deleted its
 # projection-rendering layer; `TaskInspector.set_task` alone stays
 # general-purpose for a `ScheduledTask` projection today.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlist_projection_excluded_from_unified_queue():
     """A watchlist projection never appears in the unified Queue list."""
@@ -3626,6 +3669,7 @@ class WorkbenchTestAppWithToggleFailingService(ConsolidatedCSSApp):
     scheduling_service = ToggleFailingMockSchedulingService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_tasks_service_error_keeps_the_last_good_rows():
     """UAT Major 5: a service failure AFTER data was loaded must not
@@ -3661,6 +3705,7 @@ async def test_load_tasks_service_error_keeps_the_last_good_rows():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_tasks_failure_logs_which_step_raised():
     """UAT Major 5's logging hook: a bare `logger.exception("Failed to
@@ -3803,6 +3848,7 @@ class WorkbenchTestAppWithControlledRefresh(ConsolidatedCSSApp):
         self.scheduling_service = ControlledRefreshSchedulingService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_confirmation_runs_delete_requested_flow():
     """Confirming the delete dialog triggers the full DeleteTaskRequested flow."""
@@ -3828,6 +3874,7 @@ async def test_delete_confirmation_runs_delete_requested_flow():
         assert pilot.app.scheduling_service.deleted_ids == ["task-1"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_deletes_task_and_notifies_on_success():
     """The workbench calls delete_reminder and surfaces a success notification."""
@@ -3848,6 +3895,7 @@ async def test_workbench_deletes_task_and_notifies_on_success():
         assert table.row_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh():
     """A delete reconciliation cannot overwrite a newer grouped refresh."""
@@ -3895,6 +3943,7 @@ async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh()
         assert "Newest user snapshot" in str(table.get_row_at(0)[1])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_notifies_on_delete_failure():
     """The workbench surfaces an error notification when delete_reminder fails."""
@@ -3916,6 +3965,7 @@ async def test_workbench_notifies_on_delete_failure():
         assert table.row_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enable_disable_buttons_update_reminder():
     """Enable/Disable buttons call the scheduling service and notify the user."""
@@ -3948,6 +3998,7 @@ async def test_enable_disable_buttons_update_reminder():
         assert notifications[1].severity == "information"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_reminder_action_saves_new_reminder():
     """The c binding opens the reminder form; saving calls the scheduling service."""
@@ -3982,6 +4033,7 @@ async def test_create_reminder_action_saves_new_reminder():
         assert any(n.message == "Scheduled task created." for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_reminder_action_updates_existing_reminder():
     """Clicking Edit opens the form pre-filled; saving calls update_reminder."""
@@ -4013,6 +4065,7 @@ async def test_edit_reminder_action_updates_existing_reminder():
         assert any(n.message == "Scheduled task updated." for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_reminder_for_a_different_runs_on_owner_queues_a_mutation(
     tmp_path,
@@ -4111,6 +4164,7 @@ def test_sync_failed_event():
     assert msg.error == "timeout"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mixed_sync_cycle_toasts_success_and_surfaces_the_phase_failure():
     """UAT finding 3c pin: a cycle whose reminder phase succeeded (and,
@@ -4208,6 +4262,7 @@ def test_post_reminder_dispatched_posts_the_message():
     assert posted[0].task_id == "task-7"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reminder_dispatched_message_reaches_the_workbench_through_a_live_pump():
     """Review round 1 finding 3: the three other fanout tests each pin
@@ -4250,6 +4305,7 @@ async def test_reminder_dispatched_message_reaches_the_workbench_through_a_live_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_liveness_strip_gets_its_own_faster_interval_timer():
     """UAT finding 3d pin: the scheduler-liveness strip used to be
@@ -4309,6 +4365,7 @@ class WorkbenchTestAppWithLongTitleService(ConsolidatedCSSApp):
         self.scheduling_service = _LongTitleMockSchedulingService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ticker_rerender_preserves_datatable_horizontal_scroll():
     """31713 AC#2: `DataTable.clear()` unconditionally resets `scroll_x`
@@ -4348,6 +4405,7 @@ async def test_ticker_rerender_preserves_datatable_horizontal_scroll():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_suspend_and_resume_pause_and_restart_the_liveness_timer_too():
     """The liveness timer must follow the same hidden-clock discipline
@@ -4510,7 +4568,7 @@ async def test_conflicts_tab_renders_rows_and_resolves():
         assert table.row_count == 1
         server_button = tab.query_one("#scheduling-use-server", Button)
         local_button = tab.query_one("#scheduling-use-local", Button)
-        # The Lab/Schedules/Logs UX overhaul (9dd2374b5, ADR-031) replaced the
+        # The Lab/Schedules/Logs UX overhaul (9dd2374b5, ADR-299) replaced the
         # per-button resolve tooltips with one guidance line set by
         # `_set_actions_enabled` whenever rows exist; this pin tracks that
         # shipped copy (the old per-version tooltips only exist pre-populate).
@@ -4593,6 +4651,7 @@ async def test_conflicts_tab_resolve_false_does_not_post_message():
         assert table.row_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_persisted_policy_refusal_is_not_surfaced_as_sync_error():
     """task-2722: older builds persisted the local-mode policy refusal as a
@@ -4632,6 +4691,7 @@ async def test_persisted_policy_refusal_is_not_surfaced_as_sync_error():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_sync_error_still_surfaces():
     """Guard for task-2722: only policy refusals are filtered from display."""
@@ -4656,6 +4716,7 @@ async def test_real_sync_error_still_surfaces():
         assert "connection refused" in str(error_widget.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sync_strip_fields_do_not_abut():
     """task-2723: 'Last pull: —Last push: —<error text>' rendered as one
@@ -4760,6 +4821,7 @@ class _RailTestApp(ConsolidatedCSSApp):
 # --- redesign PR-4, task 5: the retirement -------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_workbench_composes_one_surface_with_no_tab_chrome():
     """The retirement's headline claim, asserted on the real widget tree.
@@ -4820,6 +4882,7 @@ async def test_the_workbench_composes_one_surface_with_no_tab_chrome():
         assert workbench.query_one("#scheduling-results-badge", Button).region.width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_hidden_when_nothing_unread():
     app = _RailTestApp(_RailService(unread=False))
@@ -4833,6 +4896,7 @@ async def test_mark_all_read_hidden_when_nothing_unread():
         assert button.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_visible_when_a_definition_has_unread_results():
     """redesign PR-2, Task 3: the rail action is shown only once the
@@ -4849,6 +4913,7 @@ async def test_mark_all_read_visible_when_a_definition_has_unread_results():
         assert button.display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflicts_badge_pushes_conflicts_overlay_with_painted_content():
     """redesign PR-4, Task 1: the status strip's conflicts badge mirrors
@@ -4897,6 +4962,7 @@ async def test_conflicts_badge_pushes_conflicts_overlay_with_painted_content():
         assert pilot.app.screen is workbench
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflict_resolution_buttons_click_target_is_already_3_rows():
     """Finding 6/Major 10 (root-causes.md, task-3): root-causes' own
@@ -4955,6 +5021,7 @@ async def test_conflict_resolution_buttons_click_target_is_already_3_rows():
         assert "Use local" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflicts_badge_defaults_to_no_count():
     app = _RailTestApp(_RailService())
@@ -4966,6 +5033,7 @@ async def test_conflicts_badge_defaults_to_no_count():
         assert str(badge.label) == "Conflicts"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_results_badge_shows_unread_count_and_pushes_global_overlay():
     """redesign PR-4, task 2: the rail's `Results (N)` affordance mirrors
@@ -5004,6 +5072,7 @@ async def test_results_badge_shows_unread_count_and_pushes_global_overlay():
         assert pilot.app.screen is workbench
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_results_badge_defaults_to_no_count():
     app = _RailTestApp(_RailService())
@@ -5015,6 +5084,7 @@ async def test_results_badge_defaults_to_no_count():
         assert str(badge.label) == "Results"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unread_row_activation_pushes_definition_filtered_results_overlay(
     tmp_path,
@@ -5089,7 +5159,10 @@ async def test_unread_row_activation_pushes_definition_filtered_results_overlay(
             row = detail._unread_row
             assert row.affordance is True
             row.post_message(DetailValueRow.Activated(row))
-            await pilot.pause()
+            assert await wait_for_condition(
+                lambda: isinstance(pilot.app.screen, ResultsHostScreen)
+                and bool(pilot.app.screen.query("#scheduling-results-table"))
+            )
 
             assert isinstance(pilot.app.screen, ResultsHostScreen)
             overlay_tab = pilot.app.screen.query_one(ResultsTab)
@@ -5121,6 +5194,7 @@ async def test_unread_row_activation_pushes_definition_filtered_results_overlay(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_view_results_button_pushes_the_definition_filtered_results_overlay(
     tmp_path,
@@ -5156,7 +5230,10 @@ async def test_view_results_button_pushes_the_definition_filtered_results_overla
 
             button = detail.query_one("#scheduling-automation-view-results", Button)
             detail.on_button_pressed(Button.Pressed(button))
-            await pilot.pause()
+            assert await wait_for_condition(
+                lambda: isinstance(pilot.app.screen, ResultsHostScreen)
+                and bool(pilot.app.screen.query("#scheduling-results-heading"))
+            )
 
             assert isinstance(pilot.app.screen, ResultsHostScreen)
             overlay_tab = pilot.app.screen.query_one(ResultsTab)
@@ -5168,6 +5245,7 @@ async def test_view_results_button_pushes_the_definition_filtered_results_overla
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_button_creates_a_disambiguated_local_copy_of_a_definition(
     tmp_path,
@@ -5282,6 +5360,7 @@ async def test_duplicate_button_creates_a_disambiguated_local_copy_of_a_definiti
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_button_collapses_a_paused_source_to_a_paused_copy_not_due_for_selection(
     tmp_path,
@@ -5340,6 +5419,7 @@ async def test_duplicate_button_collapses_a_paused_source_to_a_paused_copy_not_d
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_button_keeps_an_active_source_active_and_due_for_selection(
     tmp_path,
@@ -5395,6 +5475,7 @@ async def test_duplicate_button_keeps_an_active_source_active_and_due_for_select
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_pause_followup_returning_non_saved_warns_without_a_success_toast(
     tmp_path,
@@ -5470,6 +5551,7 @@ async def test_duplicate_pause_followup_returning_non_saved_warns_without_a_succ
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_pause_followup_raising_warns_and_never_reports_failed_to_duplicate(
     tmp_path,
@@ -5538,6 +5620,7 @@ async def test_duplicate_pause_followup_raising_warns_and_never_reports_failed_t
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_filtered_overlay_heading_escapes_the_definition_name(
     tmp_path,
@@ -5563,7 +5646,7 @@ async def test_definition_filtered_overlay_heading_escapes_the_definition_name(
             workbench = pilot.app.screen
 
             definition = db.get_automation_definition(definition_id)
-            workbench._push_results_overlay(definition=definition)
+            await workbench._push_results_overlay(definition=definition)
             await pilot.pause()
 
             overlay_tab = pilot.app.screen.query_one(ResultsTab)
@@ -5575,6 +5658,7 @@ async def test_definition_filtered_overlay_heading_escapes_the_definition_name(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_status_strip_sync_widget_is_compact_at_narrow_width():
     """redesign PR-2, Task 3: the strip's width-triggered compact path --
@@ -5592,6 +5676,7 @@ async def test_status_strip_sync_widget_is_compact_at_narrow_width():
         assert "compact" in sync_status.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_status_strip_sync_widget_is_not_compact_at_wide_width():
     app = _RailTestApp(_RailService())
@@ -5679,6 +5764,7 @@ class _SlowProbeServerClient:
         return {}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_header_paints_checking_not_a_false_unreachable_during_mount_probe(
     tmp_path,
@@ -5785,6 +5871,7 @@ class _PolicyRefusedService(_MockSchedulingServiceMixin):
         return self._server_permission_denied
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_header_resolves_local_only_when_probe_is_policy_refused():
     """task-31798 AC#1/#2: once the mount-time reachability probe has
@@ -5845,6 +5932,7 @@ class _PendingProbeService(_MockSchedulingServiceMixin):
         return self._server_permission_denied
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_header_stays_checking_while_probe_unresolved_without_permission_denial():
     """task-31798: the `server_reachable is None` header branch must ONLY
@@ -5897,6 +5985,7 @@ class _EmptyThenOneReminderService(_MockSchedulingServiceMixin):
         return task
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_row_added_to_empty_queue_is_not_truncated():
     """task-31799: the first row inserted into a previously-empty Schedule
@@ -5947,6 +6036,7 @@ async def test_first_row_added_to_empty_queue_is_not_truncated():
 # pending. -------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_on_owner_server_reprobes_during_the_mount_probe_window(tmp_path):
     """A genuinely configured, about-to-be-confirmed server must not get a
@@ -5990,6 +6080,7 @@ async def test_on_owner_server_reprobes_during_the_mount_probe_window(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_action_sync_now_reprobes_during_the_mount_probe_window(tmp_path):
     """Same probe-window bug as `_on_owner_server`, for the `s` key --
@@ -6014,6 +6105,7 @@ async def test_action_sync_now_reprobes_during_the_mount_probe_window(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_action_create_reminder_reprobes_during_the_mount_probe_window(
     tmp_path,
@@ -6048,6 +6140,7 @@ async def test_action_create_reminder_reprobes_during_the_mount_probe_window(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_on_mount_settles_orphaned_transfer_without_any_sync_running(
     tmp_path,
@@ -6145,6 +6238,7 @@ def test_settle_orphaned_transfers_defers_to_a_worker_not_inline(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_action_sync_now_splits_configured_unreachable_from_unconfigured(
     tmp_path,
@@ -6486,6 +6580,7 @@ async def test_definition_runs_on_activation_on_failed_row_shows_stored_transfer
 # -- integration: real DB + service + full workbench -------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runs_on_dropdown_refusal_renders_inline_with_health_reason(tmp_path):
     """A refused target renders via `row.show_error` (this row's OWN
@@ -6572,6 +6667,7 @@ async def test_runs_on_dropdown_refusal_renders_inline_with_health_reason(tmp_pa
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runs_on_dropdown_confirm_dialog_lists_warnings(tmp_path):
     """Allowed -> the SAME `ConfirmationDialog` + `transfer_warnings`
@@ -6616,6 +6712,7 @@ async def test_runs_on_dropdown_confirm_dialog_lists_warnings(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runs_on_dropdown_confirm_begins_to_local_transfer_with_dormant_copy_id(
     tmp_path,
@@ -6675,6 +6772,7 @@ async def test_runs_on_dropdown_confirm_begins_to_local_transfer_with_dormant_co
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runs_on_dropdown_confirm_begins_to_server_transfer(tmp_path):
     """The other direction: confirm fires `begin_transfer_to_server` with
@@ -6717,6 +6815,7 @@ async def test_runs_on_dropdown_confirm_begins_to_server_transfer(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runs_on_cancel_button_cancels_the_dormant_copy_using_its_own_id(
     tmp_path,
@@ -6773,6 +6872,7 @@ async def test_runs_on_cancel_button_cancels_the_dormant_copy_using_its_own_id(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runs_on_retry_button_rebegins_a_failed_transfer(tmp_path):
     """`to_server_failed`: Retry = re-begin (the PR-5 retry leg) -- same
@@ -6812,6 +6912,7 @@ async def test_runs_on_retry_button_rebegins_a_failed_transfer(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_legacy_transfer_buttons_are_retired(tmp_path):
     """redesign PR-4 task 4 (ruling 2): supersedes `test_runs_on_dropdown_
@@ -6872,6 +6973,7 @@ def _stub_ready_health(monkeypatch) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_owner_action_marks_stale_before_resolving(
     tmp_path, monkeypatch
@@ -6956,6 +7058,7 @@ async def test_definition_owner_action_marks_stale_before_resolving(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_runs_on_dropdown_confirm_dialog_lists_warnings(tmp_path):
     """Definition-pane twin of `test_runs_on_dropdown_confirm_dialog_
@@ -7013,6 +7116,7 @@ async def test_definition_runs_on_dropdown_confirm_dialog_lists_warnings(tmp_pat
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_runs_on_dropdown_confirm_begins_to_local_transfer_with_dormant_copy_id(
     tmp_path, monkeypatch
@@ -7048,10 +7152,14 @@ async def test_definition_runs_on_dropdown_confirm_begins_to_local_transfer_with
             await settle_schedules_workbench(pilot, pilot.app.screen)
 
             mirror = db.get_automation_definition(mirror_id)
+            # The live Queue presents the remote ID, which resolves to this mirror.
+            server_definition = {**mirror, "id": mirror["server_id"]}
             detail = pilot.app.screen.query_one(
                 "#scheduling-queue-definition-detail", DefinitionDetail
             )
-            detail.set_definition(mirror, runs_on_options=[("This device", "local")])
+            detail.set_definition(
+                server_definition, runs_on_options=[("This device", "local")]
+            )
             await pilot.pause()
 
             row = detail._runs_on_row
@@ -7059,7 +7167,9 @@ async def test_definition_runs_on_dropdown_confirm_begins_to_local_transfer_with
             await pilot.pause()
             select = row.query_one(Select)
             select.value = "local"
-            await pilot.pause()
+            assert await wait_for_condition(
+                lambda: isinstance(pilot.app.screen, ConfirmationDialog)
+            )
 
             assert isinstance(pilot.app.screen, ConfirmationDialog)
             pilot.app.screen.dismiss(True)
@@ -7084,6 +7194,7 @@ async def test_definition_runs_on_dropdown_confirm_begins_to_local_transfer_with
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_runs_on_dropdown_confirm_begins_to_server_transfer(tmp_path):
     """Definition-pane twin of the reminder-side `to_server` test."""
@@ -7140,6 +7251,7 @@ async def test_definition_runs_on_dropdown_confirm_begins_to_server_transfer(tmp
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_runs_on_cancel_button_cancels_the_dormant_copy_using_its_own_id(
     tmp_path, monkeypatch
@@ -7215,6 +7327,7 @@ async def test_definition_runs_on_cancel_button_cancels_the_dormant_copy_using_i
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_runs_on_retry_button_rebegins_a_failed_transfer(tmp_path):
     """Definition-pane twin of the reminder-side Retry test."""
@@ -7271,6 +7384,7 @@ async def test_definition_runs_on_retry_button_rebegins_a_failed_transfer(tmp_pa
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_automations_tab_transfer_keybindings_are_retired(tmp_path):
     """redesign PR-4 task 4 (ruling 2): supersedes `test_definition_runs_
@@ -7505,6 +7619,7 @@ async def test_editable_rows_carry_a_row_key_for_per_row_worker_groups():
     assert keys and None not in keys and len(set(keys)) == len(keys)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_queue_definition_pane_repaints_after_a_successful_in_pane_edit(tmp_path):
     """Final review F4/I4. `DefinitionDetail` is mounted TWICE and the

@@ -1,0 +1,4 @@
+# v-full-track-steps-1 relaunched (no wipe) after seeding [tools] read_file_enabled=true, glob_files_enabled=true; 2nd Console message request:
+"name": "find_tools",
+  "description": "Search the tool catalog by keyword; returns ids + one-liners. Available tool groups: ask_* (1), calculator (1), canvas_* (5), character-creator (1), character_* (3), get_* (1), glob_* (1), mcp_* (6), read_* (1), todo_* (4), watchlists_* (14), web_* (3).",
+  

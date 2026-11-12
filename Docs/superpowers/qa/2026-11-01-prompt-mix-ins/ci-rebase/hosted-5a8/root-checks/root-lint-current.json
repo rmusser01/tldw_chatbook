@@ -1,0 +1,155 @@
+{
+  "Tests/Architecture/test_module_size_ratchet.py": [
+    {
+      "cell": null,
+      "code": "UP033",
+      "end_location": {
+        "column": 25,
+        "row": 878
+      },
+      "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Architecture/test_module_size_ratchet.py",
+      "fix": {
+        "applicability": "safe",
+        "edits": [
+          {
+            "content": "from functools import lru_cache, cache",
+            "end_location": {
+              "column": 32,
+              "row": 54
+            },
+            "location": {
+              "column": 1,
+              "row": 54
+            }
+          },
+          {
+            "content": "cache",
+            "end_location": {
+              "column": 25,
+              "row": 878
+            },
+            "location": {
+              "column": 2,
+              "row": 878
+            }
+          }
+        ],
+        "message": "Rewrite with `@functools.cache"
+      },
+      "location": {
+        "column": 11,
+        "row": 878
+      },
+      "message": "Use `@functools.cache` instead of `@functools.lru_cache(maxsize=None)`",
+      "name": "lru-cache-with-maxsize-none",
+      "noqa_row": 878,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/lru-cache-with-maxsize-none"
+    }
+  ],
+  "Tests/Architecture/test_library_modules_size_ratchet.py": [
+    {
+      "cell": null,
+      "code": "UP033",
+      "end_location": {
+        "column": 25,
+        "row": 895
+      },
+      "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Architecture/test_library_modules_size_ratchet.py",
+      "fix": {
+        "applicability": "safe",
+        "edits": [
+          {
+            "content": "from functools import lru_cache, cache",
+            "end_location": {
+              "column": 32,
+              "row": 115
+            },
+            "location": {
+              "column": 1,
+              "row": 115
+            }
+          },
+          {
+            "content": "cache",
+            "end_location": {
+              "column": 25,
+              "row": 895
+            },
+            "location": {
+              "column": 2,
+              "row": 895
+            }
+          }
+        ],
+        "message": "Rewrite with `@functools.cache"
+      },
+      "location": {
+        "column": 11,
+        "row": 895
+      },
+      "message": "Use `@functools.cache` instead of `@functools.lru_cache(maxsize=None)`",
+      "name": "lru-cache-with-maxsize-none",
+      "noqa_row": 895,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/lru-cache-with-maxsize-none"
+    }
+  ],
+  "Tests/CI/test_ci_queue_pressure_contract.py": [],
+  "scripts/check_ui_pr_gate_census.py": [
+    {
+      "cell": null,
+      "code": "EXE001",
+      "end_location": {
+        "column": 23,
+        "row": 1
+      },
+      "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_ui_pr_gate_census.py",
+      "fix": null,
+      "location": {
+        "column": 1,
+        "row": 1
+      },
+      "message": "Shebang is present but file is not executable",
+      "name": "shebang-not-executable",
+      "noqa_row": 59,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/shebang-not-executable"
+    },
+    {
+      "cell": null,
+      "code": "PIE810",
+      "end_location": {
+        "column": 14,
+        "row": 1209
+      },
+      "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_ui_pr_gate_census.py",
+      "fix": {
+        "applicability": "unsafe",
+        "edits": [
+          {
+            "content": "inner.startswith((outer_path + \"::\", outer_path + \"[\"))",
+            "end_location": {
+              "column": 14,
+              "row": 1209
+            },
+            "location": {
+              "column": 16,
+              "row": 1207
+            }
+          }
+        ],
+        "message": "Merge into a single `startswith` call"
+      },
+      "location": {
+        "column": 16,
+        "row": 1207
+      },
+      "message": "Call `startswith` once with a `tuple`",
+      "name": "multiple-starts-ends-with",
+      "noqa_row": 1207,
+      "severity": "error",
+      "url": "https://docs.astral.sh/ruff/rules/multiple-starts-ends-with"
+    }
+  ]
+}

@@ -16,7 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE
+from tldw_chatbook.Chat.rag_scope import (
+    RagScope,
+    ScopeItem,
+    SOURCE_TYPE_MEDIA,
+    SOURCE_TYPE_NOTE,
+)
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Workspaces.registry_service import WorkspaceNotFound
@@ -24,15 +29,17 @@ from tldw_chatbook.Workspaces.registry_service import WorkspaceNotFound
 pytestmark = pytest.mark.unit
 
 
-def build_test_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
-    return LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task12-test")
-    )
+def build_test_registry(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> LocalWorkspaceRegistryService:
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task12-test")
+    request.addfinalizer(db.close)
+    return LocalWorkspaceRegistryService(db)
 
 
 @pytest.fixture()
-def registry(tmp_path):
-    return build_test_registry(tmp_path)
+def registry(tmp_path, request):
+    return build_test_registry(tmp_path, request)
 
 
 @pytest.fixture()
@@ -42,12 +49,14 @@ def workspace_id(registry):
 
 
 class TestTableCreatedIdempotently:
-    def test_repeat_init_on_same_file_does_not_raise(self, tmp_path):
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="c1")
+    def test_repeat_init_on_same_file_does_not_raise(self, tmp_path, request):
+        first = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="c1")
+        request.addfinalizer(first.close)
 
         # Second init against the same file must be a no-op, not an error
         # (CREATE TABLE IF NOT EXISTS, mirroring every other workspace table).
         second = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="c1")
+        request.addfinalizer(second.close)
 
         with second.connection() as conn:
             row = conn.execute(
@@ -59,7 +68,10 @@ class TestTableCreatedIdempotently:
 class TestRoundTrip:
     def test_set_then_get_round_trips(self, registry, workspace_id):
         scope = RagScope(
-            items=(ScopeItem(SOURCE_TYPE_MEDIA, "42"), ScopeItem(SOURCE_TYPE_NOTE, "n1")),
+            items=(
+                ScopeItem(SOURCE_TYPE_MEDIA, "42"),
+                ScopeItem(SOURCE_TYPE_NOTE, "n1"),
+            ),
             updated_at="2026-07-21T00:00:00+00:00",
         )
 
@@ -68,16 +80,16 @@ class TestRoundTrip:
 
         assert result == scope
 
-    def test_set_persists_across_reload(self, tmp_path):
-        registry = build_test_registry(tmp_path)
-        record = registry.create_workspace(workspace_id="ws-reload", name="Reload target")
+    def test_set_persists_across_reload(self, tmp_path, request):
+        registry = build_test_registry(tmp_path, request)
+        record = registry.create_workspace(
+            workspace_id="ws-reload", name="Reload target"
+        )
         scope = RagScope(items=(ScopeItem(SOURCE_TYPE_NOTE, "n9"),), updated_at="t1")
 
         registry.set_workspace_scope(record.workspace_id, scope)
 
-        reloaded = LocalWorkspaceRegistryService(
-            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task12-test")
-        )
+        reloaded = build_test_registry(tmp_path, request)
         assert reloaded.get_workspace_scope(record.workspace_id) == scope
 
     def test_set_updates_an_existing_scope(self, registry, workspace_id):
@@ -180,7 +192,9 @@ class TestCorruptPayloadGuard:
 
 
 class TestWorkspaceDeletionCascades:
-    def test_deleting_the_workspace_row_drops_the_scope_row(self, registry, workspace_id):
+    def test_deleting_the_workspace_row_drops_the_scope_row(
+        self, registry, workspace_id
+    ):
         """The registry has no hard-delete API yet (only archive), but the
         storage layer must not orphan scope rows once one is added -- proven
         directly against the FK cascade the same way workspace_memberships
@@ -190,11 +204,14 @@ class TestWorkspaceDeletionCascades:
         assert registry.get_workspace_scope(workspace_id) is not None
 
         with registry.db.transaction() as conn:
-            conn.execute("DELETE FROM workspace_records WHERE workspace_id = ?", (workspace_id,))
+            conn.execute(
+                "DELETE FROM workspace_records WHERE workspace_id = ?", (workspace_id,)
+            )
 
         with registry.db.connection() as conn:
             row = conn.execute(
-                "SELECT 1 FROM workspace_rag_scopes WHERE workspace_id = ?", (workspace_id,)
+                "SELECT 1 FROM workspace_rag_scopes WHERE workspace_id = ?",
+                (workspace_id,),
             ).fetchone()
         assert row is None
         assert registry.get_workspace_scope(workspace_id) is None

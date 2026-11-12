@@ -1190,7 +1190,7 @@ def _created_config_file_targets(
             tokens = {
                 "path:" + str(item.path),
                 "path:" + str(item.path.resolve()),
-                f"inode:{info.st_dev}:{info.st_ino}",
+                bootstrap.inode_token(info),
             }
             with pinned_directory(selector.parent) as parent:
                 posture = os.fstat(parent)
@@ -1204,7 +1204,7 @@ def _created_config_file_targets(
                 ):
                     raise ValueError("local_snapshot_created_scope_unverified")
                 if any(
-                    tokens.intersection(entry["historical"])
+                    tokens.intersection(bootstrap.identity_view(entry["historical"]))
                     or any(
                         bootstrap._overlap(item.path, Path(path))
                         for path in entry["roots"]

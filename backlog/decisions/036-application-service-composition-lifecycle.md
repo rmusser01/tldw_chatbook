@@ -1,6 +1,6 @@
 # ADR-036: Application Service Composition Lifecycle
 
-Status: Accepted
+Status: Accepted; amended by [ADR-250](250-application-services-bundle.md) (deferral clause)
 Date: 2026-07-28
 Related Tasks:
 [TASK-1538](../tasks/task-1538%20-%20Enforce-single-pass-service-composition-and-runtime-dependency-binding.md)

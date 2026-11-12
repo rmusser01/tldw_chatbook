@@ -31,6 +31,7 @@ from tldw_chatbook.Library.library_rechunk_service import (
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -114,6 +115,7 @@ async def test_return_to_rechunk_retains_progress_and_receipt(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["canvas", "screen"])
 @pytest.mark.parametrize("failure", ["policy", "exception"])
@@ -193,6 +195,7 @@ async def test_failure_while_away_releases_run_and_return_allows_retry(route, fa
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_worker_scheduling_failure_releases_admission_for_retry(monkeypatch):
     host, _, _, _ = _host("textual-dark")

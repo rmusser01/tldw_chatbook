@@ -34,6 +34,7 @@ async def preview_with_keyboard(view, pilot):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 28), (160, 48)])
 async def test_preview_copy_and_stale_draft_on_production_models_pane(
@@ -88,6 +89,7 @@ async def test_preview_copy_and_stale_draft_on_production_models_pane(
         await _close_context(context)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_next_launch_edits_preserve_current_claim_and_verified_target(
     monkeypatch,
@@ -139,6 +141,7 @@ async def test_next_launch_edits_preserve_current_claim_and_verified_target(
         await _close_context(context)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_invalid_preview_cannot_copy_previous_command_or_error_payload(
     monkeypatch,

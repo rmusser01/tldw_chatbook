@@ -13,15 +13,16 @@ and ``collection_indexes._client``), not copies of the normalization logic,
 so a future edit that reintroduces divergence between the two sites would be
 caught here.
 """
+
 from unittest.mock import patch
 
 import pytest
 
-from tldw_chatbook.RAG_Search.simplified.vector_store import ChromaVectorStore
 from tldw_chatbook.RAG_Search.simplified import collection_indexes
 from tldw_chatbook.RAG_Search.simplified.config import (
     validate_chroma_persist_directory,
 )
+from tldw_chatbook.RAG_Search.simplified.vector_store import ChromaVectorStore
 
 
 @pytest.mark.requires_chromadb
@@ -52,11 +53,14 @@ def test_both_sites_reject_dangerous_path_identically(tmp_path):
     """An invalid (null-byte-containing) path is rejected the same way by both."""
     dangerous = str(tmp_path) + "/evil\x00dir"
 
-    with pytest.raises(ValueError):
-        ChromaVectorStore(persist_directory=dangerous)
+    with patch("chromadb.PersistentClient") as client:
+        with pytest.raises(ValueError, match="path contains a null byte") as store_error:
+            ChromaVectorStore(persist_directory=dangerous)
+        with pytest.raises(ValueError, match="path contains a null byte") as index_error:
+            collection_indexes._client(dangerous)
 
-    with pytest.raises(ValueError):
-        collection_indexes._client(dangerous)
+    assert str(store_error.value) == str(index_error.value)
+    client.assert_not_called()
 
 
 @pytest.mark.parametrize("bad_value", [123, ["a", "b"], {"x": 1}])
@@ -81,7 +85,9 @@ def test_from_dict_rejects_non_path_like_persist_directory_with_contextual_error
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 
     with pytest.raises(ValueError, match="Invalid Chroma persist_directory"):
-        RAGConfig.from_dict({"vector_store": {"type": "chroma", "persist_directory": 123}})
+        RAGConfig.from_dict(
+            {"vector_store": {"type": "chroma", "persist_directory": 123}}
+        )
 
 
 def test_expanduser_and_absolute_paths_normalize_stably(monkeypatch, tmp_path):
@@ -108,7 +114,9 @@ def test_expanduser_and_absolute_paths_normalize_stably(monkeypatch, tmp_path):
 # ``~``-containing persist_directory the SAME way the consumer sites do.
 
 
-def test_env_var_persist_directory_expands_tilde_like_client_sites(monkeypatch, tmp_path):
+def test_env_var_persist_directory_expands_tilde_like_client_sites(
+    monkeypatch, tmp_path
+):
     """RAG_PERSIST_DIR=~/x must resolve to the same path validate_chroma_persist_directory
     computes -- the active-profile env-override layer (active_config.py) is a
     persist_directory PRODUCER and must agree with the consumer sites.
@@ -116,15 +124,23 @@ def test_env_var_persist_directory_expands_tilde_like_client_sites(monkeypatch, 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("RAG_PERSIST_DIR", "~/x")
 
-    from tldw_chatbook.RAG_Search.simplified.active_config import _apply_env_overrides
-    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.RAG_Search.simplified import active_config
+    from tldw_chatbook.RAG_Search.simplified import config as rag_config
 
-    config = _apply_env_overrides(RAGConfig())
+    select_config_source(
+        monkeypatch, tmp_path / "config.toml", vars(active_config), vars(rag_config)
+    )
+    config = active_config._apply_env_overrides(rag_config.RAGConfig())
 
-    assert config.vector_store.persist_directory == validate_chroma_persist_directory("~/x")
+    assert config.vector_store.persist_directory == validate_chroma_persist_directory(
+        "~/x"
+    )
 
 
-def test_from_dict_persist_directory_expands_tilde_like_client_sites(monkeypatch, tmp_path):
+def test_from_dict_persist_directory_expands_tilde_like_client_sites(
+    monkeypatch, tmp_path
+):
     """A saved/legacy profile JSON's persist_directory ('~/x') must resolve to
     the same path validate_chroma_persist_directory computes --
     RAGConfig.from_dict() is a persist_directory PRODUCER (profile load path)
@@ -138,4 +154,6 @@ def test_from_dict_persist_directory_expands_tilde_like_client_sites(monkeypatch
         {"vector_store": {"type": "chroma", "persist_directory": "~/x"}}
     )
 
-    assert config.vector_store.persist_directory == validate_chroma_persist_directory("~/x")
+    assert config.vector_store.persist_directory == validate_chroma_persist_directory(
+        "~/x"
+    )

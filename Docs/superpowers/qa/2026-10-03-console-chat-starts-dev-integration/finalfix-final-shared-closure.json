@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request",
+    "--basetemp=/private/tmp/console-finalfix-shared-closure-01a0fa6c"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 5.002381086349487,
+  "output": ".                                                                        [100%]\n============================= slowest 25 durations =============================\n1.23s setup    Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request\n\n(2 durations < 1s hidden.)\n1 passed in 1.84s\n"
+}

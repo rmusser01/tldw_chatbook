@@ -1,0 +1,151 @@
+{
+  "query_source_commit": "19d38fd32ed9009d9fd7c9ffb04e38fd989d370d",
+  "current_commit": "e8c841d48ba35f99433842e5e7552f989867c01f",
+  "kind": "source applicability, not a new timing run",
+  "rows": [
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/service.py",
+      "query_run_hash": "aa764965e2a0d87737d47e1f9f5411d123af64e06e471eb0c0e27d346c6cd648",
+      "current_hash": "aa764965e2a0d87737d47e1f9f5411d123af64e06e471eb0c0e27d346c6cd648",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py",
+      "query_run_hash": "5bce003a30f2a0dc5538d948270b820feae21004790cc9d8261b889c8edca755",
+      "current_hash": "5bce003a30f2a0dc5538d948270b820feae21004790cc9d8261b889c8edca755",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "query_run_hash": "f84d62b1574fecf715a76e9c10949de84be287c6028816545c14888d7d7c8672",
+      "current_hash": "f84d62b1574fecf715a76e9c10949de84be287c6028816545c14888d7d7c8672",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/scanner.py",
+      "query_run_hash": "5e34731b35153728779d59ad7c3566b61dfde8486055caa45e494b431ef5fd81",
+      "current_hash": "5e34731b35153728779d59ad7c3566b61dfde8486055caa45e494b431ef5fd81",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/project_index/models.py",
+      "query_run_hash": "b76e8cab113b10131de502fa42277e224269d14bb0060a5c459298c433ccb76d",
+      "current_hash": "b76e8cab113b10131de502fa42277e224269d14bb0060a5c459298c433ccb76d",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "query_run_hash": "2f5516cc05746296d563e92afb6fa9d6eb324e991f9b742455c0c6081292ea1a",
+      "current_hash": "2f5516cc05746296d563e92afb6fa9d6eb324e991f9b742455c0c6081292ea1a",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "query_run_hash": "c213c2659248d6d75ef776f31e88104adb7e72b03c39820621c6bd7fab766d5e",
+      "current_hash": "b0a8981a61d90f188715a0856710ce8af077d337a2a785ffe50d85c73db49a8c",
+      "same": false
+    },
+    {
+      "path": "tldw_chatbook/Agents/local_tool_provider.py",
+      "query_run_hash": "f54493f97a97714fe58be15673b7ad9a32c02402d1f5e31c00879c298c7f0310",
+      "current_hash": "f54493f97a97714fe58be15673b7ad9a32c02402d1f5e31c00879c298c7f0310",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+      "query_run_hash": "c68f8dc9f1c55d28d8d3d18dcc8aa76212112b92c0be2b8323962b96ffb696d8",
+      "current_hash": "c68f8dc9f1c55d28d8d3d18dcc8aa76212112b92c0be2b8323962b96ffb696d8",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+      "query_run_hash": "f7bae7273c060f126212fd23c98a070ad6f5accf5564735396990955cfcd81f1",
+      "current_hash": "67245ca33e0fa7f50a06443d2a18202b5e372fc21c1895930027305a34886d3a",
+      "same": false
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+      "query_run_hash": "1dc9240797879be7734bf1960763c88fdc3423c193745e959ef4ca082379f6cc",
+      "current_hash": "1dc9240797879be7734bf1960763c88fdc3423c193745e959ef4ca082379f6cc",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/registry_service.py",
+      "query_run_hash": "4bd5b8d3065ffd4caeb8e8ec69b0cece6eea5ff8defba3a94ba816303019ec04",
+      "current_hash": "4bd5b8d3065ffd4caeb8e8ec69b0cece6eea5ff8defba3a94ba816303019ec04",
+      "same": true
+    },
+    {
+      "path": "Tests/Agents/test_project_index_tool.py",
+      "query_run_hash": "8050fb112e1c937eca31b062b03efd939ba7e2b737eb5154b591cfb6aac570ad",
+      "current_hash": "8050fb112e1c937eca31b062b03efd939ba7e2b737eb5154b591cfb6aac570ad",
+      "same": true
+    },
+    {
+      "path": "Tests/Chat/test_console_workspace_folder_note_contract.py",
+      "query_run_hash": "f50a9519e883214b9a34874f886a1a256810c0b91be35e515bf043e0685c39a1",
+      "current_hash": "f50a9519e883214b9a34874f886a1a256810c0b91be35e515bf043e0685c39a1",
+      "same": true
+    },
+    {
+      "path": "Tests/DB/test_workspace_project_index_db.py",
+      "query_run_hash": "1bcdc71b2bc92839a8ff711d7e9aae873c168ad1e8e5d87c0cd941c1b7921260",
+      "current_hash": "1bcdc71b2bc92839a8ff711d7e9aae873c168ad1e8e5d87c0cd941c1b7921260",
+      "same": true
+    },
+    {
+      "path": "Tests/UI/test_workspace_project_index_settings.py",
+      "query_run_hash": "b03fe667216f8d553a65dfc7aae8713a0c5e30c6757c5714582395621b6a7c66",
+      "current_hash": "b03fe667216f8d553a65dfc7aae8713a0c5e30c6757c5714582395621b6a7c66",
+      "same": true
+    },
+    {
+      "path": "Tests/Workspaces/test_project_index_detached_cleanup.py",
+      "query_run_hash": "da3ee32891c0f152b24ddb7e4faa73b9f04ae37cb6114cd3d412a611645ca31c",
+      "current_hash": "da3ee32891c0f152b24ddb7e4faa73b9f04ae37cb6114cd3d412a611645ca31c",
+      "same": true
+    },
+    {
+      "path": "Tests/Workspaces/test_project_index_service.py",
+      "query_run_hash": "ac0b4dcb0849213a01be69c21a8424990fb2516718512699247691eb8c339653",
+      "current_hash": "ac0b4dcb0849213a01be69c21a8424990fb2516718512699247691eb8c339653",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Tools/project_index_scan_worker.py",
+      "query_run_hash": "1cc7f40ab95aba039b102197d07e86247fb4e6641f1a2c5195946e5f5d99b25e",
+      "current_hash": "1cc7f40ab95aba039b102197d07e86247fb4e6641f1a2c5195946e5f5d99b25e",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Tools/project_index_scan_protocol.py",
+      "query_run_hash": "05de5a229e37da04556dfa244ab5991dbbf301b921343a936beb8cd5034a93b3",
+      "current_hash": "05de5a229e37da04556dfa244ab5991dbbf301b921343a936beb8cd5034a93b3",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/DB/migrations/workspace_project_index_003.sql",
+      "query_run_hash": "3d24306f98ee0a2041193677db65a2e9d585480b4f179191bb65f502991bdbad",
+      "current_hash": "3d24306f98ee0a2041193677db65a2e9d585480b4f179191bb65f502991bdbad",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/participants.py",
+      "query_run_hash": "14aef638569a1c453b37843cb4748658a157d17e296fbe53687b1e9edec0f5a6",
+      "current_hash": "14aef638569a1c453b37843cb4748658a157d17e296fbe53687b1e9edec0f5a6",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/storage_admission.py",
+      "query_run_hash": "d9ec07f682a027aebee1da3d06fa1fbaa170e3ed6650392cd7f3b5b3b4b1253a",
+      "current_hash": "d9ec07f682a027aebee1da3d06fa1fbaa170e3ed6650392cd7f3b5b3b4b1253a",
+      "same": true
+    },
+    {
+      "path": "tldw_chatbook/DB/store_kernel.py",
+      "query_run_hash": "825daabb5547e2b1650dec218ba03ca9434610b5c715489edb60d97df8fe7077",
+      "current_hash": "825daabb5547e2b1650dec218ba03ca9434610b5c715489edb60d97df8fe7077",
+      "same": true
+    }
+  ]
+}

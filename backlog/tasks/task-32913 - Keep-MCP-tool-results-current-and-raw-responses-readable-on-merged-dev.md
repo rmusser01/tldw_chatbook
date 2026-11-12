@@ -34,7 +34,7 @@ Users need the Test Tool outcome to describe their latest attempt, and raw respo
 Resume saved PR2719 from verified PR2722 merged dev ed2a579062. PR2770/TASK32882 already supplies the scrolling prerequisite; retain unrelated edits and the current permission/execution pipeline.
 
 ADR required: no
-ADR path: backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md; backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+ADR path: backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md; backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md
 Reason: bounded repair of existing result replacement and token-backed disclosure sizing; no new authority, runtime, storage or service contract.
 
 1. Preserve PR2722 closeout and read saved PR2719/task32833 requirements. The old task32833 collides with the landed Workspace exclusions task, so record this fresh task as its current continuation; keep historical evidence labeled.

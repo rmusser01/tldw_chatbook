@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Backup_Recovery/test_admission_device_renumber.py",
+    "Tests/Backup_Recovery/test_selected_owner_absence.py",
+    "Tests/Backup_Recovery/test_agent_runs_recovery_schema.py",
+    "Tests/Backup_Recovery/test_console_artifacts_roundtrip.py",
+    "-q",
+    "--basetemp=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/backup-dev-qualification-profile-09ras67g/pytest"
+  ],
+  "head": "872efa5bdcf21fd17fe98b29177603d9e61faf99",
+  "exit": 0,
+  "seconds": 142.77,
+  "log": "backup-dev-qualification.log"
+}

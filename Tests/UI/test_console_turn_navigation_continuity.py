@@ -309,6 +309,7 @@ async def _assert_hidden_turn_reconciles_all_four_layers(
     return reopened
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pre_durable_custody_does_not_publish_sensitive_inputs(
     tmp_path,
@@ -462,6 +463,7 @@ async def test_pre_durable_custody_does_not_publish_sensitive_inputs(
         logger.remove(sink_id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("origin", ["ordinary", "main_agent"])
 @pytest.mark.parametrize("race", ["before_task", "during_stream"])
 @pytest.mark.asyncio
@@ -617,6 +619,7 @@ async def test_accepted_turn_survives_both_outer_navigation_races(
         assert payload_text.count(final_content) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_return_during_live_turn_keeps_fresh_view_reconciling(tmp_path):
     """A view mounted mid-turn keeps polling through terminalization.
@@ -675,6 +678,7 @@ async def test_return_during_live_turn_keeps_fresh_view_reconciling(tmp_path):
         assert controller.in_flight_run_count() == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("phase", ["async_preparation", "provider_readiness"])
 @pytest.mark.asyncio
 async def test_ordinary_turn_survives_navigation_during_async_interior_phase(
@@ -750,6 +754,7 @@ async def test_ordinary_turn_survives_navigation_during_async_interior_phase(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("work_kind", "step_kind", "tool_name"),
     [
@@ -840,6 +845,7 @@ async def test_agent_interior_work_survives_real_navigation_with_origin_evidence
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_claimed_queued_continuation_drains_while_console_is_hidden(
     tmp_path,
@@ -929,6 +935,7 @@ async def test_claimed_queued_continuation_drains_while_console_is_hidden(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_during_terminal_row_and_receipt_transaction_commits_once(
     tmp_path,
@@ -1021,6 +1028,7 @@ async def test_navigation_during_terminal_row_and_receipt_transaction_commits_on
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_attachment_generation_cannot_detach_successor(tmp_path):
     """A delayed outgoing teardown cannot clear a newly attached view."""
@@ -1056,6 +1064,7 @@ async def test_stale_attachment_generation_cannot_detach_successor(tmp_path):
         assert runtime._attached_generation == successor_generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hidden_completion_and_background_approval_reconcile_by_session(
     tmp_path,

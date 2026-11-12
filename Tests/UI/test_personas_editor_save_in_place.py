@@ -50,6 +50,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
 )
 
 from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character_paging
+from Tests.UI.roleplay_frame_harness import start_new
 
 pytestmark = pytest.mark.asyncio
 
@@ -157,13 +158,14 @@ async def _mounted(pilot):
 
 
 class TestCharacterSaveInPlace:
+    @pytest.mark.bootstrap_profile
     async def test_create_save_stays_in_editor_and_rearms_dirty(
         self, mock_app_instance, route_character_db
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             assert screen._edit_mode == "create"
 
@@ -194,6 +196,7 @@ class TestCharacterSaveInPlace:
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
 
+    @pytest.mark.bootstrap_profile
     async def test_twice_save_preserves_greeting_and_bumps_version(
         self, mock_app_instance, route_character_db
     ):
@@ -207,7 +210,7 @@ class TestCharacterSaveInPlace:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             assert screen._edit_mode == "create"
 
@@ -285,7 +288,9 @@ def real_persona_scope_service(tmp_path):
     local_service = LocalCharacterPersonaService(
         None, persona_store_path=tmp_path / "personas_save_in_place.json"
     )
-    return CharacterPersonaScopeService(local_service=local_service, server_service=None)
+    return CharacterPersonaScopeService(
+        local_service=local_service, server_service=None
+    )
 
 
 async def _enter_personas_mode(pilot):
@@ -298,6 +303,7 @@ async def _enter_personas_mode(pilot):
 
 
 class TestPersonaSaveInPlace:
+    @pytest.mark.bootstrap_profile
     async def test_create_save_stays_in_editor_and_persists_new_fields(
         self, mock_app_instance, stub_characters, real_persona_scope_service
     ):
@@ -305,7 +311,7 @@ class TestPersonaSaveInPlace:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             assert screen._edit_mode == "create"
 
@@ -313,9 +319,9 @@ class TestPersonaSaveInPlace:
             screen.query_one(
                 "#personas-editor-personality-traits", TextArea
             ).text = "brave, kind"
-            screen.query_one("#personas-editor-mode", Select).value = (
-                "persistent_scoped"
-            )
+            screen.query_one(
+                "#personas-editor-mode", Select
+            ).value = "persistent_scoped"
             screen.query_one("#personas-editor-enabled", Switch).value = False
             await pilot.pause()
             await pilot.press("ctrl+s")
@@ -355,6 +361,7 @@ class TestPersonaSaveInPlace:
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
 
+    @pytest.mark.bootstrap_profile
     async def test_list_editor_save_preserves_local_and_unknown_fields(
         self, mock_app_instance, stub_characters, real_persona_scope_service
     ):
@@ -392,7 +399,9 @@ class TestPersonaSaveInPlace:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _enter_personas_mode(pilot)
-            await pilot.click("#personas-library-row-persona-p-1")
+            from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+            await select_roleplay_item(pilot, screen, "persona:p-1", via="click")
             await pilot.pause()
 
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (

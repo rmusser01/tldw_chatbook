@@ -877,18 +877,14 @@ class ServerNotesWorkspaceService:
         )
         return dict(response)
 
-    async def get_workspace_source_status(
-        self, workspace_id: str
-    ) -> dict[str, Any]:
+    async def get_workspace_source_status(self, workspace_id: str) -> dict[str, Any]:
         """Return the server's source readiness projection unchanged."""
 
         self._enforce_policy(self._workspace_action_id("detail"))
         client = self._require_client()
         return dict(await client.get_workspace_source_status(workspace_id))
 
-    async def get_workspace_capabilities(
-        self, workspace_id: str
-    ) -> dict[str, Any]:
+    async def get_workspace_capabilities(self, workspace_id: str) -> dict[str, Any]:
         """Return the server's capability read projection unchanged."""
 
         self._enforce_policy(self._workspace_action_id("detail"))

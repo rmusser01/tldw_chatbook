@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
+from Tests.UI.pump_probe import console_attach_ended
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
 
 
@@ -94,7 +96,7 @@ async def test_console_reuse_timer_quiescence_and_runtime_attachment(
 
         # Arm the interval timers the way an active run would.
         console._start_console_transcript_sync_timer()
-        console._start_console_cost_ttl_timer()
+        context_spend_for_test(console)._start_console_cost_ttl_timer()
         assert console._console_transcript_sync_timer is not None
 
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
@@ -102,7 +104,7 @@ async def test_console_reuse_timer_quiescence_and_runtime_attachment(
             "suspend must stop the 0.2s transcript-sync poll -- Textual "
             "does not auto-cancel a suspended installed screen's timers"
         )
-        assert console._console_cost_ttl_timer is None
+        assert context_spend_for_test(console)._console_cost_ttl_timer is None
         assert getattr(console._fleet, "_console_fleet_survivor_timer", None) is None
         # THE crux of the audit: the runtime view must stay attached --
         # a suspend-time detach permanently kills the prompt queue
@@ -147,6 +149,9 @@ async def test_console_resume_restarts_sync_timer_for_active_run(
 
         monkeypatch.setattr(controller, "in_flight_run_count", lambda: 1)
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
+        # TASK-36389: the reused Console re-arms the poll in its attach
+        # reconcile's resume, which a reached screen does not imply.
+        await console_attach_ended(console)
         assert console._console_transcript_sync_timer is not None, (
             "resume must restart the transcript-sync poll while a run is "
             "in flight -- no other path restarts it"
@@ -156,6 +161,7 @@ async def test_console_resume_restarts_sync_timer_for_active_run(
         console._stop_console_transcript_sync_timer()
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
+        await console_attach_ended(console)
         assert console._console_transcript_sync_timer is None
 
 

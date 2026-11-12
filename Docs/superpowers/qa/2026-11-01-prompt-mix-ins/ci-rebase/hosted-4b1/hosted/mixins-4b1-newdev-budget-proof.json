@@ -1,0 +1,99 @@
+{
+  "new_dev": "2dcf038cb8be0af991f92c43b0c262f02471c51d",
+  "branch_head": "4b1e070c972320e1353b6bac7e185035db125571",
+  "raised": {},
+  "lower_rows": {
+    "tldw_chatbook/Utils/app_shutdown.py": [
+      776,
+      554
+    ],
+    "tldw_chatbook/Chat/console_display_state.py": [
+      3065,
+      2875
+    ],
+    "tldw_chatbook/app.py": [
+      5718,
+      5687
+    ],
+    "tldw_chatbook/app_service_wiring.py": [
+      3703,
+      3693
+    ],
+    "tldw_chatbook/app_command_providers.py": [
+      1133,
+      1121
+    ],
+    "tldw_chatbook/Chat/console_chat_controller.py": [
+      29705,
+      29173
+    ],
+    "tldw_chatbook/Chat/console_chat_store.py": [
+      22400,
+      22317
+    ],
+    "tldw_chatbook/UI/Screens/personas_screen.py": [
+      17505,
+      16829
+    ],
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": [
+      1322,
+      818
+    ],
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": [
+      1582,
+      992
+    ],
+    "tldw_chatbook/Widgets/Console/console_transcript.py": [
+      8594,
+      8556
+    ],
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": [
+      25880,
+      25851
+    ],
+    "tldw_chatbook/Agents/agent_service.py": [
+      9719,
+      9714
+    ],
+    "tldw_chatbook/UI/Console_Modules/workspace.py": [
+      8938,
+      8935
+    ],
+    "tldw_chatbook/Chat/console_provider_gateway.py": [
+      8546,
+      8487
+    ],
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": [
+      7403,
+      7189
+    ],
+    "tldw_chatbook/UI/Console_Modules/session.py": [
+      7044,
+      6973
+    ],
+    "tldw_chatbook/Chat/console_runtime.py": [
+      7231,
+      7069
+    ],
+    "tldw_chatbook/Chat/console_trace_service.py": [
+      6787,
+      6587
+    ],
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": [
+      5176,
+      5167
+    ],
+    "tldw_chatbook/DB/Prompts_DB.py": [
+      4760,
+      4670
+    ],
+    "tldw_chatbook/Chat/citation_trace_repository.py": [
+      4765,
+      4717
+    ],
+    "tldw_chatbook/Chat/chat_persistence_service.py": [
+      4272,
+      4239
+    ]
+  }
+}

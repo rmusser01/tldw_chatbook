@@ -84,6 +84,7 @@ def test_console_focus_gaps_have_contract_style_rules(selector):
     assert "$accent" not in block
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_composer_pageup_scrolls_transcript_keyboard_only():
     """TASK-348: scrollback must be reachable without the mouse."""
@@ -95,7 +96,7 @@ async def test_composer_pageup_scrolls_transcript_keyboard_only():
     async with host.run_test(size=(120, 30)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
         for n in range(30):
@@ -140,6 +141,7 @@ def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switcher_arrow_keys_move_focus_through_results():
     """TASK-358: ArrowDown/ArrowUp must navigate results (quick-switcher
@@ -173,6 +175,7 @@ async def test_switcher_arrow_keys_move_focus_through_results():
         assert isinstance(host.focused, Input)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f6_rail_stop_paints_owned_divider_and_restores_on_leave():
     """F6 emphasizes one owned divider and a non-color control cue."""
@@ -184,7 +187,7 @@ async def test_f6_rail_stop_paints_owned_divider_and_restores_on_leave():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         # The focus-frame contract needs the expanded rail; current Console
         # startup may leave Context collapsed while Inspector owns the band.
         console._set_console_rail_preference(
@@ -216,6 +219,7 @@ async def test_f6_rail_stop_paints_owned_divider_and_restores_on_leave():
         assert (rail.region, rail.content_region) == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_shell_drops_header_at_small_height():
     """TASK-346: below the minimum viable height the header banner is
@@ -249,6 +253,7 @@ async def test_console_shell_drops_header_at_small_height():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switcher_footer_hints_document_real_accelerators():
     """The switcher advertises only actions valid for the current candidate."""
@@ -264,9 +269,6 @@ async def test_switcher_footer_hints_document_real_accelerators():
         await pilot.pause()
 
         hints = modal.query_one("#console-switcher-hints", Static)
-        text = str(hints.renderable)
-        assert "Enter" in text
-        assert "F2" not in text  # all rows are saved conversations
-        assert "Home/End/Pg" in text
-        assert "F3" in text
-        assert "Esc" in text
+        assert str(hints.renderable) == (
+            "Enter:open · ↑↓:move · Shift+F3:mode · Esc:close"
+        )

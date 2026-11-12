@@ -1,9 +1,10 @@
 """Conversation/workspace RAG retrieval scope: model, codecs, resolution."""
+
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping, Optional
+from typing import Any, Awaitable, Callable, Literal, Mapping, Optional, Protocol
 
 from loguru import logger
 
@@ -77,9 +78,7 @@ def scope_cause_phrase(cause: Any) -> str:
     Returns:
         The mapped phrase, or a generic fallback for unknown/blank causes.
     """
-    return _SCOPE_EMPTY_CAUSE_PHRASES.get(
-        str(cause or ""), _SCOPE_EMPTY_CAUSE_FALLBACK
-    )
+    return _SCOPE_EMPTY_CAUSE_PHRASES.get(str(cause or ""), _SCOPE_EMPTY_CAUSE_FALLBACK)
 
 
 def scope_empty_notice(cause: Any) -> str:
@@ -94,6 +93,7 @@ def scope_empty_notice(cause: Any) -> str:
     """
     return SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause=scope_cause_phrase(cause))
 
+
 def _warn_malformed(reason: str) -> None:
     """Log a warning about malformed rag_scope payload.
 
@@ -101,6 +101,7 @@ def _warn_malformed(reason: str) -> None:
         reason: A short description of what was malformed.
     """
     logger.warning("rag_scope payload malformed ({}); treating as unscoped", reason)
+
 
 @dataclass(frozen=True)
 class ScopeItem:
@@ -110,8 +111,10 @@ class ScopeItem:
         source_type: The type of source (e.g., 'media', 'note').
         source_id: The unique identifier for the source.
     """
+
     source_type: str
     source_id: str
+
 
 @dataclass(frozen=True)
 class RagScope:
@@ -121,9 +124,11 @@ class RagScope:
         items: Tuple of ScopeItem objects that define what sources to retrieve from.
         updated_at: ISO 8601 timestamp indicating when the scope was last updated.
     """
+
     items: tuple[ScopeItem, ...]
     updated_at: str
     empty_is_scoped: bool = False
+
 
 def serialize_scope(scope: RagScope) -> dict:
     """Serialize a scope to its stored JSON-safe dict shape.
@@ -137,9 +142,13 @@ def serialize_scope(scope: RagScope) -> dict:
     return {
         "version": SCOPE_VERSION,
         "updated_at": scope.updated_at,
-        "items": [{"source_type": i.source_type, "source_id": i.source_id} for i in scope.items],
+        "items": [
+            {"source_type": i.source_type, "source_id": i.source_id}
+            for i in scope.items
+        ],
         "empty_is_scoped": scope.empty_is_scoped,
     }
+
 
 def parse_scope(raw: Any) -> Optional[RagScope]:
     """Parse a stored scope payload; any invalid input reads as unscoped.
@@ -160,7 +169,10 @@ def parse_scope(raw: Any) -> Optional[RagScope]:
     version = raw.get("version")
     if not isinstance(version, int) or version > SCOPE_VERSION or version < 1:
         if version is not None and version != SCOPE_VERSION:
-            logger.warning("rag_scope payload version {} unsupported; treating as unscoped", version)
+            logger.warning(
+                "rag_scope payload version {} unsupported; treating as unscoped",
+                version,
+            )
         else:
             _warn_malformed("version missing or invalid type")
         return None
@@ -195,6 +207,7 @@ def parse_scope(raw: Any) -> Optional[RagScope]:
         empty_is_scoped=bool(empty_is_scoped),
     )
 
+
 @dataclass(frozen=True)
 class EffectiveScope:
     """The resolved RAG retrieval scope after combining conversation and workspace scopes.
@@ -216,11 +229,14 @@ class EffectiveScope:
             conversation-scope-alone or fully unscoped); ``None`` for
             ``"unscoped"`` and ``"scoped"``.
     """
+
     state: Literal["unscoped", "scoped", "empty"]
     allowlist: dict[str, frozenset[str]]
     cause: Optional[str]
 
+
 _UNSCOPED = EffectiveScope(state="unscoped", allowlist={}, cause=None)
+
 
 def resolve_effective_scope(
     conv_scope: Optional[RagScope],
@@ -278,6 +294,7 @@ def resolve_effective_scope(
 
     return EffectiveScope(state="scoped", allowlist=allowlist, cause=None)
 
+
 class ScopeCache:
     """In-process cache of resolved ``EffectiveScope`` values.
 
@@ -293,7 +310,11 @@ class ScopeCache:
         self._entries: dict[tuple[Any, Any, Any, Any], EffectiveScope] = {}
 
     def get(
-        self, conversation_id: Any, workspace_id: Any, conv_stamp: Any, ws_stamp: Any,
+        self,
+        conversation_id: Any,
+        workspace_id: Any,
+        conv_stamp: Any,
+        ws_stamp: Any,
     ) -> Optional[EffectiveScope]:
         """Look up a cached effective scope.
 
@@ -630,3 +651,66 @@ class SessionScopeHolder:
             return
         write_conversation_scope(db, conversation_id, self._scope)
         self._scope = None
+
+
+# -- injected-lister protocols ------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ScopeListItem:
+    """One row as returned by a ``SourceLister.list_page`` call."""
+
+    source_id: str
+    title: str
+    #: Sortable timestamp string (ISO-8601-ish); "" sorts last under Recent.
+    updated_at: str
+    tags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ScopeListPage:
+    """Result of a single ``SourceLister.list_page`` call."""
+
+    items: tuple[ScopeListItem, ...]
+    #: Count of ALL items matching the text/tag filter (untruncated by
+    #: paging) -- used to decide whether a Next page exists.
+    total_matching: int
+
+
+class SourceLister(Protocol):
+    """Protocol implemented by ``media_lister`` / ``notes_lister``.
+
+    Both methods share the SAME ``text``/``tags`` filter contract so their
+    results describe the same logical filtered set for a given source type.
+    """
+
+    async def list_page(
+        self,
+        *,
+        text: str,
+        tags: tuple[str, ...],
+        sort: str,
+        offset: int,
+        limit: int,
+    ) -> ScopeListPage:
+        """Return one sorted, paginated page of full item details."""
+        ...
+
+    async def list_ids(self, *, text: str, tags: tuple[str, ...]) -> tuple[str, ...]:
+        """Return ALL matching ids (unpaginated, no item details)."""
+        ...
+
+
+@dataclass(frozen=True)
+class TagCount:
+    """One entry in a tag-vocabulary listing."""
+
+    tag: str
+    count: int
+
+
+TagLister = Callable[[str], Awaitable[tuple[TagCount, ...]]]
+
+SORT_RECENT = "recent"
+SORT_TITLE = "title"
+SORT_TYPE = "type"

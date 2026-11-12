@@ -16,6 +16,8 @@ from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def service_for(
     db,

@@ -56,6 +56,7 @@ async def _reload_console(app):
     app.restart_factory()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("cold_after_discard", [False, True])
 @pytest.mark.parametrize("project_enabled", [False, True])
 async def test_following_captured_sends_after_discarded_tool_run(
@@ -377,6 +378,7 @@ async def test_following_captured_sends_after_discarded_tool_run(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "tamper",
     [
@@ -404,6 +406,7 @@ async def test_discard_evidence_is_revalidated_before_dispatch(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("project_enabled", [False, True])
 async def test_discard_restores_the_exact_transformed_user_source(
     tmp_path, monkeypatch, project_enabled
@@ -417,6 +420,7 @@ async def test_discard_restores_the_exact_transformed_user_source(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("project_enabled", [False, True])
 @pytest.mark.parametrize("current_transform", [False, True])
 @pytest.mark.parametrize("failed_followups", [1, 2])
@@ -437,6 +441,7 @@ async def test_discard_after_already_failed_followups(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "tamper",
     [

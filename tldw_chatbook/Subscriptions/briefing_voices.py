@@ -184,7 +184,9 @@ async def resolve_roster_voices(
         raw_profile_id = entry.get("voice_profile_id")
 
         if not raw_profile_id:
-            raise VoiceResolutionError(f"speaker {name!r} has no voice profile assigned")
+            raise VoiceResolutionError(
+                f"speaker {name!r} has no voice profile assigned"
+            )
         if profile_service is None:
             raise VoiceResolutionError(
                 f"speaker {name!r} has a voice profile assigned, but no voice "
@@ -195,8 +197,7 @@ async def resolve_roster_voices(
             profile_uuid = UUID(str(raw_profile_id))
         except (ValueError, AttributeError, TypeError):
             raise VoiceResolutionError(
-                f"speaker {name!r} has a malformed voice profile id "
-                f"{raw_profile_id!r}"
+                f"speaker {name!r} has a malformed voice profile id {raw_profile_id!r}"
             ) from None
 
         try:

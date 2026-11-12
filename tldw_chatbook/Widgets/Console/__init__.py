@@ -47,7 +47,6 @@ from .console_message_more_menu import (
     message_more_menus_on_screen,
 )
 from .console_rail_handle import ConsoleRailHandle
-from .console_prompts_modal import ConsolePromptsModal
 from .console_prompts_state import ConsolePromptsState, PromptBrowseResult
 from .console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
@@ -57,7 +56,6 @@ from .console_project_instructions import (
     ProjectInstructionSetupModal,
     ProjectInstructionSetupResult,
 )
-from .console_rename_session_modal import ConsoleRenameSessionModal
 from .console_retrieval_scope_row import ConsoleRetrievalScopeRow
 from .console_run_inspector import ConsoleRunInspector
 from .console_send_authority_summary import ConsoleSendAuthoritySummary
@@ -97,6 +95,10 @@ from .console_workspace_switcher_modal import (
 
 def __getattr__(name: str):
     """Load deferred Console widgets when their public export is first used."""
+    if name == "ConsolePromptsModal":
+        from .console_prompts_modal import ConsolePromptsModal
+
+        return ConsolePromptsModal
     if name in {
         "ConsoleVoicePreview",
         "VoicePreviewProjection",
@@ -106,6 +108,10 @@ def __getattr__(name: str):
         from . import console_voice_preview
 
         return getattr(console_voice_preview, name)
+    if name == "ConsoleRenameSessionModal":
+        from . import console_rename_session_modal
+
+        return console_rename_session_modal.ConsoleRenameSessionModal
     if name == "ConsoleSettingsModal":
         from . import console_settings_modal
 

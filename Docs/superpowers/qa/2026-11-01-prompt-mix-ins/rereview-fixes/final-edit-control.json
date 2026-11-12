@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_routes_publish_accepted_layout[edit]",
+    "Tests/Chat/test_console_received_intent_transitions.py::test_received_current_capture_publishes_layout_only_at_acceptance",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/rereview-fixes/final-edit-control-tmp"
+  ],
+  "exit_code": 0,
+  "seconds": 5.631011724472046
+}

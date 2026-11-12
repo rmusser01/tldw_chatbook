@@ -374,7 +374,9 @@ async def test_server_projects_audited_lifecycle_from_real_context_shape() -> No
 
 
 @pytest.mark.asyncio
-async def test_server_projection_exposes_only_concrete_audited_service_methods() -> None:
+async def test_server_projection_exposes_only_concrete_audited_service_methods() -> (
+    None
+):
     class ServiceWithoutDelete:
         async def list_workspaces(self):
             return [{"id": "server-1", "name": "Remote", "version": 4}]
@@ -412,9 +414,7 @@ async def test_server_lifecycle_calls_use_exact_service_arguments() -> None:
     ref = listed[0].ref
     fetched = await adapter.get_workspace(ref)
     created = await adapter.create_workspace(name="Created")
-    updated = await adapter.update_workspace(
-        ref, name="Renamed", expected_version=4
-    )
+    updated = await adapter.update_workspace(ref, name="Renamed", expected_version=4)
     duplicated = await adapter.duplicate_workspace(ref, name="Copy")
     archived = await adapter.archive_workspace(ref, expected_version=4)
     restored = await adapter.restore_workspace(ref, expected_version=5)

@@ -1,0 +1,93 @@
+{
+  "headRefOid": "29a251023292936eef7bfb2e7e8345740a46d077",
+  "mergeCommit": {
+    "oid": "7884e11a496a677c8180cc5d67234a57b7d659b9"
+  },
+  "mergedAt": "2026-10-28T21:32:31Z",
+  "state": "MERGED",
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/3283",
+  "merge_tree": "5f74cf6ba35f2a9c61fd36e0d81f6366fd0d6139",
+  "tested_tree": "5f74cf6ba35f2a9c61fd36e0d81f6366fd0d6139",
+  "required_ci_and_review_receipt": {
+    "head": "29a251023292936eef7bfb2e7e8345740a46d077",
+    "time": "2026-10-28T20:47:13.072922+00:00",
+    "ci": {
+      "time": "2026-10-28T20:47:00.856007+00:00",
+      "head": "29a251023292936eef7bfb2e7e8345740a46d077",
+      "runs": [
+        {
+          "id": 40760945725,
+          "name": "TASK-19637 pinned workspace platform evidence",
+          "status": "completed",
+          "conclusion": "skipped",
+          "jobs": {
+            "skipped": 1
+          },
+          "failures": []
+        },
+        {
+          "id": 40760945429,
+          "name": "TASK-32011 one-off Linux storage evidence",
+          "status": "completed",
+          "conclusion": "skipped",
+          "jobs": {
+            "skipped": 1
+          },
+          "failures": []
+        },
+        {
+          "id": 40760945736,
+          "name": "Perf Guard",
+          "status": "completed",
+          "conclusion": "success",
+          "jobs": {
+            "success": 1
+          },
+          "failures": []
+        },
+        {
+          "id": 40760945646,
+          "name": "Derived Artifacts",
+          "status": "completed",
+          "conclusion": "success",
+          "jobs": {
+            "success": 36
+          },
+          "failures": []
+        }
+      ]
+    },
+    "review": {
+      "headRefOid": "29a251023292936eef7bfb2e7e8345740a46d077",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "CLEAN",
+      "reviewDecision": null,
+      "autoMergeRequest": null,
+      "reviewThreads": {
+        "totalCount": 0,
+        "nodes": [],
+        "pageInfo": {
+          "hasNextPage": false
+        }
+      },
+      "reviews": {
+        "nodes": []
+      }
+    },
+    "coverage": {
+      "ui": 28,
+      "application": 34,
+      "audit_selectors": 95,
+      "audit_cases": 97,
+      "new_scenarios": 24,
+      "repaint": 2,
+      "settings": 19,
+      "split_cases46": true,
+      "advanced29": true,
+      "media12": true
+    },
+    "pr": "https://github.com/rmusser01/tldw_chatbook/pull/3283",
+    "merged": false
+  }
+}

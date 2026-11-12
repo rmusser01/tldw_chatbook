@@ -40,10 +40,10 @@ with a test that clicks a row, patches it in place, and clicks it again.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from collections.abc import Callable
 from typing import Any, Sequence
 
-from rich.cells import cell_len
 from tldw_chatbook.Utils.input_validation import escape_markup as escape
 from textual import events
 from textual.app import ComposeResult
@@ -51,27 +51,22 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_inspector_state import (  # noqa: F401 -- re-exported
+    RAIL_CONTENT_WIDTH_MIN,
+    ROW_INDENT_COLUMNS,
+    SECTION_TOGGLE_WIDTH,
+    SINGLE_LINE_ROW_BUDGET,
+    ConsoleInspectorSectionState,
+    InspectorSectionRow,
+    row_fits_one_line,
+)
 from tldw_chatbook.Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph, resolve_glyph_text
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
-
-#: Content width of the Console Inspect rail's section box at the SMALLEST
-#: supported terminal. Measured, not assumed (TASK-31662, TASK-31629 #12):
-#: probing the real Console at 80x24 on 2026-09-05 reports
-#: ``#console-environment-section`` at ``Size(width=30)``, its body at 29,
-#: and each row's own content region at 27; at 200x50 the same three are
-#: 36/35/33. Budgets derived from this constant therefore fit EVERY
-#: supported width, not just the roomy ones -- the previous 34-column
-#: assumption was between the two, so an "Environment" title that fitted in
-#: its test painted as "Environm…" on a real 80x24 terminal.
-RAIL_CONTENT_WIDTH_MIN = 30
-
-#: Width of a section header's collapse chevron (``compose`` pins all three
-#: of the Button's width styles to this).
-SECTION_TOGGLE_WIDTH = 3
 
 #: TASK-31664 AC#3: label the "view all" tail button flips to while a
 #: caller-driven refresh is in flight. Pressing "Refresh" could go ~12
@@ -81,173 +76,105 @@ SECTION_TOGGLE_WIDTH = 3
 #: so this acknowledgment has to live outside it. See ``set_view_all_busy``.
 VIEW_ALL_BUSY_LABEL = "Refreshing…"
 
-#: Columns a row's own text gets at ``RAIL_CONTENT_WIDTH_MIN``: the section
-#: body indents by 1 (``.console-inspector-section-body`` padding) and the
-#: row spends 2 more on its own ``padding: 0 1``.
-SINGLE_LINE_ROW_BUDGET = RAIL_CONTENT_WIDTH_MIN - 1 - 2
+#: What ``ChatScreen._sync_console_rail_descendant_visibility`` stamps on each
+#: descendant of a collapsed Console rail: the display it had before the
+#: collapse. The rail's opening restores that display and removes the mark.
+CONSOLE_RAIL_PRIOR_DISPLAY = "_console_rail_prior_display"
+#: What the same cascade sets on the rail itself while it is collapsed
+#: (TASK-38946), so a widget mounted later can tell which rail hides it.
+CONSOLE_RAIL_COLLAPSED = "_console_rail_collapsed"
 
 
-#: Columns one expansion level indents a child row by (TASK-31665 AC#3).
-#: Two, not one: a single column reads as a rendering wobble next to the
-#: section body's own 1-column padding, and the rail's narrowest content
-#: budget (``SINGLE_LINE_ROW_BUDGET`` = 27) still leaves 25 columns for a
-#: child row's own text.
-ROW_INDENT_COLUMNS = 2
+def hidden_by_console_rail(widget: Widget) -> bool:
+    """Whether a collapsed Console rail is hiding ``widget`` (TASK-37000).
 
+    Nothing such a widget does is drawn, yet each layout it requests lays out
+    the whole screen. Its owner keeps its state current for readers and
+    leaves the DOM work that needs a layout to the rail's opening, which lays
+    the rail out anyway.
 
-def row_fits_one_line(
-    primary_text: str,
-    secondary_text: str,
-    *,
-    budget: int = SINGLE_LINE_ROW_BUDGET,
-    indent: int = 0,
-) -> bool:
-    """Whether a row's primary and secondary can share ONE line.
-
-    Deliberately a pure function of the TEXTS against the smallest
-    supported width, not of the widget's measured width: a row's mounted
-    shape has to be decided in ``compose`` (before layout has run) and has
-    to stay stable across a resize, so deciding it from the narrowest rail
-    the app supports is the only answer that is both available in time and
-    correct at every width. The cost is that a pair which would fit at
-    200x50 but not at 80x24 keeps the two-line form everywhere; the pair is
-    never truncated to make one fit.
-
-    TASK-31665 AC#14: measured with ``rich.cells.cell_len``, not ``len``.
-    A CJK or emoji title is two terminal cells per character, so ``len``
-    under-measured it by up to half -- a pair that ``len`` called a fit
-    was mounted in the one-line form and then ellipsized by the primary's
-    own ``text-overflow`` at paint time. Branch names and backlog titles
-    are ASCII today, but a task title (AC#2 now reads them straight out of
-    frontmatter) and a changed file's path are both user data.
+    TASK-38946: the cascade marks only the widgets present when it runs. A
+    widget mounted into the rail afterwards is marked here, on its first ask,
+    with the display it has, so the rail's opening restores it and runs its
+    held rebuild like any other.
 
     Args:
-        primary_text: The row's first-line text.
-        secondary_text: The row's dimmed detail text.
-        budget: Columns available to the row's own text.
-        indent: Columns this row's own indent spends (TASK-31665 AC#3),
-            deducted from ``budget`` -- an indented child gets less room,
-            and deciding its shape against the un-indented budget would
-            reintroduce exactly the truncation this function exists to
-            prevent.
+        widget: A widget that may sit inside a Console rail.
 
     Returns:
-        ``True`` when both texts plus one separating column fit ``budget``.
-        Always ``False`` for an empty secondary -- that row has no pair to
-        put side by side; it renders as its primary line alone.
+        True while the rail's collapse cascade holds the widget's display.
     """
-    if not secondary_text:
-        return False
-    room = budget - indent
-    return cell_len(primary_text) + 1 + cell_len(secondary_text) <= room
+    if getattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, None) is not None:
+        return True
+    node = widget.parent
+    while node is not None:
+        if getattr(node, CONSOLE_RAIL_COLLAPSED, False):
+            setattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, bool(widget.display))
+            return True
+        node = node.parent
+    return False
 
 
-@dataclass(frozen=True)
-class InspectorSectionRow:
-    """One row rendered in an Inspector section body -- a caller-owned value
-    object; the component never mutates or derives from anything but its
-    fields.
+def set_display_under_console_rail(widget: Widget, visible: bool) -> None:
+    """Show or hide ``widget``, deferring to a collapsed rail's cascade.
 
-    Attributes:
-        row_id: Stable identity for this row across syncs. Used both as the
-            payload of ``ConsoleInspectorSection.RowActivated`` and, via the
-            structural key, to decide whether a state change is safe to
-            patch in place (same ``row_id``s in the same order) or requires
-            a recompose (rows added/removed/reordered).
-        primary_text: First (non-dimmed) line, e.g. "glyph + name + elapsed".
-            Any glyph embedded here (a status marker, a row's own trailing
-            "▸"/"▾" affordance marker -- TASK-31664 I3) is resolved through
-            ``glyph_fallback.resolve_glyph_text`` at RENDER time
-            (``ConsoleInspectorSectionRow``), never here: callers building
-            this value (including every pure projection, e.g.
-            ``console_environment_state.py``) stay free of the
-            ``appearance.ascii_glyphs`` global, so they stay testable
-            without an app and produce the same value regardless of the
-            live glyph-mode setting. Width/shape decisions
-            (``row_fits_one_line``, the structural key) are computed on
-            this UNRESOLVED value, so ASCII mode can shift a row's rendered
-            width away from the width those decisions assumed. The
-            expand/collapse markers the Inspector rows carry are 1-for-1
-            substitutes (``▸``→``>``, ``▾``→``v``) and so are exact; the
-            STATUS markers in the same table are not (``✓``→``[x]``,
-            ``●``→``[*]``, ``◈``→``[s]`` -- one column becoming three), so
-            a status-prefixed row resolves up to 2 columns wider than it
-            was measured. Harmless except right at the budget edge, where
-            it can push a pair that ``row_fits_one_line`` called a fit into
-            the primary's own ``text-overflow`` ellipsis.
-        secondary_text: Dimmed detail, e.g. a truncated last-step summary.
-            Where it renders depends on what it is (TASK-31662): empty
-            renders no line at all, a short one shares the primary's line
-            right-aligned, and only a pair too wide for
-            ``SINGLE_LINE_ROW_BUDGET`` takes a second line. Empty used to
-            render as a BLANK second line -- 25% of the Environment
-            section's row-lines were that blank.
-        wrap_secondary: Wrap essential recovery instructions instead of
-            truncating them to the usual one-line detail preview.
-        status: Status token driving the row's
-            ``console-inspector-section-row-<status>`` CSS class (e.g.
-            "running", "done", "error", "blocked"); ``""`` applies none.
-        clickable: Whether activating the row (click, Enter, or Space)
-            posts ``ConsoleInspectorSection.RowActivated``.
-        cancellable: Whether pressing Delete on the row (PR2b Task 5)
-            posts ``ConsoleInspectorSection.RowCancelRequested``.
-            Independent of ``clickable`` -- a row can be either, both, or
-            neither; the two are separate gestures (Enter/Space to drill
-            in, Delete to cancel) so they never contend for the same key.
-        indent: Expansion depth, in levels (TASK-31665 AC#3). ``0`` is a
-            top-level row; ``1`` is a child revealed by expanding the row
-            above it. Rendered as ``ROW_INDENT_COLUMNS`` extra columns of
-            left padding on the row widget, and deducted from the
-            one-line budget so an indented pair is never mounted into a
-            shape it cannot fit. Children used to share their parent's
-            indent exactly, so the only cue that a block belonged to the
-            row above it was the blank line the old two-line row shape
-            happened to leave -- a cue TASK-31662 removed when it made
-            rows one line tall.
+    Inside a collapsed rail a direct write showed the widget in a rail nobody
+    sees, laid out the whole screen, and was then undone: the opening restores
+    the display recorded at the collapse (TASK-37000: a first send's Agents
+    section showed in a rail open throughout and not in one opened after).
+    There the preference goes to the cascade's record instead.
+
+    Args:
+        widget: The widget to show or hide.
+        visible: Whether it should be displayed.
     """
-
-    row_id: str
-    primary_text: str
-    secondary_text: str = ""
-    status: str = ""
-    clickable: bool = False
-    cancellable: bool = False
-    indent: int = 0
-    wrap_secondary: bool = False
+    if hidden_by_console_rail(widget):
+        setattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, bool(visible))
+        return
+    widget.styles.display = "block" if visible else "none"
 
 
-@dataclass(frozen=True)
-class ConsoleInspectorSectionState:
-    """Atomic rows, header summary, and optional wrapped notice.
+def hold_paints(app: Any) -> Callable[[], None]:
+    """Hold the app's paints until the returned release runs (TASK-38650).
 
-    Passed as ONE value so the two dimensions can never drift independently
-    -- a caller that wants to refresh only the rows still passes the
-    summary it already had (its own held state, unchanged), rather than
-    the previous kwargs shape where omitting ``summary`` silently meant
-    "clear it" (task-3 review round 1 finding). Mirrors
-    ``ConsoleInspectorState`` (`console_display_state.py`), the same
-    full-snapshot-per-sync pattern ``ConsoleRunInspector`` already uses.
+    A rebuild queued as a Console surface opens can lose to a screen tick
+    already woken in the same loop pass (``Timer.pause()`` cannot stop it),
+    which paints the rows held while hidden. The release ends the hold once,
+    however often it runs. asyncio's ``call_later`` also ends it after 1 s,
+    because a pump that drops its callbacks after an error never runs the
+    release, and a Textual one-shot timer can skip its only tick.
+    ponytail: worst case a 1 s pause in painting, never a freeze.
 
-    **Rows and summary are REQUIRED -- neither has a default** (task-3 review
-    round 3 finding, HIGH: round 1's fix kept per-field defaults, which
-    meant ``ConsoleInspectorSectionState(rows=updated_rows)`` -- omitting
-    ``summary`` -- reproduced the exact same "silently wipes the other
-    dimension" symptom the atomic-state redesign existed to eliminate, one
-    call-frame later. Removing the defaults makes that construction a
-    ``TypeError`` instead of a silent data-loss bug: a caller that means
-    "no summary" must write ``summary=""`` explicitly, which costs one
-    keyword and makes "I forgot a dimension" impossible to express.
+    Args:
+        app: The running Textual app.
 
-    Attributes:
-        rows: Rows to render.
-        summary: Right-aligned header summary; ``""`` hides it (an
-            explicit, deliberate choice -- not an omitted argument).
-        notice: Optional wrapped explanation after the preview rows.
+    Returns:
+        The end-once release.
     """
+    loop = asyncio.get_running_loop()  # Raises before the batch opens.
+    app._begin_batch()
+    ended = False
 
-    rows: tuple[InspectorSectionRow, ...]
-    summary: str
-    notice: str = ""
+    def release() -> None:
+        nonlocal ended
+        if not ended:
+            ended = True
+            app._end_batch()
+
+    loop.call_later(1.0, release)
+    return release
+
+
+def hold_paints_until_rebuilt(widget: Widget) -> None:
+    """Hold paints until ``widget``'s pump has run the rebuild queued on it.
+
+    ``refresh(recompose=True)`` queues the rebuild with ``call_next``; the
+    release queued behind it runs right after it (TASK-38650).
+
+    Args:
+        widget: A widget whose rebuild has just been queued.
+    """
+    widget.call_next(hold_paints(widget.app))
 
 
 class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
@@ -403,6 +330,8 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         self.styles.min_height = 0
         self.add_class("console-inspector-section")
         self.recompose_count = 0
+        #: A rebuild a collapsed rail is holding for its opening (TASK-37000).
+        self._rail_rebuild_deferred = False
 
     # -- DOM id helpers -----------------------------------------------
 
@@ -453,7 +382,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             optional summary + optional chevron), the body ``Vertical`` of
             row widgets, and the optional "View all" ``Button``.
         """
-        header = Horizontal(id=self._header_id, classes="console-inspector-section-header")
+        header = Horizontal(
+            id=self._header_id, classes="console-inspector-section-header"
+        )
         header.remove_class(*(name for name in header.classes if name.startswith("h-")))
         header.set_styles(height=None)
         header.add_class("h-1")
@@ -465,7 +396,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 classes="console-inspector-section-title",
                 markup=False,
             )
-            title.remove_class(*(name for name in title.classes if name.startswith("w-")))
+            title.remove_class(
+                *(name for name in title.classes if name.startswith("w-"))
+            )
             title.set_styles(width=None)
             title.add_class("w-fill")
             title.styles.min_width = 0
@@ -481,11 +414,15 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 # for any host, including a bare test harness that never
                 # loads the app's CSS bundle (the CSS class carries the
                 # cosmetic color/dim styling only).
-                summary.remove_class(*(name for name in summary.classes if name.startswith("w-")))
+                summary.remove_class(
+                    *(name for name in summary.classes if name.startswith("w-"))
+                )
                 summary.set_styles(width=None)
                 summary.add_class("w-auto")
                 summary.styles.min_width = 0
-                summary.remove_class(*(name for name in summary.classes if name.startswith("h-")))
+                summary.remove_class(
+                    *(name for name in summary.classes if name.startswith("h-"))
+                )
                 summary.set_styles(height=None)
                 summary.add_class("h-1")
                 if self._summary_is_suppressed():
@@ -501,18 +438,21 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                     # which taxed every Button in the app -- see
                     # `Tests/Performance/test_textual_css_fastpath.py`.
                     classes=(
-                        "console-inspector-section-toggle "
-                        "console-rail-focus-carrier"
+                        "console-inspector-section-toggle console-rail-focus-carrier"
                     ),
                     compact=True,
                 )
                 toggle.tooltip = self._toggle_tooltip()
-                toggle.remove_class(*(name for name in toggle.classes if name.startswith("w-")))
+                toggle.remove_class(
+                    *(name for name in toggle.classes if name.startswith("w-"))
+                )
                 toggle.set_styles(width=None)
                 toggle.add_class("w-3")
                 toggle.styles.min_width = SECTION_TOGGLE_WIDTH
                 toggle.styles.max_width = SECTION_TOGGLE_WIDTH
-                toggle.remove_class(*(name for name in toggle.classes if name.startswith("h-")))
+                toggle.remove_class(
+                    *(name for name in toggle.classes if name.startswith("h-"))
+                )
                 toggle.set_styles(height=None)
                 toggle.add_class("h-1")
                 yield toggle
@@ -529,7 +469,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 yield self._build_row_widget(row, index)
             if self.notice:
                 notice = Static(self.notice, id=self._notice_id, markup=False)
-                notice.remove_class(*(name for name in notice.classes if name.startswith("h-")))
+                notice.remove_class(
+                    *(name for name in notice.classes if name.startswith("h-"))
+                )
                 notice.set_styles(height=None)
                 notice.add_class("h-auto")
                 notice.styles.text_wrap = "wrap"
@@ -626,9 +568,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         """Reveal the actionable tail inside any enclosing capped scroll area."""
         if not self.is_mounted or not self.open:
             return
-        target = (
-            self.query_one(f"#{self._view_all_id}") if self.view_all_label else self
-        )
+        target = self
+        if self.view_all_label:
+            target = next(iter(self.query(f"#{self._view_all_id}")), self)
         target.scroll_visible(animate=False)
 
     def set_view_all_busy(self, busy: bool) -> None:
@@ -740,7 +682,8 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                     # `appearance.ascii_glyphs` flip would patch rows in
                     # place and strand every boundary-width row in the
                     # shape the OTHER mode chose.
-                    not row.wrap_secondary and row_fits_one_line(
+                    not row.wrap_secondary
+                    and row_fits_one_line(
                         resolve_glyph_text(row.primary_text),
                         row.secondary_text,
                         indent=max(0, row.indent) * ROW_INDENT_COLUMNS,
@@ -777,6 +720,10 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         appearing/disappearing -- recomposes the whole section (counted in
         ``recompose_count``).
 
+        Inside a collapsed Console rail (TASK-37000) the attributes still
+        update at once, an in-place patch re-writes copy without a layout, and
+        a rebuild waits for the rail's opening (``rebuild_if_deferred``).
+
         Args:
             state: New rows + header summary, as one atomic snapshot.
         """
@@ -796,21 +743,48 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         self.rows = rows
         self.summary = summary
         self.notice = notice
+        hidden = self.is_mounted and hidden_by_console_rail(self)
         if (
-            not self.is_mounted
-            or not same_structure
-            or not self._apply_state_updates(
-                previous_rows, previous_summary, previous_notice
+            self.is_mounted
+            and same_structure
+            and not self._rail_rebuild_deferred
+            and self._apply_state_updates(
+                previous_rows, previous_summary, previous_notice, layout=not hidden
             )
         ):
-            self.recompose_count += 1
-            self.refresh(recompose=True)
+            return
+        if hidden:
+            self._rail_rebuild_deferred = True
+            return
+        self._rail_rebuild_deferred = False
+        self.recompose_count += 1
+        self.refresh(recompose=True)
+
+    def rebuild_if_deferred(self) -> bool:
+        """Run the rebuild a collapsed rail held back (TASK-37000).
+
+        The rail's opening cascade calls this once it has shown the section
+        again, so the rebuild lands with the opening's own layout.
+
+        Returns:
+            True when a rebuild was queued on this widget's message pump.
+        """
+        if not self._rail_rebuild_deferred:
+            return False
+        self._rail_rebuild_deferred = False
+        if not self.is_mounted:
+            return False
+        self.recompose_count += 1
+        self.refresh(recompose=True)
+        return True
 
     def _apply_state_updates(
         self,
         previous_rows: tuple[InspectorSectionRow, ...],
         previous_summary: str,
         previous_notice: str,
+        *,
+        layout: bool = True,
     ) -> bool:
         """Patch changed summary/row Statics in place.
 
@@ -819,6 +793,8 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             previous_summary: The summary text that produced the mounted
                 summary Static (or the fact it was absent).
             previous_notice: Text that produced the mounted notice.
+            layout: Whether re-written copy asks for a layout; ``False``
+                inside a collapsed rail, whose opening lays it out.
 
         Returns:
             ``True`` when every changed widget was found and patched;
@@ -827,22 +803,31 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         """
         try:
             if self.summary and self.summary != previous_summary:
-                self.query_one(f"#{self._summary_id}", Static).update(self.summary)
+                self.query_one(f"#{self._summary_id}", Static).update(
+                    self.summary, layout=layout
+                )
             if self.notice and self.notice != previous_notice:
-                self.query_one(f"#{self._notice_id}", Static).update(self.notice)
+                self.query_one(f"#{self._notice_id}", Static).update(
+                    self.notice, layout=layout
+                )
             for index, (row, previous_row) in enumerate(
                 zip(
                     self.rows[: self.max_visible_rows],
                     previous_rows[: self.max_visible_rows],
                 )
             ):
-                self._apply_row_update(index, row, previous_row)
+                self._apply_row_update(index, row, previous_row, layout=layout)
         except (NoMatches, QueryError):
             return False
         return True
 
     def _apply_row_update(
-        self, index: int, row: InspectorSectionRow, previous_row: InspectorSectionRow
+        self,
+        index: int,
+        row: InspectorSectionRow,
+        previous_row: InspectorSectionRow,
+        *,
+        layout: bool = True,
     ) -> None:
         """Patch one row widget in place; raises NoMatches/QueryError on a
         missing target so the caller can fall back to a recompose."""
@@ -871,17 +856,17 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             resolved_primary = resolve_glyph_text(row.primary_text)
             row_widget._primary_text = resolved_primary
             self.query_one(f"#{self._row_primary_id(index)}", Static).update(
-                resolved_primary
+                resolved_primary, layout=layout
             )
         if row.secondary_text != previous_row.secondary_text:
             row_widget._secondary_text = row.secondary_text
             secondary = self.query_one(f"#{self._row_secondary_id(index)}", Static)
-            secondary.update(row.secondary_text)
+            secondary.update(row.secondary_text, layout=layout)
             # Same mounted shape (the structural key guarantees it), but an
             # empty secondary is HIDDEN rather than blank -- so a row that
             # gains or loses its detail text has to gain or lose the line
             # too, or the new text renders into a `display: none` Static.
-            secondary.styles.display = "none" if not row.secondary_text else "block"
+            set_display_under_console_rail(secondary, bool(row.secondary_text))
         if row.status != previous_row.status:
             if previous_row.status:
                 row_widget.remove_class(
@@ -1025,7 +1010,9 @@ class ConsoleInspectorSectionRow(Vertical):
             classes="console-inspector-section-row-primary",
             markup=False,
         )
-        primary.remove_class(*(name for name in primary.classes if name.startswith("h-")))
+        primary.remove_class(
+            *(name for name in primary.classes if name.startswith("h-"))
+        )
         primary.set_styles(height=None)
         primary.add_class("h-1")
         return primary
@@ -1037,7 +1024,9 @@ class ConsoleInspectorSectionRow(Vertical):
             classes="console-inspector-section-row-secondary",
             markup=False,
         )
-        secondary.remove_class(*(name for name in secondary.classes if name.startswith("h-")))
+        secondary.remove_class(
+            *(name for name in secondary.classes if name.startswith("h-"))
+        )
         secondary.set_styles(height=None)
         secondary.add_class("h-auto" if self._wrap_secondary else "h-1")
         if self._wrap_secondary:
@@ -1072,13 +1061,17 @@ class ConsoleInspectorSectionRow(Vertical):
                 # `1fr` + `auto` is the header's own title/summary split:
                 # the primary takes everything the secondary does not, which
                 # is what puts the secondary flush against the right edge.
-                primary.remove_class(*(name for name in primary.classes if name.startswith("w-")))
+                primary.remove_class(
+                    *(name for name in primary.classes if name.startswith("w-"))
+                )
                 primary.set_styles(width=None)
                 primary.add_class("w-fill")
                 primary.styles.min_width = 0
                 yield primary
                 secondary = self._make_secondary()
-                secondary.remove_class(*(name for name in secondary.classes if name.startswith("w-")))
+                secondary.remove_class(
+                    *(name for name in secondary.classes if name.startswith("w-"))
+                )
                 secondary.set_styles(width=None)
                 secondary.add_class("w-auto")
                 secondary.styles.min_width = 0
@@ -1102,7 +1095,9 @@ class ConsoleInspectorSectionRow(Vertical):
     def action_activate_row(self) -> None:
         if not self.clickable:
             return
-        self.post_message(ConsoleInspectorSection.RowActivated(self.section_id, self.row_id))
+        self.post_message(
+            ConsoleInspectorSection.RowActivated(self.section_id, self.row_id)
+        )
 
     def action_cancel_row(self) -> None:
         if not self.cancellable:

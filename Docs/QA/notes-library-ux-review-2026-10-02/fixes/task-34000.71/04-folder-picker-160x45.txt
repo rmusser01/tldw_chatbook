@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes ┌─ Choose a folder to keep synced ─────────────────────────────────────────────────────────────────────────────────────────────┐
+┌───────────────│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live/home                                               │───────────────┐
+│ ┌─────────────│                                                                                                                              │               │
+│ │ Navigation  │                                                                                                                              │               │
+│ │     Import… │   /   / …   .worktrees   /   .p1b-t5-live   /   home                                                                         │               │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔│                                                                                                                              │etions pause   │
+│ │ ▊ Search Lib│                                                                                                                              │               │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁│      Name                                                                                       Size            Modified     │               │
+│ │             │ Sort Folders first                                             ▼ Ascending                                                 ▼ │▔▔▔▔▔▔▔▔▔▔▔▎   │
+│ │ ────────────│Loaded · 0 of 3 entries shown                                                                                                 │           ▎   │
+│ │ Browse      │                                                                                                                              │▁▁▁▁▁▁▁▁▁▁▁▎   │
+│ │    Media (0)│   📁 ..                                                                                                                —     │               │
+│ │    Conversat│                                                                                                                              │               │
+│ │  ▸ Notes (0)│                                                                                                                              │               │
+│ │    Prompts (│                                                                                                                              │               │
+│ │    Skills (1│                                                                                                                              │               │
+│ │    Collectio│                                                                                                                              │               │
+│ │    Search / │                                                                                                                              │               │
+│ │ ────────────│                                                                                                                              │               │
+│ │ Artifacts   │                                                                                                                              │               │
+│ │    All artif│                                                                                                                              │               │
+│ │    Chatbooks│                                                                                                                              │               │
+│ │    Reports  │                                                                                                                              │               │
+│ │    Dreams   │                                                                                                                              │               │
+│ │ ────────────│                                                                                                                              │               │
+│ │ Create      │                                                                                                                              │               │
+│ │    New note │                                                                                                                              │               │
+│ │    New promp│                                                                                                                              │               │
+│ │    New skill│ Enter Open  ·  Select folder to use this folder                                                                              │               │
+│ │ ────────────│                                                                                                                              │               │
+│ │ Study       │Folder path:┌─────────────────────────────────────────────────────────────────────────────┐  Select folder        Cancel      │               │
+│ │    Study dec│            │  /macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live/home   │                                   │               │
+│ │    Flashcard│            └─────────────────────────────────────────────────────────────────────────────┘                                   │               │
+│ │    Quizzes (│                                                                                                                              │               │
+│ │ ────────────└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘               │
+│ │ Import / Export           ▾    │                                                                                                                           │
+│ │    Import…                     │                                                                                                                           │
+│ │  ▾ scroll for more             │                                                                                                                           │
+│ └────────────────────────────────┘              ○ Check changes     ‹ Notes                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ esc Cancel  ^l Edit path directly  ^f Search in directory  ^h Toggle hidden files  f5 Refresh directory  ^r Show recent locations  ^s Select this folder

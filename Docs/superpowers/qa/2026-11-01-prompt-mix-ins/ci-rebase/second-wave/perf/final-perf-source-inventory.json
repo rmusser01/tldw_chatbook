@@ -1,0 +1,271 @@
+{
+  "head": "ba1cafc55dd5ac9b6b1f066c936206e652ed6b65",
+  "qualification": "Final five original guards against settled shared uncommitted tree; 5 passed 33.08s",
+  "changed_product_sources": [
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "sha256": "c5e1afbf7c48dd5f7be1fb40183a5d8bba16b9c886d60ccc6bfc8691843da616",
+      "bytes": 458151
+    },
+    {
+      "path": "tldw_chatbook/Chat/chat_persistence_service.py",
+      "sha256": "3072f8c584fe702198b0858d86b92b20472ef1873a82a88b11df0bac7cf124b1",
+      "bytes": 183920
+    },
+    {
+      "path": "tldw_chatbook/Chat/citation_artifact_ownership.py",
+      "sha256": "caa7d65823c083a16306eb19c1a18977a445fa166b7d81f3d77eea78fc340019",
+      "bytes": 22327
+    },
+    {
+      "path": "tldw_chatbook/Chat/citation_trace_repository.py",
+      "sha256": "42df775ea1ef22eea1e1a422f3ee907db836322da17e5c0c39c12faf54db6a31",
+      "bytes": 184729
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_agent_reply.py",
+      "sha256": "726264735ea5fc72a6ea1c8325349abf630d40f20aa4782e7898f120605ed6ab",
+      "bytes": 56729
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "sha256": "4750b5abb9bdb5464f4dd40d03c4bfe475777b4a75f9185cc43069251ca954d8",
+      "bytes": 1316754
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_fork.py",
+      "sha256": "c769c199b19bd332c3f90ce3cde78c988baf7e61d8543e2ec7fbb466b0417415",
+      "bytes": 73716
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_store.py",
+      "sha256": "2a062a56aad58b80aa17c81692846c5b14fc84f8e93481e515d160b2f578122f",
+      "bytes": 1004386
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_display_state.py",
+      "sha256": "c6abcb12f57818b840199e10e52d9acd03f6504c4d51f7a5087db5c4475a6d23",
+      "bytes": 123081
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_first_send_modules.py",
+      "sha256": "4ff9ce26f3a083f2844c1b55c1cca0997de77f7c2a470fae944bd23f9926091c",
+      "bytes": 12468
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_memory_banner.py",
+      "sha256": "94bc28d17d40adda977eaad7393061b9c1baf775df48958460262669684ebb56",
+      "bytes": 7609
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_provider_gateway.py",
+      "sha256": "20a30d83bc77407a2d2973c6aa0ddf0047aa64a00f6e8dcfb0d0f7aaba70dd40",
+      "bytes": 369737
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "sha256": "fbe4c6e8e2acf2eaf87c716aa0a9fb95b03cad297f39fa9307b1802440d73f14",
+      "bytes": 308085
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_settings_persistence.py",
+      "sha256": "08fcb8074a743b4c355c579cc89c4cddad4deb3f731a49ade5c1b9fd168b7945",
+      "bytes": 32511
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_trace_maintenance_runtime.py",
+      "sha256": "056636cb153825060b1727a01a5a2d75a2734365f6df7b78716c0cb08141f6d5",
+      "bytes": 7924
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_trace_models.py",
+      "sha256": "4bd71b12adad8b44cc6ec651e78de26830bd979a09296180fd52d0dc46c7306f",
+      "bytes": 20407
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_trace_service.py",
+      "sha256": "d6c4e55ee9c68c72bedee5df17b572a0409518f6245818ba41ff1ee093f079f0",
+      "bytes": 268438
+    },
+    {
+      "path": "tldw_chatbook/Chat/provider_readiness.py",
+      "sha256": "bc74ad584e9c675300e64d11dd112a37b8994354f9f5e084a37b5352955e910c",
+      "bytes": 45112
+    },
+    {
+      "path": "tldw_chatbook/Chat/refused_stream.py",
+      "sha256": "7c260c2c6fdeabde5e6e7535128250dc149af895091f3f953691e7f5b33da15f",
+      "bytes": 9787
+    },
+    {
+      "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "sha256": "cff2eeb41550d1c11edf03504647978eb411a84f9009cc72a760a180f397f0f9",
+      "bytes": 1129828
+    },
+    {
+      "path": "tldw_chatbook/DB/Prompts_DB.py",
+      "sha256": "b379396028040183aa10ce891623cdaefda36042569f2d21394a381bb2a563d3",
+      "bytes": 193959
+    },
+    {
+      "path": "tldw_chatbook/DB/prompt_export.py",
+      "sha256": "baf3841e48ee38de3d4eeca56a6484c7117fa6622eecae4016415ffc45381fda",
+      "bytes": 9551
+    },
+    {
+      "path": "tldw_chatbook/DB/sql_validation.py",
+      "sha256": "fba67eb491ef72295792853cc0e46235e66808cc22c7833d7d7b3d0af7d74d11",
+      "bytes": 29357
+    },
+    {
+      "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
+      "sha256": "49fb84b2e05876c11cd17156593bcfb60b005a220abf029e126d233764038d8b",
+      "bytes": 229285
+    },
+    {
+      "path": "tldw_chatbook/LLM_Calls/openai_protocol.py",
+      "sha256": "11a9e56e4f78c2ef1b83a5fbde01b8e5239b48f7bb52f7991dccd01c9fac4d07",
+      "bytes": 6274
+    },
+    {
+      "path": "tldw_chatbook/Notes/notes_sync_startup.py",
+      "sha256": "1f3d83d3f1f873b8b8e01e8088cebcf65cbaae6e86cbde2d91fa5f062bae0c6b",
+      "bytes": 995
+    },
+    {
+      "path": "tldw_chatbook/Tools/character_tool_service.py",
+      "sha256": "03edf5835e51a94aeac17bf58ac61bc97eb2539258d86c075d95b25e3218b549",
+      "bytes": 29064
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/composer_run_controls.py",
+      "sha256": "81407224cf65be388760195a487a7912344f083afe2124ad46eca475c667469b",
+      "bytes": 58307
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/prompts.py",
+      "sha256": "61c849571019357d5d2b86762b99e150fb08d8c6b5eca4355fbd47aa0c6aa6b6",
+      "bytes": 115908
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "sha256": "534198dbb4b848e6313578e864c4c90f9ddad93c407789e239b1a1d46b737f81",
+      "bytes": 305286
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py",
+      "sha256": "44ec5cae20299960e332655b4225719bbe110ced8f4a7c4ee8c14ba932cbc611",
+      "bytes": 4479
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/transcript.py",
+      "sha256": "c803e1ab675bd35875a8ac9cf663558f96d6ebac21db4409bb71f6821e98084a",
+      "bytes": 23705
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+      "sha256": "e8ccba9f1e8b1137541f0a5190c3eb5f625572c9d1f5a5a06a18fed18dd16246",
+      "bytes": 393817
+    },
+    {
+      "path": "tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py",
+      "sha256": "1e4da9aa1ad5befe1d86c6200e1b5185aee17ceaa08134a757f078713a16feb0",
+      "bytes": 13360
+    },
+    {
+      "path": "tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py",
+      "sha256": "f206f98e555ecb942ccf5d93e2b00707ad047995860e3cecccda9bffe0bb0ef5",
+      "bytes": 8858
+    },
+    {
+      "path": "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+      "sha256": "26024978045faf76a55dbf05082821fd6365fc553e5239624bccbc11dbb8d36d",
+      "bytes": 29382
+    },
+    {
+      "path": "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+      "sha256": "f4b1c70b6305b09042bd7c34077495c3ada315c8968fbdd16a8fe6e22c073bbf",
+      "bytes": 38946
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+      "sha256": "09a90044b333a69c1c1f42671fdfce28675a17fe381f04cb67ea433890e47527",
+      "bytes": 724294
+    },
+    {
+      "path": "tldw_chatbook/UI/Workbench/help.py",
+      "sha256": "57046188a24a17dad8f3bc22abfc1b638755ac603a472d1e99509b8263fcb09c",
+      "bytes": 7388
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+      "sha256": "24a978b9ecd2ed93bfda0e1de1c3ce7469f2efaa486f54c2cd14ddc06a8fa7df",
+      "bytes": 328999
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_selection_geometry.py",
+      "sha256": "ca8e854fb5939652a2c6a7cf2d9ce7aed9a171eebdea88dd784f15c0e9b6a433",
+      "bytes": 2357
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_speech_controls.py",
+      "sha256": "1f6a2b2a6240946c0413e6ea0b840c80cb508b8aa8004688e36af3144f17473e",
+      "bytes": 24323
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "sha256": "14040558c45f2aaeee8faf4374dc3bbbefed620573de548aedca7f7404caf268",
+      "bytes": 379275
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_tts_widget.py",
+      "sha256": "46db52be4759688e94735979deabbdb15d40241c3bf05162801c41014e98e0e3",
+      "bytes": 24697
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py",
+      "sha256": "39d1cdcd555a7cd87c115f5ed35d674fcaf73517c7ee9acbd3f0ae503ee41584",
+      "bytes": 41886
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_state.py",
+      "sha256": "f4bfa89791771de97b67402ed131af5ebdf0c61a782f27472b91f9e3d139a0a9",
+      "bytes": 12351
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py",
+      "sha256": "cbdedcc4794c9478bd6a5fe684f342883dc64acd35754111506b96ddc3cf2432",
+      "bytes": 23301
+    },
+    {
+      "path": "tldw_chatbook/Workspaces/display_state.py",
+      "sha256": "520a99b360d49d5a0bf404c680c69caa6df3bda07a16e64ff9f5cca5afac1bc5",
+      "bytes": 50914
+    },
+    {
+      "path": "tldw_chatbook/app.py",
+      "sha256": "17763f62c47c81c0c843668006bb8e3ae318ffe6f203914d23609009df44922a",
+      "bytes": 258705
+    },
+    {
+      "path": "tldw_chatbook/app_command_providers.py",
+      "sha256": "d85e1ab6a763f94094d06030f785bc9f04647621e8584028beaa5a8476d4f8cf",
+      "bytes": 41878
+    },
+    {
+      "path": "tldw_chatbook/app_config_notifications.py",
+      "sha256": "2e6ab824cd1ed7993d6c65df6474a52daff235fc146452aa33f6133b21807d2e",
+      "bytes": 2508
+    },
+    {
+      "path": "tldw_chatbook/app_idle_warmup.py",
+      "sha256": "26a46ba85b65d36d35096790f656742fbdaff4766894796a3ff0ad432d93eb33",
+      "bytes": 737
+    },
+    {
+      "path": "tldw_chatbook/app_service_wiring.py",
+      "sha256": "68238f0e5e44a81fc14181c8f1ff8ac8f90c85702d9c0d738109ec3c760f6718",
+      "bytes": 168377
+    }
+  ]
+}

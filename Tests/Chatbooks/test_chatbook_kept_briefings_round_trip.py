@@ -133,6 +133,7 @@ def _replace_kept_json_scripts(
 # --- Export -----------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_export_writes_kept_briefing_json_and_markdown_and_manifest_entry(
     source_env, tmp_path
 ):
@@ -187,6 +188,7 @@ def test_export_writes_kept_briefing_json_and_markdown_and_manifest_entry(
         assert kept_items[0].file_path == json_name
 
 
+@pytest.mark.bootstrap_profile
 def test_export_with_no_kept_briefings_selected_produces_no_kept_section(
     source_env, tmp_path
 ):
@@ -214,6 +216,7 @@ def test_export_with_no_kept_briefings_selected_produces_no_kept_section(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_export_paginates_past_page_size_no_silent_truncation(
     monkeypatch, tmp_path, chachanotes_template_db
 ):
@@ -283,6 +286,7 @@ def test_export_paginates_past_page_size_no_silent_truncation(
 # --- Import: round trip -------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_import_restores_kept_briefing_and_scripts_byte_faithful(source_env, tmp_path):
     db_paths, kept_id = source_env
     output = _create_chatbook(db_paths, kept_id, tmp_path)
@@ -325,6 +329,7 @@ def test_import_restores_kept_briefing_and_scripts_byte_faithful(source_env, tmp
     assert by_source[None]["roster_snapshot_json"] == '{"roster": ["Narrator"]}'
 
 
+@pytest.mark.bootstrap_profile
 def test_import_restores_kept_at_faithfully_not_re_stamped(
     tmp_path, chachanotes_template_db
 ):
@@ -383,6 +388,7 @@ def test_import_restores_kept_at_faithfully_not_re_stamped(
     assert scripts[0]["kept_at"] == datetime(2020, 1, 2, 0, 0, tzinfo=timezone.utc)
 
 
+@pytest.mark.bootstrap_profile
 def test_reimport_is_idempotent_no_duplicates(source_env, tmp_path):
     """Importing the same chatbook twice into the same destination must add
     nothing on the second pass -- neither the briefing nor either script
@@ -411,6 +417,7 @@ def test_reimport_is_idempotent_no_duplicates(source_env, tmp_path):
 # --- Import: cross-device collision ------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_import_reports_conflict_and_never_overwrites_differing_local_row(
     source_env, tmp_path
 ):
@@ -479,6 +486,7 @@ def test_import_reports_conflict_and_never_overwrites_differing_local_row(
     ), status.warnings
 
 
+@pytest.mark.bootstrap_profile
 def test_script_conflict_reported_and_local_row_not_overwritten(source_env, tmp_path):
     """`kept_scripts.source_script_id` is a table-wide UNIQUE column, so an
     incoming script can collide with a local script kept under a
@@ -526,6 +534,7 @@ def test_script_conflict_reported_and_local_row_not_overwritten(source_env, tmp_
 # --- Import: partial mid-scripts failure --------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_partial_scripts_failure_still_counts_the_briefing_as_imported(
     source_env, tmp_path
 ):
@@ -561,15 +570,17 @@ def test_partial_scripts_failure_still_counts_the_briefing_as_imported(
     assert restored is not None  # durably inserted despite the script failure
 
     assert any(
-        "kept scripts could not be imported" in warning
-        for warning in status.warnings
+        "kept scripts could not be imported" in warning for warning in status.warnings
     ), status.warnings
 
 
 # --- Backward compatibility ---------------------------------------------
 
 
-def test_import_bundle_without_kept_section_is_unaffected(tmp_path, chachanotes_template_db):
+@pytest.mark.bootstrap_profile
+def test_import_bundle_without_kept_section_is_unaffected(
+    tmp_path, chachanotes_template_db
+):
     """A chatbook predating this content type has no `kept_briefings`
     manifest entries and no `content/kept_briefings/` folder at all --
     importing it (with the default "import everything" selection) must not

@@ -1,0 +1,107 @@
+[
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-source.json",
+    "sha256": "9c23c59f0192b4f27f219dccd9daa861dd0d857d7c540033dcfda90824787f9a",
+    "bytes": 458
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-static-proof.json",
+    "sha256": "c8bc2a1ad1564e9660090180f28d1d967c78b59fca75abfc7d3e5066bcb60f79",
+    "bytes": 1338
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-red.log",
+    "sha256": "77f6e1722fef34531b1bbe2a7759eb174d6ad8ae2375ac654fbd64de0d59b42a",
+    "bytes": 36380
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-red.xml",
+    "sha256": "8971f7649186daeae0aac21b353305391bd62f81d4e405b8775c5ae30deaec15",
+    "bytes": 14586
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-native.log",
+    "sha256": "55d7e08e2eeae09bfa6e0202313c4d125fce9f2b6f0aeee98226618f70df7459",
+    "bytes": 435
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-native.xml",
+    "sha256": "389e53c95fe5b1bcf2133e2b7ec7796d39693cb11f0790d0c8e74f5a5de11968",
+    "bytes": 774
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/frozen-green.log",
+    "sha256": "56ce18b91c5586ce791402bcf271683bb72baf03e587c279663053b5dc584599",
+    "bytes": 30144
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/frozen-green.xml",
+    "sha256": "acca06ee0d63fb846fecbe007d746e59cb99d339a5592810fbbed1692d678b0e",
+    "bytes": 31493
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/inherited-bootstrap.log",
+    "sha256": "0ae05df44b8b6cff3c2d2389c9161a6836947ac806e464da1ab1216a62749f3e",
+    "bytes": 1245
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/inherited-bootstrap.xml",
+    "sha256": "2fba36b62c5b97af262f1bf85f22be946a0e11217eb0c24dfd3c5f0ec949bdc6",
+    "bytes": 1413
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/bootstrap_selected.py",
+    "sha256": "469fd1a6191c34f26044c8ef423660f47a23af0ddd5a1be52d889d9a1291fbbd",
+    "bytes": 219
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-format.log",
+    "sha256": "3bc53bf3e981a98a34a852e175bf9b77af841edea74fca595d9aedcbaf9a4938",
+    "bytes": 26
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-ruff.json",
+    "sha256": "5619600d3a1b085f4c6a9344cc599500bdc93e7b7e6cc39f1d6b03667eaf53a1",
+    "bytes": 2572
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/baseline-ruff.json",
+    "sha256": "8968932e7f4de94f1b56896db1f31f459b61186ada9805cf37455a092b3ac632",
+    "bytes": 2478
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner_probe.py",
+    "sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011",
+    "bytes": 3155
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-events.jsonl",
+    "sha256": "238bb394e352e720e0b4ac79c6c58fe068c247b11d95fb2ddf6911881de91091",
+    "bytes": 905
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-probe.xml",
+    "sha256": "9d815951c3380e559b2c3bf126604b09293ad6f0e6c849abf2906ac1f1150b43",
+    "bytes": 7827
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner_probe.py",
+    "sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011",
+    "bytes": 3155
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-events.jsonl",
+    "sha256": "282c57dfac45a7868e797064db0f78e827545562c81aaaa61b167f5e6eb0f217",
+    "bytes": 934
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-probe.log",
+    "sha256": "8b1346d48692a2e49790158573dfceda0943f9af3d247610bee8ceb469a9aef5",
+    "bytes": 445
+  },
+  {
+    "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-probe.xml",
+    "sha256": "f750f015cb230a4bcf7497aed52ae03a52e5d12bc3059ee9097c4729f092bef7",
+    "bytes": 435
+  }
+]

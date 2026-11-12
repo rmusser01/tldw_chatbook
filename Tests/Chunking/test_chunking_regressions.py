@@ -25,10 +25,13 @@ def test_words_chunk_generator_matches_chunk_with_min_size(monkeypatch):
     monkeypatch.setattr(strategy, "_tokenize_text", lambda text: tokens)
     text = " ".join(tokens)
     chunks = strategy.chunk(text, max_size=3, overlap=0, min_chunk_size=3)
-    gen_chunks = list(strategy.chunk_generator(text, max_size=3, overlap=0, min_chunk_size=3))
+    gen_chunks = list(
+        strategy.chunk_generator(text, max_size=3, overlap=0, min_chunk_size=3)
+    )
     assert gen_chunks == chunks
 
 
+@pytest.mark.bootstrap_profile
 def test_sentence_strategy_language_reconfigure_via_chunker(monkeypatch):
 
     fake_pkg = types.ModuleType("pythainlp")
@@ -43,16 +46,21 @@ def test_sentence_strategy_language_reconfigure_via_chunker(monkeypatch):
     monkeypatch.setitem(sys.modules, "pythainlp", fake_pkg)
     monkeypatch.setitem(sys.modules, "pythainlp.tokenize", fake_tokenize)
 
-    ck = Chunker(config=ChunkerConfig(default_method=ChunkingMethod.SENTENCES, language="en"))
+    ck = Chunker(
+        config=ChunkerConfig(default_method=ChunkingMethod.SENTENCES, language="en")
+    )
     ck.chunk_text("One. Two.", method="sentences", max_size=1, overlap=0, language="en")
     strategy = ck.get_strategy("sentences")
     assert not strategy.pythainlp_available
 
-    ck.chunk_text("thai test.", method="sentences", max_size=1, overlap=0, language="th")
+    ck.chunk_text(
+        "thai test.", method="sentences", max_size=1, overlap=0, language="th"
+    )
     assert strategy.pythainlp_available
     assert strategy._th_sent_tokenize is sent_tokenize
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_sentences_respects_combine_short():
 
     ck = Chunker()
@@ -86,6 +94,7 @@ def test_words_min_chunk_size_overlap_no_duplicates():
     assert chunks == [text]
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_words_min_chunk_size_overlap_matches_flat():
 
     ck = Chunker()
@@ -101,14 +110,20 @@ def test_hierarchical_words_min_chunk_size_overlap_matches_flat():
     assert [item["text"] for item in hier] == base
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_code_fence_long_marker_closes():
 
     ck = Chunker()
     text = "Intro\n\n````python\nprint('hi')\n````\n\nAfter."
-    chunks = ck.chunk_text_hierarchical_flat(text, method="words", max_size=50, overlap=0)
-    assert any(c.get("metadata", {}).get("paragraph_kind") == "code_fence" for c in chunks)
+    chunks = ck.chunk_text_hierarchical_flat(
+        text, method="words", max_size=50, overlap=0
+    )
     assert any(
-        c.get("metadata", {}).get("paragraph_kind") == "paragraph" and "After." in c.get("text", "")
+        c.get("metadata", {}).get("paragraph_kind") == "code_fence" for c in chunks
+    )
+    assert any(
+        c.get("metadata", {}).get("paragraph_kind") == "paragraph"
+        and "After." in c.get("text", "")
         for c in chunks
     )
 
@@ -135,8 +150,11 @@ def test_token_chunk_decode_failure_falls_back():
     assert reconstructed == text.split()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.unit
-def test_process_text_multi_level_fallback_offsets_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_text_multi_level_fallback_offsets_clamped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Fallback offsets should remain within paragraph bounds even on mismatched chunks."""
     chunker = Chunker()
     text = "short paragraph"

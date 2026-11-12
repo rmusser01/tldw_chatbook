@@ -135,6 +135,7 @@ class TestTemplateFromRecord:
 
 
 class TestApplyTemplate:
+    @pytest.mark.bootstrap_profile
     @pytest.mark.parametrize("options", [None, {"method": None}, {"method": " WORDS "}])
     def test_saved_apply_does_not_claim_exact_mapping_for_normalized_repetitions(
         self, options
@@ -149,6 +150,7 @@ class TestApplyTemplate:
             for chunk in output
         )
 
+    @pytest.mark.bootstrap_profile
     def test_legacy_apply_does_not_use_strict_lab_admission(self):
         template = {
             "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}},
@@ -158,6 +160,7 @@ class TestApplyTemplate:
             chunk["text"] for chunk in tr.apply_template(template, "one two three")
         ] == ["one two", "three"]
 
+    @pytest.mark.bootstrap_profile
     def test_apply_runs_pre_and_post_pinned_exact_output(self):
         # AC 10: preprocessing AND postprocessing both run; the output is an
         # exact pinned value that differs from the chunking stage alone.
@@ -178,8 +181,11 @@ class TestApplyTemplate:
         # Postprocessing demonstrably ran: under FLAT_DELETING the filter
         # drops the 10-char chunk that FLAT (min_length 10) keeps.
         deleting = tr.apply_template(FLAT_DELETING, PINNED_TEXT)
-        assert [c["text"] for c in deleting] == ["First sentence. Second sentence here."]
+        assert [c["text"] for c in deleting] == [
+            "First sentence. Second sentence here."
+        ]
 
+    @pytest.mark.bootstrap_profile
     def test_flat_contract_synthesized(self):
         # AC 11: full flat contract on every chunk.
         out = tr.apply_template(FLAT, PINNED_TEXT)
@@ -205,11 +211,13 @@ class TestApplyTemplate:
             == "First sentence.\nSecond sentence here."
         )
 
+    @pytest.mark.bootstrap_profile
     def test_offset_basis_preprocessed(self):
         out = tr.apply_template(FLAT, PINNED_TEXT)
         assert out[0]["metadata"]["offset_basis"] == "preprocessed:normalize_whitespace"
         assert out[1]["metadata"]["offset_basis"] == "preprocessed:normalize_whitespace"
 
+    @pytest.mark.bootstrap_profile
     def test_offset_basis_source_when_no_preprocessing_rewrites(self):
         out = tr.apply_template(FLAT_NO_PRE, WORDS_TEXT)
         assert len(out) == 3
@@ -218,6 +226,7 @@ class TestApplyTemplate:
             # Words chunks are exact substrings: source-relative offsets.
             assert WORDS_TEXT[c["start_char"] : c["end_char"]] == c["text"]
 
+    @pytest.mark.bootstrap_profile
     def test_unsynthesizable_offsets_omitted_never_none(self):
         # AC 12 (unit half): when postprocessing deletes/merges chunks the
         # offset keys are OMITTED entirely — never present-and-None.
@@ -237,6 +246,7 @@ class TestApplyTemplate:
                 assert not ("start_char" in c and c["start_char"] is None)
                 assert not ("end_char" in c and c["end_char"] is None)
 
+    @pytest.mark.bootstrap_profile
     def test_apply_passes_options_through(self):
         # Runtime options reach the engine (method override measured to
         # win over the template's chunking.method). The words method plus
@@ -283,6 +293,7 @@ class TestAdmissionRuntimeAdapters:
             "metadata": {"sections": [{"title": "Intro", "position": 0}]},
         }
 
+    @pytest.mark.bootstrap_profile
     @pytest.mark.production_path
     def test_sanitize_matches_engine_without_security_event(self):
         from tldw_chatbook.Chunking.engine.security_logger import get_security_logger
@@ -443,9 +454,7 @@ _RE_NAME_RESOLUTION = re.compile(
 _RE_FENCED_CONSTRUCTION = re.compile(
     r"(?<![A-Za-z0-9_])Template(?:Manager|Learner)\s*\("
 )
-_RE_CLASSIFIER_CONSTRUCTION = re.compile(
-    r"(?<![A-Za-z0-9_])TemplateClassifier\s*\("
-)
+_RE_CLASSIFIER_CONSTRUCTION = re.compile(r"(?<![A-Za-z0-9_])TemplateClassifier\s*\(")
 CLASSIFIER_CONSTRUCTION_ALLOWED = {"Chunking/auto_selection.py"}
 
 
@@ -534,8 +543,9 @@ class TestEnumerationGuards:
         # may appear anywhere else. The home module does not exist yet, so
         # the scan is empty today and this stays green by construction.
         hits = _scan(_RE_CLASSIFIER_CONSTRUCTION)
-        assert set(hits) <= CLASSIFIER_CONSTRUCTION_ALLOWED, \
+        assert set(hits) <= CLASSIFIER_CONSTRUCTION_ALLOWED, (
             f"TemplateClassifier constructed outside its home: {sorted(hits)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -548,9 +558,7 @@ class TestTemplateManagerFencing:
     def test_templates_directory_absent_with_positive_control(self):
         from tldw_chatbook.Chunking.engine.templates import TemplateManager
 
-        probe = (
-            Path(tr.__file__).resolve().parent / "engine" / "template_library"
-        )
+        probe = Path(tr.__file__).resolve().parent / "engine" / "template_library"
         assert not probe.exists(), (
             "engine/template_library exists: some code constructed TemplateManager"
         )
@@ -600,6 +608,7 @@ def _memory_rag_service():
 
 
 class TestRagIntegration:
+    @pytest.mark.bootstrap_profile
     async def test_template_chunks_index_and_search_without_typeerror(self):
         from tldw_chatbook.RAG_Search.simplified.indexing_helpers import (
             generate_embeddings_batch,
@@ -667,6 +676,7 @@ class TestRagIntegration:
         finally:
             service.close()
 
+    @pytest.mark.bootstrap_profile
     def test_citation_builder_tolerates_omitted_offset_keys(self):
         # The exact consumer the spec cites (vector_store.py:611,
         # ChromaVectorStore._create_citations_from_result) run directly on
@@ -687,7 +697,9 @@ class TestRagIntegration:
             "chunk_end": omitted_chunk.get("end_char", len(omitted_chunk["text"])),
         }
         result = SearchResult(
-            id="tpl_b_chunk_0", score=1.0, document=omitted_chunk["text"],
+            id="tpl_b_chunk_0",
+            score=1.0,
+            document=omitted_chunk["text"],
             metadata=metadata,
         )
         probe = ChromaVectorStore.__new__(ChromaVectorStore)
@@ -795,7 +807,9 @@ class TestMediaNavigation:
         )
 
         chunks = tr.apply_template(FLAT, PINNED_TEXT)
-        assert chunks[0]["metadata"]["offset_basis"] == "preprocessed:normalize_whitespace"
+        assert (
+            chunks[0]["metadata"]["offset_basis"] == "preprocessed:normalize_whitespace"
+        )
         db = _NavDb(PINNED_TEXT)
         db.add_chunks(3, chunks)
         service = LocalMediaReadingService(db)

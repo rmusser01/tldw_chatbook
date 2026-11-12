@@ -1,0 +1,2209 @@
+{
+  "baseRefOid": "f5585b020d545e62c7f63031940b07193b49b4c0",
+  "headRefOid": "9a89a23ba1156e48ece70b540202afe81e798303",
+  "mergeCommit": {
+    "oid": "96cae7eec00473bbfb5687ccfd0685eba2785add"
+  },
+  "mergedAt": "2026-10-24T17:16:42Z",
+  "state": "MERGED",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T15:58:13Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377428/job/120917709668",
+      "name": "platform-evidence",
+      "startedAt": "2026-10-24T15:58:14Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-19637 pinned workspace platform evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T15:58:13Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377411/job/120917709745",
+      "name": "Linux storage - Python ${{ matrix.python }}",
+      "startedAt": "2026-10-24T15:58:14Z",
+      "status": "COMPLETED",
+      "workflowName": "TASK-32011 one-off Linux storage evidence"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T17:06:16Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540804",
+      "name": "PR Fast Lane",
+      "startedAt": "2026-10-24T16:41:31Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:01:55Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109416918/job/120917826357",
+      "name": "Merge queue",
+      "startedAt": "2026-10-24T16:01:26Z",
+      "status": "COMPLETED",
+      "workflowName": "Merge Queue"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T17:18:35Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40115394272/job/120935508498",
+      "name": "Merge queue",
+      "startedAt": "2026-10-24T17:17:57Z",
+      "status": "COMPLETED",
+      "workflowName": "Merge Queue"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:05:52Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377513/job/120918172365",
+      "name": "UI latency guardrails",
+      "startedAt": "2026-10-24T16:00:44Z",
+      "status": "COMPLETED",
+      "workflowName": "Perf Guard"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:27:16Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540414",
+      "name": "PR Fast Lane (admission-sensitive)",
+      "startedAt": "2026-10-24T16:07:13Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:55:13Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540672",
+      "name": "PR Fast Lane (admission-sensitive 2)",
+      "startedAt": "2026-10-24T16:40:44Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:36:32Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540692",
+      "name": "UI Fast Lane (1)",
+      "startedAt": "2026-10-24T16:21:57Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:20:04Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540640",
+      "name": "UI Fast Lane (2)",
+      "startedAt": "2026-10-24T16:08:59Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:34:52Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540716",
+      "name": "UI Fast Lane (3)",
+      "startedAt": "2026-10-24T16:21:07Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:42:29Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540674",
+      "name": "UI Fast Lane (4)",
+      "startedAt": "2026-10-24T16:29:23Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:53:53Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540733",
+      "name": "UI Fast Lane (5)",
+      "startedAt": "2026-10-24T16:39:30Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:31:19Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540682",
+      "name": "UI Fast Lane (6)",
+      "startedAt": "2026-10-24T16:17:46Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:46:09Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540781",
+      "name": "UI Fast Lane (7)",
+      "startedAt": "2026-10-24T16:34:44Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:36:32Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540721",
+      "name": "UI Fast Lane (8)",
+      "startedAt": "2026-10-24T16:24:03Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:51:33Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540795",
+      "name": "UI Fast Lane (9)",
+      "startedAt": "2026-10-24T16:38:08Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:53:41Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540863",
+      "name": "UI Fast Lane (10)",
+      "startedAt": "2026-10-24T16:39:32Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:49:35Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540800",
+      "name": "UI Fast Lane (11)",
+      "startedAt": "2026-10-24T16:37:14Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:48:25Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540894",
+      "name": "UI Fast Lane (12)",
+      "startedAt": "2026-10-24T16:35:39Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:34:55Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540694",
+      "name": "UI Fast Lane (13)",
+      "startedAt": "2026-10-24T16:21:21Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:21:16Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540710",
+      "name": "UI Fast Lane (14)",
+      "startedAt": "2026-10-24T16:08:59Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:49:52Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540809",
+      "name": "UI Fast Lane (15)",
+      "startedAt": "2026-10-24T16:38:08Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:34:07Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540622",
+      "name": "UI Fast Lane (16)",
+      "startedAt": "2026-10-24T16:20:20Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:23:25Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540760",
+      "name": "UI Fast Lane (17)",
+      "startedAt": "2026-10-24T16:09:08Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:30:47Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540693",
+      "name": "Console P0 regression gate",
+      "startedAt": "2026-10-24T16:17:24Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:36:51Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540735",
+      "name": "Dreams and Guardian boundary contracts",
+      "startedAt": "2026-10-24T16:31:45Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T16:29:40Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540741",
+      "name": "Dreams tracking tests",
+      "startedAt": "2026-10-24T16:23:23Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T17:15:53Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120933157157",
+      "name": "Derived artifacts reproduce from their sources",
+      "startedAt": "2026-10-24T17:11:32Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T17:18:38Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120935301325",
+      "name": "Merge queue tick",
+      "startedAt": "2026-10-24T17:18:06Z",
+      "status": "COMPLETED",
+      "workflowName": "Derived Artifacts"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-24T15:58:21Z",
+      "conclusion": "NEUTRAL",
+      "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/3228",
+      "name": "cubic \u00b7 AI code reviewer",
+      "startedAt": "2026-10-24T15:58:17Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-10-24T15:58:35Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    }
+  ],
+  "url": "https://github.com/rmusser01/tldw_chatbook/pull/3228",
+  "verifiedAt": "2026-10-24T17:19:45.441296+00:00",
+  "liveDevAtRead": "96cae7eec00473bbfb5687ccfd0685eba2785add",
+  "fetchedDev": "96cae7eec00473bbfb5687ccfd0685eba2785add",
+  "mergeAncestorOfFetchedDev": true,
+  "runs": {
+    "40109377531": {
+      "attempt": 1,
+      "conclusion": "success",
+      "event": "pull_request",
+      "headSha": "9a89a23ba1156e48ece70b540202afe81e798303",
+      "jobs": [
+        {
+          "completedAt": "2026-10-24T16:27:16Z",
+          "conclusion": "success",
+          "databaseId": 120919540414,
+          "name": "PR Fast Lane (admission-sensitive)",
+          "startedAt": "2026-10-24T16:07:13Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:07:14Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:07:13Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:07:36Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:07:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:07:41Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:07:36Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:07:55Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:07:41Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:27:12Z",
+              "conclusion": "success",
+              "name": "Run admission-sensitive suites",
+              "number": 5,
+              "startedAt": "2026-10-24T16:07:55Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:27:12Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:27:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:27:13Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:27:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:27:13Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:27:13Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540414"
+        },
+        {
+          "completedAt": "2026-10-24T16:34:07Z",
+          "conclusion": "success",
+          "databaseId": 120919540622,
+          "name": "UI Fast Lane (16)",
+          "startedAt": "2026-10-24T16:20:20Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:20:21Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:20:20Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:20:45Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:20:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:20:54Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:20:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:15Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:20:54Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:04Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:21:15Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:04Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:34:04Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:05Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:34:04Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:05Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:34:05Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540622"
+        },
+        {
+          "completedAt": "2026-10-24T16:20:04Z",
+          "conclusion": "success",
+          "databaseId": 120919540640,
+          "name": "UI Fast Lane (2)",
+          "startedAt": "2026-10-24T16:08:59Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:09:00Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:09:00Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:09:20Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:09:00Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:09:24Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:09:20Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:09:35Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:09:24Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:20:02Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:09:35Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:20:02Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:20:02Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:20:02Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:20:02Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:20:02Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:20:02Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540640"
+        },
+        {
+          "completedAt": "2026-10-24T16:55:13Z",
+          "conclusion": "success",
+          "databaseId": 120919540672,
+          "name": "PR Fast Lane (admission-sensitive 2)",
+          "startedAt": "2026-10-24T16:40:44Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:40:45Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:40:44Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:41:06Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:40:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:41:09Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:41:06Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:41:28Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:41:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:55:10Z",
+              "conclusion": "success",
+              "name": "Run admission-sensitive suites 2",
+              "number": 5,
+              "startedAt": "2026-10-24T16:41:28Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:55:11Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:55:10Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:55:11Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:55:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:55:11Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:55:11Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540672"
+        },
+        {
+          "completedAt": "2026-10-24T16:42:29Z",
+          "conclusion": "success",
+          "databaseId": 120919540674,
+          "name": "UI Fast Lane (4)",
+          "startedAt": "2026-10-24T16:29:23Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:29:24Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:29:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:29:48Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:29:24Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:29:52Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:29:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:30:09Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:29:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:42:26Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:30:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:42:26Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:42:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:42:26Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:42:26Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:42:26Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:42:26Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540674"
+        },
+        {
+          "completedAt": "2026-10-24T16:31:19Z",
+          "conclusion": "success",
+          "databaseId": 120919540682,
+          "name": "UI Fast Lane (6)",
+          "startedAt": "2026-10-24T16:17:46Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:17:48Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:17:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:18:11Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:17:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:18:16Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:18:11Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:18:35Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:18:16Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:31:15Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:18:35Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:31:16Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:31:15Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:31:16Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:31:16Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:31:16Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:31:16Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540682"
+        },
+        {
+          "completedAt": "2026-10-24T16:36:32Z",
+          "conclusion": "success",
+          "databaseId": 120919540692,
+          "name": "UI Fast Lane (1)",
+          "startedAt": "2026-10-24T16:21:57Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:21:59Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:21:58Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:22:20Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:21:59Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:22:24Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:22:20Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:22:42Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:22:24Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:30Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:22:42Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:30Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:36:30Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:30Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:36:30Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:30Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:36:30Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540692"
+        },
+        {
+          "completedAt": "2026-10-24T16:30:47Z",
+          "conclusion": "success",
+          "databaseId": 120919540693,
+          "name": "Console P0 regression gate",
+          "startedAt": "2026-10-24T16:17:24Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:17:25Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:17:25Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:17:47Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:17:25Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:17:51Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:17:47Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:18:09Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:17:51Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:18Z",
+              "conclusion": "success",
+              "name": "Run the sandboxed Console P0 regression tests",
+              "number": 5,
+              "startedAt": "2026-10-24T16:18:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:30:45Z",
+              "conclusion": "success",
+              "name": "Run the admission-sensitive Console P0 regression tests",
+              "number": 6,
+              "startedAt": "2026-10-24T16:21:18Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:30:45Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 11,
+              "startedAt": "2026-10-24T16:30:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:30:46Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 12,
+              "startedAt": "2026-10-24T16:30:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:30:46Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 13,
+              "startedAt": "2026-10-24T16:30:46Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540693"
+        },
+        {
+          "completedAt": "2026-10-24T16:34:55Z",
+          "conclusion": "success",
+          "databaseId": 120919540694,
+          "name": "UI Fast Lane (13)",
+          "startedAt": "2026-10-24T16:21:21Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:21:23Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:21:22Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:45Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:21:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:52Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:21:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:22:12Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:21:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:52Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:22:12Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:53Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:34:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:53Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:34:53Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:53Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:34:53Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540694"
+        },
+        {
+          "completedAt": "2026-10-24T16:21:16Z",
+          "conclusion": "success",
+          "databaseId": 120919540710,
+          "name": "UI Fast Lane (14)",
+          "startedAt": "2026-10-24T16:08:59Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:09:01Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:09:00Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:09:23Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:09:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:09:29Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:09:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:09:46Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:09:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:14Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:09:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:14Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:21:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:14Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:21:14Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:14Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:21:14Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540710"
+        },
+        {
+          "completedAt": "2026-10-24T16:34:52Z",
+          "conclusion": "success",
+          "databaseId": 120919540716,
+          "name": "UI Fast Lane (3)",
+          "startedAt": "2026-10-24T16:21:07Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:21:08Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:21:07Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:29Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:21:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:33Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:21:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:21:52Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:21:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:50Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:21:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:50Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:34:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:50Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:34:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:34:50Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:34:50Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540716"
+        },
+        {
+          "completedAt": "2026-10-24T16:36:32Z",
+          "conclusion": "success",
+          "databaseId": 120919540721,
+          "name": "UI Fast Lane (8)",
+          "startedAt": "2026-10-24T16:24:03Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:24:04Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:24:04Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:24:27Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:24:04Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:24:34Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:24:27Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:24:48Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:24:34Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:29Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:24:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:30Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:36:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:30Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:36:30Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:30Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:36:30Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540721"
+        },
+        {
+          "completedAt": "2026-10-24T16:53:53Z",
+          "conclusion": "success",
+          "databaseId": 120919540733,
+          "name": "UI Fast Lane (5)",
+          "startedAt": "2026-10-24T16:39:30Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:39:32Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:39:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:39:55Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:39:32Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:40:01Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:39:55Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:40:18Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:40:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:53:50Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:40:18Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:53:50Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:53:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:53:51Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:53:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:53:51Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:53:51Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540733"
+        },
+        {
+          "completedAt": "2026-10-24T16:36:51Z",
+          "conclusion": "success",
+          "databaseId": 120919540735,
+          "name": "Dreams and Guardian boundary contracts",
+          "startedAt": "2026-10-24T16:31:45Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:31:46Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:31:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:32:07Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:31:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:32:10Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:32:07Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:32:23Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:32:10Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:33:50Z",
+              "conclusion": "success",
+              "name": "Run Dreams and Guardian boundary contracts",
+              "number": 5,
+              "startedAt": "2026-10-24T16:32:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:48Z",
+              "conclusion": "success",
+              "name": "Run Dreams admission-sensitive contracts",
+              "number": 6,
+              "startedAt": "2026-10-24T16:33:50Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:49Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 11,
+              "startedAt": "2026-10-24T16:36:48Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:49Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 12,
+              "startedAt": "2026-10-24T16:36:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:49Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 13,
+              "startedAt": "2026-10-24T16:36:49Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540735"
+        },
+        {
+          "completedAt": "2026-10-24T16:29:40Z",
+          "conclusion": "success",
+          "databaseId": 120919540741,
+          "name": "Dreams tracking tests",
+          "startedAt": "2026-10-24T16:23:23Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:23:24Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:23:24Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:23:46Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:23:24Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:23:51Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:23:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:24:07Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:23:51Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:29:37Z",
+              "conclusion": "success",
+              "name": "Run the Dreams tracking tests",
+              "number": 5,
+              "startedAt": "2026-10-24T16:24:07Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:29:37Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:29:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:29:38Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:29:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:29:38Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:29:38Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540741"
+        },
+        {
+          "completedAt": "2026-10-24T16:23:25Z",
+          "conclusion": "success",
+          "databaseId": 120919540760,
+          "name": "UI Fast Lane (17)",
+          "startedAt": "2026-10-24T16:09:08Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:09:10Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:09:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:09:32Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:09:10Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:09:38Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:09:32Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:09:57Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:09:38Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:23:21Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:09:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:23:21Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:23:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:23:22Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:23:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:23:22Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:23:22Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540760"
+        },
+        {
+          "completedAt": "2026-10-24T16:46:09Z",
+          "conclusion": "success",
+          "databaseId": 120919540781,
+          "name": "UI Fast Lane (7)",
+          "startedAt": "2026-10-24T16:34:44Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:34:46Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:34:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:35:08Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:34:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:35:13Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:35:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:35:29Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:35:13Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:46:06Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:35:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:46:06Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:46:06Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:46:06Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:46:06Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:46:06Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:46:06Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540781"
+        },
+        {
+          "completedAt": "2026-10-24T16:51:33Z",
+          "conclusion": "success",
+          "databaseId": 120919540795,
+          "name": "UI Fast Lane (9)",
+          "startedAt": "2026-10-24T16:38:08Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:38:09Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:38:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:38:34Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:38:09Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:38:38Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:38:34Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:38:57Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:38:38Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:51:31Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:38:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:51:31Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:51:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:51:31Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:51:31Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:51:31Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:51:31Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540795"
+        },
+        {
+          "completedAt": "2026-10-24T16:49:35Z",
+          "conclusion": "success",
+          "databaseId": 120919540800,
+          "name": "UI Fast Lane (11)",
+          "startedAt": "2026-10-24T16:37:14Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:37:16Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:37:15Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:37:39Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:37:16Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:37:44Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:37:39Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:38:00Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:37:44Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:49:33Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:38:00Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:49:33Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:49:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:49:33Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:49:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:49:33Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:49:33Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540800"
+        },
+        {
+          "completedAt": "2026-10-24T17:06:16Z",
+          "conclusion": "success",
+          "databaseId": 120919540804,
+          "name": "PR Fast Lane",
+          "startedAt": "2026-10-24T16:41:31Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:41:33Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:41:32Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:41:56Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:41:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:42:01Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:41:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:42:20Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:42:01Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "0001-01-01T00:00:00Z",
+              "conclusion": "",
+              "name": "Run fast PR contract",
+              "number": 5,
+              "startedAt": "2026-10-24T16:42:20Z",
+              "status": "in_progress"
+            },
+            {
+              "completedAt": "0001-01-01T00:00:00Z",
+              "conclusion": "",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "0001-01-01T00:00:00Z",
+              "status": "pending"
+            },
+            {
+              "completedAt": "0001-01-01T00:00:00Z",
+              "conclusion": "",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "0001-01-01T00:00:00Z",
+              "status": "pending"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540804"
+        },
+        {
+          "completedAt": "2026-10-24T16:49:52Z",
+          "conclusion": "success",
+          "databaseId": 120919540809,
+          "name": "UI Fast Lane (15)",
+          "startedAt": "2026-10-24T16:38:08Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:38:10Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:38:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:38:32Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:38:10Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:38:37Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:38:32Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:38:56Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:38:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:49:49Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:38:56Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:49:49Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:49:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:49:49Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:49:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:49:49Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:49:49Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540809"
+        },
+        {
+          "completedAt": "2026-10-24T16:53:41Z",
+          "conclusion": "success",
+          "databaseId": 120919540863,
+          "name": "UI Fast Lane (10)",
+          "startedAt": "2026-10-24T16:39:32Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:39:33Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:39:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:39:57Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:39:33Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:40:02Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:39:57Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:40:21Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:40:02Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:53:37Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:40:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:53:37Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:53:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:53:38Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:53:37Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:53:38Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:53:38Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540863"
+        },
+        {
+          "completedAt": "2026-10-24T16:48:25Z",
+          "conclusion": "success",
+          "databaseId": 120919540894,
+          "name": "UI Fast Lane (12)",
+          "startedAt": "2026-10-24T16:35:39Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:35:40Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:35:39Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:03Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:35:40Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:08Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:36:03Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:36:23Z",
+              "conclusion": "success",
+              "name": "Install fast-lane dependencies",
+              "number": 4,
+              "startedAt": "2026-10-24T16:36:08Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:48:21Z",
+              "conclusion": "success",
+              "name": "Run the gated Tests/UI slice",
+              "number": 5,
+              "startedAt": "2026-10-24T16:36:23Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:48:21Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 9,
+              "startedAt": "2026-10-24T16:48:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:48:22Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 10,
+              "startedAt": "2026-10-24T16:48:21Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:48:22Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 11,
+              "startedAt": "2026-10-24T16:48:22Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120919540894"
+        },
+        {
+          "completedAt": "2026-10-24T17:15:53Z",
+          "conclusion": "success",
+          "databaseId": 120933157157,
+          "name": "Derived artifacts reproduce from their sources",
+          "startedAt": "2026-10-24T17:11:32Z",
+          "status": "completed",
+          "steps": [],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120933157157"
+        },
+        {
+          "completedAt": "2026-10-24T17:18:38Z",
+          "conclusion": "success",
+          "databaseId": 120935301325,
+          "name": "Merge queue tick",
+          "startedAt": "2026-10-24T17:18:06Z",
+          "status": "completed",
+          "steps": [],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531/job/120935301325"
+        }
+      ],
+      "name": "Derived Artifacts",
+      "status": "completed",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377531"
+    },
+    "40109377513": {
+      "attempt": 1,
+      "conclusion": "success",
+      "event": "pull_request",
+      "headSha": "9a89a23ba1156e48ece70b540202afe81e798303",
+      "jobs": [
+        {
+          "completedAt": "2026-10-24T16:05:52Z",
+          "conclusion": "success",
+          "databaseId": 120918172365,
+          "name": "UI latency guardrails",
+          "startedAt": "2026-10-24T16:00:44Z",
+          "status": "completed",
+          "steps": [
+            {
+              "completedAt": "2026-10-24T16:00:46Z",
+              "conclusion": "success",
+              "name": "Set up job",
+              "number": 1,
+              "startedAt": "2026-10-24T16:00:45Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:01:06Z",
+              "conclusion": "success",
+              "name": "Run actions/checkout@v4",
+              "number": 2,
+              "startedAt": "2026-10-24T16:00:46Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:01:07Z",
+              "conclusion": "success",
+              "name": "Run actions/setup-python@v5",
+              "number": 3,
+              "startedAt": "2026-10-24T16:01:06Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:01:29Z",
+              "conclusion": "success",
+              "name": "Install package (test deps only path)",
+              "number": 4,
+              "startedAt": "2026-10-24T16:01:07Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:02:52Z",
+              "conclusion": "success",
+              "name": "Run latency guardrails",
+              "number": 5,
+              "startedAt": "2026-10-24T16:01:29Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:03:17Z",
+              "conclusion": "success",
+              "name": "Run GC policy and idle re-freeze tests",
+              "number": 6,
+              "startedAt": "2026-10-24T16:02:52Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:04:39Z",
+              "conclusion": "success",
+              "name": "Run boot budget ratchets",
+              "number": 7,
+              "startedAt": "2026-10-24T16:03:17Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:05:49Z",
+              "conclusion": "success",
+              "name": "Run Console storage-unit ratchet",
+              "number": 8,
+              "startedAt": "2026-10-24T16:04:39Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:05:49Z",
+              "conclusion": "success",
+              "name": "Post Run actions/setup-python@v5",
+              "number": 15,
+              "startedAt": "2026-10-24T16:05:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:05:50Z",
+              "conclusion": "success",
+              "name": "Post Run actions/checkout@v4",
+              "number": 16,
+              "startedAt": "2026-10-24T16:05:49Z",
+              "status": "completed"
+            },
+            {
+              "completedAt": "2026-10-24T16:05:50Z",
+              "conclusion": "success",
+              "name": "Complete job",
+              "number": 17,
+              "startedAt": "2026-10-24T16:05:50Z",
+              "status": "completed"
+            }
+          ],
+          "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377513/job/120918172365"
+        }
+      ],
+      "name": "Perf Guard",
+      "status": "completed",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40109377513"
+    }
+  }
+}

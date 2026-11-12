@@ -49,6 +49,42 @@ async def test_preview_bounds_mounts_and_hidden_changes_do_not_recompose():
         assert len(section.query(ConsoleInspectorSectionRow)) == 4
 
 
+async def _until_fleet_auto_opened(pilot, console) -> None:
+    """Wait (bounded) for the fleet section's one-shot auto-open."""
+    for _ in range(400):  # 20 s: the rows land on a worker, slow under load
+        if console._console_fleet_section_auto_opened:
+            return
+        await pilot.pause(0.05)
+    section = console.query_one("#console-agent-section-subagents")
+    raise AssertionError(
+        "the populated fleet section never auto-opened: "
+        f"rows={len(section.rows)} open={section.open} "
+        f"dismissed={console._console_fleet_inspector_dismissed} "
+        f"read={console._agent._console_historical_read!r:.300}"
+    )
+
+
+async def _until_painted(pilot, host, console, selector: str, *, scroll=True) -> None:
+    """Wait (10 s) until the compositor paints ``selector`` at its own region.
+
+    With ``scroll`` it scrolls the widget into view each try; without, it only
+    waits, so a test of the app's own reveal scroll still tests that scroll.
+    """
+    for _ in range(50):
+        if scroll:
+            await _scroll_into_view(pilot, console, selector)
+        else:
+            await pilot.pause(0.2)
+        widget = console.query_one(selector)
+        region = widget.region
+        try:
+            if host.get_widget_at(region.x + 1, region.y)[0] is widget:
+                return
+        except Exception:  # noqa: BLE001 - nothing painted there yet
+            pass
+    raise AssertionError(f"{selector} was never painted at its own region")
+
+
 async def _loaded(pilot, modal):
     for _ in range(80):
         if not modal.query_one(DataTable).disabled:
@@ -85,14 +121,37 @@ async def test_view_all_pages_to_old_child_and_drills_into_it(tmp_path, size):
             section = console.query_one(
                 "#console-agent-section-subagents", ConsoleInspectorSection
             )
-            # Dev auto-opens populated fleets; close it before testing expansion.
+            # Dev auto-opens populated fleets; close it before testing
+            # expansion. Since 3e618d7119 the rows land asynchronously, so the
+            # one-shot auto-open (and its reveal scroll) comes after setup:
+            # wait for it first, or it reopens the section or scrolls the
+            # toggle off screen after this close (TASK-39044).
+            await _until_fleet_auto_opened(pilot, console)
             section.set_open(False)
-            await pilot.pause()
+            # Closing recomposes the section; its toggle is back once that lands.
+            for _ in range(100):
+                if console.query("#console-inspector-section-agent-fleet-toggle"):
+                    break
+                await pilot.pause(0.05)
+            # The rail can still scroll after the auto-open's reveal; click
+            # only once the toggle is painted where it says it is.
+            await _until_painted(pilot, host, console, "#console-inspector-section-agent-fleet-toggle")
             # Expansion is a real click. Its own handler scrolls the new preview.
             assert await pilot.click("#console-inspector-section-agent-fleet-toggle")
             await pilot.pause()
             assert section.open
             assert len(section.query(ConsoleInspectorSectionRow)) == 4
+            # The expansion's own reveal scroll lands over a few refreshes.
+            try:
+                await _until_painted(
+                    pilot,
+                    host,
+                    console,
+                    "#console-inspector-section-agent-fleet-view-all",
+                    scroll=False,
+                )
+            except AssertionError:
+                pass  # the assertion below names what is painted instead
             tail = console.query_one(
                 "#console-inspector-section-agent-fleet-view-all", Button
             )
@@ -140,9 +199,12 @@ async def test_view_all_pages_to_old_child_and_drills_into_it(tmp_path, size):
             assert host.screen is console
             assert console._console_agent_drilldown_run_id == target
             await _scroll_into_view(pilot, console, "#console-agent-section-steps")
-            assert "This run:" in _painted_text(
-                host, console.query_one("#console-agent-section-steps")
-            )
+            steps = console.query_one("#console-agent-section-steps")
+            for _ in range(200):  # the drilled run's steps paint on a later sync
+                if "This run:" in _painted_text(host, steps):
+                    break
+                await pilot.pause(0.05)
+            assert "This run:" in _painted_text(host, steps)
     finally:
         db.close()
 
@@ -290,6 +352,117 @@ async def test_history_selection_rechecks_conversation_and_agent_kind(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("superseded", [False, True], ids=["one-write", "superseded"])
+async def test_a_config_write_keeps_a_collapsed_fleet_collapsed_with_its_rows(
+    tmp_path, superseded
+):
+    """A config write re-keys the historical read; the rows stay (TASK-39044).
+
+    The read's key holds the config identity. Before, a re-key served empty
+    rows until the new read landed, which reset the fleet's auto-open and
+    dismissed flags: the section the user collapsed opened again and the
+    rail scrolled to it. Here the config write is a Settings save of the
+    display cap the historical rows are cut to. ``superseded`` holds the
+    re-keyed read and makes a second write before it returns, so that read
+    lands under a stale key and must not drop the rows it carried.
+    """
+    import asyncio
+    import threading
+
+    from tldw_chatbook import config
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="history")
+    try:
+        parent = db.create_run(conversation_id="conv-A", agent_kind="primary")
+        for index in range(6):
+            child = db.create_run(
+                conversation_id="conv-A",
+                agent_kind="subagent",
+                parent_run_id=parent,
+                task=f"Child {index}",
+            )
+            db.set_status(child, "done", result="ok", budget_tokens=index)
+        db.set_status(parent, "done")
+        bridge = _bridge(db)
+        app = _build_test_app()
+        _configure_native_ready_console(app)
+        ensure_console_runtime(app).set_agent_bridge(bridge)
+        host = _StyledConsoleHarness(app)
+        entered, release = threading.Event(), threading.Event()
+        async with host.run_test(size=(180, 48)) as pilot:
+            console = await _setup_console(pilot, host, bridge)
+            section = console.query_one(
+                "#console-agent-section-subagents", ConsoleInspectorSection
+            )
+            await _until_fleet_auto_opened(pilot, console)
+            await _scroll_into_view(
+                pilot, console, "#console-inspector-section-agent-fleet-toggle"
+            )
+            assert await pilot.click("#console-inspector-section-agent-fleet-toggle")
+            await pilot.pause()
+            assert not section.open and section.rows
+            derive = bridge._derive_historical_snapshot
+
+            def held_once(*args, **kwargs):
+                if entered.is_set():
+                    return derive(*args, **kwargs)
+                entered.set()
+                assert release.wait(5)
+                value = derive(*args, **kwargs)
+                # The second write lands as this re-read returns, so it
+                # returns under a stale key with no sync in between.
+                settings_save(2)
+                return value
+
+            if superseded:
+                bridge._derive_historical_snapshot = held_once
+
+            def settings_save(step: int) -> None:
+                before = config.current_config_identity()
+                assert config.save_setting_to_cli_config(
+                    "console",
+                    "tool_result_display_chars",
+                    config.DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS + step,
+                )
+                assert config.current_config_identity() != before, (
+                    "precondition: the save must be a real config write"
+                )
+
+            try:
+                settings_save(1)
+                console._sync_console_agent_section()
+                if superseded:
+                    assert await asyncio.to_thread(entered.wait, 5)
+                    held = console._agent._console_historical_read
+                    release.set()
+                    await held["worker"].wait()
+            finally:
+                release.set()
+            # No explicit sync from here: after a superseded read only the
+            # coalesced fleet sync it requests can re-key and read again.
+            await pilot.pause()
+            assert section.rows, "the re-keyed read blanked the fleet rows"
+            for _ in range(200):
+                state = console._agent._console_historical_read
+                if (
+                    state is not None
+                    and state["value"] is not None
+                    and state["key"][3] == config.current_config_identity()
+                ):
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("the re-keyed historical read never landed")
+            await pilot.pause(0.2)
+            assert not section.open, (
+                "a config write re-opened the fleet section the user collapsed"
+            )
+            assert section.rows
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_expansion_scrolls_once_and_in_place_refresh_preserves_reading_position():
     from Tests.UI.test_console_inspector_section import _ScrolledSectionHarness
 
@@ -306,7 +479,23 @@ async def test_expansion_scrolls_once_and_in_place_refresh_preserves_reading_pos
     host = _ScrolledSectionHarness(section)
     async with host.run_test(size=(70, 20)) as pilot:
         section.set_open(True)
-        await pilot.pause(0.2)
+
+        def tail_painted() -> bool:
+            # The expansion lays out and scrolls over several refreshes; a
+            # loaded machine needs more than one fixed pause (TASK-39044).
+            tails = section.query("#console-inspector-section-agents-view-all")
+            if not tails:
+                return False
+            region = tails.first().region
+            try:
+                return host.get_widget_at(region.x + 1, region.y)[0] is tails.first()
+            except Exception:  # noqa: BLE001 - nothing painted there yet
+                return False
+
+        for _ in range(200):
+            await pilot.pause(0.05)
+            if tail_painted():
+                break
         tail = section.query_one("#console-inspector-section-agents-view-all")
         _assert_painted_at_own_region(host, tail)
         scroll = host.query_one("#scroll")

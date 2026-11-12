@@ -1,0 +1,9 @@
+[
+  "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+  "scripts/terminal_qualification/format_ratchet.py",
+  "verify",
+  "--baseline",
+  ".superpowers/sdd/2026-10-03-console-baseline-remediation/format-baseline.json",
+  "--head",
+  "1c1a7e3566a01b2d0b963673272eae562025ef25"
+]

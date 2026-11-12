@@ -21,7 +21,11 @@ alone stopped being the app tier for this file).
 
 from __future__ import annotations
 
+import asyncio
+import warnings
+
 import pytest
+import pytest_asyncio
 from textual.widgets import Button, DataTable, Input, Select
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
@@ -73,6 +77,21 @@ class BundledCSSWorkbenchApp(ConsolidatedCSSApp):
     scheduling_service = None
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _retire_schedules_executor(isolate_test_environment, request) -> None:
+    yield
+    from tldw_chatbook.app_lifecycle import WORKER_CANCELLATION_GRACE_SECONDS
+
+    # Textual cancels its waiters; local DB work can still be on the executor.
+    request.node._test_app_native_workers_uncertain = True
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        await asyncio.get_running_loop().shutdown_default_executor(
+            timeout=WORKER_CANCELLATION_GRACE_SECONDS
+        )
+    request.node._test_app_native_workers_uncertain = False
+
+
 def _real_service(tmp_path, app: App) -> tuple[ScheduledTasksDB, SchedulingService]:
     db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
     service = SchedulingService(db=db, runtime_source="local", app_getter=lambda: app)
@@ -80,10 +99,13 @@ def _real_service(tmp_path, app: App) -> tuple[ScheduledTasksDB, SchedulingServi
     return db, service
 
 
-def _reminder(db: ScheduledTasksDB, title: str = "Nightly check") -> str:
+def _reminder(
+    db: ScheduledTasksDB, title: str = "Nightly check", *, body: str | None = None
+) -> str:
     return db.create_reminder_task(
         owner_id="local",
         title=title,
+        body=body,
         schedule_kind="one_time",
         run_at="2030-01-01T00:00:00+00:00",
         enabled=True,
@@ -144,6 +166,7 @@ async def _push_detail(pilot) -> WorkbenchHostScreen:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_the_floor_the_queue_is_full_width_and_the_rows_paint(tmp_path):
     """The rail owned 24 of 80 columns while the two hidden panes owned the
@@ -172,6 +195,7 @@ async def test_at_the_floor_the_queue_is_full_width_and_the_rows_paint(tmp_path)
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_the_floor_the_chips_collapse_to_the_cycling_control(tmp_path):
     """Spec S11: the four chips collapse into one cycling control rather
@@ -204,6 +228,7 @@ async def test_at_the_floor_the_chips_collapse_to_the_cycling_control(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_the_floor_the_chip_keys_are_independent_of_chip_visibility(tmp_path):
     """Task 4's `1`-`4`/`f` bindings never read chip visibility; this pins
@@ -231,6 +256,7 @@ async def test_at_the_floor_the_chip_keys_are_independent_of_chip_visibility(tmp
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_the_floor_the_rail_and_status_strip_stay_readable(tmp_path):
     """The rail header used to hide entirely below 84, taking `Create ▾`,
@@ -262,6 +288,7 @@ async def test_at_the_floor_the_rail_and_status_strip_stay_readable(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_the_floor_enter_pushes_the_hosted_reminder_detail(tmp_path):
     """A FRESH `TaskDetail` instance -- never the docked pane reparented --
@@ -288,6 +315,7 @@ async def test_at_the_floor_enter_pushes_the_hosted_reminder_detail(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_at_the_floor_enter_pushes_the_hosted_definition_detail(tmp_path):
     """Same push for a definition row, and the pushed pane gets the same
@@ -322,6 +350,7 @@ async def test_at_the_floor_enter_pushes_the_hosted_definition_detail(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_pops_the_pushed_detail_back_to_the_queue(tmp_path):
     app = BundledCSSWorkbenchApp()
@@ -342,6 +371,7 @@ async def test_escape_pops_the_pushed_detail_back_to_the_queue(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_with_a_hosted_editor_open_closes_the_editor_not_the_screen(
     tmp_path,
@@ -392,6 +422,7 @@ async def test_escape_with_a_hosted_editor_open_closes_the_editor_not_the_screen
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_is_reachable_at_the_floor(tmp_path):
     app = BundledCSSWorkbenchApp()
@@ -407,6 +438,7 @@ async def test_create_is_reachable_at_the_floor(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_in_full_is_reachable_from_the_pushed_detail(tmp_path):
     """The pushed pane's `Edit` button posts `EditTaskRequested`, which
@@ -431,6 +463,7 @@ async def test_edit_in_full_is_reachable_from_the_pushed_detail(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pause_resume_is_reachable_from_the_pushed_detail(tmp_path):
     app = BundledCSSWorkbenchApp()
@@ -452,6 +485,7 @@ async def test_pause_resume_is_reachable_from_the_pushed_detail(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_in_pane_edit_inside_the_pushed_detail_persists(tmp_path):
     """The in-pane row editors work inside the pushed pane: the commit
@@ -483,6 +517,7 @@ async def test_an_in_pane_edit_inside_the_pushed_detail_persists(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_transfer_dropdown_opens_inside_the_pushed_detail(tmp_path):
     """Ruling 2's one transfer surface -- the Runs-on row's dropdown --
@@ -507,6 +542,7 @@ async def test_the_transfer_dropdown_opens_inside_the_pushed_detail(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_results_and_conflicts_are_reachable_at_the_floor(tmp_path):
     app = BundledCSSWorkbenchApp()
@@ -537,6 +573,7 @@ async def test_results_and_conflicts_are_reachable_at_the_floor(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_mid_width_layout_keeps_the_docked_detail_and_does_not_push(tmp_path):
     """~110 columns: the detail pane is docked (only the inspector yields),
@@ -564,6 +601,7 @@ async def test_the_mid_width_layout_keeps_the_docked_detail_and_does_not_push(tm
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_full_width_layout_keeps_all_three_panes(tmp_path):
     app = BundledCSSWorkbenchApp()
@@ -595,6 +633,7 @@ async def test_the_full_width_layout_keeps_all_three_panes(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_queue_filter_paints_typed_text_while_focused(tmp_path):
     """Finding 1b: `#scheduling-queue-filter` is a 1-row `Input`; app CSS
@@ -628,6 +667,7 @@ async def test_the_queue_filter_paints_typed_text_while_focused(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_blurs_the_queue_filter_so_chip_keys_reach_the_screen(tmp_path):
     """UAT Minor 21: with no blur, Escape fell through to the screen's
@@ -667,6 +707,7 @@ async def test_escape_blurs_the_queue_filter_so_chip_keys_reach_the_screen(tmp_p
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_lifecycle_row_paints_without_scrolling_at_a_tall_docked_size(
     tmp_path,
@@ -695,6 +736,7 @@ async def test_the_lifecycle_row_paints_without_scrolling_at_a_tall_docked_size(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_docked_task_detail_pane_scrolls_to_reveal_history_past_the_fold(
     tmp_path,
@@ -709,7 +751,19 @@ async def test_the_docked_task_detail_pane_scrolls_to_reveal_history_past_the_fo
     app = BundledCSSWorkbenchApp()
     db, _service = _real_service(tmp_path, app)
     try:
-        _reminder(db, "Nightly check")
+        # A plain reminder now fits at this viewport; the body card adds
+        # real content above History without changing the docked layout.
+        _reminder(
+            db,
+            body=(
+                "Check the backup status.\n"
+                "Confirm the latest run completed.\n"
+                "Review any pending warnings.\n"
+                "Check the available disk space.\n"
+                "Record the outcome.\n"
+                "Follow up on failed jobs."
+            ),
+        )
         async with app.run_test(size=TALL) as pilot:
             await _open_workbench(pilot)
             await _select_row(pilot)
@@ -733,6 +787,7 @@ async def test_the_docked_task_detail_pane_scrolls_to_reveal_history_past_the_fo
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_lifecycle_row_paints_in_the_80x24_pushed_detail(tmp_path):
     """Finding 2, the pushed-detail twin of the docked-pane pin above --
@@ -762,6 +817,7 @@ async def test_the_lifecycle_row_paints_in_the_80x24_pushed_detail(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_pushed_pane_repaints_from_the_same_refresh_as_the_docked_one(
     tmp_path,
@@ -796,6 +852,7 @@ async def test_the_pushed_pane_repaints_from_the_same_refresh_as_the_docked_one(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_at_the_floor_opens_the_dropdown_in_the_pane_the_user_can_see(
     tmp_path,
@@ -856,6 +913,7 @@ async def test_m_at_the_floor_opens_the_dropdown_in_the_pane_the_user_can_see(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_at_the_floor_on_an_empty_queue_refuses_out_loud(tmp_path):
     """F1's other half: no row under the cursor still says why."""
@@ -876,6 +934,7 @@ async def test_m_at_the_floor_on_an_empty_queue_refuses_out_loud(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_pushed_detail_never_repaints_from_another_rows_data(tmp_path):
     """F2: the pushed pane is pinned to the row it was pushed FOR.
@@ -919,6 +978,7 @@ async def test_a_pushed_detail_never_repaints_from_another_rows_data(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_pushed_detail_closes_with_a_notice_when_its_row_is_gone(tmp_path):
     """F2's honest gone-state (the documented choice: auto-pop + notice).
@@ -965,6 +1025,7 @@ async def test_a_pushed_detail_closes_with_a_notice_when_its_row_is_gone(tmp_pat
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_row_removed_while_the_initial_push_mounts_closes_with_a_notice(
     tmp_path,
@@ -1039,6 +1100,7 @@ async def test_a_row_removed_while_the_initial_push_mounts_closes_with_a_notice(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resolving_a_conflict_in_the_pushed_view_reloads_the_queue(tmp_path):
     """F3: `ConflictsTab.ConflictResolved` reaches the workbench LIVE.

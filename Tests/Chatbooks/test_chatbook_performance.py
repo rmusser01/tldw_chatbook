@@ -189,6 +189,7 @@ class TestChatbookPerformance:
 
         return ids
 
+    @pytest.mark.bootstrap_profile
     def test_large_export_performance(self, performance_db_setup, tmp_path):
         """Test performance of exporting large chatbooks."""
         metrics = PerformanceMetrics()
@@ -230,6 +231,7 @@ class TestChatbookPerformance:
 
         print(f"Export metrics: {metrics.get_summary()}")
 
+    @pytest.mark.bootstrap_profile
     def test_import_performance_with_conflicts(self, performance_db_setup, tmp_path):
         """Test import performance when handling conflicts."""
         # First create a chatbook
@@ -276,6 +278,7 @@ class TestChatbookPerformance:
             assert import_time < 5.0  # Should handle conflicts quickly
             print(f"{strategy.name} import took {import_time:.3f}s")
 
+    @pytest.mark.bootstrap_profile
     def test_concurrent_operations(self, performance_db_setup, tmp_path):
         """Test concurrent chatbook operations."""
         # Populate small dataset
@@ -325,6 +328,7 @@ class TestChatbookPerformance:
             f"avg individual={sum(individual_times) / len(individual_times):.3f}s"
         )
 
+    @pytest.mark.bootstrap_profile
     def test_memory_usage_large_export(self, performance_db_setup, tmp_path):
         """Test memory usage during large exports."""
         process = psutil.Process(os.getpid())
@@ -381,6 +385,7 @@ class TestChatbookPerformance:
         # Memory increase should be reasonable
         assert memory_increase < 500  # Less than 500MB increase
 
+    @pytest.mark.bootstrap_profile
     def test_zip_compression_efficiency(self, performance_db_setup, tmp_path):
         """Test ZIP compression efficiency for different content types."""
         # Create different types of content
@@ -449,6 +454,7 @@ class TestChatbookPerformance:
 
         assert compression_ratio < 0.5  # Text should be less than half the size
 
+    @pytest.mark.bootstrap_profile
     def test_incremental_import_performance(self, performance_db_setup, tmp_path):
         """Test performance of importing chatbooks incrementally."""
         # Create multiple small chatbooks
@@ -506,6 +512,7 @@ class TestChatbookPerformance:
 
         assert late_median < max(early_median * 3, early_median + 0.05)
 
+    @pytest.mark.bootstrap_profile
     @pytest.mark.slow
     def test_stress_test_extreme_scale(self, performance_db_setup, tmp_path):
         """Stress test with extreme scale (marked as slow)."""

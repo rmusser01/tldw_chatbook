@@ -413,9 +413,9 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
     ),
     "mlx_whisper": _feature(
         "mlx_whisper",
-        "Legacy MLX Whisper providers",
+        "Legacy Apple Silicon transcription bundle",
         AREA_MEDIA,
-        ("lightning-whisper-mlx", "parakeet-mlx"),
+        ("parakeet-mlx",),
         "Library > Import/Export",
         "MLX transcription",
         OWNER_LIBRARY_MEDIA,
@@ -519,15 +519,6 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         ("transcribe_cpp",),
         "Library > Import/Export",
         "transcribe.cpp transcription",
-        OWNER_LIBRARY_MEDIA,
-    ),
-    "transcription_lightning_whisper": _feature(
-        "transcription_lightning_whisper",
-        "Lightning Whisper MLX transcription",
-        AREA_MEDIA,
-        ("lightning-whisper-mlx",),
-        "Library > Import/Export",
-        "Lightning Whisper transcription",
         OWNER_LIBRARY_MEDIA,
     ),
     "transcription_parakeet": _feature(
@@ -1049,14 +1040,6 @@ def check_audio_processing_deps() -> bool:
     # Probe native MLX backends without importing them. Importing these modules
     # can initialize Metal and abort a headless process before Python can catch
     # an exception; the feature-specific runtime loader performs the real import.
-    lightning_whisper_available = False
-    if sys.platform == "darwin":
-        lightning_whisper_available = _check_dependency_installed(
-            "lightning_whisper_mlx"
-        )
-    else:
-        DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = False
-
     parakeet_mlx_available = False
     if sys.platform == "darwin":
         parakeet_mlx_available = _check_dependency_installed("parakeet_mlx")
@@ -1073,7 +1056,7 @@ def check_audio_processing_deps() -> bool:
     audio_available = core_available
     DEPENDENCIES_AVAILABLE["audio_processing"] = audio_available
     DEPENDENCIES_AVAILABLE["faster_whisper"] = faster_whisper_available
-    DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = lightning_whisper_available
+    DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = False
     DEPENDENCIES_AVAILABLE["parakeet_mlx"] = parakeet_mlx_available
     DEPENDENCIES_AVAILABLE["qwen2audio"] = qwen2audio_available
     DEPENDENCIES_AVAILABLE["yt_dlp"] = yt_dlp_available
@@ -1083,8 +1066,6 @@ def check_audio_processing_deps() -> bool:
         enhanced_features = []
         if parakeet_mlx_available:
             enhanced_features.append("parakeet-mlx (Real-time ASR for Apple Silicon)")
-        if lightning_whisper_available:
-            enhanced_features.append("lightning-whisper-mlx (Apple Silicon optimized)")
         if faster_whisper_available:
             enhanced_features.append("faster-whisper transcription")
         if qwen2audio_available:
@@ -1524,26 +1505,41 @@ def force_recheck_embeddings():
 # Check configuration for eager dependency checking
 eager_check = False
 
-# First check environment variable (highest priority)
+# The environment variable is the only import-time signal (no config file I/O).
+# The config-file flag is read when the app starts: see
+# ``apply_config_eager_flags``.
 if os.environ.get("TLDW_EAGER_DEPENDENCY_CHECK", "").lower() == "true":
     eager_check = True
     logger.info(
         "Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK environment variable"
     )
-else:
-    # Check config file if not in test environment
-    if "PYTEST_CURRENT_TEST" not in os.environ:
-        try:
-            # Import config lazily to avoid circular dependencies
-            from ..config import get_cli_setting
 
-            if get_cli_setting("rag", "performance", {}).get(
-                "eager_dependency_check", False
-            ):
-                eager_check = True
-                logger.info("Eager dependency checking enabled via config file")
-        except Exception as e:
-            logger.debug(f"Could not check config for eager_dependency_check: {e}")
+
+def apply_config_eager_flags() -> None:
+    """Run the dependency checks now if ``[rag] performance.eager_dependency_check`` is set.
+
+    Called once from each entry point (app_entry, tldw-serve, MCP server) before the UI loop (not at import, so importing this module
+    performs no config I/O). Skipped under pytest, as the import-time path was.
+    """
+    global _initialized
+    if _initialized or "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    # The settings read is not wrapped: a read failure (RecoveryRequired among
+    # them) propagates, as it did when this ran at import.
+    from ..config import get_cli_setting
+
+    performance = get_cli_setting("rag", "performance", {})
+    if not isinstance(performance, dict):
+        return
+    if not performance.get("eager_dependency_check", False):
+        return
+    logger.info("Eager dependency checking enabled via config file")
+    try:
+        initialize_dependency_checks()
+        _initialized = True
+    except Exception as e:
+        logger.debug(f"Could not run eager dependency checks: {e}")
+
 
 if eager_check:
     initialize_dependency_checks()

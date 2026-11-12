@@ -4,6 +4,8 @@ on:
   pull_request:
     branches: [dev]
     types: [labeled, synchronize]
+  # For manual runs; the merge queue approves the held pull_request run instead (ADR-218 amendment 2026-10-06).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,8 +13,9 @@ permissions:
 jobs:
   linux-storage:
     if: >-
-      contains(github.event.pull_request.labels.*.name, 'task-32011-linux-evidence') &&
-      (github.event.action == 'synchronize' || github.event.label.name == 'task-32011-linux-evidence')
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'task-32011-linux-evidence') &&
+      (github.event.action == 'synchronize' || github.event.label.name == 'task-32011-linux-evidence'))
     name: Linux storage - Python ${{ matrix.python }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -24,7 +27,7 @@ jobs:
       - name: Check out the exact PR head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5

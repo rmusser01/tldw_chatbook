@@ -1,0 +1,37 @@
+{
+  "source_sha256": "dab7f701fc1162c1b169c56c2376b59a764efd5097136e17101c42850726808c",
+  "baseline_lint": [
+    {
+      "code": "I001",
+      "message": "Import block is un-sorted or un-formatted",
+      "source": "from __future__ import annotations"
+    },
+    {
+      "code": "I001",
+      "message": "Import block is un-sorted or un-formatted",
+      "source": "from tldw_chatbook.config import get_cli_config_path"
+    }
+  ],
+  "baseline_format_exit": 1,
+  "current_lint": [
+    {
+      "code": "I001",
+      "message": "Import block is un-sorted or un-formatted",
+      "source": "from __future__ import annotations"
+    },
+    {
+      "code": "I001",
+      "message": "Import block is un-sorted or un-formatted",
+      "source": "from tldw_chatbook.config import get_cli_config_path"
+    }
+  ],
+  "current_format_exit": 1,
+  "changed_original_definitions": [
+    "_drain_settings_tasks"
+  ],
+  "added_definitions": [
+    "test_settings_task_drain_yields_for_completed_task_retirement"
+  ],
+  "new_lint": [],
+  "new_test_formatted": true
+}

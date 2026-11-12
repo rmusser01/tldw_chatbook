@@ -1,0 +1,294 @@
+{
+  "head": "012ca47c39a16c10aa9b9b0a2298287945e22a89",
+  "snapshot_time": "2026-10-28T19:02:14.466610+00:00",
+  "runs": [
+    {
+      "id": 40744954984,
+      "name": "TASK-19637 pinned workspace platform evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "jobs": {
+        "skipped": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40744955112,
+      "name": "TASK-32011 one-off Linux storage evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "jobs": {
+        "skipped": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40744955102,
+      "name": "Perf Guard",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": {
+        "success": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40744955216,
+      "name": "Derived Artifacts",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": {
+        "success": 21,
+        "cancelled": 2,
+        "failure": 2
+      },
+      "failures": [
+        {
+          "id": 123016160566,
+          "name": "UI Fast Lane (11)",
+          "conclusion": "failure",
+          "steps": [
+            "Run the gated Tests/UI slice"
+          ]
+        },
+        {
+          "id": 123032552633,
+          "name": "Derived artifacts reproduce from their sources",
+          "conclusion": "failure",
+          "steps": [
+            "Require successful UI fast lane"
+          ]
+        }
+      ]
+    }
+  ],
+  "jobs": [
+    {
+      "id": 123016157665,
+      "name": "UI latency guardrails",
+      "run": 40744955102,
+      "conclusion": "success",
+      "seconds": 475.0,
+      "log_sha256": "44740f6472ee8bd0c7e049fc851a08208e76d172c8acf8cfa69eed4ebb4dae13"
+    },
+    {
+      "id": 123016159466,
+      "name": "Console P0 regression gate",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 883.0,
+      "log_sha256": "f750460e28c8c00c0217f4139891f4949b32692cd670825ebb0ace0e7a1ef2c1"
+    },
+    {
+      "id": 123016159623,
+      "name": "PR Fast Lane (admission-sensitive 2)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 699.0,
+      "log_sha256": "f7d20bb0f46a8a012e406e97e2f77e55ccf47dbeb3ad6448e571d152afb79569"
+    },
+    {
+      "id": 123016159650,
+      "name": "Dreams and Guardian boundary contracts",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 419.0,
+      "log_sha256": "99372f3513e1ab087c5689ca517f1013fc3e7a897c09bd3768d73a544083db46"
+    },
+    {
+      "id": 123016159948,
+      "name": "UI Fast Lane (2)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 906.0,
+      "log_sha256": "877d2d01f0fd4739e78316e51a847e0a82067a10a51958fbab5ced0eb7e306e4"
+    },
+    {
+      "id": 123016160000,
+      "name": "Dreams tracking tests",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 479.0,
+      "log_sha256": "243542870f646778fe6f9750a128da163dff610994f2d05eb8bd26885fe4d089"
+    },
+    {
+      "id": 123016160102,
+      "name": "PR Fast Lane (admission-sensitive)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1819.0,
+      "log_sha256": "d6122d861758534e2db051cf2d5a1d93cb2376e6005e1155f969c2a49f8e283e"
+    },
+    {
+      "id": 123016160173,
+      "name": "PR Fast Lane",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1732.0,
+      "log_sha256": "d68dddd33f9a85af7db5eb41f5b33d9ceef1220b195426191aa6c57b74c1fb27"
+    },
+    {
+      "id": 123016160209,
+      "name": "UI Fast Lane (1)",
+      "run": 40744955216,
+      "conclusion": "cancelled",
+      "seconds": 1217.0,
+      "log_sha256": "d3056fd6854959f5286d13ee528ad924cbfd18cbbdb5fb4838f4725fc6be9f05"
+    },
+    {
+      "id": 123016160267,
+      "name": "UI Fast Lane (6)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1010.0,
+      "log_sha256": "d151ab89a83c7f36c7ff3551d59ada5d9c1383a4bf48fe8e8da306ece1035ed9"
+    },
+    {
+      "id": 123016160271,
+      "name": "UI Fast Lane (3)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1143.0,
+      "log_sha256": "d3df1094b23a1bc720e5e5edc2056a50a634b3dfb2855e89160add3ee5388b8e"
+    },
+    {
+      "id": 123016160280,
+      "name": "UI Fast Lane (9)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1027.0,
+      "log_sha256": "0158ffc531a4684e2c66780e7265fffd5995289073504cd6dd08b0fa1c8d12a7"
+    },
+    {
+      "id": 123016160283,
+      "name": "UI Fast Lane (8)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1198.0,
+      "log_sha256": "323698f9de57fbaf35e6d6ca2649f88045a224d04a074683166ead4abdac624a"
+    },
+    {
+      "id": 123016160290,
+      "name": "UI Fast Lane (15)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 983.0,
+      "log_sha256": "4e5dc4717dccff8bb1e228e43da4aaf93e233d4db20391c9455e5bf87fc806c1"
+    },
+    {
+      "id": 123016160302,
+      "name": "UI Fast Lane (5)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 926.0,
+      "log_sha256": "eabad00dfbf562715f09802450f55e1c79d203bd5e38651d7445e6bf937e7a88"
+    },
+    {
+      "id": 123016160506,
+      "name": "UI Fast Lane (16)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 940.0,
+      "log_sha256": "d8a0d0e7614fd2f8158915f12de4d620352af375bb6ee6ea862ab6c948d96a26"
+    },
+    {
+      "id": 123016160527,
+      "name": "UI Fast Lane (7)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1167.0,
+      "log_sha256": "5607f5ebdcc2d9e6fdfbfb84bfd7ce5b614a98bef7bd00242dcf016259eebe66"
+    },
+    {
+      "id": 123016160566,
+      "name": "UI Fast Lane (11)",
+      "run": 40744955216,
+      "conclusion": "failure",
+      "seconds": 782.0,
+      "log_sha256": "bdd77d65197a2aea37be8066b1dc1b730cb9acc90771bfad2e7b273110380fcf"
+    },
+    {
+      "id": 123016160615,
+      "name": "UI Fast Lane (10)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1188.0,
+      "log_sha256": "5b9ae5b0d8606cd71a7f8f77ddfb993252d422982ad55c4f703ef0c1325842f8"
+    },
+    {
+      "id": 123016160639,
+      "name": "UI Fast Lane (13)",
+      "run": 40744955216,
+      "conclusion": "cancelled",
+      "seconds": 1217.0,
+      "log_sha256": "f55d8d3b1b56a67eadafb67f3a31fdd3208e2eaf4ef619ebbb6cdf900ce02ba7"
+    },
+    {
+      "id": 123016160641,
+      "name": "UI Fast Lane (4)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1019.0,
+      "log_sha256": "c147502b413e9922d47540f5cec32da1b483040e995fd1ced0b9f6f4eaf4c448"
+    },
+    {
+      "id": 123016160856,
+      "name": "UI Fast Lane (14)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 1131.0,
+      "log_sha256": "468b7938825840fc3226795830c15eeb831854427d42a6c3b1ef13866f866872"
+    },
+    {
+      "id": 123016160858,
+      "name": "UI Fast Lane (17)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 868.0,
+      "log_sha256": "7bf520bf2211e6419237d6c9392e7f59ff3247485aa07ffa8ba90ad15423b643"
+    },
+    {
+      "id": 123016160935,
+      "name": "UI Fast Lane (12)",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 912.0,
+      "log_sha256": "04af0e3df430b6729de74772f27cd458f1304a1e289f6e158deda3af8e1aaf47"
+    },
+    {
+      "id": 123032552633,
+      "name": "Derived artifacts reproduce from their sources",
+      "run": 40744955216,
+      "conclusion": "failure",
+      "seconds": 284.0,
+      "log_sha256": "22122789cf5983f9b91b93aac62051cdc6107b769d3b2a0428cf9e838a666671"
+    },
+    {
+      "id": 123035111299,
+      "name": "Merge queue tick",
+      "run": 40744955216,
+      "conclusion": "success",
+      "seconds": 86.0,
+      "log_sha256": "632b720a83a35531f3132bc379aa5d3c916a9bfafe0c55927521b8fccf7fc136"
+    }
+  ],
+  "media_assertion": {
+    "job": 123016160566,
+    "node": "Tests/UI/test_library_media_actions_target_opened_item.py::test_read_later_and_edit_save_target_the_opened_item_not_row_1",
+    "observed": "[]",
+    "expected": "local:media:3",
+    "repair_task": "TASK-37235"
+  },
+  "capacity": {
+    "cancelled_shards": [
+      1,
+      13
+    ],
+    "checkout_seconds": {
+      "1": 289,
+      "13": 131
+    },
+    "repair_task": "TASK-37236"
+  },
+  "qualification": "Failed matrix:14UIshards pass, one assertion fails, two jobs time out. No failure waived. Successful jobs qualify only their own scopes. Failed/cancelled timing inputs are estimates, never execution-pass evidence."
+}

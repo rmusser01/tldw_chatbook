@@ -128,13 +128,12 @@ def test_mixed_batch_refuses_load_but_executes_ordinary_call_under_old_set():
     steps = []
     deps = LoopDeps(
         call_model=lambda _messages, _active: next(turns),
-        invoke_tool=lambda call: invoked.append(call.name)
-        or ToolResult(ok=True, content="ok"),
+        invoke_tool=lambda call: (
+            invoked.append(call.name) or ToolResult(ok=True, content="ok")
+        ),
         spawn=lambda task, **kwargs: ToolResult(ok=True),
         find_tools=lambda query: [],
-        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
-            accepted=(bar,)
-        ),
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(accepted=(bar,)),
         replace_disclosed_names=committed.append,
         should_cancel=lambda: False,
         clock=lambda: 0.0,
@@ -173,9 +172,7 @@ def test_repeated_load_batch_preserves_old_set():
         invoke_tool=lambda call: ToolResult(ok=True),
         spawn=lambda task, **kwargs: ToolResult(ok=True),
         find_tools=lambda query: [],
-        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
-            accepted=(bar,)
-        ),
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(accepted=(bar,)),
         replace_disclosed_names=committed.append,
         should_cancel=lambda: False,
         clock=lambda: 0.0,

@@ -129,8 +129,12 @@ async def test_permanent_roots_always_render():
 @pytest.mark.asyncio
 async def test_roots_render_even_with_no_watchlists():
     # First run: the folder migration is effectively a no-op, so there are none.
-    app = _TreeApp({"watchlists": [], "counts": {-1: {"total": 0, "unread": 0},
-                                                 -2: {"total": 0, "unread": 0}}})
+    app = _TreeApp(
+        {
+            "watchlists": [],
+            "counts": {-1: {"total": 0, "unread": 0}, -2: {"total": 0, "unread": 0}},
+        }
+    )
     async with app.run_test():
         assert app.query("#wl-tree-node-all")
         assert app.query("#wl-tree-node-unassigned")
@@ -200,7 +204,9 @@ async def test_selecting_a_watchlist_posts_its_scope():
     async with app.run_test() as pilot:
         await pilot.click("#wl-tree-node-watchlist-1")
         await pilot.pause()
-        assert app.scopes[-1] == TreeScope(kind="watchlist", watchlist_id=1, source_id=None)
+        assert app.scopes[-1] == TreeScope(
+            kind="watchlist", watchlist_id=1, source_id=None
+        )
 
 
 @pytest.mark.asyncio
@@ -304,12 +310,12 @@ async def test_aggregate_children_are_stably_sorted_and_keep_exact_occurrences()
             "wl-tree-node-source-all-11",
             "wl-tree-node-source-all-12",
         ]
-        assert app.query_one(
-            "#wl-tree-node-source-unassigned-12", Button
-        ).has_class("is-active")
-        assert not app.query_one(
-            "#wl-tree-node-source-all-12", Button
-        ).has_class("is-active")
+        assert app.query_one("#wl-tree-node-source-unassigned-12", Button).has_class(
+            "is-active"
+        )
+        assert not app.query_one("#wl-tree-node-source-all-12", Button).has_class(
+            "is-active"
+        )
 
         await pilot.click("#wl-tree-node-source-unassigned-12")
         await pilot.pause()
@@ -360,7 +366,9 @@ async def test_sources_load_only_when_a_watchlist_is_expanded():
 
     app = _App(_tree_data())
     async with app.run_test() as pilot:
-        assert calls == [], "no watchlist is expanded yet, so nothing should have loaded"
+        assert calls == [], (
+            "no watchlist is expanded yet, so nothing should have loaded"
+        )
         await pilot.click("#wl-tree-expand-1")
         await pilot.pause()
         assert calls == [1]
@@ -400,7 +408,9 @@ async def test_re_expanding_a_watchlist_does_not_reload_its_sources():
 
 @pytest.mark.asyncio
 async def test_selecting_a_source_posts_a_source_scope():
-    app = _TreeApp(_tree_data(), source_rows={1: [{"id": 10, "name": "ArXiv: AI", "type": "rss"}]})
+    app = _TreeApp(
+        _tree_data(), source_rows={1: [{"id": 10, "name": "ArXiv: AI", "type": "rss"}]}
+    )
     async with app.run_test() as pilot:
         await pilot.click("#wl-tree-expand-1")
         await pilot.pause()
@@ -546,9 +556,7 @@ async def test_active_scope_all_marks_the_all_root_active():
 async def test_active_scope_unassigned_marks_the_unassigned_root_active():
     app = _TreeApp(_tree_data(), active_scope=TreeScope(kind="unassigned"))
     async with app.run_test():
-        assert app.query_one("#wl-tree-node-unassigned", Button).has_class(
-            "is-active"
-        )
+        assert app.query_one("#wl-tree-node-unassigned", Button).has_class("is-active")
         assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")
 
 
@@ -559,12 +567,10 @@ async def test_active_scope_watchlist_marks_only_that_watchlist_node_active():
         active_scope=TreeScope(kind="watchlist", watchlist_id=2),
     )
     async with app.run_test():
-        assert app.query_one(
-            "#wl-tree-node-watchlist-2", Button
-        ).has_class("is-active")
-        assert not app.query_one(
-            "#wl-tree-node-watchlist-1", Button
-        ).has_class("is-active")
+        assert app.query_one("#wl-tree-node-watchlist-2", Button).has_class("is-active")
+        assert not app.query_one("#wl-tree-node-watchlist-1", Button).has_class(
+            "is-active"
+        )
         assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")
 
 
@@ -582,14 +588,12 @@ async def test_active_scope_source_marks_only_that_source_node_active():
         expanded=frozenset({1}),
     )
     async with app.run_test():
-        assert app.query_one(
-            "#wl-tree-node-source-1-10", Button
-        ).has_class("is-active")
+        assert app.query_one("#wl-tree-node-source-1-10", Button).has_class("is-active")
         # The source's own parent watchlist node must NOT also read as
         # active -- only the single node matching the scope exactly.
-        assert not app.query_one(
-            "#wl-tree-node-watchlist-1", Button
-        ).has_class("is-active")
+        assert not app.query_one("#wl-tree-node-watchlist-1", Button).has_class(
+            "is-active"
+        )
 
 
 @pytest.mark.asyncio
@@ -637,9 +641,7 @@ async def test_setting_active_scope_after_mount_moves_the_highlight():
         tree.active_scope = TreeScope(kind="watchlist", watchlist_id=1)
         await pilot.pause()
 
-        assert app.query_one("#wl-tree-node-watchlist-1", Button).has_class(
-            "is-active"
-        )
+        assert app.query_one("#wl-tree-node-watchlist-1", Button).has_class("is-active")
         assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")
 
 
@@ -746,7 +748,7 @@ async def test_rename_delete_and_add_source_carry_the_scoped_watchlist_id():
 
 @pytest.mark.asyncio
 async def test_remove_carries_both_ids_because_membership_is_many_to_many():
-    """"Source 10" alone does not say which watchlist it is leaving -- the
+    """ "Source 10" alone does not say which watchlist it is leaving -- the
     same reason the source node's own id is watchlist-qualified.
     """
     shared_row = {"id": 10, "name": "ArXiv: AI", "type": "rss"}
@@ -812,9 +814,7 @@ async def test_a_blocked_verb_posts_nothing_even_if_it_is_pressed_directly():
     )
     async with app.run_test() as pilot:
         tree = app.query_one("#wl-tree", WatchlistTree)
-        tree.on_button_pressed(
-            Button.Pressed(app.query_one("#wl-tree-rename", Button))
-        )
+        tree.on_button_pressed(Button.Pressed(app.query_one("#wl-tree-rename", Button)))
         await pilot.pause()
         assert app.write_requests == []
 
@@ -841,9 +841,7 @@ async def test_starred_root_renders_above_the_watchlists_with_its_count():
         # DOM order is the rail's reading order: starred sits with the roots,
         # above every watchlist node.
         ids = [node.id for node in app.query(Button)]
-        assert ids.index("wl-tree-node-starred") < ids.index(
-            "wl-tree-node-watchlist-1"
-        )
+        assert ids.index("wl-tree-node-starred") < ids.index("wl-tree-node-watchlist-1")
 
 
 @pytest.mark.asyncio
@@ -904,7 +902,9 @@ async def test_unread_and_today_roots_render_in_the_smart_feed_cluster():
     unread-since-local-midnight count the screen inserts."""
     app = _TreeApp(_phase3_data())
     async with app.run_test():
-        assert str(app.query_one("#wl-tree-node-unread", Button).label) == "All Unread  37"
+        assert (
+            str(app.query_one("#wl-tree-node-unread", Button).label) == "All Unread  37"
+        )
         assert str(app.query_one("#wl-tree-node-today", Button).label) == "Today  2"
         ids = [node.id for node in app.query(Button)]
         assert ids.index("wl-tree-node-unassigned") < ids.index("wl-tree-node-unread")

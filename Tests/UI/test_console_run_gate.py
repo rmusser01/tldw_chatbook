@@ -15,6 +15,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+    wait_for_background_signal,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunState,
@@ -86,6 +91,7 @@ def _start_fake_run(screen) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.unit
 def test_persona_buddy_run_and_approval_states_drive_real_controller_producers():
     """The real controller callbacks publish and settle exact Buddy owners."""
@@ -113,6 +119,7 @@ def test_persona_buddy_run_and_approval_states_drive_real_controller_producers()
     assert buddy.snapshot().state == "idle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.unit
 def test_persona_buddy_missing_controller_sink_is_noop():
     """Controller-only construction remains valid when no Buddy sink exists."""
@@ -130,6 +137,7 @@ def test_persona_buddy_missing_controller_sink_is_noop():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
     """Each actual run task carries the exact owner captured at validation."""
@@ -154,7 +162,9 @@ async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
         )
 
     async def new_run() -> None:
-        await old_validating.wait()
+        await wait_for_background_signal(
+            old_validating, old_task, what="original Buddy run validation"
+        )
         controller._set_run_state(
             ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
         )
@@ -166,18 +176,29 @@ async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
 
     old_task = asyncio.create_task(old_run())
     new_task = asyncio.create_task(new_run())
-    await new_validating.wait()
-    release_old.set()
-    await old_task
+    try:
+        await wait_for_background_signal(
+            new_validating, new_task, what="replacement Buddy run validation"
+        )
+        release_old.set()
+        await await_background_task(old_task, what="original Buddy run settlement")
 
-    assert app.persona_buddy_controller.snapshot().state == "thinking"
-    assert controller._buddy_sink.active_owner_count("console-run") == 1
+        assert app.persona_buddy_controller.snapshot().state == "thinking"
+        assert controller._buddy_sink.active_owner_count("console-run") == 1
 
-    release_new.set()
-    await new_task
-    assert app.persona_buddy_controller.snapshot().state == "idle"
+        release_new.set()
+        await await_background_task(new_task, what="replacement Buddy run settlement")
+        assert app.persona_buddy_controller.snapshot().state == "idle"
+    finally:
+        release_old.set()
+        release_new.set()
+        await asyncio.wait_for(
+            asyncio.gather(old_task, new_task, return_exceptions=True),
+            timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "action_id,target",
@@ -208,6 +229,7 @@ async def test_mid_run_action_notifies_instead_of_spawning(action_id, target):
     assert any(ALREADY_RUNNING_COPY in note for note in notices)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "action_id,target",

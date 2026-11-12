@@ -1,0 +1,48 @@
+{
+  "cases": [
+    {
+      "case": "stop_then_leave_control",
+      "start_method": "existing ctrl+d binding with toggle button focused",
+      "capture_started": true,
+      "processor_started": true,
+      "view_detached": true,
+      "service_is_widget_owned": true,
+      "recorder_callback_targets_service": true,
+      "final_callback_targets_detached_widget": true,
+      "partial_callback_targets_detached_widget": true,
+      "state_callback_targets_detached_widget": true,
+      "replacement_view": "effects",
+      "capture_still_recording_after_leave": false,
+      "processor_alive_after_leave": false,
+      "stop_processing_set_after_leave": true,
+      "stop_calls_after_leave": 1,
+      "old_widget_still_thinks_dictating": false,
+      "capture_still_recording_after_host_shutdown": false,
+      "processor_alive_after_host_shutdown": false,
+      "test_cleanup_released_capture": true
+    },
+    {
+      "case": "leave_while_listening",
+      "start_method": "existing ctrl+d binding with toggle button focused",
+      "capture_started": true,
+      "processor_started": true,
+      "view_detached": true,
+      "service_is_widget_owned": true,
+      "recorder_callback_targets_service": true,
+      "final_callback_targets_detached_widget": true,
+      "partial_callback_targets_detached_widget": true,
+      "state_callback_targets_detached_widget": true,
+      "replacement_view": "effects",
+      "capture_still_recording_after_leave": true,
+      "processor_alive_after_leave": true,
+      "stop_processing_set_after_leave": false,
+      "stop_calls_after_leave": 0,
+      "old_widget_still_thinks_dictating": true,
+      "capture_still_recording_after_host_shutdown": true,
+      "processor_alive_after_host_shutdown": true,
+      "test_cleanup_released_capture": true
+    }
+  ],
+  "blocked_network_attempts": [],
+  "profile_violations": []
+}

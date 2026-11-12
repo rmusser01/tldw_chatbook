@@ -26,14 +26,14 @@ opened=[];pauses=[];outer=None;native_calls=0
 custom_calls=[]
 class CustomConnection(sqlite3.Connection):
  def __init__(self,*args,**kwargs):
-  custom_calls.append(raw._runtime_operation())
+  custom_calls.append(raw.runtime_operation())
   super().__init__(*args,**kwargs)
 
 def observe_connect(*args,**kwargs):
  global native_calls
  native_calls+=1
  assert outer in raw._states and outer in storage._raw_operations
- assert raw._runtime_operation() is None,'SQLite preflight inherited config discovery'
+ assert raw.runtime_operation() is None,'SQLite preflight inherited config discovery'
  if case in {'error_selector','cancel_selector'}:
   os.environ['TLDW_CONFIG_PATH']=str(selected.with_name('other.toml'))
  if case in {'error','cancel','error_selector','cancel_selector'}:raise original
@@ -68,7 +68,7 @@ try:
   except BaseException as error:
    failed=error
   finally:os.environ['TLDW_CONFIG_PATH']=str(selected)
-  assert raw._runtime_operation() is outer
+  assert raw.runtime_operation() is outer
   assert outer in raw._states and outer in storage._raw_operations
   if case in {'error','cancel','error_selector','cancel_selector'}:
    assert failed is original,(type(failed).__name__,type(original).__name__)
@@ -101,7 +101,7 @@ try:
     assert native_calls==1 and len(opened)==1
     assert private_sqlite._ordinary_connections[opened[0]] in storage._live_leases
   assert config.get_cli_setting('general','users_name')=='fixture'
-  assert raw._runtime_operation() is outer
+  assert raw.runtime_operation() is outer
   if case not in {'pause_before','pause_during'}:
    assert config.save_setting_to_cli_config('general','users_name','updated')
    assert config.get_cli_setting('general','users_name')=='updated'
@@ -110,7 +110,7 @@ finally:
  os.environ['TLDW_CONFIG_PATH']=str(selected)
  db.close()
  for pause in reversed(pauses):pause.resume()
-assert raw._runtime_operation() is None and not storage._raw_operations
+assert raw.runtime_operation() is None and not storage._raw_operations
 assert not storage._operations and not storage._pending_acquisitions
 if case=='failed_close':
  pause=storage._begin_local_pause()

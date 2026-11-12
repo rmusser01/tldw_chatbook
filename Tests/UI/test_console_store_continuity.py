@@ -40,24 +40,23 @@ from types import SimpleNamespace
 
 import pytest
 from loguru import logger
+from textual.widgets import Button
 
 from Tests.Chat.test_console_fleet_wake import _drain, _settle, _survivor
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
-from textual.widgets import Button
-
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 SEEDED_USER = "first user message"
 SEEDED_REPLY = "assistant one"
@@ -91,6 +90,12 @@ class _StallingWakeGateway:
         self.entered_stream = asyncio.Event()
         self.release_stream = asyncio.Event()
 
+    def cached_context_window(self, settings):
+        """Use the real gateway's offline metadata fallback for mounted UI."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
     async def resolve_for_send(self, selection):
         if self.stall:
             self.entered_stall.set()
@@ -109,9 +114,7 @@ class _StallingWakeGateway:
             # generic "Provider destination is incomplete." copy. Derive it
             # through the production classifier the real gateway uses rather
             # than hand-building one, so this double cannot drift from it.
-            resolution.resolved_destination = resolve_console_destination(
-                resolution
-            )
+            resolution.resolved_destination = resolve_console_destination(resolution)
         return resolution
 
     async def stream_chat(self, resolution, messages, **kwargs):
@@ -135,6 +138,7 @@ def _drain_from_child_thread(wake, drain) -> None:
 def _terminal_survivor_run(runs_db, conversation_id, *, result=CHILD_RESULT):
     """A sub-agent run that finished AFTER its (terminal) parent turn."""
     from uuid import uuid4
+
     chain_id = runs_db.automatic_work.create_chain(
         conversation_id, root_submission_id=uuid4().hex
     )
@@ -150,7 +154,6 @@ def _terminal_survivor_run(runs_db, conversation_id, *, result=CHILD_RESULT):
     )
     runs_db.set_status(run_id, "done", result)
     return run_id
-
 
 
 async def _navigate(
@@ -173,7 +176,9 @@ async def _navigate(
             if not allow_confirmation:
                 screen.query_one("#cancel-button", Button).press()
                 await pilot.pause()
-                raise AssertionError("ordinary Console navigation asked for confirmation")
+                raise AssertionError(
+                    "ordinary Console navigation asked for confirmation"
+                )
             try:
                 screen.query_one("#confirm-button", Button).press()
             except Exception:  # noqa: BLE001 -- the dialog may still be settling
@@ -485,8 +490,9 @@ async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_a_wake_that_ran_while_console_was_unmounted_is_in_the_transcript(
-    tmp_path,
+    tmp_path, request: pytest.FixtureRequest,
 ):
     """P3b. Executed on unmodified production: the user saw 2 of 4 rows.
 
@@ -676,8 +682,11 @@ async def test_transcript_payload_db_and_active_leaf_all_agree(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(tmp_path):
+async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(
+    tmp_path, request
+):
     """A staged wake targets a session id; that id must not change on nav.
 
     The snapshot preserved session ids explicitly
@@ -694,10 +703,11 @@ async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(tmp_pa
     gateway = _StallingWakeGateway()
     app.console_provider_gateway_factory = lambda: gateway
 
+    # This harness supplies the one content screen before deferred startup.
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -714,6 +724,12 @@ async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(tmp_pa
         await pilot.pause()
         await pilot.press("h", "a", "l", "f")
         await pilot.pause()
+        assert app.screen_stack == [app.screen_stack[0], chat]
+        assert app.screen is chat
+        assert chat._console_runtime().view is chat
+        assert store.active_session_id == first.id
+        assert chat._console_visible_draft_session_id == first.id
+        assert chat.query_one("#console-native-composer").draft_text() == "half"
         before_ids = [session.id for session in store.sessions()]
         assert first.persisted_conversation_id in (None, ""), (
             "this test is about an UNSAVED conversation"

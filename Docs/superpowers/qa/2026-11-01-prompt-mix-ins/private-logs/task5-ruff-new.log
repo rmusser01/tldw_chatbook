@@ -1,0 +1,241 @@
+F811 Redefinition of unused `trace_harness` from line 8
+  --> Tests/Chat/test_console_prompt_mixin_retry.py:28:68
+   |
+26 | @pytest.mark.asyncio
+27 | @pytest.mark.parametrize("capture", [False, True])
+28 | async def test_retry_original_regenerate_current_and_clean_history(trace_harness, monkeypatch, capture):
+   |                                                                    ^^^^^^^^^^^^^ `trace_harness` redefined here
+29 |     h = trace_harness
+30 |     capture_mode(monkeypatch, capture)
+   |
+  ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+   |
+ 6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+ 7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+ 8 |     trace_harness,  # noqa: F401
+   |     ------------- previous definition of `trace_harness` here
+ 9 | )
+10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+   |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 8
+  --> Tests/Chat/test_console_prompt_mixin_retry.py:70:78
+   |
+68 | @pytest.mark.parametrize("enabled", [False, True])
+69 | @pytest.mark.parametrize("capture", [False, True])
+70 | async def test_original_retry_survives_reopen_deleted_source_and_latest_loss(trace_harness, monkeypatch, enabled, capture):
+   |                                                                              ^^^^^^^^^^^^^ `trace_harness` redefined here
+71 |     from Tests.Chat.test_console_turn_resend import _restore
+72 |     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+   |
+  ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+   |
+ 6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+ 7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+ 8 |     trace_harness,  # noqa: F401
+   |     ------------- previous definition of `trace_harness` here
+ 9 | )
+10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+   |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 8
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:121:71
+    |
+119 | @pytest.mark.asyncio
+120 | @pytest.mark.parametrize("trace_harness", [False, True], indirect=True)
+121 | async def test_current_choice_edit_continue_preview_and_clean_history(trace_harness, monkeypatch):
+    |                                                                       ^^^^^^^^^^^^^ `trace_harness` redefined here
+122 |     h = trace_harness
+123 |     service, scope = select(h, monkeypatch)
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+  8 |     trace_harness,  # noqa: F401
+    |     ------------- previous definition of `trace_harness` here
+  9 | )
+ 10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+    |
+help: Remove definition: `trace_harness`
+
+RUF059 Unpacked variable `service` is never used
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:123:5
+    |
+121 | async def test_current_choice_edit_continue_preview_and_clean_history(trace_harness, monkeypatch):
+122 |     h = trace_harness
+123 |     service, scope = select(h, monkeypatch)
+    |     ^^^^^^^
+124 |     capture_mode(monkeypatch, False)
+125 |     first = await h.controller.submit_draft("input", session_id="session-1")
+    |
+help: Prefix it with an underscore or any other dummy variable pattern
+
+F811 Redefinition of unused `trace_harness` from line 8
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:143:82
+    |
+142 | @pytest.mark.asyncio
+143 | async def test_snapshot_write_failure_blocks_initial_adapter_and_preserves_draft(trace_harness, monkeypatch):
+    |                                                                                  ^^^^^^^^^^^^^ `trace_harness` redefined here
+144 |     from tldw_chatbook.DB import console_prompt_mixins as records
+145 |     h = trace_harness
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+  8 |     trace_harness,  # noqa: F401
+    |     ------------- previous definition of `trace_harness` here
+  9 | )
+ 10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+    |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 8
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:160:79
+    |
+158 | @pytest.mark.parametrize("trace_harness", [False, True], indirect=True)
+159 | @pytest.mark.parametrize("character", [False, True])
+160 | async def test_plain_character_streaming_and_nonstreaming_keep_bodies_literal(trace_harness, monkeypatch, character):
+    |                                                                               ^^^^^^^^^^^^^ `trace_harness` redefined here
+161 |     h = trace_harness
+162 |     service, scope = select(h, monkeypatch)
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+  8 |     trace_harness,  # noqa: F401
+    |     ------------- previous definition of `trace_harness` here
+  9 | )
+ 10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+    |
+help: Remove definition: `trace_harness`
+
+RUF059 Unpacked variable `service` is never used
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:162:5
+    |
+160 | async def test_plain_character_streaming_and_nonstreaming_keep_bodies_literal(trace_harness, monkeypatch, character):
+161 |     h = trace_harness
+162 |     service, scope = select(h, monkeypatch)
+    |     ^^^^^^^
+163 |     scope.records[A.record_uuid]["prompt_definition"]["body"] = "literal alias {{x}} /command"
+164 |     if character:
+    |
+help: Prefix it with an underscore or any other dummy variable pattern
+
+F811 Redefinition of unused `trace_harness` from line 8
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:174:56
+    |
+173 | @pytest.mark.asyncio
+174 | async def test_hook_user_row_is_never_the_mixin_anchor(trace_harness, monkeypatch):
+    |                                                        ^^^^^^^^^^^^^ `trace_harness` redefined here
+175 |     h = trace_harness
+176 |     select(h, monkeypatch)
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+  8 |     trace_harness,  # noqa: F401
+    |     ------------- previous definition of `trace_harness` here
+  9 | )
+ 10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+    |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 8
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:187:62
+    |
+186 | @pytest.mark.asyncio
+187 | async def test_temporary_attempts_promote_with_retry_lineage(trace_harness, monkeypatch):
+    |                                                              ^^^^^^^^^^^^^ `trace_harness` redefined here
+188 |     import asyncio
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+  8 |     trace_harness,  # noqa: F401
+    |     ------------- previous definition of `trace_harness` here
+  9 | )
+ 10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+    |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 8
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:220:73
+    |
+218 | @pytest.mark.asyncio
+219 | @pytest.mark.parametrize("damage", ["missing", "count", "foreign", "parent", "revision", "pending", "marker"])
+220 | async def test_replacement_trace_proof_requires_exact_operational_owner(trace_harness, monkeypatch, damage):
+    |                                                                         ^^^^^^^^^^^^^ `trace_harness` redefined here
+221 |     from uuid import uuid4
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+  8 |     trace_harness,  # noqa: F401
+    |     ------------- previous definition of `trace_harness` here
+  9 | )
+ 10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+    |
+help: Remove definition: `trace_harness`
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:235:18
+    |
+233 | …b.transaction() as cursor:
+234 | …sion = cursor.execute("SELECT revision_id FROM console_trace_semantic_revisions WHERE live_message_id=? ORDER BY revision_sequence DESC LIMIT 1", (assistant.persisted_message_id,)).fetchone()[0]
+235 | …gs = dict(conversation_id=conversation, source_user_id=h.store.get_message(first.user_message_id).persisted_message_id, current_user_id=current.persisted_message_id, assistant_revision_id=revision)
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+236 | …rt service.operational_replacement_attempt(cursor, **kwargs) == assistant.metadata.mixin_attempt_id
+237 | …amage == "missing":
+    |
+help: Rewrite as a literal
+
+F811 Redefinition of unused `trace_harness` from line 8
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:256:73
+    |
+255 | @pytest.mark.asyncio
+256 | async def test_regenerate_attempt_failure_rolls_back_empty_native_owner(trace_harness, monkeypatch):
+    |                                                                         ^^^^^^^^^^^^^ `trace_harness` redefined here
+257 |     from tldw_chatbook.DB import console_prompt_mixins
+258 |     h = trace_harness
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+  8 |     trace_harness,  # noqa: F401
+    |     ------------- previous definition of `trace_harness` here
+  9 | )
+ 10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+    |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 8
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:273:72
+    |
+272 | @pytest.mark.asyncio
+273 | async def test_capture_masks_credentials_but_operational_body_is_exact(trace_harness, monkeypatch):
+    |                                                                        ^^^^^^^^^^^^^ `trace_harness` redefined here
+274 |     h = trace_harness
+275 |     service, scope = select(h, monkeypatch)
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:8:5
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import (
+  8 |     trace_harness,  # noqa: F401
+    |     ------------- previous definition of `trace_harness` here
+  9 | )
+ 10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+    |
+help: Remove definition: `trace_harness`
+
+Found 22 errors (9 fixed, 13 remaining).
+No fixes available (3 hidden fixes can be enabled with the `--unsafe-fixes` option).

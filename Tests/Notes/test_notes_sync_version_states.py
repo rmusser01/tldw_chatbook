@@ -71,8 +71,9 @@ def test_version_states_empty_input_reads_nothing(db: CharactersRAGDB) -> None:
     assert db.get_note_version_states([]) == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_interop_service_wrapper_passes_through(
-    db: CharactersRAGDB, tmp_path: Path
+    db: CharactersRAGDB, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     base_dir = tmp_path / "notes-base"
     base_dir.mkdir(mode=0o700)
@@ -81,6 +82,7 @@ def test_interop_service_wrapper_passes_through(
         api_client_id="test-app",
         global_db_to_use=db,
     )
+    request.addfinalizer(service.close_all_user_connections)
     db.add_note("Wrapped", "wrapped body", note_id="note-wrapped")
 
     states = service.get_note_version_states(_USER, ["note-wrapped"])
@@ -162,9 +164,7 @@ async def test_authority_excludes_tombstones_at_its_own_level(
     db.add_note("Doomed", "doomed body", note_id="note-doomed")
     db.soft_delete_note("note-doomed", 1)
     authority = NotesScopeSyncAuthority(
-        NotesScopeService(
-            local_notes_service=_DirectBackend(db), server_service=None
-        ),
+        NotesScopeService(local_notes_service=_DirectBackend(db), server_service=None),
         scope=ScopeType.LOCAL_NOTE,
         user_id=_USER,
         note_scope_id="local_note",
@@ -183,9 +183,7 @@ async def test_authority_wraps_backend_failure_into_bounded_reason(
             raise RuntimeError("private backend outage with details")
 
     authority = NotesScopeSyncAuthority(
-        NotesScopeService(
-            local_notes_service=_FailingBackend(), server_service=None
-        ),
+        NotesScopeService(local_notes_service=_FailingBackend(), server_service=None),
         scope=ScopeType.LOCAL_NOTE,
         user_id=_USER,
         note_scope_id="local_note",

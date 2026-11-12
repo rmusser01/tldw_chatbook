@@ -147,7 +147,9 @@ async def test_mounting_and_settling_the_panel_logs_no_prompt_search_error() -> 
     code path remains that could ever produce that log line again.
     """
     records: list[dict] = []
-    sink_id = loguru_logger.add(lambda message: records.append(message.record), level="ERROR")
+    sink_id = loguru_logger.add(
+        lambda message: records.append(message.record), level="ERROR"
+    )
     try:
         panel = MediaViewerPanel(_media_app())
         app = MediaViewerTestApp(panel)

@@ -1,0 +1,366 @@
+.FFFF..F................................................................ [ 64%]
+...........F...........................                                  [100%]
+=================================== FAILURES ===================================
+_________ test_exact_agent_catalogs_validate_without_rewriting[fresh] __________
+
+tmp_path = PosixPath('/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_exact_agent_catalogs_vali1')
+route = 'fresh'
+
+    @pytest.mark.parametrize("route", ["legacy", "fresh", "native_migrated", "native_v19", "native_v20"])
+    def test_exact_agent_catalogs_validate_without_rewriting(tmp_path, route):
+        path = tmp_path / "agents.db"
+        if route != "fresh":
+            legacy(path, {"native_v19": 19, "native_v20": 20}.get(route, 18))
+        if route != "legacy":
+            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+            database = AgentRunsDB(path)
+            database.close()
+        before = path.read_bytes()
+>       assert validate_candidate(owner(), path, Event(), migrate=False) == ()
+E       AssertionError: assert ('unsupported_schema',) == ()
+E         
+E         Left contains one more item: 'unsupported_schema'
+E         Use -v to get more diff
+
+Tests/Backup_Recovery/test_agent_runs_recovery_schema.py:62: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 08:47:39.895 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_exact_agent_catalogs_vali1/agents.db [Client: default]
+____ test_exact_agent_catalogs_validate_without_rewriting[native_migrated] _____
+
+tmp_path = PosixPath('/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_exact_agent_catalogs_vali2')
+route = 'native_migrated'
+
+    @pytest.mark.parametrize("route", ["legacy", "fresh", "native_migrated", "native_v19", "native_v20"])
+    def test_exact_agent_catalogs_validate_without_rewriting(tmp_path, route):
+        path = tmp_path / "agents.db"
+        if route != "fresh":
+            legacy(path, {"native_v19": 19, "native_v20": 20}.get(route, 18))
+        if route != "legacy":
+            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+            database = AgentRunsDB(path)
+            database.close()
+        before = path.read_bytes()
+>       assert validate_candidate(owner(), path, Event(), migrate=False) == ()
+E       AssertionError: assert ('unsupported_schema',) == ()
+E         
+E         Left contains one more item: 'unsupported_schema'
+E         Use -v to get more diff
+
+Tests/Backup_Recovery/test_agent_runs_recovery_schema.py:62: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 08:47:40.252 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_exact_agent_catalogs_vali2/agents.db [Client: default]
+_______ test_exact_agent_catalogs_validate_without_rewriting[native_v19] _______
+
+tmp_path = PosixPath('/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_exact_agent_catalogs_vali3')
+route = 'native_v19'
+
+    @pytest.mark.parametrize("route", ["legacy", "fresh", "native_migrated", "native_v19", "native_v20"])
+    def test_exact_agent_catalogs_validate_without_rewriting(tmp_path, route):
+        path = tmp_path / "agents.db"
+        if route != "fresh":
+            legacy(path, {"native_v19": 19, "native_v20": 20}.get(route, 18))
+        if route != "legacy":
+            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+            database = AgentRunsDB(path)
+            database.close()
+        before = path.read_bytes()
+>       assert validate_candidate(owner(), path, Event(), migrate=False) == ()
+E       AssertionError: assert ('unsupported_schema',) == ()
+E         
+E         Left contains one more item: 'unsupported_schema'
+E         Use -v to get more diff
+
+Tests/Backup_Recovery/test_agent_runs_recovery_schema.py:62: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 08:47:40.662 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_exact_agent_catalogs_vali3/agents.db [Client: default]
+_______ test_exact_agent_catalogs_validate_without_rewriting[native_v20] _______
+
+tmp_path = PosixPath('/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_exact_agent_catalogs_vali4')
+route = 'native_v20'
+
+    @pytest.mark.parametrize("route", ["legacy", "fresh", "native_migrated", "native_v19", "native_v20"])
+    def test_exact_agent_catalogs_validate_without_rewriting(tmp_path, route):
+        path = tmp_path / "agents.db"
+        if route != "fresh":
+            legacy(path, {"native_v19": 19, "native_v20": 20}.get(route, 18))
+        if route != "legacy":
+            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+            database = AgentRunsDB(path)
+            database.close()
+        before = path.read_bytes()
+>       assert validate_candidate(owner(), path, Event(), migrate=False) == ()
+E       AssertionError: assert ('unsupported_schema',) == ()
+E         
+E         Left contains one more item: 'unsupported_schema'
+E         Use -v to get more diff
+
+Tests/Backup_Recovery/test_agent_runs_recovery_schema.py:62: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 08:47:41.039 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_exact_agent_catalogs_vali4/agents.db [Client: default]
+_________ test_unknown_agent_schema_or_version_refuses[future_version] _________
+
+tmp_path = PosixPath('/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_unknown_agent_schema_or_v1')
+alteration = 'future_version'
+
+    @pytest.mark.parametrize(
+        "alteration", ["extra_table", "future_version", "relabeled_legacy"]
+    )
+    def test_unknown_agent_schema_or_version_refuses(tmp_path, alteration):
+        path = tmp_path / "agents.db"
+        if alteration == "relabeled_legacy":
+            legacy(path)
+        else:
+            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+            database = AgentRunsDB(path)
+            database.close()
+        with closing(sqlite3.connect(path)) as connection:
+            if alteration == "extra_table":
+                connection.execute("CREATE TABLE unrecognized(payload TEXT)")
+            else:
+>               connection.execute(
+                    "INSERT INTO schema_version VALUES (?)",
+                    (21 if alteration == "relabeled_legacy" else 22,),
+                )
+E               sqlite3.IntegrityError: UNIQUE constraint failed: schema_version.version
+
+Tests/Backup_Recovery/test_agent_runs_recovery_schema.py:109: IntegrityError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 08:47:41.827 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_unknown_agent_schema_or_v1/agents.db [Client: default]
+_______ test_accepted_console_artifacts_restore_with_fresh_passive_reads _______
+
+tmp_path = PosixPath('/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0')
+
+    def test_accepted_console_artifacts_restore_with_fresh_passive_reads(tmp_path):
+        root = tmp_path.resolve()
+        for name in ("home", "config", "data", "cache", "tmp", "profile", "restore-home"):
+            (root / name).mkdir(mode=0o700)
+        profile = root / "profile"
+        (profile / "custom").mkdir(mode=0o700)
+        (profile / "data").mkdir(mode=0o700)
+        selector = profile / "config.toml"
+        selector.write_text(
+            '[general]\nusers_name="default_user"\n[first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n[AppRAGSearchConfig.rag.indexing]\nenabled=false\n'
+            + f"[paths]\ndata_dir={json.dumps(str(profile / 'data'))}\n[database]\n"
+            + "".join(
+                f"{key}={json.dumps(str(profile / 'custom' / leaf))}\n"
+                for key, leaf in [
+                    ("chachanotes_db_path", "notes.db"),
+                    ("media_db_path", "media.db"),
+                    ("research_db_path", "research.db"),
+                    ("prompts_db_path", "prompts.db"),
+                ]
+            )
+        )
+        selector.chmod(0o600)
+        environment = {
+            key: os.environ[key]
+            for key in ("PATH", "LANG", "LC_ALL", "GOMODCACHE", "GOCACHE", "GOPROXY")
+            if key in os.environ
+        }
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            XDG_CACHE_HOME=str(root / "cache"),
+            TMPDIR=str(root / "tmp"),
+            TLDW_CONFIG_PATH=str(selector),
+            CONSOLE_ARTIFACT_FIXTURE=str(root),
+            PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+            PYTHONPATH=str(Path(__file__).resolve().parents[2]),
+        )
+>       _run_profile_child(root, "capture", _CAPTURE, environment, timeout=120)
+
+Tests/Backup_Recovery/test_console_artifacts_roundtrip.py:245: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0')
+name = 'capture'
+script = '\nimport asyncio,hashlib,json,os,sys,threading\nfrom pathlib import Path\nfrom Tests.network_guard import install,blo...own_app_owned_lifecycles()\n  await app.tts_service.close();await app.tts_service.wait_closed()\nasyncio.run(main())\n'
+environment = {'CONSOLE_ARTIFACT_FIXTURE': '/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0'...-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/home', 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8', ...}
+
+    def _run_profile_child(root, name, script, environment, *, timeout=60):
+        """Run one fixed private fixture program and preserve its full native output."""
+        environment = {**environment, "PYTHONIOENCODING": "utf-8"}
+        # Windows' native per-file barriers made the finite seed exceed 60 seconds
+        # while still creating records. Retain a stack at the previous observer bound.
+        if sys.platform == "win32" and name.startswith("seed-"):
+            script = (
+                "from pathlib import Path\n"
+                "from Tests.Backup_Recovery.thread_diagnostics import observe_threads\n"
+                + "stop_diagnostics=observe_threads(Path("
+                + repr(str(root / (name + "-stacks.log")))
+                + "),interval=55)\n"
+                + script
+                + "\nstop_diagnostics()\n"
+            )
+            timeout = 180
+        elif sys.platform == "win32":
+            # Two profiles require a full capture and two sequential native opens.
+            # The capture's cancellation watchdog remains inside its child limit.
+            timeout = 600 if name == "stage2-restore" else 360
+        program = root / (name + ".py")
+        program.write_text(script, encoding="utf-8")
+        output_path = root / (name + ".log")
+        with output_path.open("w", encoding="utf-8") as output:
+            # Fixed interpreter and fixture-owned source; no shell or external command.
+            result = subprocess.run(  # nosec B603
+                [sys.executable, str(program)],
+                cwd=root
+                if environment.get("TLDW_TEST_INSTALLED_PACKAGE")
+                else Path(__file__).resolve().parents[2],
+                env=environment,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                check=False,
+                timeout=timeout,
+            )
+>       assert result.returncode == 0, output_path.read_text(encoding="utf-8")[-14000:]
+E       AssertionError: )
+E         2026-10-03 08:48:38.549 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 6171504640.
+E         2026-10-03 08:48:38.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): 
+E                         SELECT *
+E                           FROM visual_identity_bindings
+E                          WHERE owner_user_id = ?
+E                            AND actor_kind = ?
+E                            AND actor_id = ?
+E                            AND status = ?
+E                         ... Params: (0, character, 3, active)
+E         2026-10-03 08:48:38.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): 
+E                         SELECT *
+E                           FROM visual_identity_packs
+E                          WHERE id = ? AND owner_user_id = ? AND status = ?
+E                         ... Params: (2, 0, active)
+E         2026-10-03 08:48:38.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): 
+E                     SELECT pack_id
+E                       FROM visual_identity_pack_versions
+E                      WHERE id = ? AND owner_user_id = ?
+E                     ... Params: (2, 0)
+E         2026-10-03 08:48:38.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): 
+E                     SELECT pack_id
+E                       FROM visual_identity_pack_versions
+E                      WHERE id = ? AND owner_user_id = ?
+E                     ... Params: (2, 0)
+E         2026-10-03 08:48:38.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): 
+E                         SELECT *
+E                           FROM visual_identity_pack_versions
+E                          WHERE id = ? AND owner_user_id = ?
+E                         ... Params: (2, 0)
+E         2026-10-03 08:48:38.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): 
+E                     SELECT pack_id
+E                       FROM visual_identity_pack_versions
+E                      WHERE id = ? AND owner_user_id = ?
+E                     ... Params: (2, 0)
+E         2026-10-03 08:48:38.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): 
+E                         SELECT *
+E                           FROM visual_identity_assets
+E                          WHERE pack_version_id = ?
+E                            AND owner_user_id = ?
+E                            AND deleted = 0
+E                          ORDER BY original_expression_key, id
+E                         ... Params: (2, 0)
+E         2026-10-03 08:48:38.551 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 6171504640.
+E         2026-10-03 08:48:38.551 | SUCCESS  | tldw_chatbook.config:get_chachanotes_db_lazy:10715 - ChaChaNotes_DB lazy-initialized successfully at /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/custom/notes.db
+E         INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService: Verified base directory: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/custom
+E         INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService initialized with unified DB template: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/custom/notes.db
+E         2026-10-03 08:48:38.552 | INFO     | tldw_chatbook.app:_init_notes_service:2038 - NotesInteropService successfully initialized for user 'default_user'.
+E         2026-10-03 08:48:38.552 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3874 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=21f6db09dddb thread=6171504640.
+E         2026-10-03 08:48:38.553 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3880 - WAL checkpoint TRUNCATE executed db_sha256=21f6db09dddb.
+E         2026-10-03 08:48:38.554 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3900 - Closed SQLite connection db_sha256=21f6db09dddb thread=6171504640.
+E         2026-10-03 08:48:38.555 | INFO     | tldw_chatbook.app:__init__:1359 - Parallel init task 'notes_service' completed in 1.005s
+E         INFO:root:App __init__: Determined initial tab value: chat
+E         2026-10-03 08:48:38.624 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - LibraryCollectionsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/data/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+E         2026-10-03 08:48:38.696 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - WorkspaceDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/data/default_user/tldw_chatbook_workspaces.db [Client: tldw_cli_local_instance_v1]
+E         2026-10-03 08:48:38.835 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/data/default_user/tldw_chatbook_subscriptions.db [Client: tldw_cli_local_instance_v1]
+E         2026-10-03 08:48:38.843 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ClientNotificationsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/data/default_user/tldw_chatbook_notifications.db [Client: tldw_cli_local_instance_v1]
+E         2026-10-03 08:48:38.847 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - EventStateRepository initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/data/default_user/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E         2026-10-03 08:48:38.847 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SyncStateRepository initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/data/default_user/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E         2026-10-03 08:48:39.035 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+E         2026-10-03 08:48:39.094 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E         2026-10-03 08:48:39.155 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E         2026-10-03 08:48:39.214 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E         2026-10-03 08:48:39.271 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E         2026-10-03 08:48:39.327 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E         2026-10-03 08:48:39.327 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ScheduledTasksDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/data/default_user/tldw_chatbook_scheduled_tasks.db [Client: default]
+E         2026-10-03 08:48:39.459 | DEBUG    | tldw_chatbook.app:__init__:1430 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E         2026-10-03 08:48:39.459 | DEBUG    | tldw_chatbook.app:__init__:1433 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E         INFO:root:Assigned prompts_interop.get_db_instance() to self.prompts_db
+E         INFO:root:Assigned lazy-loaded chachanotes_db to self.chachanotes_db as fallback.
+E         2026-10-03 08:48:39.535 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=21f6db09dddb thread=8494865792
+E         2026-10-03 08:48:39.540 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E         2026-10-03 08:48:39.540 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E         2026-10-03 08:48:39.550 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+E         2026-10-03 08:48:39.615 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+E         2026-10-03 08:48:39.615 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/data/default_user/evals.db
+E         2026-10-03 08:48:39.615 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E         2026-10-03 08:48:39.654 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:_init_worker_handlers:2167 - Worker handler registry initialized with all handlers
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1615 - === STARTUP TIMING SUMMARY ===
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1616 - Total initialization time: 2.191 seconds
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1622 -   basic_init: 0.081s (3.7%)
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1622 -   attribute_init: 0.000s (0.0%)
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1622 -   parallel_init: 1.006s (45.9%)
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1635 -     - notes_service: 1.005s (99.9% of parallel_init)
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1635 -     - media_db: 0.156s (15.5% of parallel_init)
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1635 -     - prompts_service: 0.103s (10.3% of parallel_init)
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1635 -     - providers_models: 0.003s (0.3% of parallel_init)
+E         2026-10-03 08:48:39.655 | INFO     | tldw_chatbook.app:__init__:1639 - ==============================
+E         2026-10-03 08:48:39.663 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E         2026-10-03 08:48:39.671 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E         2026-10-03 08:48:39.919 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/custom/agent_runs.db [Client: default]
+E         2026-10-03 08:48:39.937 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E         2026-10-03 08:48:39.938 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E         2026-10-03 08:48:40.155 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - WorkspaceDB initialized with path: /private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/data/default_user/tldw_chatbook_workspaces.db [Client: file-tools]
+E         INFO:tldw_chatbook.model_capabilities:No capability information found for llama_cpp/test-model, using defaults
+E         2026-10-03 08:48:40.563 | INFO     | tldw_chatbook.Chat.console_agent_bridge:run_reply:8119 - agent run step
+E         2026-10-03 08:48:40.563 | INFO     | tldw_chatbook.Chat.console_agent_bridge:run_reply:8127 - console agent bridge run_reply end
+E         2026-10-03 08:48:40.565 | INFO     | tldw_chatbook.Utils.custom_tokenizers:install_tokenizer:422 - Installed tokenizer: retained-artifact
+E         2026-10-03 08:48:40.565 | DEBUG    | tldw_chatbook.Utils.custom_tokenizers:save_mappings:107 - Saved tokenizer mappings
+E         2026-10-03 08:48:44.103 | INFO     | tldw_chatbook.Chat.console_agent_bridge:run_reply:8119 - agent run step
+E         2026-10-03 08:48:44.103 | INFO     | tldw_chatbook.Chat.console_agent_bridge:run_reply:8127 - console agent bridge run_reply end
+E         2026-10-03 08:48:44.106 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E         2026-10-03 08:48:44.106 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E         2026-10-03 08:48:44.110 | INFO     | tldw_chatbook.Chat.console_runtime:dispose:5224 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+E         Traceback (most recent call last):
+E           File "/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/capture.py", line 116, in <module>
+E             asyncio.run(main())
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+E             return runner.run(main)
+E                    ^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E             return future.result()
+E                    ^^^^^^^^^^^^^^^
+E           File "/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/capture.py", line 60, in main
+E             assert preview.complete,(preview.issues,[(i.owner,str(i.path),i.status) for i in preview.items if i.status in ('unsupported','unavailable','missing_required')])
+E                    ^^^^^^^^^^^^^^^^
+E         AssertionError: (('missing_required', 'unsupported'), [('agents.history', 'None', 'unsupported'), ('research.local', '/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/profile/custom/research.db', 'missing_required')])
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '/private/tmp/console-dev-recovery-core-current-01a0fa6c/test_accepted_console_artifact0/capture.py'], returncode=1).returncode
+
+Tests/Backup_Recovery/test_complete_roundtrip.py:633: AssertionError
+============================= slowest 25 durations =============================
+16.08s call     Tests/Backup_Recovery/test_core_owners.py::test_committed_wal_domain_records_blobs_and_soft_deletes[chachanotes]
+9.60s call     Tests/Backup_Recovery/test_console_artifacts_roundtrip.py::test_accepted_console_artifacts_restore_with_fresh_passive_reads
+1.39s call     Tests/Backup_Recovery/test_core_owners.py::test_schema_variants_never_blessed_by_current_version[library_collections-table-unsupported_schema]
+1.21s call     Tests/Backup_Recovery/test_core_owners.py::test_dependency_validation_scans_each_real_peer_once_per_invocation
+
+(21 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Backup_Recovery/test_agent_runs_recovery_schema.py::test_exact_agent_catalogs_validate_without_rewriting[fresh]
+FAILED Tests/Backup_Recovery/test_agent_runs_recovery_schema.py::test_exact_agent_catalogs_validate_without_rewriting[native_migrated]
+FAILED Tests/Backup_Recovery/test_agent_runs_recovery_schema.py::test_exact_agent_catalogs_validate_without_rewriting[native_v19]
+FAILED Tests/Backup_Recovery/test_agent_runs_recovery_schema.py::test_exact_agent_catalogs_validate_without_rewriting[native_v20]
+FAILED Tests/Backup_Recovery/test_agent_runs_recovery_schema.py::test_unknown_agent_schema_or_version_refuses[future_version]
+FAILED Tests/Backup_Recovery/test_console_artifacts_roundtrip.py::test_accepted_console_artifacts_restore_with_fresh_passive_reads
+6 failed, 105 passed in 69.45s (0:01:09)

@@ -1,0 +1,45 @@
+# Notes step is informational only, yet [notes] is a wizard-owned section and the docs claim it configures folder + toggle
+class NotesSyncStep(SetupStep):
+    """Explain where reviewed lasting folder sync is configured."""
+
+    def compose_step(self) -> ComposeResult:
+        with Vertical(classes="setup-notes"):
+            yield Static("Notes folder sync", classes="setup-title")
+            yield Static(
+                "After setup, use Library → Notes → Add from files… to review a folder before activating sync.",
+                classes="setup-subtitle",
+            )
+            # TASK-21140 (UAT G-3): reassurance, not an error — the error
+            # class painted this calm sentence bold red-on-maroon.
+            yield Static(
+                "Nothing is activated during first-run setup.",
+                classes="setup-step-note",
+            )
+
+    async def commit(self) -> tuple[bool, str]:
+        return True, ""
+
+    def get_step_data(self) -> Dict[str, Any]:
+        return {}
+
+
+## WIZARD_OWNED_SECTIONS includes 'notes' (first_run_setup_state.py:1251-1266)
+WIZARD_OWNED_SECTIONS = frozenset(
+    {
+        "chat_defaults",
+        "embedding_config",
+        "tools",
+        "notes",
+        "general",
+        # TASK-21146 (UAT H-1): the Summary step records the online
+        # model-list consent answer through the exact [model_catalog]
+        # contract the Console consent modal writes.
+        "model_catalog",
+        "splash_screen",
+        "transcription",
+        "provider_setup.confirmed",
+        WIZARD_STATE_SECTION,
+    }
+
+## Docs (First_Run_Setup.md):
+70:| Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  A field guide to Markdown tables                         │
+│ │ Navigation                     │  a  │ Media (1)      Sets                                  │  t  Seed                                                     │
+│ │     Import…                    │  v  │ Media · 1 of 23 · filter “field g…      Clear        │  e   Find  Note  Read later  Use in Console  More            │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m   Read (selected)  Analysis  Highlights  Info             │
+│ │ ▊ Search Library…         ▎▊x▎ │     │  ▊  field guide                     ▎                │  s   Rendered (selected) |      Raw                          │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │     ┌──────────────────────────────────────────────────────┐ │
+│ │                                │     │    type: All types    sort: Newest                   │     │   the effect held across three cohorts and did       │ │
+│ │ ────────────────────────────── │     │                                                      │     │   not depend on the length of the initial            │ │
+│ │ Browse                     ▾   │     │    Export…     Trash     Select                      │     │   exposure.                                       ▇▇ │ │
+│ │ █▸ Media (23) — your files     │     │    Review these                                      │     │                                                      │ │
+│ │    Conversations (0)           │     │ 1 result · Enter opens                               │     │   Paragraph 6. Retrieval practice improved 7-day     │ │
+│ │    Notes (124)                 │     │  ▸ A field guide to Markdown tables                  │     │   retention by 21 percentage points in study 6;      │ │
+│ │    Prompts (0) — reuse         │     │      article · updated 1h · loaded                   │     │   the effect held across three cohorts and did       │ │
+│ │    Skills (1) — AI add-ons     │<--- │                                                      │     │   not depend on the length of the initial            │ │
+│ │    Collections (0)             │     │                                                      │     │   exposure.                                          │ │
+│ │    Search / RAG — find all     │     │                                                      │     │                                                      │ │
+│ │ ────────────────────────────── │     │                                                      │     │   Paragraph 7. Retrieval practice improved 7-day     │ │
+│ │ Artifacts                  ▾   │     │                                                      │     │   retention by 21 percentage points in study 7;      │ │
+│ │    All artifacts               │     │                                                      │<--- │   the effect held across three cohorts and did       │ │
+│ │    Chatbooks                   │     │                                                      │     │   not depend on the length of the initial            │ │
+│ │    Reports                     │     │                                                      │     │   exposure.                                          │ │
+│ │ ────────────────────────────── │     │                                                      │     │                                                      │ │
+│ │ Create                     ▾   │     │                                                      │     │   Paragraph 8. Retrieval practice improved 7-day     │ │
+│ │    New note                    │     │                                                      │     │   retention by 21 percentage points in study 8;      │ │
+│ │    New prompt                  │<--- │                                                      │     │   the effect held across three cohorts and did       │ │
+│ │    New skill                   │     │                                                      │     │   not depend on the length of the initial            │ │
+│ │ ────────────────────────────── │     │                                                      │     │   exposure.                                          │ │
+│ │ Study                      ▾   │     │                                                      │     │                                                      │ │
+│ │    Study decks (0)             │     │                                                      │     │   Paragraph 9. Retrieval practice improved 7-day     │ │
+│ │    Flashcards due: 0           │     │                                                      │     │   retention by 21 percentage points in study 9;      │ │
+│ │    Quizzes (0)                 │     │                                                      │     │   the effect held across three cohorts and did       │ │
+│ │ ────────────────────────────── │     │                                                      │     │   not depend on the length of the initial            │ │
+│ │ Import / Export            ▾   │     │                                                      │     │   exposure.                                          │ │
+│ │    Import…                     │     │                                                      │     │                                                      │ │
+│ │    Export                      │     │                                                      │     │   Paragraph 10. Retrieval practice improved          │ │
+│ │ ────────────────────────────── │     │                                                      │     │   7-day retention by 21 percentage points in         │ │
+│ │ Details                    ▸   │     │                       1-1 of 1                       │     └──────────────────────────────────────────────────────┘ │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ctrl+f find | n note | l read later | c use in Console | t trash | F1 help · Ctrl+P palette · Ctrl+Q quit

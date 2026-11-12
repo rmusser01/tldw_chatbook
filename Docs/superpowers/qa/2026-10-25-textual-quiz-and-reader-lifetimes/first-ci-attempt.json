@@ -1,0 +1,264 @@
+{
+  "head": "0d91e6c10774dadc55cde3156a116e681aaa7630",
+  "run": 40233902140,
+  "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40233902140",
+  "conclusion": "failure",
+  "new_case_results": {
+    "head": "0d91e6c10774dadc55cde3156a116e681aaa7630",
+    "shards": [
+      {
+        "name": "UI Fast Lane (10)",
+        "job_conclusion": "success",
+        "seconds": 872.0,
+        "cases": {
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_newer_selection_reads_before_older_body_finishes[late-success]": [
+            8.51
+          ]
+        },
+        "sha256": "984c209ef975577248687f9330d2f761cc8a6d05db6a87730653bfac9f8bdba9"
+      },
+      {
+        "name": "UI Fast Lane (9)",
+        "job_conclusion": "success",
+        "seconds": 904.0,
+        "cases": {
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_ordinary_reader_publishes_one_hydrated_shared_row": [
+            9.43
+          ],
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[space]": [
+            9.44
+          ]
+        },
+        "sha256": "e48aa790b3f8af5fa2bd6f713c61c083a9c86f24f58951e35a09ccfab8845e9f"
+      },
+      {
+        "name": "UI Fast Lane (1)",
+        "job_conclusion": "success",
+        "seconds": 742.0,
+        "cases": {
+          "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-local-shell]": [
+            5.65
+          ],
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-query-away-back]": [
+            7.0
+          ]
+        },
+        "sha256": "8332569414d4353c469c09ea3cd4a832abbb0329d67b79e51150be02139a1edb"
+      },
+      {
+        "name": "UI Fast Lane (7)",
+        "job_conclusion": "success",
+        "seconds": 665.0,
+        "cases": {
+          "Tests/UI/test_study_quiz_start_responsiveness.py::test_failed_start_reports_the_previous_context_and_allows_retry[runtime-local]": [
+            4.88
+          ],
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[j]": [
+            7.03
+          ]
+        },
+        "sha256": "97c9f7e434d622b20d72e9e6d3b8cdf7ed44574e612b332369ce1ea0ebeeb3fa"
+      },
+      {
+        "name": "UI Fast Lane (12)",
+        "job_conclusion": "success",
+        "seconds": 913.0,
+        "cases": {
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_enabled_section_navigation_runs_during_body_read": [
+            10.36
+          ]
+        },
+        "sha256": "5400b2dd629aefef3fa8d1315376a1cefe4d3fbcb3ad1f7a4752525204f7e0d7"
+      },
+      {
+        "name": "UI Fast Lane (16)",
+        "job_conclusion": "success",
+        "seconds": 847.0,
+        "cases": {
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-section-away-back]": [
+            8.83
+          ]
+        },
+        "sha256": "bfdcd62e876dd99c9200c97732c54784824d3c2082c18c3c4bd350feef2ab21c"
+      },
+      {
+        "name": "UI Fast Lane (2)",
+        "job_conclusion": "success",
+        "seconds": 896.0,
+        "cases": {
+          "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-local-inner]": [
+            6.01
+          ],
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-page-away-back]": [
+            8.1
+          ]
+        },
+        "sha256": "456c8edfee5e8a36d4e478ea239b25311fa4d9567160d574c2912762ee1f49c8"
+      },
+      {
+        "name": "UI Fast Lane (11)",
+        "job_conclusion": "failure",
+        "seconds": 893.0,
+        "cases": {
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_newer_selection_reads_before_older_body_finishes[late-failure]": [
+            8.92
+          ]
+        },
+        "sha256": "91f2554755e469104f8a5a66ac1852b6307077479f8bb960c33ffb10fc3ffb99"
+      },
+      {
+        "name": "UI Fast Lane (6)",
+        "job_conclusion": "success",
+        "seconds": 832.0,
+        "cases": {
+          "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-away-back-inner]": [
+            6.51
+          ],
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_current_body_failure_reports_and_later_selection_can_retry": [
+            8.11
+          ]
+        },
+        "sha256": "94b2da34f14640cc041a88a75aebe1c26718708b4e121f584866f3bbb76367b0"
+      },
+      {
+        "name": "UI Fast Lane (13)",
+        "job_conclusion": "success",
+        "seconds": 888.0,
+        "cases": {
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-query-away-back]": [
+            9.18
+          ]
+        },
+        "sha256": "a73328855a2730d374497d9451b18d1b650b735043a71c6592f1d641483559a3"
+      },
+      {
+        "name": "UI Fast Lane (15)",
+        "job_conclusion": "success",
+        "seconds": 988.0,
+        "cases": {
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-backend-away-back]": [
+            10.45
+          ]
+        },
+        "sha256": "ed5d27afdd7e0744bb689b88591c6b5df2b806304ca574cafdcbc17902dace1a"
+      },
+      {
+        "name": "UI Fast Lane (5)",
+        "job_conclusion": "success",
+        "seconds": 744.0,
+        "cases": {
+          "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-away-back-shell]": [
+            5.38
+          ],
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-unmount]": [
+            6.46
+          ]
+        },
+        "sha256": "83005c0edd99b3948a700ee37d59f0777971cc9e00a4c934c18aa715af2d52b3"
+      },
+      {
+        "name": "UI Fast Lane (14)",
+        "job_conclusion": "success",
+        "seconds": 961.0,
+        "cases": {
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-page-away-back]": [
+            9.67
+          ]
+        },
+        "sha256": "eb5586962e207261ef1febf41fab544b6ac407a328d8695207cd037820b16b12"
+      },
+      {
+        "name": "UI Fast Lane (4)",
+        "job_conclusion": "success",
+        "seconds": 926.0,
+        "cases": {
+          "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[workspace-B-inner]": [
+            7.43
+          ],
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-section-away-back]": [
+            9.81
+          ]
+        },
+        "sha256": "05c14114d9f599dd8828bc9af242dd4615a8305a7e8dfd02838b61c937ee036c"
+      },
+      {
+        "name": "UI Fast Lane (3)",
+        "job_conclusion": "success",
+        "seconds": 925.0,
+        "cases": {
+          "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[workspace-B-shell]": [
+            7.66
+          ],
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-backend-away-back]": [
+            10.12
+          ]
+        },
+        "sha256": "affebb9342f88b4123e4a48ab88105dee734f0ef928a1f9ceb7eda628623a463"
+      },
+      {
+        "name": "UI Fast Lane (8)",
+        "job_conclusion": "success",
+        "seconds": 954.0,
+        "cases": {
+          "Tests/UI/test_study_quiz_start_responsiveness.py::test_failed_start_reports_the_previous_context_and_allows_retry[runtime-away-back]": [
+            6.89
+          ],
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[k]": [
+            8.8
+          ]
+        },
+        "sha256": "77ead31828cf57543fc70b5d87bad8137083f1ab6faafa6df72838b64634f9ef"
+      },
+      {
+        "name": "UI Fast Lane (17)",
+        "job_conclusion": "success",
+        "seconds": 862.0,
+        "cases": {
+          "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-unmount]": [
+            8.51
+          ]
+        },
+        "sha256": "e16a02c6f5e8e22e125038e222b44ff25616832710aa620a53735c30815ca998"
+      }
+    ],
+    "new_cases_executed": 26
+  },
+  "failures": [
+    {
+      "job": "PR Fast Lane",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40233902140/job/121291247049",
+      "failed_steps": [
+        "Run fast PR contract"
+      ],
+      "log_sha256": "19ffa885bd49ba336f0cbb48b0246cb3cb4cc18b5eb8fb62c2d8f5aed2746100"
+    },
+    {
+      "job": "UI Fast Lane (11)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40233902140/job/121291247143",
+      "failed_steps": [
+        "Run the gated Tests/UI slice"
+      ],
+      "log_sha256": "91f2554755e469104f8a5a66ac1852b6307077479f8bb960c33ffb10fc3ffb99"
+    },
+    {
+      "job": "Derived artifacts reproduce from their sources",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40233902140/job/121297981628",
+      "failed_steps": [
+        "Require successful PR fast lane",
+        "Require successful UI fast lane"
+      ],
+      "log_sha256": "961e7fefb09b082d10afcb67b83fdbf714d4c719c36896093601aa396d2580e1"
+    }
+  ],
+  "corrections": [
+    "Existing fail-closed Study keyword guard: preserve captured mode/scope in named locals, no guard change; 8/8 green after original7/8 red and full61 Study requalification.",
+    "Library receipt test: local mouse-only trace shows stale pre-layout click coordinates; wait for stable hit-tested region and reacquire before Pilot captures coordinates. Original actual click and Reader/DB assertions retained."
+  ],
+  "limits": [
+    "All26newcasespassed is distinct from a passing overall workflow.",
+    "The local mouse trace demonstrates a concrete missed-target mechanism; the first hosted failure did not capture mouse-hit diagnostics.",
+    "Early admission and delegation-property probe failures are excluded.",
+    "This attempt is retained, not relabeled as green after a later source repair.",
+    "An attempted wait for the wider Library Edit/Save highlight did not settle and was reverted; the original read-later test is unchanged and remains separately qualified."
+  ]
+}

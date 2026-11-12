@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -709,7 +710,7 @@ _SENT_WITH_MCP = schemas_to_openai_tools(
     [
         (
             "mcp__thirdparty__lookup",
-            "Turn off the MCP server that provides it on the MCP screen",
+            "Turn off the MCP server that provides it in Settings ▸ Tools & MCP",
             "one of Chatbook's own tools",
         ),
         (
@@ -728,7 +729,7 @@ def test_tool_rejection_copy_gives_advice_that_fits_the_tool_source(
     )
 
     copy = _provider_error_copy_with_model_recovery(
-        "Provider error from openai: bad request. Status: 400.",
+        "Provider error from OpenAI: bad request. Status: 400.",
         model="gpt-4.1-mini",
         status_code=400,
         provider_message=f"Invalid schema for function '{name}': bad",
@@ -743,18 +744,94 @@ def test_tool_rejection_copy_gives_advice_that_fits_the_tool_source(
     assert "model picker" not in copy
 
 
-def test_a_non_tool_bad_request_keeps_the_model_recovery_copy():
+#: TASK-36519: there is no MCP screen (task-35150, ADR-240); Ctrl+9 opens
+#: Settings ▸ Tools & MCP. "MCP" may still describe a server or a tool, or
+#: be part of that category's own name -- never stand alone as a place.
+_MCP_AS_A_PLACE = re.compile(r"(?<!Tools & )MCP(?! server| tool)")
+
+
+def test_no_surface_names_the_retired_mcp_screen_as_a_place(monkeypatch, tmp_path):
+    """TASK-36519 AC#4: each surface names Settings ▸ Tools & MCP instead.
+
+    The copy is rendered, not grepped: two of these sentences are split
+    across source lines ("...on the MCP " "screen..."), which a source grep
+    for "MCP screen" never saw.
+    """
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _provider_error_copy_with_model_recovery,
+    )
+    from tldw_chatbook.MCP import builtin_tool_policy, permission_store
+    from tldw_chatbook.Skills_Interop.builtin_skills import builtin_skill_dir
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        DECISION_SCOPE_COPY,
+    )
+
+    surfaces = {
+        f"approval scope {key}": DECISION_SCOPE_COPY[key]
+        for key in ("allow_matching", "always_allow")
+    }
+    for label, message in {
+        "rejected mcp tool": "Invalid schema for function 'mcp__thirdparty__lookup': bad",
+        "rejected chatbook tool": "Invalid schema for function 'todo_update': bad",
+        "rejected unnamed tool": "tools.9.custom.input_schema: bad",
+    }.items():
+        surfaces[label] = _provider_error_copy_with_model_recovery(
+            "Provider error from OpenAI: bad request. Status: 400.",
+            model="gpt-4.1-mini",
+            status_code=400,
+            provider_message=message,
+            tools=_SENT_WITH_MCP,
+        )
+    monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        permission_store,
+        "MCPPermissionStore",
+        lambda _path: SimpleNamespace(get_kill_switch=lambda: False, load=dict),
+    )
+    for state in ("ask", "deny"):
+        monkeypatch.setattr(
+            permission_store,
+            "resolve_effective_state_by_key",
+            lambda *_a, _state=state: SimpleNamespace(state=_state),
+        )
+        refusal = builtin_tool_policy.standalone_character_write_refusal(
+            "create_character"
+        )
+        surfaces[f"external client {state}"] = refusal["error"]
+    surfaces["character-creator skill"] = (
+        builtin_skill_dir("character-creator") / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    wrong = {
+        label: text
+        for label, text in surfaces.items()
+        if "Settings ▸ Tools & MCP" not in text or _MCP_AS_A_PLACE.search(text)
+    }
+    assert sorted(wrong) == []
+
+
+def test_a_non_tool_bad_request_names_the_model_only_when_typed_unavailable():
+    """TASK-33621.11 AC#3: a 400 is no evidence about the model; only an
+    explicit model_not_found (``ChatModelUnavailableError``) names it."""
     from tldw_chatbook.Chat.console_provider_gateway import (
         _provider_error_copy_with_model_recovery,
     )
 
-    base = "Provider error from anthropic: bad request. Status: 400."
+    base = "Provider error from Anthropic: bad request. Status: 400."
+    plain_copy = _provider_error_copy_with_model_recovery(
+        base,
+        model="claude-3-opus",
+        status_code=400,
+        provider_message="Bad request (400). Detail: temperature: range 0..1",
+        tools=_SENT,
+    )
     model_copy = _provider_error_copy_with_model_recovery(
         base,
         model="claude-3-opus",
         status_code=400,
-        provider_message="Bad request (400). Detail: model: claude-3-opus not found",
+        provider_message="Bad request (400). Detail: model_not_found",
         tools=_SENT,
+        model_unavailable=True,
     )
     unnamed_tool_copy = _provider_error_copy_with_model_recovery(
         base,
@@ -764,7 +841,9 @@ def test_a_non_tool_bad_request_keeps_the_model_recovery_copy():
         tools=_SENT,
     )
 
-    assert "Confirm the model is still available" in model_copy
+    assert plain_copy == base
+    assert "could not find this model" in model_copy
+    assert "model picker" in model_copy
     assert "one of the tool definitions sent with this request" in unnamed_tool_copy
     # Unnamed, the blame rests only on a marker in the provider's text, so the
     # copy does not state as fact that no other model could help.

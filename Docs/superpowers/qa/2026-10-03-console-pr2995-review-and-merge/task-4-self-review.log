@@ -1,0 +1,33 @@
+{
+  "Tests/Chat/test_console_durable_commit_offload.py": {
+    "original_test_bodies_preserved": true,
+    "count": 7
+  },
+  "Tests/Chat/test_console_durable_commit_diagnostics.py": {
+    "original_test_bodies_preserved": true,
+    "count": 2
+  },
+  "Tests/Chat/test_console_close_during_durable_postcommit.py": {
+    "original_test_bodies_preserved": true,
+    "count": 16
+  },
+  "Tests/Agents/test_automatic_child_scope.py": {
+    "original_test_bodies_preserved": true,
+    "count": 17
+  },
+  "_run_durable_db_call": {
+    "manual_durable_contract_unchanged": true
+  },
+  "_run_owned_chat_db_operation": {
+    "manual_durable_contract_unchanged": true
+  },
+  "passing_distinct_cases": {
+    "count": 260,
+    "receipts": [
+      "final-owners-green",
+      "final-reconciliation-owners-green",
+      "final-context-green",
+      "latency-controls-green"
+    ]
+  }
+}

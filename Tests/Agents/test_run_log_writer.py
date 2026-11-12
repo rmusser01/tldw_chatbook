@@ -151,7 +151,9 @@ def test_write_failure_deactivates_rather_than_raising(root, monkeypatch):
 
 def test_config_can_disable_logging_entirely(root, monkeypatch):
     monkeypatch.setattr(
-        run_log_module, "_setting", lambda key, default: False if key == "run_log_enabled" else default
+        run_log_module,
+        "_setting",
+        lambda key, default: False if key == "run_log_enabled" else default,
     )
     writer = RunLogWriter()
     writer.bind("run-abc")
@@ -197,7 +199,9 @@ def test_manifest_records_segments_after_appends(root):
 
 def test_manifest_failure_never_raises(root, monkeypatch):
     writer = make(root)
-    monkeypatch.setattr(writer, "_write_bytes", lambda *a, **k: (_ for _ in ()).throw(OSError))
+    monkeypatch.setattr(
+        writer, "_write_bytes", lambda *a, **k: (_ for _ in ()).throw(OSError)
+    )
     writer.write_manifest({"status": "done"})  # must not raise
 
 
@@ -216,7 +220,10 @@ def test_concurrent_appends_produce_unique_numbers_and_no_corruption(root):
     def worker(index):
         for _ in range(20):
             writer.append(
-                run_id=f"r{index}", kind="primary", type="model", content=f"payload-{index}"
+                run_id=f"r{index}",
+                kind="primary",
+                type="model",
+                content=f"payload-{index}",
             )
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
@@ -235,7 +242,9 @@ def test_non_numeric_segment_bytes_uses_default(root, monkeypatch):
     monkeypatch.setattr(
         run_log_module,
         "_setting",
-        lambda key, default: "not-a-number" if key == "run_log_segment_bytes" else default,
+        lambda key, default: (
+            "not-a-number" if key == "run_log_segment_bytes" else default
+        ),
     )
     writer = RunLogWriter()
     writer.bind("run-abc")
@@ -257,7 +266,9 @@ def test_negative_max_record_bytes_uses_default(root, monkeypatch):
 
 def test_bind_idempotent_after_failed_first_bind(root, monkeypatch):
     monkeypatch.setattr(
-        run_log_module, "_setting", lambda key, default: False if key == "run_log_enabled" else default
+        run_log_module,
+        "_setting",
+        lambda key, default: False if key == "run_log_enabled" else default,
     )
     writer = RunLogWriter()
     writer.bind("run-abc")
@@ -266,7 +277,9 @@ def test_bind_idempotent_after_failed_first_bind(root, monkeypatch):
 
     # Second bind with different run_id must not activate or create directory
     monkeypatch.setattr(
-        run_log_module, "_setting", lambda key, default: True if key == "run_log_enabled" else default
+        run_log_module,
+        "_setting",
+        lambda key, default: True if key == "run_log_enabled" else default,
     )
     writer.bind("run-other")
     assert writer.is_active is False
@@ -274,7 +287,9 @@ def test_bind_idempotent_after_failed_first_bind(root, monkeypatch):
     assert not (root / "agent-runs" / "run-other").exists()
 
 
-def test_path_traversal_with_dotdot_falls_back_to_the_default_dir_name(root, monkeypatch):
+def test_path_traversal_with_dotdot_falls_back_to_the_default_dir_name(
+    root, monkeypatch
+):
     """F1 (Qodo #1, PR #1066 review ruling): CHANGED BEHAVIOR, deliberately.
 
     Before this fix, a `..`-bearing dir_name reached `bind()` unvalidated
@@ -581,7 +596,9 @@ def test_explicit_constructor_arg_still_wins_over_env_var(monkeypatch):
 
 def test_append_reports_truncated_on_the_returned_record_number(root):
     writer = make(root, max_record_bytes=50)
-    number = writer.append(run_id="r", kind="primary", type="tool_result", content="y" * 500)
+    number = writer.append(
+        run_id="r", kind="primary", type="tool_result", content="y" * 500
+    )
     assert number.truncated is True
     assert int(number) == 1  # still a plain int for every ordinary purpose
 
@@ -707,6 +724,7 @@ def test_workspace_folder_outside_the_sandbox_also_gets_dotted_and_hidden(
     workspace_folder.mkdir()
 
     monkeypatch.setattr(file_tools, "_tool_sandbox_root", lambda: sandbox_root)
+
     # GrepFiles resolves `allowed_file_roots` via a name bound at
     # `file_operation_tools` IMPORT time, a separate binding from
     # `workspace_file_roots.allowed_file_roots` -- both must be patched for

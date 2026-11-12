@@ -10,6 +10,7 @@ from textual.widgets import Switch
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_speculative_voice_wiring import _QualifiedSession
+from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -17,6 +18,7 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 SECRET = "secret-token https://private.invalid/provider voice_provider_unavailable"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "result", ["unavailable", "missing", "unknown", "timeout", "ready"]
@@ -69,6 +71,7 @@ async def test_visible_control_validates_before_factory_and_preserves_draft(
         composer.load_draft("keep this draft exactly")
         notices.clear()
         await pilot.click("#console-hands-free-switch")
+        await accept_hands_free_consent(host, pilot)
         await pilot.pause()
         async with asyncio.timeout(2):
             while console._hands_free._qualified_voice_startup_generation is not None:
@@ -96,6 +99,7 @@ async def test_visible_control_validates_before_factory_and_preserves_draft(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "change",
@@ -146,11 +150,13 @@ async def test_pending_readiness_cannot_enter_or_notify_after_owner_changes(
         monkeypatch.setattr(controller.provider_gateway, "resolve_for_send", resolve)
         try:
             await pilot.click("#console-hands-free-switch")
+            await accept_hands_free_consent(host, pilot)
             await asyncio.wait_for(entered.wait(), 0.5)
             if change in {"off", "replacement"}:
                 await pilot.click("#console-hands-free-switch")
                 if change == "replacement":
                     await pilot.click("#console-hands-free-switch")
+                    await accept_hands_free_consent(host, pilot)
                     await pilot.pause()
                     assert engine.entered_with == [False]
             elif change == "teardown":
@@ -206,6 +212,7 @@ async def test_pending_readiness_cannot_enter_or_notify_after_owner_changes(
             release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("changes_during_load", [False, True])
 async def test_default_factory_and_voice_worker_wait_for_current_readiness(
@@ -242,6 +249,7 @@ async def test_default_factory_and_voice_worker_wait_for_current_readiness(
                 property(lambda self: starts.append("worker")),
             )
             await pilot.click("#console-hands-free-switch")
+            await accept_hands_free_consent(host, pilot)
             if changes_during_load:
                 assert await asyncio.to_thread(loaded.wait, 1)
                 session_id = controller.store.active_session_id
@@ -262,6 +270,7 @@ async def test_default_factory_and_voice_worker_wait_for_current_readiness(
         release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exception_in_final_readiness_check_closes_unentered_engine(monkeypatch):
     monkeypatch.setattr(hands_free_module, "speculative_voice_qualified", lambda: True)
@@ -287,6 +296,7 @@ async def test_exception_in_final_readiness_check_closes_unentered_engine(monkey
         monkeypatch.setattr(controller.provider_gateway, "resolve_for_send", resolve)
         app.console_speculative_voice_session_factory = factory
         await pilot.click("#console-hands-free-switch")
+        await accept_hands_free_consent(host, pilot)
         await pilot.pause()
         assert not console.query_one("#console-hands-free-switch", Switch).value
         assert engine.entered_with == []

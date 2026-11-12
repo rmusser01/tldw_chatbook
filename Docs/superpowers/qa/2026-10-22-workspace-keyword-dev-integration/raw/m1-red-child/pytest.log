@@ -1,0 +1,74 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+___ test_history_keeps_live_retired_supervisor_until_cancelled_close_joins ____
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-22-keyw...of-GDesktop-1/pytest-0/test_history_keeps_live_retire0/private-profile-process/pytest/test_history_keeps_live_retire0')
+request = <FixtureRequest for <Coroutine test_history_keeps_live_retired_supervisor_until_cancelled_close_joins>>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B773843950>
+
+    @private_profile_test
+    async def test_history_keeps_live_retired_supervisor_until_cancelled_close_joins(
+        tmp_path, request, monkeypatch
+    ):
+        rig = Rig(tmp_path)
+        entered, release = threading.Event(), threading.Event()
+        bind = rig.service._bind
+        first = closing = None
+    
+        @contextmanager
+        def hold_first_supervisor_tail(pin):
+            with bind(pin):
+                yield
+            if (
+                threading.current_thread().name == "project-index-owner"
+                and not entered.is_set()
+            ):
+                entered.set()
+                release.wait()
+    
+        monkeypatch.setattr(rig.service, "_bind", hold_first_supervisor_tail)
+        try:
+            rig.enable()
+            first_job = rig.refresh()
+            first = rig.service._runs[first_job]
+            assert await asyncio.to_thread(entered.wait, 15)
+            assert first.native_retired and first.supervisor.is_alive()
+            assert not first.writer.is_alive()
+            for _ in range(20):
+                job = await asyncio.to_thread(rig.refresh)
+                run = rig.service._runs[job]
+                await asyncio.to_thread(run.supervisor.join, 15)
+                assert run.native_retired and not run.supervisor.is_alive()
+    
+>           assert rig.service._runs.get(first_job) is first, (
+                "history discarded the still-running supervisor's shutdown join record"
+            )
+E           AssertionError: history discarded the still-running supervisor's shutdown join record
+E           assert None is _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='wo...time.BindingLifetime object at 0x000001B774B43020>, read_admission=<contextlib.ExitStack object at 0x000001B7747E55E0>)
+E            +  where None = <built-in method get of dict object at 0x000001B7749DEDC0>('2c9cddb0079f4c9cae85f6055c436add')
+E            +    where <built-in method get of dict object at 0x000001B7749DEDC0> = {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20>, read_admission=<contextlib.ExitStack object at 0x000001B774B7A300>), ...}.get
+E            +      where {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20>, read_admission=<contextlib.ExitStack object at 0x000001B774B7A300>), ...} = <tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490>._runs
+E            +        where <tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490> = <Tests.Workspaces.test_project_index_service.Rig object at 0x000001B7747E4CB0>.service
+
+Tests\Workspaces\test_project_index_service.py:1672: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-21 21:56:31.010 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-21 21:56:31.297 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-21 21:56:31.298 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-21 21:56:31.300 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================== warnings summary ===============================
+Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-22-keyword-dev-integration\native-temp-rebase\pytest-of-GDesktop-1\pytest-0\test_history_keeps_live_retire0\private-profile-process\pytest.xml -
+============================ slowest 25 durations =============================
+218.18s call     Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+2.39s setup    Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+
+(1 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+1 failed, 1 warning in 221.32s (0:03:41)

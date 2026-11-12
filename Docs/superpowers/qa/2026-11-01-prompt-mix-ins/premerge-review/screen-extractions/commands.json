@@ -1,0 +1,76 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "commands": [
+    {
+      "phase": "RED, before production repair",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest 'Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]' 'Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/library_screen.py]' 'Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]' -q -p no:cacheprovider --basetemp=/private/tmp/mixins-pr3346-size-repair/red-tmp",
+      "log": "red.log",
+      "exit": 1,
+      "result": "3 failed in 0.66s; exact three ceiling nodes"
+    },
+    {
+      "phase": "GREEN, frozen production guard selections",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest 'Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]' 'Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/library_screen.py]' 'Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]' 'Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]' 'Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/library_screen.py]' 'Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]' 'Tests/Architecture/test_library_support_layer_surface.py' -q -p no:cacheprovider --basetemp=/private/tmp/mixins-pr3346-size-repair/guard-tmp",
+      "log": "guards.log",
+      "exit": 0,
+      "result": "14 passed in 7.10s"
+    },
+    {
+      "phase": "GREEN, ordinary CI helper file",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_screen_derivation_helpers.py -q -p no:cacheprovider --basetemp=/private/tmp/mixins-pr3346-size-repair/derived-tmp",
+      "log": "derived.log",
+      "exit": 0,
+      "result": "3 passed in 1.42s; module bootstrap_profile marker"
+    },
+    {
+      "phase": "GREEN, ordinary CI exact new Browse case after case marker",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m pytest Tests/UI/test_library_prompt_browse_controller.py::test_controller_live_reads_replaced_screen_worker -q -p no:cacheprovider --basetemp=/private/tmp/mixins-pr3346-size-repair/ci-worker-tmp",
+      "log": "ci-worker.log",
+      "exit": 0,
+      "result": "1 passed in 1.10s; no private plugin or module injection"
+    },
+    {
+      "phase": "private baseline control; not ordinary CI qualification",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-pr3346-size-repair/browse-probe.py --baseline --bootstrap",
+      "log": "baseline-profile-browse-final.log",
+      "exit": 0,
+      "result": "22 passed, 3 warnings in 3.12s; explicit profile precondition"
+    },
+    {
+      "phase": "private current control; not ordinary CI qualification",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-pr3346-size-repair/browse-probe.py --bootstrap",
+      "log": "current-profile-browse-final.log",
+      "exit": 0,
+      "result": "22 passed, 3 warnings in 3.13s; explicit profile precondition"
+    },
+    {
+      "phase": "frozen body proof",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B /private/tmp/mixins-pr3346-size-repair/verify_moves.py",
+      "log": "ast-proof.log",
+      "exit": 0,
+      "result": "10 exact body/predicate checks passed"
+    },
+    {
+      "phase": "frozen scoped production lint compare",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m ruff check tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Library_Modules/screen_helpers.py tldw_chatbook/UI/Console_Modules/command_handoff.py --output-format=json",
+      "log": "lint-current.json",
+      "exit": 1,
+      "result": "388 inherited diagnostics; same code/message multiplicities as baseline; no introduced or removed diagnostics"
+    },
+    {
+      "phase": "frozen test lint",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m ruff check Tests/UI/test_screen_derivation_helpers.py Tests/UI/test_library_prompt_browse_controller.py --output-format=json",
+      "log": "test-lint-final.json",
+      "exit": 0,
+      "result": "[]"
+    },
+    {
+      "phase": "frozen test formatter",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -B -m ruff format --check Tests/UI/test_screen_derivation_helpers.py Tests/UI/test_library_prompt_browse_controller.py",
+      "log": "test-format.log",
+      "exit": 0,
+      "result": "2 files already formatted"
+    }
+  ],
+  "selection_note": "Guard and helper replay selections are reconstructed from the recorded node/output logs; the exact final ordinary Browse command is recorded as executed. Private paired controls ran before the final case-only profile marker was added; that marker changes fixture classification, not test assertions or product bytes."
+}

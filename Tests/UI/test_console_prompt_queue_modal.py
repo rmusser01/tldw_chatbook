@@ -50,7 +50,9 @@ class _QueueFacade:
         assert session_id == "pinned-session"
         return self.recovery_turns.get(action)
 
-    def read_waiting_text(self, session_id: str, entry_id: str, *, expected_revision: int):
+    def read_waiting_text(
+        self, session_id: str, entry_id: str, *, expected_revision: int
+    ):
         self.read_calls.append((session_id, entry_id, expected_revision))
         return self.registry.read_waiting_text(
             session_id,
@@ -58,7 +60,9 @@ class _QueueFacade:
             expected_revision=expected_revision,
         )
 
-    def edit_waiting(self, session_id: str, entry_id: str, *, text: str, expected_revision: int):
+    def edit_waiting(
+        self, session_id: str, entry_id: str, *, text: str, expected_revision: int
+    ):
         return self.registry.edit(
             session_id,
             entry_id=entry_id,
@@ -66,7 +70,9 @@ class _QueueFacade:
             expected_revision=expected_revision,
         )
 
-    def move_waiting(self, session_id: str, entry_id: str, *, position: int, expected_revision: int):
+    def move_waiting(
+        self, session_id: str, entry_id: str, *, position: int, expected_revision: int
+    ):
         return self.registry.move(
             session_id,
             entry_id=entry_id,
@@ -171,9 +177,7 @@ async def test_manager_rejects_unsafe_edited_prompt_at_ui_boundary() -> None:
         after = facade.snapshot("pinned-session")
         assert after.revision == before.revision
         assert after.entries[0] is first_entry
-        feedback = modal.query_one(
-            "#console-prompt-queue-manager-feedback", Static
-        )
+        feedback = modal.query_one("#console-prompt-queue-manager-feedback", Static)
         assert "Prompt blocked" in str(feedback.renderable)
 
 

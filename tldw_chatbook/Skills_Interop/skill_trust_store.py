@@ -266,7 +266,7 @@ def _cached_keyring_read(store: Any) -> str | None:
 
 
 def _invalidate_keyring_read(store: Any) -> None:
-    """Drop the cached read AFTER a write, so no in-flight read survives it."""
+    """Drop cached reads after a write or explicit retry, fencing in-flight reads."""
 
     store._read_generation += 1
     store._read_cache = None
@@ -294,6 +294,10 @@ class KeyringSkillTrustGenerationMarkerStore:
 
     def __repr__(self) -> str:
         return "KeyringSkillTrustGenerationMarkerStore(keyring_backend=<redacted>)"
+
+    def invalidate_cached_read(self) -> None:
+        """Forget the in-memory read without changing the stored credential."""
+        _invalidate_keyring_read(self)
 
     @property
     def _account(self) -> str:
@@ -399,6 +403,10 @@ class KeyringSkillTrustKeyCache:
 
     def __repr__(self) -> str:
         return "KeyringSkillTrustKeyCache(keyring_backend=<redacted>)"
+
+    def invalidate_cached_read(self) -> None:
+        """Forget the in-memory read without changing the stored credential."""
+        _invalidate_keyring_read(self)
 
     @property
     def _account(self) -> str:

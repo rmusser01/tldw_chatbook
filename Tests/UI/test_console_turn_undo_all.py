@@ -20,9 +20,9 @@ import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.UI.Screens.change_review_screen import (
+from tldw_chatbook.UI.Screens.change_review_screen import ChangeRevertConfirmModal
+from tldw_chatbook.Workspaces.change_review_provider import (
     AgentRunsChangeReviewProvider,
-    ChangeRevertConfirmModal,
     ReviewTurn,
 )
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
@@ -331,6 +331,7 @@ def _record_real_turn(db, tracker, root: Path, run_id: str) -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thread(
     tmp_path,
@@ -481,6 +482,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
         assert revert_threads and all(tid != main_thread for tid in revert_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_duplicate_root_undo_refuses_inline_and_routes_to_review(
     tmp_path,
@@ -552,6 +554,7 @@ async def test_mounted_duplicate_root_undo_refuses_inline_and_routes_to_review(
         assert undo.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retry(
     tmp_path,

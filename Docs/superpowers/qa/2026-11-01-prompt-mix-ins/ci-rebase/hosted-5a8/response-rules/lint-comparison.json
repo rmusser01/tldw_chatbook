@@ -1,0 +1,690 @@
+{
+  "files": {
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+      "baseline": [
+        {
+          "code": "I001",
+          "message": "Import block is un-sorted or un-formatted",
+          "source_line": "from __future__ import annotations",
+          "scope": "<module>"
+        },
+        {
+          "code": "UP037",
+          "message": "Remove quotes from type annotation",
+          "source_line": "def __init__(self, controller: \"ConsoleSessionController\") -> None:",
+          "scope": "__init__"
+        },
+        {
+          "code": "PYI034",
+          "message": "`__enter__` methods in classes like `_conversation_activation_window` usually return `self` at runtime",
+          "source_line": "def __enter__(self) -> \"_conversation_activation_window\":",
+          "scope": "__enter__"
+        },
+        {
+          "code": "UP037",
+          "message": "Remove quotes from type annotation",
+          "source_line": "def __enter__(self) -> \"_conversation_activation_window\":",
+          "scope": "__enter__"
+        },
+        {
+          "code": "UP037",
+          "message": "Remove quotes from type annotation",
+          "source_line": "screen: \"ChatScreen\",",
+          "scope": "__init__"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "consume_resume_navigation_startup"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_log_first_chat_handoff_exception"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.debug(",
+          "scope": "_resolve_historical_visual_identity"
+        },
+        {
+          "code": "RUF100",
+          "message": "Unused `noqa` directive (non-enabled: `SLF001`)",
+          "source_line": "store._pending_workspace_projections[request.fork_session_id] = (  # noqa: SLF001",
+          "scope": "_register_console_chat_fork"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if snapshot.durable:",
+          "scope": "_run_console_chat_fork"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if request.projection_pending:",
+          "scope": "_recover_created_console_chat_fork"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_activate_native_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "start_close_console_session_tab"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.error(",
+          "scope": "_report_session_close_failure"
+        },
+        {
+          "code": "S110",
+          "message": "`try`-`except`-`pass` detected, consider logging the exception",
+          "source_line": "except Exception:  # noqa: BLE001 -- already reported; the next \u2715 re-renders",
+          "scope": "_report_session_close_failure"
+        },
+        {
+          "code": "I001",
+          "message": "Import block is un-sorted or un-formatted",
+          "source_line": "from ..Navigation.llamacpp_handoff import (",
+          "scope": "consume_pending_llamacpp_console_intent"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `BaseException`",
+          "source_line": "except BaseException as rollback_error:",
+          "scope": "_consume_verified_console_intent"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `BaseException`",
+          "source_line": "except BaseException as release_error:",
+          "scope": "_consume_verified_console_intent"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `BaseException`",
+          "source_line": "except BaseException as retention_error:",
+          "scope": "_consume_verified_console_intent"
+        },
+        {
+          "code": "I001",
+          "message": "Import block is un-sorted or un-formatted",
+          "source_line": "from ...Chat.console_configuration_capture import capture_console_turn_configuration",
+          "scope": "_build_console_turn_execution_context"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.info(",
+          "scope": "_notify_stale_default_provider_swap"
+        },
+        {
+          "code": "RUF100",
+          "message": "Unused `noqa` directive (unused: `BLE001`)",
+          "source_line": "except Exception:  # noqa: BLE001 -- display-only signal",
+          "scope": "_notify_stale_default_provider_swap"
+        },
+        {
+          "code": "UP045",
+          "message": "Use `X | None` for type annotations",
+          "source_line": "self, system_prompt: Optional[str]",
+          "scope": "_apply_console_session_system_prompt"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_promote_console_temporary_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_swap_console_session_character"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception as exc:",
+          "scope": "_swap_console_session_character"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_swap_console_session_character"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_capture_server_handoff_context"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "is_current"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if runtime_backend == \"server\":",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception as exc:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception as exc:",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if (",
+          "scope": "_consume_visible_agent_handoff"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "refuse_send_from_unbound_composer"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "refuse_send_from_unbound_composer"
+        },
+        {
+          "code": "UP045",
+          "message": "Use `X | None` for type annotations",
+          "source_line": "def _current_console_conversation_id(self) -> Optional[str]:",
+          "scope": "_current_console_conversation_id"
+        },
+        {
+          "code": "UP045",
+          "message": "Use `X | None` for type annotations",
+          "source_line": "def _current_console_session_id(self) -> Optional[str]:",
+          "scope": "_current_console_session_id"
+        },
+        {
+          "code": "C408",
+          "message": "Unnecessary `dict()` call (rewrite as a literal)",
+          "source_line": "session_kwargs: dict[str, Any] = dict(",
+          "scope": "_console_session_from_state"
+        },
+        {
+          "code": "SIM114",
+          "message": "Combine `if` branches using logical `or` operator",
+          "source_line": "if not has_source_aware_identity:",
+          "scope": "_console_session_from_state"
+        },
+        {
+          "code": "S110",
+          "message": "`try`-`except`-`pass` detected, consider logging the exception",
+          "source_line": "except Exception:  # noqa: BLE001 -- view cleanup remains best-effort",
+          "scope": "_dismiss_project_instruction_decision_projection"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if owning_session_exists():",
+          "scope": "finish"
+        }
+      ],
+      "current": [
+        {
+          "code": "I001",
+          "message": "Import block is un-sorted or un-formatted",
+          "source_line": "from __future__ import annotations",
+          "scope": "<module>"
+        },
+        {
+          "code": "UP037",
+          "message": "Remove quotes from type annotation",
+          "source_line": "def __init__(self, controller: \"ConsoleSessionController\") -> None:",
+          "scope": "__init__"
+        },
+        {
+          "code": "PYI034",
+          "message": "`__enter__` methods in classes like `_conversation_activation_window` usually return `self` at runtime",
+          "source_line": "def __enter__(self) -> \"_conversation_activation_window\":",
+          "scope": "__enter__"
+        },
+        {
+          "code": "UP037",
+          "message": "Remove quotes from type annotation",
+          "source_line": "def __enter__(self) -> \"_conversation_activation_window\":",
+          "scope": "__enter__"
+        },
+        {
+          "code": "UP037",
+          "message": "Remove quotes from type annotation",
+          "source_line": "screen: \"ChatScreen\",",
+          "scope": "__init__"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "consume_resume_navigation_startup"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_log_first_chat_handoff_exception"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.debug(",
+          "scope": "_resolve_historical_visual_identity"
+        },
+        {
+          "code": "RUF100",
+          "message": "Unused `noqa` directive (non-enabled: `SLF001`)",
+          "source_line": "store._pending_workspace_projections[request.fork_session_id] = (  # noqa: SLF001",
+          "scope": "_register_console_chat_fork"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if snapshot.durable:",
+          "scope": "_run_console_chat_fork"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if request.projection_pending:",
+          "scope": "_recover_created_console_chat_fork"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_activate_native_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "start_close_console_session_tab"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.error(",
+          "scope": "_report_session_close_failure"
+        },
+        {
+          "code": "S110",
+          "message": "`try`-`except`-`pass` detected, consider logging the exception",
+          "source_line": "except Exception:  # noqa: BLE001 -- already reported; the next \u2715 re-renders",
+          "scope": "_report_session_close_failure"
+        },
+        {
+          "code": "I001",
+          "message": "Import block is un-sorted or un-formatted",
+          "source_line": "from ..Navigation.llamacpp_handoff import (",
+          "scope": "consume_pending_llamacpp_console_intent"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `BaseException`",
+          "source_line": "except BaseException as rollback_error:",
+          "scope": "_consume_verified_console_intent"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `BaseException`",
+          "source_line": "except BaseException as release_error:",
+          "scope": "_consume_verified_console_intent"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `BaseException`",
+          "source_line": "except BaseException as retention_error:",
+          "scope": "_consume_verified_console_intent"
+        },
+        {
+          "code": "I001",
+          "message": "Import block is un-sorted or un-formatted",
+          "source_line": "from ...Chat.console_configuration_capture import capture_console_turn_configuration",
+          "scope": "_build_console_turn_execution_context"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.info(",
+          "scope": "_notify_stale_default_provider_swap"
+        },
+        {
+          "code": "RUF100",
+          "message": "Unused `noqa` directive (unused: `BLE001`)",
+          "source_line": "except Exception:  # noqa: BLE001 -- display-only signal",
+          "scope": "_notify_stale_default_provider_swap"
+        },
+        {
+          "code": "UP045",
+          "message": "Use `X | None` for type annotations",
+          "source_line": "self, system_prompt: Optional[str]",
+          "scope": "_apply_console_session_system_prompt"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_promote_console_temporary_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_swap_console_session_character"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception as exc:",
+          "scope": "_swap_console_session_character"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_swap_console_session_character"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_capture_server_handoff_context"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "is_current"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if runtime_backend == \"server\":",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception as exc:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_character_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception as exc:",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception:",
+          "scope": "_start_persona_console_session"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "refuse_send_from_unbound_composer"
+        },
+        {
+          "code": "PLE1205",
+          "message": "Too many arguments for `logging` format string",
+          "source_line": "logger.warning(",
+          "scope": "refuse_send_from_unbound_composer"
+        },
+        {
+          "code": "UP045",
+          "message": "Use `X | None` for type annotations",
+          "source_line": "def _current_console_conversation_id(self) -> Optional[str]:",
+          "scope": "_current_console_conversation_id"
+        },
+        {
+          "code": "UP045",
+          "message": "Use `X | None` for type annotations",
+          "source_line": "def _current_console_session_id(self) -> Optional[str]:",
+          "scope": "_current_console_session_id"
+        },
+        {
+          "code": "C408",
+          "message": "Unnecessary `dict()` call (rewrite as a literal)",
+          "source_line": "session_kwargs: dict[str, Any] = dict(",
+          "scope": "_console_session_from_state"
+        },
+        {
+          "code": "SIM114",
+          "message": "Combine `if` branches using logical `or` operator",
+          "source_line": "if not has_source_aware_identity:",
+          "scope": "_console_session_from_state"
+        },
+        {
+          "code": "S110",
+          "message": "`try`-`except`-`pass` detected, consider logging the exception",
+          "source_line": "except Exception:  # noqa: BLE001 -- view cleanup remains best-effort",
+          "scope": "_dismiss_project_instruction_decision_projection"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if owning_session_exists():",
+          "scope": "finish"
+        }
+      ],
+      "new_per_file": [],
+      "removed_per_file": [
+        [
+          "SIM102",
+          "Use a single `if` statement instead of nested `if` statements",
+          "if (",
+          "consume_visible_agent_handoff"
+        ]
+      ]
+    },
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": {
+      "baseline": [
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception as exc:",
+          "scope": "_save_chat_capture"
+        },
+        {
+          "code": "UP037",
+          "message": "Remove quotes from type annotation",
+          "source_line": "stash: \"ConsoleDraftStash | None\" = None,",
+          "scope": "_dispatch_console_draft_send"
+        },
+        {
+          "code": "I001",
+          "message": "Import block is un-sorted or un-formatted",
+          "source_line": "from ..Console_Modules.prompt_queue import (",
+          "scope": "_dispatch_console_draft_send"
+        }
+      ],
+      "current": [
+        {
+          "code": "BLE001",
+          "message": "Do not catch blind exception: `Exception`",
+          "source_line": "except Exception as exc:",
+          "scope": "_save_chat_capture"
+        },
+        {
+          "code": "SIM102",
+          "message": "Use a single `if` statement instead of nested `if` statements",
+          "source_line": "if (",
+          "scope": "consume_visible_agent_handoff"
+        },
+        {
+          "code": "UP037",
+          "message": "Remove quotes from type annotation",
+          "source_line": "stash: \"ConsoleDraftStash | None\" = None,",
+          "scope": "_dispatch_console_draft_send"
+        },
+        {
+          "code": "I001",
+          "message": "Import block is un-sorted or un-formatted",
+          "source_line": "from ..Console_Modules.prompt_queue import (",
+          "scope": "_dispatch_console_draft_send"
+        }
+      ],
+      "new_per_file": [
+        [
+          "SIM102",
+          "Use a single `if` statement instead of nested `if` statements",
+          "if (",
+          "consume_visible_agent_handoff"
+        ]
+      ],
+      "removed_per_file": []
+    },
+    "Tests/UI/test_response_rules_end_to_end.py": {
+      "baseline": [],
+      "current": [],
+      "new_per_file": [],
+      "removed_per_file": []
+    }
+  },
+  "new_across_owned_scope": [],
+  "relocated_baseline_warning": "SIM102 on unchanged consume_visible_agent_handoff executable body moved from session.py to composer_run_controls.py; exact body AST proof in repair-ast-proof.json; no suppression or behavior rewrite."
+}

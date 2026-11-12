@@ -221,8 +221,15 @@ async def test_decision_and_outcome_columns_carry_semantic_color():
             [
                 _entry(tool_name="ok_call", decision="allowed", ok=True),
                 _entry(tool_name="approved_call", decision="approved", ok=True),
-                _entry(tool_name="blocked_call", decision="denied", ok=False, duration_ms=0),
-                _entry(tool_name="downgraded_call", decision="downgraded", ok=False, duration_ms=0),
+                _entry(
+                    tool_name="blocked_call", decision="denied", ok=False, duration_ms=0
+                ),
+                _entry(
+                    tool_name="downgraded_call",
+                    decision="downgraded",
+                    ok=False,
+                    duration_ms=0,
+                ),
             ]
         )
         await pilot.pause()
@@ -232,26 +239,32 @@ async def test_decision_and_outcome_columns_carry_semantic_color():
         }
 
         # Decision column (index 3).
-        assert table.get_cell_at((rows_by_tool["ok_call"], 3)).style == state_text(
-            "allowed", "ready"
-        ).style
-        assert table.get_cell_at((rows_by_tool["blocked_call"], 3)).style == state_text(
-            "denied", "error"
-        ).style
-        assert table.get_cell_at((rows_by_tool["downgraded_call"], 3)).style == state_text(
-            "downgraded", "warning"
-        ).style
+        assert (
+            table.get_cell_at((rows_by_tool["ok_call"], 3)).style
+            == state_text("allowed", "ready").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["blocked_call"], 3)).style
+            == state_text("denied", "error").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["downgraded_call"], 3)).style
+            == state_text("downgraded", "warning").style
+        )
 
         # Outcome column (index 5).
-        assert table.get_cell_at((rows_by_tool["ok_call"], 5)).style == state_text(
-            "OK", "ready"
-        ).style
-        assert table.get_cell_at((rows_by_tool["blocked_call"], 5)).style == state_text(
-            "Blocked", "error"
-        ).style
-        assert table.get_cell_at((rows_by_tool["downgraded_call"], 5)).style == state_text(
-            "Downgraded", "warning"
-        ).style
+        assert (
+            table.get_cell_at((rows_by_tool["ok_call"], 5)).style
+            == state_text("OK", "ready").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["blocked_call"], 5)).style
+            == state_text("Blocked", "error").style
+        )
+        assert (
+            table.get_cell_at((rows_by_tool["downgraded_call"], 5)).style
+            == state_text("Downgraded", "warning").style
+        )
 
 
 @pytest.mark.asyncio
@@ -311,7 +324,8 @@ async def test_filter_narrowing_to_zero_rows_does_not_show_empty_state():
 
         text_input = app.query_one("#mcp-audit-filter-text", Input)
         text_input.value = "does-not-match-anything"
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the 0.2s timer.
+        await pilot.pause(0.3)
 
         table = app.query_one("#mcp-audit-table", DataTable)
         assert table.row_count == 0
@@ -402,13 +416,14 @@ async def test_filter_by_text_matches_tool_name_or_server_key():
 
         text_input = app.query_one("#mcp-audit-filter-text", Input)
         text_input.value = "weather"
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the 0.2s timer.
+        await pilot.pause(0.3)
         table = app.query_one("#mcp-audit-table", DataTable)
         assert table.row_count == 1
         assert _row_texts(table, 0)[1] == "server:weather::forecast"
 
         text_input.value = "search"
-        await pilot.pause()
+        await pilot.pause(0.3)
         assert table.row_count == 1
         assert _row_texts(table, 0)[1] == "local:docs::search"
 
@@ -532,7 +547,9 @@ async def test_decision_filter_narrows_user_denials_and_policy_off_separately():
         canvas = app.query_one(MCPAuditMode)
         await canvas.update_entries(
             [
-                _entry(tool_name="i_said_no", decision="denied", ok=False, duration_ms=0),
+                _entry(
+                    tool_name="i_said_no", decision="denied", ok=False, duration_ms=0
+                ),
                 _entry(
                     tool_name="switched_off",
                     decision=POLICY_DENIED_DECISION,
@@ -604,7 +621,8 @@ async def test_cursor_key_is_preserved_across_a_filter_rebuild():
         # key "1" ("b").
         text_input = app.query_one("#mcp-audit-filter-text", Input)
         text_input.value = "local"
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the 0.2s timer.
+        await pilot.pause(0.3)
 
         row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
         assert row_key.value == "1"
@@ -945,7 +963,9 @@ async def test_findings_row_keys_are_stable_synthetic_index():
         ("STALE_BINDING", ""),  # case-insensitive
     ],
 )
-def test_remediation_actions_maps_discovery_stale_catalog_keywords(finding_type, message):
+def test_remediation_actions_maps_discovery_stale_catalog_keywords(
+    finding_type, message
+):
     finding = {"finding_type": finding_type, "message": message}
     assert remediation_actions(finding) == (
         HubAction.REFRESH_DISCOVERY,

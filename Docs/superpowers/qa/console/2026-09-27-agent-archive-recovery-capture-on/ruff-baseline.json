@@ -1,0 +1,5119 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 60,
+      "row": 358
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport contextlib\nimport copy\nimport functools\nimport hashlib\nimport inspect\nimport json\nimport os\nimport re\nimport stat\nimport threading\nimport time\nimport weakref\nfrom collections import OrderedDict\nfrom collections.abc import AsyncIterator, Iterable, Iterator, Mapping\nfrom contextlib import contextmanager, nullcontext\nfrom contextvars import ContextVar\nfrom dataclasses import dataclass, field, replace\nfrom datetime import UTC, datetime\nfrom enum import Enum\nfrom pathlib import Path\nfrom sqlite3 import Error as SQLiteError\nfrom typing import (\n    TYPE_CHECKING,\n    Any,\n    Awaitable,\n    Callable,\n    Literal,\n    Protocol,\n    Sequence,\n    TypedDict,\n)\nfrom uuid import uuid4\n\nfrom loguru import logger\nfrom rich.markup import escape as escape_markup\n\nfrom tldw_chatbook.Agents.agent_models import WorkOrigin\n\n# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)\nfrom tldw_chatbook.Agents.agent_service import append_personal_context\nfrom tldw_chatbook.Character_Chat.emote_directives import (\n    CharacterEmoteAssetReference,\n    CharacterEmoteRunSnapshot,\n    append_character_emote_prompt_instruction,\n    project_character_emote_assets,\n)\nfrom tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer\nfrom tldw_chatbook.Chat.assistant_generation_state import (\n    assistant_state_allows_provider_history,\n)\nfrom tldw_chatbook.Chat.attachment_core import (\n    PendingAttachment,\n    image_url_part,\n    max_history_images,\n    vision_block_reason,\n)\nfrom tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle\nfrom tldw_chatbook.Chat.citation_repair import (\n    REPAIR_ANSWER_BODY_UTF8_BYTES_MAX,\n    CitationRepairContract,\n    CitationRepairDecision,\n    build_citation_repair_messages,\n    decide_citation_repair,\n    repair_request_fits_model_window,\n    select_repaired_body,\n)\nfrom tldw_chatbook.Chat.citation_trace_builder import (\n    CitationTraceBuilder,\n    CitationTraceBuildUnavailable,\n)\nfrom tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite\nfrom tldw_chatbook.Chat.console_capture_policy_repository import (\n    CapturePolicyReadStatus,\n    CapturePolicyWriteStatus,\n    ConsoleCapturePolicyRepository,\n)\nfrom tldw_chatbook.Chat.console_chat_models import (\n    CONSOLE_CAP_REFUSAL_TITLE_LIMIT,\n    CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,\n    CONSOLE_DISPATCH_DISCARDED_COPY,\n    CONSOLE_GLOBAL_WORKSPACE_ID,\n    FEEDBACK_ACTIVE_RUN_STATUSES,\n    ConsoleChatMessage,\n    ConsoleCitationNoticeCode,\n    ConsoleCitationPhase,\n    ConsoleCitationPresentation,\n    ConsoleContextSnapshot,\n    ConsoleControllerActivity,\n    ConsoleDispatchRecoveryActionId,\n    ConsoleDispatchRecoveryKind,\n    ConsoleLifecycleImpact,\n    ConsoleLifecycleRevisionChanged,\n    ConsoleMessageRole,\n    ConsoleNextSendHistoryProjection,\n    ConsoleProviderSelection,\n    ConsoleQueuedAcceptanceEvent,\n    ConsoleRunMarker,\n    ConsoleRunState,\n    ConsoleRunStatus,\n    ConsoleSessionCloseTicket,\n    ConsoleStagedSource,\n    ConsoleSubmissionOrigin,\n    ConsoleWorkspaceContext,\n    MessageAttachment,\n    ProjectInstructionActivationEvent,\n    ProjectInstructionPreview,\n    derive_console_session_title,\n    fold_greeting_into_system_prompt,\n    is_default_console_session_title,\n)\nfrom tldw_chatbook.Chat.console_chat_store import (\n    UNSPECIFIED_ASSISTANT,\n    CapturePolicyStaleError,\n    CapturePurgeStaleError,\n    ConsoleChatSession,\n    ConsoleChatStore,\n    ConsoleDispatchSettlementError,\n    ConsoleDurableAcceptanceFingerprint,\n    ConsoleDurableAcceptanceRetired,\n    ConsoleDurableTurnCommit,\n    ConsoleThinkingCompatibilityError,\n    TerminalCitationFinalizer,\n    require_thinking_persistence_support,\n)\nfrom tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX\nfrom tldw_chatbook.Chat.console_context_compaction import (\n    NO_LEGACY_MEMORY,\n    CompactionAdmission,\n    CompactionDecision,\n    CompactionPlan,\n    CompactionPromptSnapshot,\n    CompactionTerminal,\n    ConsoleCompactionService,\n    DurableMessageSnapshot,\n    DurableVisualAttachment,\n    EffectiveMemoryKind,\n    EffectiveMemoryResult,\n    LegacyMemorySnapshot,\n    ManualMemoryPlan,\n    compactable_units_after,\n    complete_durable_units,\n    decide_compaction,\n    manual_summary_preview,\n    micro_compaction_due,\n    plan_compaction,\n    plan_manual_prefix,\n    plan_manual_range,\n    prefix_digest,\n    project_effective_memory,\n    resolve_micro_escalation,\n    sanitize_summary_focus,\n    select_effective_memory,\n)\nfrom tldw_chatbook.Chat.console_context_policy import (\n    CompactionFailureBehavior,\n    ConsoleContextCapacity,\n    ConsoleContextPolicyOverrides,\n    ContextCarryForwardMode,\n    ContextCompactionRepresentation,\n    context_policy_overrides_from_console_config,\n    merge_context_policy,\n    resolve_context_policy,\n)\nfrom tldw_chatbook.Chat.console_context_repository import (\n    BranchMemoryCommit,\n    ConsoleContextRepository,\n    ConsoleMemoryRecord,\n    ConsoleMemoryScopeRecord,\n    ConsoleMemorySelectionRecord,\n    MemoryCoverageKind,\n    MemoryOriginKind,\n    MemorySelectionFence,\n    MemorySelectionKind,\n    PersistedLineageFenceRow,\n    persisted_attachment_digest,\n)\nfrom tldw_chatbook.Chat.console_dispatch_checkpoint import (\n    ConsoleDispatchCheckpointState,\n    ConsoleDispatchReconstructability,\n    ConsoleDispatchResultStatus,\n    ConsoleDispatchTransition,\n    ConsoleDurableTurnAcceptance,\n    ConsoleLibraryItemScopeSnapshot,\n    ConsoleProviderIntent,\n    ConsoleResolvedDestination,\n    ConsoleTurnLibraryAuthority,\n)\nfrom tldw_chatbook.Chat.console_endpoint_provenance import (\n    ConsoleEndpointProvenance,\n)\nfrom tldw_chatbook.Chat.console_exchange_capture import (\n    CaptureDetail,\n    CapturePolicyResolution,\n    resolve_capture_policy,\n    resolve_scoped_boolean,\n)\nfrom tldw_chatbook.Chat.console_fleet_wake import (\n    AgentWakeAuthorization,\n    ConsoleFleetWakeCoordinator,\n)\nfrom tldw_chatbook.Chat.console_history_budget import (\n    DEFAULT_RESPONSE_RESERVATION,\n    ProviderContinuationSidecar,\n    bound_messages_to_window,\n    count_console_messages_tokens,\n    provider_continuation_owner_groups,\n)\nfrom tldw_chatbook.Chat.console_library_policy import (\n    AUTOMATIC_LIBRARY_SOURCE_TYPES,\n    ConsoleAssistantLibraryAccess,\n    ConsoleAutoRetrieve,\n    ConsoleLibraryPolicySnapshot,\n)\nfrom tldw_chatbook.Chat.console_prepared_request import (\n    CONTINUATION_OWNER_KEY,\n    MEMORY_OWNER_KEY,\n    PERSISTED_CONVERSATION_ID_KEY,\n    PERSISTED_MESSAGE_ID_KEY,\n    THINKING_OWNER_KEY,\n    PreparedConsoleRequest,\n    tagged_memory_message,\n    tagged_visual_memory_message,\n)\nfrom tldw_chatbook.Chat.console_project_instructions import (\n    ProjectInstructionControlState,\n    fingerprint_canonical_locator,\n    project_instruction_notice_key,\n    sanitized_destination_label,\n)\nfrom tldw_chatbook.Chat.console_prompt_queue import (\n    ConsolePromptQueueRegistry,\n    PromptQueueMutationResult,\n    QueuedPrompt,\n    QueueMutationStatus,\n)\nfrom tldw_chatbook.Chat.console_prompt_queue_coordinator import (\n    ConsolePromptQueueCoordinator,\n    QueueGenerationAuthorization,\n)\nfrom tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint\nfrom tldw_chatbook.Chat.console_provider_support import (\n    build_local_thinking_payload_fields,\n    resolve_console_provider_identity,\n)\nfrom tldw_chatbook.Chat.console_roleplay_identity import (\n    ConsoleMessagePresentation,\n    ConsolePresentationContext,\n    expand_character_template,\n    resolve_console_message_presentation,\n    resolve_send_system_prompt,\n)\nfrom tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager\n\n# `Chat.console_visual_transcript` (PIL-backed visual compaction) is imported\n# inside `_apply_conversation_memory_preflight`, its only user, so it stays\n# off the UI-ready module census (ADR-097): task-31384 spends that slot on\n# `Chat.console_interrupt_rounds`, which the controller constructs at boot.\nfrom tldw_chatbook.Chat.console_session_settings import (\n    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,\n    ConsoleSessionSettings,\n    build_default_console_session_settings,\n    build_target_default_console_session_settings,\n    normalize_console_model_value,\n    normalize_llamacpp_base_url,\n    normalized_console_model_profile_overrides,\n)\nfrom tldw_chatbook.Chat.console_settings_apply import (\n    FULL_MODEL_DEFAULT_FIELDS,\n    QUICK_MODEL_DEFAULT_FIELDS,\n    ConsoleEndpointDraft,\n    ConsoleSettingsDraftState,\n    ConsoleSettingsFieldDraft,\n    ConsoleSettingsFieldProvenance,\n)\nfrom tldw_chatbook.Chat.console_skill_resolver import (\n    MENTION_SIGIL,\n    SKILL_MENTION_SKIPPED_NOTE,\n    SKILL_UNTRUSTED_REFUSE,\n    SkillCommandCandidate,\n    cap_skill_args,\n    find_embedded_mentions,\n    resolve_skill_command,\n)\nfrom tldw_chatbook.Chat.console_trace_custom_pii import (\n    redact_pii_value_for_ruleset_revision,\n)\nfrom tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet\n    TraceCallPersistenceError,\n)\nfrom tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id\nfrom tldw_chatbook.Chat.console_trace_provenance import (\n    ConsoleRequestRoute,\n    ConsoleTraceCaptureMode,\n    DerivedTraceProvenance,\n    ProviderArtifactTraceProvenance,\n    SavedRevisionTraceProvenance,\n    TraceProvenance,\n    TraceProvenancePersistenceError,\n    TraceProvenanceSource,\n    TraceTransformKind,\n    admit_message_provenance,\n    compaction_transform_provenance,\n    frozen_policy_from_provenance,\n    request_route_provenance,\n)\nfrom tldw_chatbook.Chat.console_trace_redaction import (\n    BUILTIN_PII_RULESET_REVISION_ID,\n    CREDENTIAL_FILTER_VERSION,\n    CREDENTIAL_SANITIZER_UNAVAILABLE,\n    PII_DETECTOR_UNAVAILABLE,\n    CredentialSanitizer,\n    PIIRedactionSpan,\n)\nfrom tldw_chatbook.Chat.console_turn_context import (\n    ConsoleCharacterAuthoritySnapshot,\n    ConsoleProjectAuthoritySnapshot,\n    ConsoleProjectBindingSnapshot,\n    ConsoleTurnConfigurationSnapshot,\n    ConsoleTurnCustodyRequest,\n    ConsoleTurnExecutionContext,\n    capture_change_review_admission,\n    resolve_turn_persona_policy_rules,\n    resolve_turn_tool_policy_profile_id,\n)\nfrom tldw_chatbook.Chat.console_turn_preparation import (\n    ConsolePreparationPauseKind,\n    ConsolePreparationTransition,\n    ConsoleTurnPreparation,\n    ConsoleTurnPreparationState,\n    admit_one_shot_capture_off,\n    build_console_request_for_preparation,\n    initial_preparation_state,\n    pause_for_trace_call_failure,\n    pause_temporary_capture_on,\n)\nfrom tldw_chatbook.Chat.library_preparation import (\n    LibraryPreparationContribution,\n    library_preparation_event_for_outcome,\n)\nfrom tldw_chatbook.Chat.message_metadata import (\n    MESSAGE_ORIGIN_AGENT_WAKE,\n    MESSAGE_ORIGIN_HOOK,\n    MessageMetadata,\n)\nfrom tldw_chatbook.Chat.prompt_history import PromptHistory\nfrom tldw_chatbook.Chat.provider_continuation import (\n    ContinuationConflictError,\n    ContinuationRestoreTarget,\n    ProviderContinuationCheckpoint,\n    validate_continuation_restore,\n)\nfrom tldw_chatbook.Chat.rag_scope import EffectiveScope\nfrom tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository\nfrom tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (\n    TOOL_DESCRIPTION_CAPTURE_CAP,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 359
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 2,
+      "row": 36
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from typing import (\n    TYPE_CHECKING,\n    Any,\n    Literal,\n    Protocol,\n    TypedDict,\n)\nfrom collections.abc import Awaitable, Callable, Sequence",
+          "end_location": {
+            "column": 2,
+            "row": 36
+          },
+          "location": {
+            "column": 1,
+            "row": 27
+          }
+        }
+      ],
+      "message": "Import from `collections.abc`"
+    },
+    "location": {
+      "column": 1,
+      "row": 27
+    },
+    "message": "Import from `collections.abc` instead: `Awaitable`, `Callable`, `Sequence`",
+    "name": "deprecated-import",
+    "noqa_row": 27,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 30,
+      "row": 295
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from tldw_chatbook.Chat.console_roleplay_identity import (\n    ConsoleMessagePresentation,\n    ConsolePresentationContext,\n    resolve_console_message_presentation,\n    resolve_send_system_prompt,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 298
+          },
+          "location": {
+            "column": 1,
+            "row": 292
+          }
+        }
+      ],
+      "message": "Remove unused import: `tldw_chatbook.Chat.console_roleplay_identity.expand_character_template`"
+    },
+    "location": {
+      "column": 5,
+      "row": 295
+    },
+    "message": "`tldw_chatbook.Chat.console_roleplay_identity.expand_character_template` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 295,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 368
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from tldw_chatbook.Agents.builtin_tool_gate import (\n    DENIAL_POLICY,\n    LOCAL_TOOLS_DEFAULT_ENABLED,\n    build_builtin_gate,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 369
+          },
+          "location": {
+            "column": 1,
+            "row": 364
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 364
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 364,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 498
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from tldw_chatbook.Agents.mcp_tool_provider import (\n    MCPPendingCall,\n    MCPToolProvider,\n    approval_effects_for_tool,\n)\nfrom tldw_chatbook.Agents.project_instruction_resolver import (\n    InstructionSnapshot,\n    ProjectInstructionResolver,\n    StartupInstructionCandidate,\n)\nfrom tldw_chatbook.Agents.run_context import current_run_actor, current_run_id\n\n# NOTE (boot budget, ADR-097): `Agents.persona_policy` is imported lazily\n# (annotation-only `PersonaToolPolicy` under TYPE_CHECKING; the parsing and\n# floor helpers are imported inside their per-run use sites) so the module\n# stays out of the UI-ready module census.\nfrom tldw_chatbook.Agents.session_todo_store import (\n    SessionTodoStore,\n    TodoChangeCallback,\n)\nfrom tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolExecutionPolicy\nfrom tldw_chatbook.Agents.tool_refusals import TOOL_KILL_SWITCH_REFUSAL\nfrom tldw_chatbook.Chat.console_cost_tracker import (\n    PayloadFingerprint,\n    fingerprint_payload,\n)\nfrom tldw_chatbook.Chat.console_provider_gateway import (\n    ConsoleProviderResolution,\n    ConsoleProviderStreamSignals,\n    ProviderProprietaryThinkingEvidence,\n    ProviderThinkingDelta,\n)\nfrom tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture\nfrom tldw_chatbook.Chat.console_thinking_history import (\n    EffectiveThinkingHistoryPolicy,\n    ProviderThinkingSidecar,\n    ThinkingReplayTarget,\n    effective_thinking_history_policy,\n    resolve_thinking_history,\n)\nfrom tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)\n    describe_stream_failure,\n)\nfrom tldw_chatbook.Chat.provider_readiness import provider_config_key\nfrom tldw_chatbook.Chat.provider_usage import ProviderUsage\nfrom tldw_chatbook.Chat.thinking_blocks import (\n    THINKING_ENVELOPE_VERSION,\n    ThinkingEnvelope,\n    ThinkingHistoryPolicy,\n    normalize_thinking_history_policy,\n    parse_thinking_blocks_json,\n)\n\n# task-24458: these two providers pull the whole workspace tool-execution\n# cluster (`Tools.workspace_tool_executor` -> `Tools.{git,local,patch,\n# virtual_cli}_tool_impls`, `Tools.workspace_root_pin`,\n# `Tools.workspace_tool_protocol`, `Utils.filesystem_identity`) and they were\n# resident by `_ui_ready` purely because this controller imports them at module\n# scope. Nothing needs them until a session actually composes a provider, so\n# they are imported at their three runtime use sites instead. Every annotation\n# in this module is a string (`from __future__ import annotations` above), so\n# no type reference here evaluates at runtime.\nfrom tldw_chatbook.config import (\n    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,\n    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,\n    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,\n    ConfigMutationResult,\n    apply_console_capture_settings,\n    coerce_bool_setting,\n    coerce_int_setting,\n    get_cli_setting,\n    get_runtime_config_snapshot,\n    runtime_capture_policy,\n)\nfrom tldw_chatbook.Library.library_rag_service import (\n    LibraryRagSearchRequest,\n    _outcome_from_service_result,\n)\nfrom tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS\nfrom tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION\nfrom tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY\nfrom tldw_chatbook.model_capabilities import (\n    anthropic_model_rejects_fixed_thinking_budget,\n    is_vision_capable,\n    moonshot_model_returns_reasoning_content,\n    moonshot_model_supports_reasoning_effort,\n    zai_model_supports_reasoning_effort,\n)\nfrom tldw_chatbook.runtime_policy.bootstrap import (\n    load_default_runtime_source_state,\n)\nfrom tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError\nfrom tldw_chatbook.Tools.file_operation_tools import path_precheck_failed\nfrom tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService\nfrom tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService\nfrom tldw_chatbook.UI.Views.RAGSearch.search_handoff import (\n    build_library_rag_evidence_bundle,\n)\nfrom tldw_chatbook.Utils.input_validation import validate_console_draft\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 500
+          },
+          "location": {
+            "column": 1,
+            "row": 400
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 400
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 400,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "RUF100",
+    "end_location": {
+      "column": 65,
+      "row": 462
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 138,
+            "row": 462
+          },
+          "location": {
+            "column": 51,
+            "row": 462
+          }
+        }
+      ],
+      "message": "Remove unused `noqa` directive"
+    },
+    "location": {
+      "column": 53,
+      "row": 462
+    },
+    "message": "Unused `noqa` directive (unused: `F401`)",
+    "name": "unused-noqa",
+    "noqa_row": 462,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 78,
+      "row": 513
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from tldw_chatbook.Agents.agent_models import ToolCall\n    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate\n    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider\n    from tldw_chatbook.Agents.profile_tool_provider import ProfileToolProvider\n    from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider\n    from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider\n    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge\n    from tldw_chatbook.MCP.hub_tool_catalog import HubTool\n    from tldw_chatbook.Personal_Context.context_service import (\n        ProfileContextService,\n        ProfileContextSnapshot,\n    )\n    from tldw_chatbook.Personal_Context.service import PersonalContextService\n",
+          "end_location": {
+            "column": 1,
+            "row": 514
+          },
+          "location": {
+            "column": 1,
+            "row": 501
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 501
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 501,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 64,
+      "row": 809
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ProjectInstructionControlState",
+          "end_location": {
+            "column": 64,
+            "row": 809
+          },
+          "location": {
+            "column": 32,
+            "row": 809
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 32,
+      "row": 809
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 809,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "B009",
+    "end_location": {
+      "column": 54,
+      "row": 944
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "value.st_file_attributes",
+          "end_location": {
+            "column": 54,
+            "row": 944
+          },
+          "location": {
+            "column": 18,
+            "row": 944
+          }
+        }
+      ],
+      "message": "Replace `getattr` with attribute access"
+    },
+    "location": {
+      "column": 18,
+      "row": 944
+    },
+    "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "get-attr-with-constant",
+    "noqa_row": 944,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/get-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "RUF100",
+    "end_location": {
+      "column": 54,
+      "row": 1206
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 81,
+            "row": 1206
+          },
+          "location": {
+            "column": 38,
+            "row": 1206
+          }
+        }
+      ],
+      "message": "Remove unused `noqa` directive"
+    },
+    "location": {
+      "column": 40,
+      "row": 1206
+    },
+    "message": "Unused `noqa` directive (non-enabled: `SLF001`)",
+    "name": "unused-noqa",
+    "noqa_row": 1206,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+  },
+  {
+    "cell": null,
+    "code": "RUF100",
+    "end_location": {
+      "column": 72,
+      "row": 1210
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 72,
+            "row": 1210
+          },
+          "location": {
+            "column": 56,
+            "row": 1210
+          }
+        }
+      ],
+      "message": "Remove unused `noqa` directive"
+    },
+    "location": {
+      "column": 58,
+      "row": 1210
+    },
+    "message": "Unused `noqa` directive (non-enabled: `SLF001`)",
+    "name": "unused-noqa",
+    "noqa_row": 1210,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 50,
+      "row": 1674
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 50,
+            "row": 1674
+          },
+          "location": {
+            "column": 34,
+            "row": 1674
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 34,
+      "row": 1674
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1674,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 37,
+      "row": 1881
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list[dict[str, Any]]",
+          "end_location": {
+            "column": 37,
+            "row": 1881
+          },
+          "location": {
+            "column": 15,
+            "row": 1881
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 15,
+      "row": 1881
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1881,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 28,
+      "row": 1882
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list[dict[str, Any]]",
+          "end_location": {
+            "column": 28,
+            "row": 1882
+          },
+          "location": {
+            "column": 6,
+            "row": 1882
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 6,
+      "row": 1882
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1882,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 54,
+      "row": 1914
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 54,
+            "row": 1914
+          },
+          "location": {
+            "column": 44,
+            "row": 1914
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 44,
+      "row": 1914
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1914,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 27,
+      "row": 1915
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 27,
+            "row": 1915
+          },
+          "location": {
+            "column": 11,
+            "row": 1915
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 11,
+      "row": 1915
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1915,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 35,
+      "row": 1927
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 35,
+            "row": 1927
+          },
+          "location": {
+            "column": 19,
+            "row": 1927
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 19,
+      "row": 1927
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1927,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 36,
+      "row": 1944
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list[MCPPendingCall]",
+          "end_location": {
+            "column": 36,
+            "row": 1944
+          },
+          "location": {
+            "column": 14,
+            "row": 1944
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 14,
+      "row": 1944
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1944,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 59,
+      "row": 1993
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 59,
+            "row": 1993
+          },
+          "location": {
+            "column": 43,
+            "row": 1993
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 43,
+      "row": 1993
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1993,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 31,
+      "row": 1994
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 31,
+            "row": 1994
+          },
+          "location": {
+            "column": 21,
+            "row": 1994
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 1994
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 1994,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 49,
+      "row": 2069
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 49,
+            "row": 2069
+          },
+          "location": {
+            "column": 39,
+            "row": 2069
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2069
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2069,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 36,
+      "row": 2092
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "BuiltinToolGate",
+          "end_location": {
+            "column": 36,
+            "row": 2092
+          },
+          "location": {
+            "column": 19,
+            "row": 2092
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 19,
+      "row": 2092
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2092,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 44,
+      "row": 2093
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "BuiltinToolProvider",
+          "end_location": {
+            "column": 44,
+            "row": 2093
+          },
+          "location": {
+            "column": 23,
+            "row": 2093
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 23,
+      "row": 2093
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2093,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 55,
+      "row": 2095
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 55,
+            "row": 2095
+          },
+          "location": {
+            "column": 39,
+            "row": 2095
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2095
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2095,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 31,
+      "row": 2102
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 31,
+            "row": 2102
+          },
+          "location": {
+            "column": 21,
+            "row": 2102
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 2102
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2102,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 49,
+      "row": 2249
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 49,
+            "row": 2249
+          },
+          "location": {
+            "column": 39,
+            "row": 2249
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2249
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2249,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 46,
+      "row": 2299
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 46,
+            "row": 2299
+          },
+          "location": {
+            "column": 30,
+            "row": 2299
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 30,
+      "row": 2299
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2299,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 55,
+      "row": 2300
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 55,
+            "row": 2300
+          },
+          "location": {
+            "column": 39,
+            "row": 2300
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2300
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2300,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 47,
+      "row": 2372
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 47,
+            "row": 2372
+          },
+          "location": {
+            "column": 31,
+            "row": 2372
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 31,
+      "row": 2372
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2372,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 25,
+      "row": 2486
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 2485
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 2485,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 48,
+      "row": 2489
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 48,
+            "row": 2489
+          },
+          "location": {
+            "column": 32,
+            "row": 2489
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 32,
+      "row": 2489
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2489,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 53,
+      "row": 2506
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "list[MCPPendingCall]",
+          "end_location": {
+            "column": 53,
+            "row": 2506
+          },
+          "location": {
+            "column": 31,
+            "row": 2506
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 31,
+      "row": 2506
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2506,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 25,
+      "row": 2627
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 2626
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 2626,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 34,
+      "row": 2636
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "LocalToolProvider",
+          "end_location": {
+            "column": 34,
+            "row": 2636
+          },
+          "location": {
+            "column": 15,
+            "row": 2636
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 15,
+      "row": 2636
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2636,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 55,
+      "row": 2637
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 55,
+            "row": 2637
+          },
+          "location": {
+            "column": 39,
+            "row": 2637
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2637
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2637,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 31,
+      "row": 2638
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 31,
+            "row": 2638
+          },
+          "location": {
+            "column": 21,
+            "row": 2638
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 2638
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2638,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 49,
+      "row": 2665
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 49,
+            "row": 2665
+          },
+          "location": {
+            "column": 39,
+            "row": 2665
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2665
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2665,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 39,
+      "row": 2670
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 39,
+            "row": 2670
+          },
+          "location": {
+            "column": 23,
+            "row": 2670
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 23,
+      "row": 2670
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2670,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 48,
+      "row": 2688
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 48,
+            "row": 2688
+          },
+          "location": {
+            "column": 32,
+            "row": 2688
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 32,
+      "row": 2688
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2688,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 37,
+      "row": 2743
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ManagedSkillProposalGate",
+          "end_location": {
+            "column": 37,
+            "row": 2743
+          },
+          "location": {
+            "column": 11,
+            "row": 2743
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 11,
+      "row": 2743
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2743,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 55,
+      "row": 2744
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 55,
+            "row": 2744
+          },
+          "location": {
+            "column": 39,
+            "row": 2744
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2744
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2744,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 31,
+      "row": 2745
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 31,
+            "row": 2745
+          },
+          "location": {
+            "column": 21,
+            "row": 2745
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 2745
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2745,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 49,
+      "row": 2748
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 49,
+            "row": 2748
+          },
+          "location": {
+            "column": 39,
+            "row": 2748
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2748
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2748,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 35,
+      "row": 2786
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "VirtualCliProvider",
+          "end_location": {
+            "column": 35,
+            "row": 2786
+          },
+          "location": {
+            "column": 15,
+            "row": 2786
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 15,
+      "row": 2786
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2786,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 55,
+      "row": 2787
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 55,
+            "row": 2787
+          },
+          "location": {
+            "column": 39,
+            "row": 2787
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2787
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2787,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 31,
+      "row": 2788
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 31,
+            "row": 2788
+          },
+          "location": {
+            "column": 21,
+            "row": 2788
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 2788
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2788,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 49,
+      "row": 2796
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 49,
+            "row": 2796
+          },
+          "location": {
+            "column": 39,
+            "row": 2796
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2796
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2796,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 37,
+      "row": 2813
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "RawShellToolProvider",
+          "end_location": {
+            "column": 37,
+            "row": 2813
+          },
+          "location": {
+            "column": 15,
+            "row": 2813
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 15,
+      "row": 2813
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2813,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 55,
+      "row": 2814
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 55,
+            "row": 2814
+          },
+          "location": {
+            "column": 39,
+            "row": 2814
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2814
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2814,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 31,
+      "row": 2815
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 31,
+            "row": 2815
+          },
+          "location": {
+            "column": 21,
+            "row": 2815
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 2815
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2815,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 49,
+      "row": 2818
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 49,
+            "row": 2818
+          },
+          "location": {
+            "column": 39,
+            "row": 2818
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2818
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2818,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 42,
+      "row": 2850
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 42,
+            "row": 2850
+          },
+          "location": {
+            "column": 32,
+            "row": 2850
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 32,
+      "row": 2850
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2850,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 31,
+      "row": 2851
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 31,
+            "row": 2851
+          },
+          "location": {
+            "column": 21,
+            "row": 2851
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 2851
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2851,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 49,
+      "row": 2885
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 49,
+            "row": 2885
+          },
+          "location": {
+            "column": 39,
+            "row": 2885
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 2885
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 2885,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 78,
+      "row": 3181
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "CapturePurgeResult",
+          "end_location": {
+            "column": 78,
+            "row": 3181
+          },
+          "location": {
+            "column": 58,
+            "row": 3181
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 58,
+      "row": 3181
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3181,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 80,
+      "row": 3185
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "CapturePurgeResult",
+          "end_location": {
+            "column": 80,
+            "row": 3185
+          },
+          "location": {
+            "column": 60,
+            "row": 3185
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 60,
+      "row": 3185
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3185,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 66,
+      "row": 3360
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ProfileContextSnapshot",
+          "end_location": {
+            "column": 66,
+            "row": 3360
+          },
+          "location": {
+            "column": 42,
+            "row": 3360
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 42,
+      "row": 3360
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3360,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 3536
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 3536
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 3536,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 3550
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 3550
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 3550,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 50,
+      "row": 3605
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ConsoleAgentBridge | None",
+          "end_location": {
+            "column": 50,
+            "row": 3605
+          },
+          "location": {
+            "column": 23,
+            "row": 3605
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 23,
+      "row": 3605
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3605,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 75,
+      "row": 3609
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Callable[[str | None, str], str] | None",
+          "end_location": {
+            "column": 75,
+            "row": 3609
+          },
+          "location": {
+            "column": 34,
+            "row": 3609
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 34,
+      "row": 3609
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3609,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 76,
+      "row": 3610
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Callable[[str | None, str, list], str] | None",
+          "end_location": {
+            "column": 76,
+            "row": 3610
+          },
+          "location": {
+            "column": 29,
+            "row": 3610
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 29,
+      "row": 3610
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3610,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 69,
+      "row": 3611
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Callable[..., Awaitable[Any]] | None",
+          "end_location": {
+            "column": 69,
+            "row": 3611
+          },
+          "location": {
+            "column": 31,
+            "row": 3611
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 31,
+      "row": 3611
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3611,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 80,
+      "row": 3612
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Callable[[], ConsoleSessionSettings] | None",
+          "end_location": {
+            "column": 80,
+            "row": 3612
+          },
+          "location": {
+            "column": 35,
+            "row": 3612
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 35,
+      "row": 3612
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3612,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 69,
+      "row": 3613
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Callable[..., Any | None] | None",
+          "end_location": {
+            "column": 69,
+            "row": 3613
+          },
+          "location": {
+            "column": 35,
+            "row": 3613
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 35,
+      "row": 3613
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3613,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 90,
+      "row": 3616
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Callable[[str], ConsoleTurnConfigurationSnapshot] | None",
+          "end_location": {
+            "column": 90,
+            "row": 3616
+          },
+          "location": {
+            "column": 32,
+            "row": 3616
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 32,
+      "row": 3616
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3616,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 69,
+      "row": 3617
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Callable[[str], bool] | None",
+          "end_location": {
+            "column": 69,
+            "row": 3617
+          },
+          "location": {
+            "column": 39,
+            "row": 3617
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 39,
+      "row": 3617
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3617,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 66,
+      "row": 3618
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Callable[[], Mapping[str, Any]] | None",
+          "end_location": {
+            "column": 66,
+            "row": 3618
+          },
+          "location": {
+            "column": 26,
+            "row": 3618
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 26,
+      "row": 3618
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3618,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 56,
+      "row": 3628
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "PersonaBuddyConsoleAdapter | None",
+          "end_location": {
+            "column": 56,
+            "row": 3628
+          },
+          "location": {
+            "column": 21,
+            "row": 3628
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 21,
+      "row": 3628
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3628,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 53,
+      "row": 3635
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "Callable[[], Any] | None",
+          "end_location": {
+            "column": 53,
+            "row": 3635
+          },
+          "location": {
+            "column": 27,
+            "row": 3635
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 27,
+      "row": 3635
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 3635,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 3733
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 3733
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 3733,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 4107
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 4107
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4107,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 4556
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 4556
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4556,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 4609
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 4609
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4609,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 45,
+      "row": 4856
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 32,
+      "row": 4856
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 4856,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 5125
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5125
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 5125,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 5177
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 5177
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 5177,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 5200
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 5200
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 5200,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 5623
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5623
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 5623,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 6335
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 6335
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 6335,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 6350
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 6350
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 6350,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 6421
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 6421
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 6421,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 6528
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 6528
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 6528,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 6559
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 6559
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 6559,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 70,
+      "row": 6706
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 21,
+      "row": 6706
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 6706,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 6727
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 6727
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 6727,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 6870
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 6870
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 6870,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 6913
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 6913
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 6913,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 7021
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 7021
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 7021,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 7136
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 7136
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 7136,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 7245
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 7245
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 7245,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 7279
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 7279
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 7279,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 7573
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 7573
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 7573,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 7575
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 7575
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 7575,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 7591
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 7591
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 7591,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 74,
+      "row": 7918
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 7918
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 7918,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 7972
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 7972
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 7972,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 8134
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 8134
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 8134,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 8169
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 8169
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 8169,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 37,
+      "row": 8210
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 28,
+      "row": 8210
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 8210,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 8268
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 8268
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 8268,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 83,
+      "row": 8627
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 8627
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 8627,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 9151
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 9151
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 9151,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 10163
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 10163
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 10163,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 10503
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 10503
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 10503,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 10905
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 10905
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 10905,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 11426
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 11426
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 11426,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 11899
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 11899
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 11899,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 12151
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 12151
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 12151,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 68,
+      "row": 12584
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ConsoleAgentBridge | None",
+          "end_location": {
+            "column": 68,
+            "row": 12584
+          },
+          "location": {
+            "column": 41,
+            "row": 12584
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 41,
+      "row": 12584
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 12584,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "SIM103",
+    "end_location": {
+      "column": 20,
+      "row": 12990
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "return not callable(getattr(self._agent_bridge, \"fence_fleet\", None))",
+          "end_location": {
+            "column": 20,
+            "row": 12990
+          },
+          "location": {
+            "column": 9,
+            "row": 12988
+          }
+        }
+      ],
+      "message": "Inline condition"
+    },
+    "location": {
+      "column": 9,
+      "row": 12988
+    },
+    "message": "Return the negated condition directly",
+    "name": "needless-bool",
+    "noqa_row": 12988,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/needless-bool"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 48,
+      "row": 13441
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 48,
+            "row": 13441
+          },
+          "location": {
+            "column": 32,
+            "row": 13441
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 32,
+      "row": 13441
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 13441,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 48,
+      "row": 13633
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "MCPPendingCall",
+          "end_location": {
+            "column": 48,
+            "row": 13633
+          },
+          "location": {
+            "column": 32,
+            "row": 13633
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 32,
+      "row": 13633
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 13633,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 21,
+      "row": 13824
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 13823
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 13823,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 90,
+      "row": 14492
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "            from tldw_chatbook.UI.Navigation.main_navigation import (\n                set_console_attention,\n            )\n",
+          "end_location": {
+            "column": 1,
+            "row": 14493
+          },
+          "location": {
+            "column": 1,
+            "row": 14492
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 13,
+      "row": 14492
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 14492,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 21,
+      "row": 14721
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 14720
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 14720,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 26,
+      "row": 14919
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "BuiltinToolGate",
+          "end_location": {
+            "column": 26,
+            "row": 14919
+          },
+          "location": {
+            "column": 9,
+            "row": 14919
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 9,
+      "row": 14919
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 14919,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 34,
+      "row": 14921
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 34,
+            "row": 14921
+          },
+          "location": {
+            "column": 24,
+            "row": 14921
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 24,
+      "row": 14921
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 14921,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 60,
+      "row": 15011
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 60,
+            "row": 15011
+          },
+          "location": {
+            "column": 50,
+            "row": 15011
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 50,
+      "row": 15011
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15011,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 45,
+      "row": 15123
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "HubTool",
+          "end_location": {
+            "column": 45,
+            "row": 15123
+          },
+          "location": {
+            "column": 36,
+            "row": 15123
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 36,
+      "row": 15123
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15123,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 44,
+      "row": 15139
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "HubTool",
+          "end_location": {
+            "column": 44,
+            "row": 15139
+          },
+          "location": {
+            "column": 35,
+            "row": 15139
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 35,
+      "row": 15139
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15139,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 42,
+      "row": 15234
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "HubTool",
+          "end_location": {
+            "column": 42,
+            "row": 15234
+          },
+          "location": {
+            "column": 33,
+            "row": 15234
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 33,
+      "row": 15234
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15234,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 34,
+      "row": 15284
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 34,
+            "row": 15284
+          },
+          "location": {
+            "column": 24,
+            "row": 15284
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 24,
+      "row": 15284
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15284,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 41,
+      "row": 15318
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "HubTool",
+          "end_location": {
+            "column": 41,
+            "row": 15318
+          },
+          "location": {
+            "column": 32,
+            "row": 15318
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 32,
+      "row": 15318
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15318,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 35,
+      "row": 15346
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "HubTool",
+          "end_location": {
+            "column": 35,
+            "row": 15346
+          },
+          "location": {
+            "column": 26,
+            "row": 15346
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 26,
+      "row": 15346
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15346,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 34,
+      "row": 15360
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "HubTool",
+          "end_location": {
+            "column": 34,
+            "row": 15360
+          },
+          "location": {
+            "column": 25,
+            "row": 15360
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 25,
+      "row": 15360
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15360,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 44,
+      "row": 15368
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "HubTool",
+          "end_location": {
+            "column": 44,
+            "row": 15368
+          },
+          "location": {
+            "column": 35,
+            "row": 15368
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 35,
+      "row": 15368
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15368,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 43,
+      "row": 15380
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "HubTool",
+          "end_location": {
+            "column": 43,
+            "row": 15380
+          },
+          "location": {
+            "column": 34,
+            "row": 15380
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 34,
+      "row": 15380
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15380,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 34,
+      "row": 15415
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ToolCall",
+          "end_location": {
+            "column": 34,
+            "row": 15415
+          },
+          "location": {
+            "column": 24,
+            "row": 15415
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 24,
+      "row": 15415
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15415,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 15441
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 15441
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 15441,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 41,
+      "row": 15450
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "HubTool",
+          "end_location": {
+            "column": 41,
+            "row": 15450
+          },
+          "location": {
+            "column": 32,
+            "row": 15450
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 32,
+      "row": 15450
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 15450,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 15466
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 15466
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 15466,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 21,
+      "row": 17144
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 17143
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 17143,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 21,
+      "row": 17810
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 17808
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 17808,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 17808
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 17808
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 17808,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 17885
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 17885
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 17885,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 17897
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 17897
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 17897,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 37,
+      "row": 17910
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 17910
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 17910,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 18537
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 18537
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 18537,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 18557
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 18557
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 18557,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 18601
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 18601
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 18601,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 18719
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 18719
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 18719,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 18991
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 18991
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 18991,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 19040
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 19040
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 19040,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 83,
+      "row": 19056
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "ImpersonateResult",
+          "end_location": {
+            "column": 83,
+            "row": 19056
+          },
+          "location": {
+            "column": 64,
+            "row": 19056
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 64,
+      "row": 19056
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 19056,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 19167
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 19167
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 19167,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 19745
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 19745
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 19745,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP041",
+    "end_location": {
+      "column": 52,
+      "row": 19862
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "TimeoutError",
+          "end_location": {
+            "column": 52,
+            "row": 19862
+          },
+          "location": {
+            "column": 16,
+            "row": 19862
+          }
+        }
+      ],
+      "message": "Replace with builtin `TimeoutError`"
+    },
+    "location": {
+      "column": 16,
+      "row": 19862
+    },
+    "message": "Replace aliased errors with `TimeoutError`",
+    "name": "timeout-error-alias",
+    "noqa_row": 19862,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/timeout-error-alias"
+  },
+  {
+    "cell": null,
+    "code": "RUF012",
+    "end_location": {
+      "column": 6,
+      "row": 20548
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 30,
+      "row": 20541
+    },
+    "message": "Mutable default value for class attribute",
+    "name": "mutable-class-default",
+    "noqa_row": 20541,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/mutable-class-default"
+  },
+  {
+    "cell": null,
+    "code": "RUF012",
+    "end_location": {
+      "column": 6,
+      "row": 20551
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 41,
+      "row": 20549
+    },
+    "message": "Mutable default value for class attribute",
+    "name": "mutable-class-default",
+    "noqa_row": 20549,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/mutable-class-default"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 21571
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 21571
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 21571,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 21661
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 21661
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 21661,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 21902
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 21902
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 21902,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 21949
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 21949
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 21949,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 22053
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 22053
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 22053,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 17,
+      "row": 22150
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 22147
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 22147,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 22147
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 22147
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 22147,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 17,
+      "row": 22163
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 22162
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 22162,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 22162
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 22162
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 22162,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 22267
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 22267
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 22267,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 22359
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 22359
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 22359,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 23023
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 23023
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 23023,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 23147
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 23147
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 23147,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 23333
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 23333
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 23333,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 23536
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 23536
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 23536,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 23590
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 23590
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 23590,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP034",
+    "end_location": {
+      "column": 18,
+      "row": 23660
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "\n                    \"Conversation context reached its compaction threshold. \"\n                    \"Review and approve compaction before sending again.\"\n                ",
+          "end_location": {
+            "column": 18,
+            "row": 23660
+          },
+          "location": {
+            "column": 17,
+            "row": 23657
+          }
+        }
+      ],
+      "message": "Remove extraneous parentheses"
+    },
+    "location": {
+      "column": 17,
+      "row": 23657
+    },
+    "message": "Avoid extraneous parentheses",
+    "name": "extraneous-parentheses",
+    "noqa_row": 23657,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/extraneous-parentheses"
+  },
+  {
+    "cell": null,
+    "code": "UP034",
+    "end_location": {
+      "column": 18,
+      "row": 23704
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "\n                    \"This request cannot fit the selected model. \"\n                    f\"{limiting_reason} Summarizing older turns cannot make \"\n                    f\"enough room. {recovery}\"\n                ",
+          "end_location": {
+            "column": 18,
+            "row": 23704
+          },
+          "location": {
+            "column": 17,
+            "row": 23700
+          }
+        }
+      ],
+      "message": "Remove extraneous parentheses"
+    },
+    "location": {
+      "column": 17,
+      "row": 23700
+    },
+    "message": "Avoid extraneous parentheses",
+    "name": "extraneous-parentheses",
+    "noqa_row": 23700,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/extraneous-parentheses"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 23717
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 23717
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 23717,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 23750
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 23750
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 23750,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 23787
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 23787
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 23787,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP034",
+    "end_location": {
+      "column": 18,
+      "row": 23817
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "\n                    \"Conversation compaction could not reach the configured \"\n                    \"target in one bounded summary call.\"\n                ",
+          "end_location": {
+            "column": 18,
+            "row": 23817
+          },
+          "location": {
+            "column": 17,
+            "row": 23814
+          }
+        }
+      ],
+      "message": "Remove extraneous parentheses"
+    },
+    "location": {
+      "column": 17,
+      "row": 23814
+    },
+    "message": "Avoid extraneous parentheses",
+    "name": "extraneous-parentheses",
+    "noqa_row": 23814,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/extraneous-parentheses"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 25,
+      "row": 23940
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 23939
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 23939,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 23939
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 23939
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 23939,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "UP034",
+    "end_location": {
+      "column": 14,
+      "row": 23982
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "\n                \"Conversation compaction did not complete; the provider request \"\n                \"was not sent.\"\n            ",
+          "end_location": {
+            "column": 14,
+            "row": 23982
+          },
+          "location": {
+            "column": 13,
+            "row": 23979
+          }
+        }
+      ],
+      "message": "Remove extraneous parentheses"
+    },
+    "location": {
+      "column": 13,
+      "row": 23979
+    },
+    "message": "Avoid extraneous parentheses",
+    "name": "extraneous-parentheses",
+    "noqa_row": 23979,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/extraneous-parentheses"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 24177
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 24177
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 24177,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 24346
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 24346
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 24346,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 24851
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 24851
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 24851,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 24880
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 24880
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 24880,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 24907
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 24907
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 24907,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 24935
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 24935
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 24935,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 25480
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 25480
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 25480,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 25635
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 25635
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 25635,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 25804
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 25804
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 25804,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 25961
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 25961
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 25961,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "RUF100",
+    "end_location": {
+      "column": 21,
+      "row": 26156
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 74,
+            "row": 26156
+          },
+          "location": {
+            "column": 1,
+            "row": 26156
+          }
+        }
+      ],
+      "message": "Remove unused `noqa` directive"
+    },
+    "location": {
+      "column": 9,
+      "row": 26156
+    },
+    "message": "Unused `noqa` directive (non-enabled: `E731`)",
+    "name": "unused-noqa",
+    "noqa_row": 26156,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+  },
+  {
+    "cell": null,
+    "code": "RUF100",
+    "end_location": {
+      "column": 68,
+      "row": 26173
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 68,
+            "row": 26173
+          },
+          "location": {
+            "column": 54,
+            "row": 26173
+          }
+        }
+      ],
+      "message": "Remove unused `noqa` directive"
+    },
+    "location": {
+      "column": 56,
+      "row": 26173
+    },
+    "message": "Unused `noqa` directive (non-enabled: `E731`)",
+    "name": "unused-noqa",
+    "noqa_row": 26173,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 27377
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 27377
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 27377,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 27464
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 27464
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 27464,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 27551
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 27551
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 27551,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "SIM102",
+    "end_location": {
+      "column": 82,
+      "row": 28627
+    },
+    "filename": "/private/tmp/archive-capture-task1-baseline-controller.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 28614
+    },
+    "message": "Use a single `if` statement instead of nested `if` statements",
+    "name": "collapsible-if",
+    "noqa_row": 28614,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/collapsible-if"
+  }
+]

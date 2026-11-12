@@ -1,0 +1,36 @@
+....F............................F...................................... [ 54%]
+...........................................................              [100%]
+=================================== FAILURES ===================================
+__________ test_durable_fork_immediate_publication_and_original_retry __________
+Tests/Chat/test_console_prompt_mixin_forks.py:106: in test_durable_fork_immediate_publication_and_original_retry
+    assert copied.metadata.mixin_attempt_id != json.loads(dict(snapshot.prompt_mixin_history.markers)[copied.id])["mixin_attempt_id"]
+E   AssertionError: assert '7bfcab50-2019-4a87-870c-bcc660cfc920' != '7bfcab50-2019-4a87-870c-bcc660cfc920'
+E    +  where '7bfcab50-2019-4a87-870c-bcc660cfc920' = MessageMetadata(engine='', provider='', model='', interrupted=False, transcript_status='', template_kind='', template_...ceipt_id='', root_fork=False, mixin_attempt_id='7bfcab50-2019-4a87-870c-bcc660cfc920', mixin_snapshot_schema_version=1).mixin_attempt_id
+E    +    where MessageMetadata(engine='', provider='', model='', interrupted=False, transcript_status='', template_kind='', template_...ceipt_id='', root_fork=False, mixin_attempt_id='7bfcab50-2019-4a87-870c-bcc660cfc920', mixin_snapshot_schema_version=1) = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='partial answer', id='c026fa3d-7094-43bd-...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').metadata
+____________ test_legacy_fork_ignores_unrelated_malformed_metadata _____________
+Tests/DB/test_console_prompt_mixins.py:606: in test_legacy_fork_ignores_unrelated_malformed_metadata
+    copy_conversation_mixins(
+tldw_chatbook/DB/console_prompt_mixins.py:423: in copy_conversation_mixins
+    state = read_fork_state(cursor, source_conversation_id, {key: key for key in message_ids})
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/console_prompt_mixins.py:369: in read_fork_state
+    metadata = _metadata(row[0])
+               ^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/console_prompt_mixins.py:123: in _metadata
+    raise MixinSnapshotUnavailableError("mixin_invalid_anchor_metadata")
+E   tldw_chatbook.Chat.console_prompt_mixins.MixinSnapshotUnavailableError: mixin_invalid_anchor_metadata
+============================= slowest 25 durations =============================
+1.67s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_queue_retry_current_regenerate_reopen[True]
+1.59s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_queue_retry_current_regenerate_reopen[False]
+1.26s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[True]
+1.13s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-False]
+1.13s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-True]
+1.10s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_resend_continue_and_missing_original
+1.08s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[False]
+1.03s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_original_retry_survives_reopen_deleted_source_and_latest_loss[True-True]
+
+(17 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_fork_immediate_publication_and_original_retry
+FAILED Tests/DB/test_console_prompt_mixins.py::test_legacy_fork_ignores_unrelated_malformed_metadata
+2 failed, 129 passed in 106.30s (0:01:46)

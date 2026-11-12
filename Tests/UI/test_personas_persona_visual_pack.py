@@ -234,3 +234,29 @@ async def test_custom_state_dialog_returns_plain_typed_values():
             "[bold]Deep focus[/bold]",
             "mood",
         )
+
+
+@pytest.mark.parametrize(
+    ("availability", "dirty", "busy", "activatable", "enabled"),
+    (
+        ("available", False, None, True, True),
+        ("unsaved", False, None, True, False),
+        ("server", False, None, True, False),
+        ("available", True, None, True, False),
+        ("available", False, "saving", True, False),
+        ("available", False, None, False, False),
+    ),
+)
+async def test_buddy_management_shortcut_requires_saved_clean_idle_local_pack(
+    availability, dirty, busy, activatable, enabled
+):
+    async with PackApp().run_test(size=(80, 24)) as pilot:
+        widget = pilot.app.query_one(PersonasPersonaVisualPackWidget)
+        widget.show_inventory(_inventory(activatable=activatable), dirty=dirty)
+        widget.set_availability(availability)
+        if availability == "available":
+            widget.set_busy(busy)
+        button = widget.query_one("#personas-persona-visual-buddy", Button)
+        assert button.disabled is not enabled
+        assert str(button.label) == "Manage Buddy…"
+        assert button.tooltip == "Open Buddy management. Artwork changes require Apply."

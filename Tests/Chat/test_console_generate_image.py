@@ -87,6 +87,7 @@ def test_parse_table(args, backend, style, prompt):
     assert (parsed.backend, parsed.style, parsed.prompt) == (backend, style, prompt)
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_style_exact_id():
     """An exact (case-insensitive) template id resolves directly."""
     res = resolve_style_token("STYLE_anime")
@@ -95,12 +96,14 @@ def test_resolve_style_exact_id():
     assert res.ambiguous == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_style_exact_name_spaces_and_underscores():
     """Exact name matching treats spaces and underscores as interchangeable."""
     assert resolve_style_token("anime style").template.id == "style_anime"
     assert resolve_style_token("Anime_Style").template.id == "style_anime"
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_style_unique_prefix():
     """A prefix unique across ids+names resolves to the one match."""
     res = resolve_style_token("waterc")
@@ -109,6 +112,7 @@ def test_resolve_style_unique_prefix():
     assert res.ambiguous == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_style_ambiguous_prefix_lists_matched_ids():
     """A prefix matching several templates is ambiguous and lists the ids."""
     res = resolve_style_token("style_")
@@ -116,6 +120,7 @@ def test_resolve_style_ambiguous_prefix_lists_matched_ids():
     assert res.ambiguous == ("style_anime", "style_cyberpunk", "style_watercolor")
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_style_unknown_token():
     """A token matching nothing resolves to no template and no ambiguity."""
     res = resolve_style_token("totally_not_a_style")
@@ -123,6 +128,7 @@ def test_resolve_style_unknown_token():
     assert res.ambiguous == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_styled_request_substitutes_placeholder():
     """The user prompt fills every context-mapped placeholder."""
     template = get_template("quick_simple")
@@ -132,6 +138,7 @@ def test_compose_styled_request_substitutes_placeholder():
     assert params == {"width": 512, "height": 512, "steps": 15, "cfg_scale": 7.0}
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_styled_request_appends_when_prompt_unconsumed():
     """When the template doesn't consume the prompt, it is appended (invariant)."""
     base_template = get_template("style_anime")
@@ -448,6 +455,7 @@ def test_batch_build_exception_collected():
     assert "build boom" in out.errors[0]
 
 
+@pytest.mark.bootstrap_profile
 def test_batch_threads_style_and_template_params():
     """style_name/width/height/steps/cfg_scale reach build() and the variant meta."""
     captured = []
@@ -590,6 +598,7 @@ def test_batch_resolved_seed_none_falls_back_to_variant_seed():
 # --- build_context_prompt ---------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_composes_from_pairs():
     """The last user message anchors the composed prompt via the template."""
     template = get_template("chat_scene_visual")
@@ -605,6 +614,7 @@ def test_build_context_prompt_composes_from_pairs():
     assert params == template.default_params
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_mood_and_hints_path():
     """Multi-message context still resolves; mood/hint extraction doesn't crash
     and the last user message remains the anchor."""
@@ -620,12 +630,14 @@ def test_build_context_prompt_mood_and_hints_path():
     assert "a mysterious shrine standing in the mist" in prompt
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_none_on_no_pairs():
     """No pairs at all -> None (nothing to build a prompt from)."""
     template = get_template("chat_scene_visual")
     assert build_context_prompt([], template) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_none_on_whitespace_only_pairs():
     """Every pair is empty/whitespace-only content -> None."""
     template = get_template("chat_scene_visual")
@@ -633,6 +645,7 @@ def test_build_context_prompt_none_on_whitespace_only_pairs():
     assert build_context_prompt(pairs, template) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_anchor_guard_appends_last_message():
     """When the template consumes nothing (unrecognized id -> apply_template_to_prompt
     yields an empty base), the last-message anchor is still appended rather than
@@ -654,6 +667,7 @@ def test_build_context_prompt_anchor_guard_appends_last_message():
     assert params == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_explicit_style_beats_default():
     """An explicit style template is used verbatim, not swapped for chat_scene_visual."""
     template = get_template("style_anime")
@@ -667,6 +681,7 @@ def test_build_context_prompt_explicit_style_beats_default():
 # --- prepare_generation_request -----------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_styled_prompt_composes_and_carries_template_params():
     """Prompt + resolved @style -> composed prompt, template negative/params/style name."""
     args = GenerateImageArgs(backend=None, prompt="a red dragon", style="anime")
@@ -697,6 +712,7 @@ def test_prepare_plain_prompt_passthrough():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_unknown_style_refusal_lists_all_ids():
     """An unresolvable @style token refuses and lists every valid style id."""
     args = GenerateImageArgs(backend=None, prompt="a red dragon", style="nope")
@@ -707,6 +723,7 @@ def test_prepare_unknown_style_refusal_lists_all_ids():
         assert template_id in result.reason
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_ambiguous_style_refusal_lists_matches():
     """An ambiguous @style prefix refuses and lists only the matched ids."""
     args = GenerateImageArgs(backend=None, prompt="a red dragon", style="style_")
@@ -731,6 +748,7 @@ def test_prepare_empty_prompt_whitespace_only_conversation_usage_refusal():
     assert result == GenerationRefusal(reason=GENERATE_IMAGE_USAGE_TEXT)
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_empty_prompt_with_content_uses_default_context_style():
     """No prompt but usable conversation content -> context path, chat_scene_visual default."""
     args = GenerateImageArgs(backend=None, prompt="", style=None)
@@ -742,6 +760,7 @@ def test_prepare_empty_prompt_with_content_uses_default_context_style():
     assert "a quiet lakeside cabin at dawn" in result.prompt
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_empty_prompt_with_content_and_style_uses_that_style():
     """No prompt, usable content, AND an explicit @style -> that style's template, not the default."""
     args = GenerateImageArgs(backend=None, prompt="", style="anime")
@@ -1198,6 +1217,7 @@ def test_call_chat_api_with_timeout_submit_raises_saturated_error_directly():
 # --- build_context_prompt_with_llm -----------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_with_llm_none_options_matches_keyword_path():
     """`llm_context=None` behaves exactly like calling `build_context_prompt` directly."""
     template = get_template("chat_scene_visual")
@@ -1207,6 +1227,7 @@ def test_build_context_prompt_with_llm_none_options_matches_keyword_path():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_with_llm_empty_pairs_returns_none_regardless():
     template = get_template("chat_scene_visual")
     options = _llm_options(
@@ -1216,6 +1237,7 @@ def test_build_context_prompt_with_llm_empty_pairs_returns_none_regardless():
     assert build_context_prompt_with_llm([("user", "   ")], template, options) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_with_llm_success_flows_through_template_pipeline():
     """A successful LLM composition still goes through apply_template_to_prompt +
     the anchor-append invariant, exactly like the keyword path -- so negative_prompt/
@@ -1236,6 +1258,7 @@ def test_build_context_prompt_with_llm_success_flows_through_template_pipeline()
     assert "a knight explores a glowing cave" not in prompt
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_with_llm_falls_back_on_llm_failure():
     """Any LLM failure -> identical output to calling build_context_prompt directly."""
     template = get_template("chat_scene_visual")
@@ -1249,6 +1272,7 @@ def test_build_context_prompt_with_llm_falls_back_on_llm_failure():
     assert result == build_context_prompt(pairs, template)
 
 
+@pytest.mark.bootstrap_profile
 def test_build_context_prompt_with_llm_falls_back_when_disabled():
     template = get_template("chat_scene_visual")
     pairs = [("user", "a dimly lit tavern with a roaring fireplace")]
@@ -1262,6 +1286,7 @@ def test_build_context_prompt_with_llm_falls_back_when_disabled():
 # --- prepare_generation_request: llm_context threading ----------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_empty_prompt_llm_context_success_used_over_keyword_extractor():
     args = GenerateImageArgs(backend=None, prompt="", style=None)
     pairs = [("user", "a quiet lakeside cabin at dawn")]
@@ -1275,6 +1300,7 @@ def test_prepare_empty_prompt_llm_context_success_used_over_keyword_extractor():
     assert result.negative_prompt == template.negative_prompt
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_empty_prompt_llm_context_failure_falls_back_to_keyword_result():
     args = GenerateImageArgs(backend=None, prompt="", style=None)
     pairs = [("user", "a quiet lakeside cabin at dawn")]
@@ -1288,6 +1314,7 @@ def test_prepare_empty_prompt_llm_context_failure_falls_back_to_keyword_result()
     assert "a quiet lakeside cabin at dawn" in with_llm.prompt
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_empty_prompt_llm_context_default_none_matches_pre_ac1_behavior():
     """Omitting llm_context entirely (positional-arg call sites elsewhere in the
     suite) is unaffected by this AC -- default is None, pure keyword path."""

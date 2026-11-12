@@ -16,7 +16,7 @@ from typing import Literal
 
 import httpx
 
-from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
 
 from .vllm_setup import (
     SERVED_MODEL_NAME,

@@ -6,7 +6,7 @@ Integration note (2026-09-05): Renumbered from ADR-115 to ADR-121 to avoid the
 existing Personas decision's identifier. Historical execution reports may retain
 the original number; this is the same Canvas decision, with no policy change.
 Related Tasks: TASK-31226, TASK-31227, TASK-31228, TASK-31229, TASK-31230, TASK-31003
-Related: TASK-31003, ADR-069, ADR-032
+Related: TASK-31003, ADR-317, ADR-300
 
 ### Current-dev schema integration (2026-09-05, TASK-31742)
 
@@ -530,6 +530,23 @@ validated proxy/keyring posture. Independent review approved commits
 `69405e7c8d`, `e69141538f`, and `ff8a45fb65`. Quota measurements and complete
 rollout verification remain in TASK-31232's subsequent steps.
 
+### Disposable Personal Context budget preview (TASK-34800)
+
+Next Send inspection reserves the same Canvas schemas, runtime-profile guidance
+and direct/discovery policy as live first-request planning. It uses immutable
+profile and catalog metadata from the existing Canvas owner, never an executable provider, run
+registration, staging record or registration authority. The live registry's
+exact-provider authentication and mutation classification remain unchanged.
+
+Load schemas incrementally inside the shared guarded probe, after persona
+narrowing; unreadable or oversized catalogs use the same discovery fallback.
+Reuse interactive-owner capture/validation plus exact session identity through
+final snapshot publication and the Inspector's later async validation. Closure,
+disable, durable/temporary replacement, promotion or branch changes discard
+the result and buffered diagnostic sidecar. Schema-only planning cannot change Canvas selection or grant
+permission. This corrects the existing preview boundary under ADR-202; it does
+not activate memory capture or forgetting.
+
 ### Runtime quota qualification record
 
 Task 7.2 lowered V1 ceilings to 1,800 DOM nodes, 900 CSS rules, and 500
@@ -692,8 +709,8 @@ authoritative dashboards.
 - [Canvas V1 runtime compatibility and security boundary](../../Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md)
 - [Served-mode authentication and operations](../../tldw_chatbook/Web_Server/README.md)
 - [TASK-31003: Define server synchronization contract for Canvas artifacts](../tasks/task-31003%20-%20Define-server-synchronization-contract-for-Canvas-artifacts.md)
-- [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
-- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
 - [Claude Code artifacts](https://code.claude.com/docs/en/artifacts)
 - [Claude Code checkpointing](https://code.claude.com/docs/en/checkpointing)
 - [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)

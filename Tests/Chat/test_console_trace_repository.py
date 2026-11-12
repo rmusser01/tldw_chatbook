@@ -712,10 +712,13 @@ def test_call_reservation_rejects_cross_owner_segment_without_durable_row(
                 policy_id=policy_id,
             )
 
-        assert cursor.execute(
-            "SELECT COUNT(*) FROM console_trace_calls WHERE idempotency_key = ?",
-            ("cross-owner-reservation",),
-        ).fetchone()[0] == 0
+        assert (
+            cursor.execute(
+                "SELECT COUNT(*) FROM console_trace_calls WHERE idempotency_key = ?",
+                ("cross-owner-reservation",),
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_hard_deleted_conversation_atomically_detaches_trace_owner(

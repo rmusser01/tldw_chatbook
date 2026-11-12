@@ -1,0 +1,8 @@
+{
+  "initial_export": "Stopped before copying any newly selected evidence because the recognizable sk- pattern lacked a token boundary.",
+  "classification": "All396 candidate matches were the sk- substring inside task- prefixed private evidence paths; no other match metadata was found.",
+  "correction": "Recognize sk- only when not preceded by an alphanumeric or underscore; exact known local credential comparison is unchanged.",
+  "raw_values_printed": false,
+  "profile_exported": false,
+  "limit": "This fixes the observed pattern false positive; it is not a general security scan."
+}

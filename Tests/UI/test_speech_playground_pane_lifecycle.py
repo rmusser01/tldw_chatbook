@@ -241,9 +241,9 @@ def test_clone_transcript_boundary_runs_shared_input_validation(
         validate_text_input,
     )
 
-    assert playground_pane_module._validate_clone_transcript_input("  spoken words  ") == (
-        "spoken words"
-    )
+    assert playground_pane_module._validate_clone_transcript_input(
+        "  spoken words  "
+    ) == ("spoken words")
     assert calls == [("  spoken words  ", 4_096, True)]
 
 
@@ -289,6 +289,7 @@ def test_reference_required_guided_model_projects_setup_actions() -> None:
     assert "reference WAV" in ready_projection.primary_action.disabled_reason
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ready_clone_model_mounts_and_canonicalizes_path_free_setup(
     monkeypatch: pytest.MonkeyPatch,
@@ -335,9 +336,10 @@ async def test_ready_clone_model_mounts_and_canonicalizes_path_free_setup(
         )
         pane = app.query_one(SpeechPlaygroundPane)
         setup = app.query_one(SpeechCloneSetup)
-        assert "plaintext" in str(
-            setup.query_one("#speech-clone-privacy", Static).render()
-        ).lower()
+        assert (
+            "plaintext"
+            in str(setup.query_one("#speech-clone-privacy", Static).render()).lower()
+        )
         app.query_one("#tts-text-input", TextArea).text = "Generate cloned speech."
         await pilot.pause()
         ordinary_generate = app.query_one("#tts-generate-btn", Button)
@@ -408,6 +410,7 @@ async def test_ready_clone_model_mounts_and_canonicalizes_path_free_setup(
         assert primary.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_applied_clone_generation_change_clears_prior_private_draft(
     monkeypatch: pytest.MonkeyPatch,
@@ -448,9 +451,9 @@ async def test_applied_clone_generation_change_clears_prior_private_draft(
     async with app.run_test(size=(100, 30)) as pilot:
         await _wait_until(pilot, lambda: len(app.query(SpeechCloneSetup)) == 1)
         pane = app.query_one(SpeechPlaygroundPane)
-        app.query_one("#speech-clone-reference-text", TextArea).text = (
-            "Exact words from the old applied generation."
-        )
+        app.query_one(
+            "#speech-clone-reference-text", TextArea
+        ).text = "Exact words from the old applied generation."
         pane._handle_clone_reference_selection(source)
         await _wait_until(pilot, lambda: pane._clone_setup_canonical is not None)
         prior_calls = service.runtime_observation_calls
@@ -565,6 +568,7 @@ async def test_replacing_clone_source_joins_prior_canonicalization_before_next(
         assert pane._clone_setup_source_path == sources[2]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unmount_joins_active_clone_canonicalization_before_clearing_draft(
     monkeypatch: pytest.MonkeyPatch,
@@ -642,6 +646,7 @@ async def test_unmount_joins_active_clone_canonicalization_before_clearing_draft
         assert pane._clone_setup_canonical is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clone_picker_cancel_and_field_errors_preserve_the_other_input(
     monkeypatch: pytest.MonkeyPatch,
@@ -696,13 +701,13 @@ async def test_clone_picker_cancel_and_field_errors_preserve_the_other_input(
         pane._handle_clone_reference_selection(tmp_path)
         await _wait_until(
             pilot,
-            lambda: pane._clone_setup_error
-            == "Choose a valid, bounded PCM WAV reference.",
+            lambda: (
+                pane._clone_setup_error == "Choose a valid, bounded PCM WAV reference."
+            ),
         )
         await _wait_until(
             pilot,
-            lambda: getattr(app.focused, "id", None)
-            == "speech-clone-reference-choose",
+            lambda: getattr(app.focused, "id", None) == "speech-clone-reference-choose",
         )
         assert transcript.text == "Exact words from the valid WAV."
         assert pane._clone_setup_source_path == tmp_path
@@ -717,6 +722,7 @@ async def test_clone_picker_cancel_and_field_errors_preserve_the_other_input(
         assert transcript.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stopped_clone_model_tests_before_mounting_voice_setup(
     monkeypatch: pytest.MonkeyPatch,
@@ -1051,6 +1057,7 @@ def test_audio_cpp_runtime_projection_labels_bounded_managed_diagnostics() -> No
     assert projection.dropped_diagnostics_copy == "7 older lines were dropped."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runtime_diagnostics_are_collapsed_and_interactions_are_passive(
     monkeypatch: pytest.MonkeyPatch,
@@ -1077,13 +1084,15 @@ async def test_runtime_diagnostics_are_collapsed_and_interactions_are_passive(
         diagnostics = app.query_one("#audio-cpp-runtime-diagnostics", Collapsible)
         await _wait_until(
             pilot,
-            lambda: "generation: 5"
-            in str(
-                app.query_one(
-                    "#audio-cpp-diagnostics-generation",
-                    Static,
-                ).render()
-            ).lower(),
+            lambda: (
+                "generation: 5"
+                in str(
+                    app.query_one(
+                        "#audio-cpp-diagnostics-generation",
+                        Static,
+                    ).render()
+                ).lower()
+            ),
         )
 
         assert diagnostics.collapsed is True
@@ -1167,6 +1176,7 @@ class _RuntimeObservationService(FakeTTSService):
         await self._run_lifecycle("shutdown")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_cpp_runtime_card_mounts_passively_and_updates_in_place(
     monkeypatch: pytest.MonkeyPatch,
@@ -1217,6 +1227,7 @@ async def test_audio_cpp_runtime_card_mounts_passively_and_updates_in_place(
         assert service.synthesize_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unhealthy_runtime_has_one_restart_and_a_labeled_test_probe(
     monkeypatch: pytest.MonkeyPatch,
@@ -1261,6 +1272,7 @@ async def test_unhealthy_runtime_has_one_restart_and_a_labeled_test_probe(
         assert str(probe.label) == "Refresh"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runtime_primary_action_reflows_when_passive_state_changes_its_label(
     monkeypatch: pytest.MonkeyPatch,
@@ -1400,6 +1412,7 @@ async def test_audio_cpp_runtime_poll_uses_a_bounded_five_second_interval(
     assert intervals == [5.0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switch_back_before_runtime_read_cannot_reuse_stale_primary_action(
     monkeypatch: pytest.MonkeyPatch,
@@ -1454,6 +1467,7 @@ async def test_switch_back_before_runtime_read_cannot_reuse_stale_primary_action
         release_observation.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_cpp_runtime_card_links_to_canonical_global_settings(
     monkeypatch: pytest.MonkeyPatch,
@@ -1480,6 +1494,7 @@ async def test_audio_cpp_runtime_card_links_to_canonical_global_settings(
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_managed_start_and_test_runs_async_and_preserves_current_result(
     monkeypatch: pytest.MonkeyPatch,
@@ -1551,6 +1566,7 @@ async def test_managed_start_and_test_runs_async_and_preserves_current_result(
         assert service.synthesize_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_running_managed_test_exposes_busy_reasons_on_disabled_actions(
     monkeypatch: pytest.MonkeyPatch,
@@ -1596,6 +1612,7 @@ async def test_running_managed_test_exposes_busy_reasons_on_disabled_actions(
         await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_managed_primary_routes_to_restart_and_apply(
     monkeypatch: pytest.MonkeyPatch,
@@ -1637,6 +1654,7 @@ async def test_pending_managed_primary_routes_to_restart_and_apply(
         assert service.synthesize_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switching_back_during_lifecycle_restores_visible_busy_controls(
     monkeypatch: pytest.MonkeyPatch,
@@ -1691,6 +1709,7 @@ async def test_switching_back_during_lifecycle_restores_visible_busy_controls(
         await _wait_until(pilot, lambda: str(primary.label) == "Test Connection")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_cpp_lifecycle_completion_does_not_disable_selected_provider(
     monkeypatch: pytest.MonkeyPatch,
@@ -1746,6 +1765,7 @@ async def test_audio_cpp_lifecycle_completion_does_not_disable_selected_provider
         assert generate.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saved_external_primary_applies_settings_and_stops_managed_child(
     monkeypatch: pytest.MonkeyPatch,
@@ -1794,6 +1814,7 @@ async def test_saved_external_primary_applies_settings_and_stops_managed_child(
         assert service.runtime_observation.applied_mode == "external"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_shutdown_is_distinct_from_playback_stop_and_does_not_restart(
     monkeypatch: pytest.MonkeyPatch,
@@ -1842,6 +1863,7 @@ async def test_server_shutdown_is_distinct_from_playback_stop_and_does_not_resta
         assert service.catalog_calls.count(("audio_cpp", False)) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lifecycle_failure_uses_safe_copy_and_keeps_existing_result(
     monkeypatch: pytest.MonkeyPatch,
@@ -1877,6 +1899,7 @@ async def test_lifecycle_failure_uses_safe_copy_and_keeps_existing_result(
         assert pane.current_audio_file == existing
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lifecycle_and_passive_status_failure_restore_safe_recovery_controls(
     monkeypatch: pytest.MonkeyPatch,
@@ -1941,6 +1964,7 @@ async def test_lifecycle_and_passive_status_failure_restore_safe_recovery_contro
             assert "checked" in str(action.tooltip).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unknown_runtime_test_does_not_reuse_stale_pending_restart_action(
     monkeypatch: pytest.MonkeyPatch,
@@ -2308,6 +2332,7 @@ async def test_clone_profile_review_completion_cannot_save_replaced_result(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_guided_primary_starts_verifies_and_uses_existing_generation_path(
     monkeypatch: pytest.MonkeyPatch,
@@ -2346,6 +2371,7 @@ async def test_guided_primary_starts_verifies_and_uses_existing_generation_path(
         assert service.synthesize_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_guided_sample_completion_is_fenced_after_provider_switch_round_trip(
     monkeypatch: pytest.MonkeyPatch,
@@ -2396,6 +2422,7 @@ async def test_guided_sample_completion_is_fenced_after_provider_switch_round_tr
         assert app.generation_events == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_late_guided_sample_result_cannot_overwrite_shutdown_busy_state(
     tmp_path: Path,
@@ -2465,6 +2492,7 @@ async def test_late_guided_sample_result_cannot_overwrite_shutdown_busy_state(
         await app.workers.wait_for_complete()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_guided_primary_click_executes_visible_immutable_action(
     monkeypatch: pytest.MonkeyPatch,
@@ -2507,6 +2535,7 @@ async def test_guided_primary_click_executes_visible_immutable_action(
         assert app.generation_events[0].request.model_id == "model-a"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_guided_generation_projects_and_executes_retry_sample(
     monkeypatch: pytest.MonkeyPatch,
@@ -2548,6 +2577,7 @@ async def test_failed_guided_generation_projects_and_executes_retry_sample(
         assert app.generation_events[1].request.model_id == "model-a"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounting_external_audio_cpp_speech_lab_never_starts_managed_child(
     monkeypatch: pytest.MonkeyPatch,
@@ -2599,6 +2629,7 @@ class _PaneScreen(Screen):
         yield body
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
 async def test_runtime_card_actions_remain_scroll_reachable_at_supported_widths(
@@ -2642,6 +2673,7 @@ async def test_runtime_card_actions_remain_scroll_reachable_at_supported_widths(
         assert pane.max_scroll_y >= 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "terminal_size", ((134, 34), (100, 30), (94, 28), (94, 22), (80, 24))
@@ -2714,6 +2746,7 @@ async def test_clone_setup_controls_and_status_remain_scroll_reachable(
         assert pane.max_scroll_y > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ready_clone_setup_preserves_editable_text_and_current_result_geometry(
     monkeypatch: pytest.MonkeyPatch,
@@ -2765,9 +2798,9 @@ async def test_ready_clone_setup_preserves_editable_text_and_current_result_geom
         )
         pane = screen.query_one(SpeechPlaygroundPane)
         screen.query_one("#tts-text-input", TextArea).text = "Generate speech."
-        screen.query_one("#speech-clone-reference-text", TextArea).text = (
-            "Exact words in the reference."
-        )
+        screen.query_one(
+            "#speech-clone-reference-text", TextArea
+        ).text = "Exact words in the reference."
         pane._handle_clone_reference_selection(source)
         await _wait_until(pilot, lambda: pane._clone_setup_canonical is not None)
         generated = _native_profile_artifact(tmp_path / "generated.wav")
@@ -2862,6 +2895,7 @@ def _patch_cli_setting(
 # =====================================================================
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mount_uses_descriptors_and_resolves_only_selected_provider(
     audio_cpp_playground: FakeTTSService,
@@ -2909,6 +2943,7 @@ async def test_mount_uses_descriptors_and_resolves_only_selected_provider(
     assert service.synthesize_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_configuration_change_marks_catalog_stale_without_connecting(
     audio_cpp_playground: FakeTTSService,
@@ -3213,6 +3248,7 @@ async def test_superseded_same_model_voice_result_cannot_overwrite_newer_success
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_catalog_generation_is_reserved_before_exclusive_worker_cancellation(
     audio_cpp_playground: FakeTTSService,
@@ -3276,6 +3312,7 @@ async def test_catalog_generation_is_reserved_before_exclusive_worker_cancellati
         assert pane._catalogs["audio_cpp"] is newer_catalog
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_generation_is_reserved_before_exclusive_worker_cancellation(
     audio_cpp_playground: FakeTTSService,
@@ -3386,6 +3423,7 @@ async def test_voice_discovery_does_not_cancel_inflight_catalog_refresh(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
     audio_cpp_playground: FakeTTSService,
@@ -3436,6 +3474,7 @@ async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
         assert app.query_one("#tts-generate-btn", Button).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_catalog_revision_preserves_exact_voice_removed_by_refresh(
     audio_cpp_playground: FakeTTSService,
@@ -3471,6 +3510,7 @@ async def test_catalog_revision_preserves_exact_voice_removed_by_refresh(
         assert app.notices == notices_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_discovery_failure_preserves_pending_explicit_voice(
     audio_cpp_playground: FakeTTSService,
@@ -3697,6 +3737,7 @@ async def test_stale_model_voice_failure_cannot_release_current_pending_voice(
         await _wait_until(pilot, lambda: pane._pending_voice_selections == {})
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_legacy_control_state_is_restored_after_audio_cpp_switch(
     audio_cpp_playground: FakeTTSService,
@@ -3751,6 +3792,7 @@ async def test_legacy_control_state_is_restored_after_audio_cpp_switch(
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
@@ -3815,6 +3857,7 @@ async def test_legacy_provider_defaults_and_labels_are_preserved(
         assert _label_for_value(voice_select, voice_id) == voice_label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_higgs_saved_profile_is_prefixed_exactly_once_in_request(
     audio_cpp_playground: FakeTTSService,
@@ -3877,6 +3920,7 @@ async def test_higgs_saved_profile_is_prefixed_exactly_once_in_request(
 #: below were `xfail(strict=True)` against the pre-fix code; both now pass.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("health", "expected_copy"),
@@ -3934,6 +3978,7 @@ async def test_audio_cpp_health_states_use_fixed_safe_recovery_copy(
 # `_load_provider_catalog_worker` (`speech_catalog_mixin.py`, the genuine-
 # supersession check) so it always falls through to `discard` -- this test
 # alone goes red; health2/health3 and the TASK-3000 tests stay green.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_second_load_after_genuine_config_change_marks_provider_stale(
     audio_cpp_playground: FakeTTSService,
@@ -3973,6 +4018,7 @@ async def test_second_load_after_genuine_config_change_marks_provider_stale(
 # =====================================================================
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_playback_uses_dedicated_widget_worker_group(
     audio_cpp_playground: FakeTTSService,
@@ -4031,6 +4077,7 @@ async def test_playback_uses_dedicated_widget_worker_group(
         assert worker_calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_playback_uses_artifact_captured_before_worker_runs(
     audio_cpp_playground: FakeTTSService,
@@ -4128,6 +4175,7 @@ async def test_playback_uses_artifact_captured_before_worker_runs(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("pause_before_replacement", "terminal_action"),
@@ -4245,6 +4293,105 @@ async def test_playback_lease_survives_replacement_until_playback_ends(
     assert old_path not in handler._playground_file_leases
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_handed_off_playback_ends_its_polling_and_unmount_releases_the_copy(
+    audio_cpp_playground: FakeTTSService,
+    tmp_path: Path,
+) -> None:
+    """TASK-39040 fix round 2 (Qodo). A clip the Windows fallback hands to the
+    default app has no process, so on `854e00b9e3` the pane's progress task
+    polled every 100 ms for as long as the pane lived and held the result's
+    lease (new with that PR). Now the task ends on the hand-off, the status
+    says where the clip plays, the transport is hidden, the lease is kept for
+    the hand-off bound instead of released, and the pane's unmount (its
+    existing release point) releases it at once."""
+    del audio_cpp_playground
+    clip = tmp_path / "handed.wav"
+    clip.write_bytes(b"handed")
+    artifact = STTSGeneratedAudio(
+        path=clip,
+        provider_id="audio_cpp",
+        model_id="handed-model",
+        voice_id=None,
+        source_text="handed",
+        operation_id="handed-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+
+    class Player:
+        def __init__(self) -> None:
+            self.state = PlaybackState.IDLE
+
+        async def get_state(self) -> PlaybackState:
+            return self.state
+
+        async def stop(self) -> bool:
+            # A handed-off clip releases the slot without claiming a stop.
+            self.state = PlaybackState.IDLE
+            return False
+
+        async def play(self, _path: Path) -> bool:
+            self.state = PlaybackState.HANDED_OFF
+            return True
+
+        async def is_playing(self) -> bool:
+            return False
+
+        async def pause(self) -> bool:
+            return False
+
+        async def resume(self) -> bool:
+            return False
+
+        async def get_position(self) -> float:
+            return 0.0
+
+        async def get_duration(self) -> float:
+            return 1.0
+
+    app = _PaneHost()
+    handler = STTSEventHandler(app)
+    handler._accept_playground_artifact(artifact)
+    app._stts_handler = handler
+    player = Player()
+    app.audio_player = player
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        pane = app.query_one(SpeechPlaygroundPane)
+
+        pane._play_audio()
+        await _wait_until(
+            pilot,
+            lambda: (
+                pane._play_worker_task is None
+                and pane._progress_timer_task is not None
+                and pane._progress_timer_task.done()
+            ),
+        )
+
+        assert clip.exists()
+        assert handler._playground_file_leases[clip] == 1
+        assert pane._active_playback_release is None
+        assert len(pane._hand_off_releases) == 1
+        assert str(app.query_one("#audio-player-status", Static).render()) == (
+            "Playing in your default audio app. Pause or stop it there."
+        )
+        assert app.query_one("#audio-player-transport").has_class("hidden")
+        assert app.query_one("#audio-progress-bar").has_class("hidden")
+        assert "Playback complete" not in [message for message, _ in app.notices]
+
+    # The unmount released the playback lease without waiting out the bound.
+    # The file itself stays: it is still the pane's current result, and only
+    # a replaced result is deleted on release.
+    assert clip not in handler._playground_file_leases
+    assert pane._hand_off_releases == {}
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_uses_artifact_captured_before_dialog_completes(
     audio_cpp_playground: FakeTTSService,
@@ -4317,6 +4464,7 @@ async def test_export_uses_artifact_captured_before_dialog_completes(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_cancel_releases_captured_artifact(
     audio_cpp_playground: FakeTTSService,
@@ -4367,6 +4515,7 @@ async def test_export_cancel_releases_captured_artifact(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_export_rejects_unsafe_dialog_destination(
     audio_cpp_playground: FakeTTSService,
@@ -4393,6 +4542,7 @@ async def test_audio_export_rejects_unsafe_dialog_destination(
     assert "dangerous pattern" in app.notices[-1][0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unmount_cancels_only_widget_owned_worker_groups(
     audio_cpp_playground: FakeTTSService,
@@ -4422,6 +4572,7 @@ async def test_unmount_cancels_only_widget_owned_worker_groups(
     cleanup.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_mount_rehydrates_handler_owned_artifact(
     audio_cpp_playground: FakeTTSService,
@@ -4468,6 +4619,7 @@ async def test_new_mount_rehydrates_handler_owned_artifact(
     cleanup.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_mount_rehydrates_active_generation_without_starting_another(
     audio_cpp_playground: FakeTTSService,
@@ -4501,6 +4653,7 @@ async def test_new_mount_rehydrates_active_generation_without_starting_another(
 # =====================================================================
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fresh_catalog_missing_exact_profile_stays_visible_but_unavailable(
     audio_cpp_playground: FakeTTSService,
@@ -4530,6 +4683,7 @@ async def test_fresh_catalog_missing_exact_profile_stays_visible_but_unavailable
     assert service.synthesize_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_complete_voice_observation_missing_exact_voice_blocks_profile(
     audio_cpp_playground: FakeTTSService,
@@ -4577,6 +4731,7 @@ async def test_complete_voice_observation_missing_exact_voice_blocks_profile(
 # this branch's widget deletion). Fixed by making `_sync_generate_enabled`
 # derive the button's disabled state from `_generation_readiness_error`
 # instead of re-deriving its own answer, so the two can no longer disagree.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_profile_cannot_generate_while_voice_validation_is_pending(
     audio_cpp_playground: FakeTTSService,
@@ -4763,6 +4918,7 @@ async def test_configuration_change_for_unrelated_provider_does_not_detach_profi
         await service.voice_finished_by_request[request_key].wait()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_catalog_downgrades_available_profile_to_warned_unverified_attempt(
     audio_cpp_playground: FakeTTSService,
@@ -4802,6 +4958,7 @@ async def test_stale_catalog_downgrades_available_profile_to_warned_unverified_a
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_service_acquisition_failure_projects_exact_disabled_recovery(
     monkeypatch: pytest.MonkeyPatch,
@@ -4842,6 +4999,7 @@ async def test_profile_service_acquisition_failure_projects_exact_disabled_recov
         assert banner.has_class("profile-preview-unavailable")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_long_exact_profile_ids_stay_reachable_via_tooltip(
     audio_cpp_playground: FakeTTSService,
@@ -4897,6 +5055,7 @@ async def test_long_exact_profile_ids_stay_reachable_via_tooltip(
             assert select.tooltip.plain == exact_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unavailable_exact_profile_catalog_failure_projects_but_stays_blocked(
     audio_cpp_playground: FakeTTSService,
@@ -4924,6 +5083,7 @@ async def test_unavailable_exact_profile_catalog_failure_projects_but_stays_bloc
         assert app.generation_events == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "voice_error",
@@ -4971,6 +5131,7 @@ async def test_fresh_not_configured_catalog_makes_exact_profile_unavailable(
         assert app.generation_events == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("availability", "expected_status"),
@@ -5015,6 +5176,7 @@ async def test_closed_catalog_health_projects_exact_profile_but_stays_blocked(
         assert "blocked" in banner_copy or "unavailable" in banner_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("original_availability", "failure_availability"),
@@ -5063,6 +5225,7 @@ async def test_current_voice_discovery_success_restores_only_original_preset_sta
         assert preset.availability == original_availability
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "edited_control", ("provider", "model", "voice", "format", "speed", "options")
@@ -5166,6 +5329,7 @@ async def test_provider_edit_during_initial_profile_catalog_load_ends_preset(
 # =====================================================================
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_profile_action_is_visible_and_focusable_at_narrow_width(
     audio_cpp_playground: FakeTTSService,
@@ -5205,6 +5369,7 @@ async def test_save_profile_action_is_visible_and_focusable_at_narrow_width(
         assert player.content_region.contains_region(button.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_successful_native_artifact_save_uses_only_immutable_provenance(
     audio_cpp_playground: FakeTTSService,
@@ -5261,6 +5426,7 @@ async def test_successful_native_artifact_save_uses_only_immutable_provenance(
         assert artifact_path.exists()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_mode", ("worker", "unmount"))
 async def test_cancelled_profile_name_modal_is_dismissed_without_saving(
@@ -5319,6 +5485,7 @@ async def test_cancelled_profile_name_modal_is_dismissed_without_saving(
         assert app.profile_service_requests == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("error", "expected_copy"),
@@ -5377,6 +5544,7 @@ async def test_save_profile_failures_use_value_independent_recovery_copy(
         assert app.profile_service_requests == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unavailable_lazy_profile_service_keeps_audio_artifact_owned_by_handler(
     audio_cpp_playground: FakeTTSService,

@@ -156,7 +156,11 @@ that the highlight was saved but the list could not refresh; reopen
 
 Saving a capture note keeps its Save action focused and visible, scrolling Work
 when needed. At narrow sizes, use the pane grips and vertical scrolling to reach
-controls outside the current viewport.
+controls outside the current viewport. Below 64 columns with no capture open,
+the capture list takes the whole stage. With a capture open on a narrow
+terminal (up to 82 columns), the list grip gives the list the whole stage
+rather than squeezing the reader beside it, and the same grip returns to the
+capture with focus in it.
 
 ## Features & controls
 
@@ -194,7 +198,14 @@ bounded, read-only inspector of those records with **Export complete
 JSON…** and **Close inspector**. Those records cannot be created, renamed,
 deleted, restored, or added to — the local Collections service refuses
 every one of those writes — so read and export are the only two things you
-can do with them (task-32057).
+can do with them (task-32057). The export picker opens in the folder you last
+exported to this session; if the chosen `.json` file already exists, a
+"Replace existing file?" prompt names it and its folder, with **Cancel**
+focused, and only **Replace** overwrites it. The same prompt opens if
+another program creates that file after you pick it, while the export is
+running: the export never replaces a file it has not asked about. The status
+line then reads
+"Legacy recovery export complete: ~/exp/legacy-collections-recovery.json".
 
 Profiles with no legacy records never see any of this.
 

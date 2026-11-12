@@ -1,0 +1,82 @@
+{
+  "mapping": {
+    "33802": "34201",
+    "33804": "34202",
+    "33805": "34203"
+  },
+  "sweep_head": "149adb53f1d10b090e31a5f458e8c2ffcd3ca458",
+  "files": [
+    {
+      "source": "backlog/tasks/task-33805.1 - Clear-recorded-Console-baseline-test-failures-before-PR.md",
+      "target": "backlog/tasks/task-34203.1 - Clear-recorded-Console-baseline-test-failures-before-PR.md",
+      "before_sha256": "fdf67d51d63b9a595b842def1a12b95d11a4a6092927ba9bb8feb41423ebfdff",
+      "after_sha256": "ba2d3046ffa9e25873a187d375a0c8c6700f582926217e68126701d5a6881149",
+      "final_controller_sha256": "ba2d3046ffa9e25873a187d375a0c8c6700f582926217e68126701d5a6881149"
+    },
+    {
+      "source": "backlog/tasks/task-33805 - Console-workspace-or-casual-chats-with-bounded-background-starts.md",
+      "target": "backlog/tasks/task-34203 - Console-workspace-or-casual-chats-with-bounded-background-starts.md",
+      "before_sha256": "156f2f95db6c00d3094fa77437d194e0d8ce3c3a62075ff07e93c8165de989ee",
+      "after_sha256": "5ab136a5b6c9c4f7e86f4b56ac02e648908d652311376817d2e60d7cc2e60a1e",
+      "final_controller_sha256": "700b43ac1a3b39de1b44b674b954575a9b02a4528ac1095b0cbb74b3333d4089"
+    },
+    {
+      "source": "backlog/tasks/task-33802 - Design-Console-chat-destinations-and-bounded-agent-starts.md",
+      "target": "backlog/tasks/task-34201 - Design-Console-chat-destinations-and-bounded-agent-starts.md",
+      "before_sha256": "8fc6717e3fc68a4dc2a07abc927b7d533a3a5bb82172ba7864628487c7af9b97",
+      "after_sha256": "c27ede660e215b363af18dd39fbafd26f9196acb8728154c0ab3da2321467847",
+      "final_controller_sha256": "c27ede660e215b363af18dd39fbafd26f9196acb8728154c0ab3da2321467847"
+    },
+    {
+      "source": "backlog/tasks/task-33805.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md",
+      "target": "backlog/tasks/task-34203.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md",
+      "before_sha256": "fa8c2b54b9b8d0ba045e2d36aafc89635dd39bd85dbc8618606fcb02fcaad421",
+      "after_sha256": "8923c72978c5f25a85e573da0727f559cc2a13422deddecbdda7ae2335471884",
+      "final_controller_sha256": "8923c72978c5f25a85e573da0727f559cc2a13422deddecbdda7ae2335471884"
+    },
+    {
+      "source": "backlog/tasks/task-33804 - Console-shared-automatic-allowances-and-chat-start-attempts.md",
+      "target": "backlog/tasks/task-34202 - Console-shared-automatic-allowances-and-chat-start-attempts.md",
+      "before_sha256": "89d4a279fdded4d57cad7d2fc7fc291aa79d31152d55e3b5da3fa9b54ab04544",
+      "after_sha256": "8c89951f7c5134fae6f1faf2135f8600a99d7eec25fa7fdff8dde0509358a534",
+      "final_controller_sha256": "81e8f7b6026cbfb5c4f31ac43116465139d98382e9a5f156e1bf75310e496e3d"
+    },
+    {
+      "source": "backlog/decisions/211-console-chat-destinations-and-bounded-starts.md",
+      "target": "backlog/decisions/211-console-chat-destinations-and-bounded-starts.md",
+      "before_sha256": "94bb264e0ad00152e33399902c4fa0be864f4ed9d25fb1818bb9915422ce8a09",
+      "after_sha256": "e35371c5381c68882b967c8057738be44c7f99eea89cdd79054d8f9a9d8469fd",
+      "final_controller_sha256": "e35371c5381c68882b967c8057738be44c7f99eea89cdd79054d8f9a9d8469fd"
+    },
+    {
+      "source": "Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md",
+      "target": "Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md",
+      "before_sha256": "695044d1c0dd3d79faad83a7c41c926304e970b89e0b307faf0778907ccefa22",
+      "after_sha256": "e2d48c2dfc1bfee5ef65c86800654dc9703b5f44e67f21d19bf94d7eb43e9304",
+      "final_controller_sha256": "e2d48c2dfc1bfee5ef65c86800654dc9703b5f44e67f21d19bf94d7eb43e9304"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-02-console-chat-destinations-and-starts.md",
+      "target": "Docs/superpowers/plans/2026-10-02-console-chat-destinations-and-starts.md",
+      "before_sha256": "572cecfea41f2c53370ef848cbba3e092e9b4ba3ab283bc5d73f4ce9665ee925",
+      "after_sha256": "20a2d00a68be966bbe6cd6fce7cf16f586b300dea738e78903ce2c7abdeb651d",
+      "final_controller_sha256": "20a2d00a68be966bbe6cd6fce7cf16f586b300dea738e78903ce2c7abdeb651d"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-03-console-baseline-remediation.md",
+      "target": "Docs/superpowers/plans/2026-10-03-console-baseline-remediation.md",
+      "before_sha256": "f69c4f2ac8bac0c7fa9870b7a2b8285aae2f4ec697929902c73e793a6cc5fe96",
+      "after_sha256": "12e2c6d248ad4155d2b6376d51188041bb6d1d1dfbfb5c9960103865cceca77c",
+      "final_controller_sha256": "12e2c6d248ad4155d2b6376d51188041bb6d1d1dfbfb5c9960103865cceca77c"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-03-console-chat-starts-dev-integration.md",
+      "target": "Docs/superpowers/plans/2026-10-03-console-chat-starts-dev-integration.md",
+      "before_sha256": "a1b92c000a07084d0df6e98ba5e75556b1e6637e8b7ad5a446fa604f1bb6a43c",
+      "after_sha256": "2f912ef6502e8729a5876191b32709fa93f0db51a12d63f350a1bd3d0081ecb1",
+      "final_controller_sha256": "a8259e3daad0b7e89b1de898567b5334a80d97f1d61b69b57bf74f04c9690b9d"
+    }
+  ],
+  "historical_qa": "unchanged",
+  "controller_refinements": "Preserve original collision wording, clarify historical schema notes; CLI verified integration identity34203.2."
+}

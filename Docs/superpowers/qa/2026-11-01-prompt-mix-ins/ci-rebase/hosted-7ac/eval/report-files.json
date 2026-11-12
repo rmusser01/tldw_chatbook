@@ -1,0 +1,54 @@
+[
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/hosted-initial-capture.log",
+    "sha256": "aab77fb34fbd1b2b7b1e4c6c629c4df3abbcb11519277adb525f336c2b2b80ff"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/hosted-red.log",
+    "sha256": "c04fee2e0377636142ea19c0f23533e419edb412db67e545629da7bdcff1d6f4"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/observed-scopes.jsonl",
+    "sha256": "f6ba616314856f1c9a35971b0f81551c18a664aa0edd53eb55ccc42b4fd6349c"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/observed.json",
+    "sha256": "316870993ae0c3d6fd49ca7fdc585a7e09448f5656912f8f80d998fd257dd96c"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/observed.log",
+    "sha256": "1dc00a5a73981c4f81cf8554d178164c3ffd918d46e3085d7b277543880f7e36"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/observed.xml",
+    "sha256": "8331579ff07ea6bb82fc476e5f221d74b69f890a09d58c2960086f96d8f46523"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/report.md",
+    "sha256": "4282c08d4a20db6a4cf534c30b3df82b018c2fe3d3ccfb93436293c3eaccd18c"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/run.py",
+    "sha256": "93f99193795e881f0db09c3a1cd06cc2a44f42ee0f7de343810c0a75ab78036b"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/scope-comparison.json",
+    "sha256": "543e61781400554a6f8d2eecb7f52d6ab9b23e8071cf0f9f0fe90b446c4fd0d6"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/scope_probe.py",
+    "sha256": "9c6d1e4dde38a667bf6e25b07e873719e167340e227ee97058443ddc19c87e5a"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/observed-tmp/test_complete_rebackup_retains0/original/restart-output.log",
+    "sha256": "e281f18900d109fd8e489e2cc777820ec8725c9259b9009da999dfb19e80beda"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/observed-tmp/test_complete_rebackup_retains0/restored/restart-output.log",
+    "sha256": "e4b2ce5e3271f4b8a9f17fc28bdbf8523f0a12a1da7ae3fdf05d6d6f158c871b"
+  },
+  {
+    "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/observed-tmp/test_complete_rebackup_retains0/reopen.log",
+    "sha256": "7ce7c56e14225f35077f226129709a84c61c03c67866e4593587ba00d7e0dd20"
+  }
+]

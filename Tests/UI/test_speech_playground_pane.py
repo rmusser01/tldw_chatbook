@@ -14,7 +14,12 @@ from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.background_signals import wait_for_signal
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+    wait_for_background_signal,
+    wait_for_signal,
+)
 from Tests.UI.speech_playground_fixtures import (
     FakeTTSService,
     _native_profile_artifact,
@@ -41,7 +46,7 @@ from tldw_chatbook.TTS.studio_preferences import (
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
 )
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     build_provider_test_fingerprint,
     load_global_speech_tts_state,
     process_provider_test_evidence_store,
@@ -132,6 +137,7 @@ def _generated_artifact(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
 async def test_the_primary_action_is_above_the_fold(
@@ -160,6 +166,7 @@ async def test_the_primary_action_is_above_the_fold(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
 async def test_no_control_is_clipped_by_its_container(
@@ -201,6 +208,7 @@ async def test_no_control_is_clipped_by_its_container(
         assert not escaped, f"clipped by container at {size}: {escaped}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
 async def test_delivered_result_actions_are_visible_inside_result_and_viewport(
@@ -238,6 +246,7 @@ async def test_delivered_result_actions_are_visible_inside_result_and_viewport(
             assert body.region.contains_region(control.region), control_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_native_profile_save_action_tracks_generation_lifecycle(
     faked_service: FakeTTSService,
@@ -308,6 +317,7 @@ async def test_native_profile_save_action_tracks_generation_lifecycle(
         assert button.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_options_bearing_result_states_why_it_cannot_be_saved(
     faked_service: FakeTTSService,
@@ -366,6 +376,7 @@ async def test_options_bearing_result_states_why_it_cannot_be_saved(
         assert "temporary" in clean_lifecycle.casefold()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_profile_button_opens_the_name_dialog(
     faked_service: FakeTTSService,
@@ -408,6 +419,7 @@ async def test_save_profile_button_opens_the_name_dialog(
         await _wait_until(pilot, lambda: app.screen is not modal)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
 async def test_no_chip_text_is_truncated(
@@ -430,6 +442,7 @@ async def test_no_chip_text_is_truncated(
             assert text in chip.render_line(0).text, f"truncated at {size}: {text!r}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_pane_scrolls_rather_than_clipping_when_stacked(
     monkeypatch: pytest.MonkeyPatch,
@@ -451,6 +464,7 @@ async def test_the_pane_scrolls_rather_than_clipping_when_stacked(
         assert pane.virtual_size.height > pane.container_size.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_axes_and_the_text_input_are_both_present(
     monkeypatch: pytest.MonkeyPatch,
@@ -469,6 +483,7 @@ async def test_the_axes_and_the_text_input_are_both_present(
         assert screen.query_one("#speech-param-group")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("metadata", "expected_status"),
@@ -505,6 +520,7 @@ async def test_current_result_reports_only_known_artifact_facts(
         assert "0:00 / 0:00" not in time_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_complete_wav_result_has_safe_provenance_and_repeat_save_actions(
     tmp_path,
@@ -599,6 +615,7 @@ def test_current_result_provenance_bounds_and_flattens_provider_identifiers(
     assert copy.count("…") == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_current_result_disabled_actions_explain_the_current_state(
     tmp_path: Path,
@@ -640,6 +657,7 @@ async def test_current_result_disabled_actions_explain_the_current_state(
         assert "in progress" in str(repeat.tooltip).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("auto_play", [False, True])
 async def test_generation_honors_studio_auto_play_and_keyboard_recovery(
@@ -672,6 +690,7 @@ async def test_generation_honors_studio_auto_play_and_keyboard_recovery(
             assert app.query_one("#audio-play-btn", Button).has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_result_stops_active_playback_before_replacing_controls(
     tmp_path: Path,
@@ -757,6 +776,7 @@ async def test_new_result_stops_active_playback_before_replacing_controls(
         assert not save_profile.has_class("hidden")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
     tmp_path: Path,
@@ -774,6 +794,7 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
         def __init__(self) -> None:
             self.state = PlaybackState.IDLE
             self.first_get_state_started = asyncio.Event()
+            self.release_first_get_state = asyncio.Event()
             self.get_state_calls = 0
             self.played: list[Path] = []
 
@@ -781,7 +802,7 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
             self.get_state_calls += 1
             if self.get_state_calls == 1:
                 self.first_get_state_started.set()
-                await asyncio.Event().wait()
+                await self.release_first_get_state.wait()
             return self.state
 
         async def stop(self) -> bool:
@@ -834,18 +855,22 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
         pane._store_delivered_artifact(old_artifact, announce=False)
-        pane._play_audio()
-        await wait_for_signal(
-            player.first_get_state_started, what="the first playback get_state"
-        )
+        try:
+            pane._play_audio()
+            await wait_for_signal(
+                player.first_get_state_started, what="the first playback get_state"
+            )
 
-        pane._generation_complete(new_artifact)
-        await _wait_until(pilot, lambda: player.played == [new_path])
+            pane._generation_complete(new_artifact)
+            await _wait_until(pilot, lambda: player.played == [new_path])
 
-        assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
-        assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
+            assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
+            assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
+        finally:
+            player.release_first_get_state.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_navigation_fences_result_waiting_for_playback_stop(
     tmp_path: Path,
@@ -911,27 +936,33 @@ async def test_profile_navigation_fences_result_waiting_for_playback_stop(
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
         pane._store_delivered_artifact(old_artifact, announce=False)
-        pane._play_audio()
-        await _wait_until(
-            pilot,
-            lambda: (
-                player.state is PlaybackState.PLAYING and pane._play_worker_task is None
-            ),
-        )
+        try:
+            pane._play_audio()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    player.state is PlaybackState.PLAYING
+                    and pane._play_worker_task is None
+                ),
+            )
 
-        pane._generation_complete(new_artifact)
-        await wait_for_signal(
-            player.replacement_stop_started, what="the replacement playback stop"
+            pane._generation_complete(new_artifact)
+            await wait_for_signal(
+                player.replacement_stop_started, what="the replacement playback stop"
+            )
+            pane.apply_profile_preset(_profile_preset(model_id="new-profile-model"))
+        finally:
+            player.release_replacement_stop.set()
+        await asyncio.wait_for(
+            app.workers.wait_for_complete(), timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS
         )
-        pane.apply_profile_preset(_profile_preset(model_id="new-profile-model"))
-        player.release_replacement_stop.set()
-        await app.workers.wait_for_complete()
 
         assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
         assert pane.current_audio_artifact.operation_id == old_artifact.operation_id
         assert pane.current_audio_file == old_artifact.path
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
     tmp_path: Path,
@@ -999,19 +1030,20 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
         pane._store_delivered_artifact(old_artifact, announce=False)
-        pane._play_audio()
-        await _wait_until(
-            pilot,
-            lambda: (
-                player.state is PlaybackState.PLAYING and pane._play_worker_task is None
-            ),
-        )
-
-        pane._generation_complete(new_artifact)
-        await wait_for_signal(
-            player.replacement_stop_started, what="the replacement playback stop"
-        )
         try:
+            pane._play_audio()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    player.state is PlaybackState.PLAYING
+                    and pane._play_worker_task is None
+                ),
+            )
+
+            pane._generation_complete(new_artifact)
+            await wait_for_signal(
+                player.replacement_stop_started, what="the replacement playback stop"
+            )
             play = app.query_one("#audio-play-btn", Button)
             stop = app.query_one("#stop-audio-btn", Button)
             assert play.disabled is True
@@ -1022,12 +1054,15 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
             assert player.get_state_calls == get_state_calls
         finally:
             player.release_replacement_stop.set()
-        await app.workers.wait_for_complete()
+        await asyncio.wait_for(
+            app.workers.wait_for_complete(), timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS
+        )
 
         assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
         assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_secondary_diagnostics_start_collapsed_and_use_neutral_detail_rows(
     monkeypatch: pytest.MonkeyPatch,
@@ -1049,6 +1084,7 @@ async def test_secondary_diagnostics_start_collapsed_and_use_neutral_detail_rows
         assert not details.query("#tts-provider-status")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_cpp_hides_its_non_applicable_language_axis(
     monkeypatch: pytest.MonkeyPatch,
@@ -1068,6 +1104,7 @@ async def test_audio_cpp_hides_its_non_applicable_language_axis(
         assert language.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_speech_disclosures_are_compact_when_collapsed(
     monkeypatch: pytest.MonkeyPatch,
@@ -1326,6 +1363,7 @@ def faked_service(monkeypatch: pytest.MonkeyPatch) -> FakeTTSService:
     return service
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_playground_status_keeps_external_provider_and_local_deps_independent(
     faked_service: FakeTTSService,
@@ -1374,6 +1412,7 @@ async def test_playground_status_keeps_external_provider_and_local_deps_independ
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
     faked_service: FakeTTSService,
@@ -1389,6 +1428,7 @@ async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
         pane = app.query_one(SpeechPlaygroundPane)
         first_started = asyncio.Event()
         first_cancelled = asyncio.Event()
+        release_first = asyncio.Event()
         second_started = asyncio.Event()
         release_second = asyncio.Event()
         call_count = 0
@@ -1404,7 +1444,7 @@ async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
             if call_count == 1:
                 first_started.set()
                 try:
-                    await asyncio.Event().wait()
+                    await release_first.wait()
                 except asyncio.CancelledError:
                     first_cancelled.set()
                     raise
@@ -1414,17 +1454,22 @@ async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
 
         monkeypatch.setattr(faked_service, "get_catalog", get_catalog)
 
-        pane._load_provider_catalog("audio_cpp", refresh=True)
-        await wait_for_signal(first_started, what="the first catalog worker starting")
-        pane._load_provider_catalog("audio_cpp", refresh=True)
-        await wait_for_signal(
-            first_cancelled, what="the first catalog worker's cancellation"
-        )
-        await wait_for_signal(second_started, what="the second catalog worker starting")
+        try:
+            pane._load_provider_catalog("audio_cpp", refresh=True)
+            await wait_for_signal(first_started, what="the first catalog worker starting")
+            pane._load_provider_catalog("audio_cpp", refresh=True)
+            await wait_for_signal(
+                first_cancelled, what="the first catalog worker's cancellation"
+            )
+            await wait_for_signal(
+                second_started, what="the second catalog worker starting"
+            )
 
-        assert "audio_cpp" in pane._catalog_checking_providers
+            assert "audio_cpp" in pane._catalog_checking_providers
+        finally:
+            release_first.set()
+            release_second.set()
 
-        release_second.set()
         await _wait_until(
             pilot,
             lambda: "audio_cpp" not in pane._catalog_checking_providers,
@@ -1478,8 +1523,7 @@ async def test_openai_catalog_worker_uses_explicit_tts_probe_and_records_outcome
         assert captured["purpose"] == "tts_catalog"
         assert captured["provider"] == "openai"
         assert (
-            evidence.catalog_state(fingerprint)
-            is SpeechTTSConnectionState.UNSUPPORTED
+            evidence.catalog_state(fingerprint) is SpeechTTSConnectionState.UNSUPPORTED
         )
 
 
@@ -1492,6 +1536,7 @@ async def test_openai_catalog_worker_uses_explicit_tts_probe_and_records_outcome
         (SpeechTTSConnectionState.UNREACHABLE, "incompatible"),
     ),
 )
+@pytest.mark.bootstrap_profile
 async def test_latest_openai_probe_replaces_success_independently_of_hydration(
     faked_service: FakeTTSService,
     monkeypatch: pytest.MonkeyPatch,
@@ -1563,6 +1608,7 @@ async def test_latest_openai_probe_replaces_success_independently_of_hydration(
         assert evidence.catalog_state(fingerprint) is latest_state
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_openai_probe_result_is_not_attributed_after_revision_changes(
     faked_service: FakeTTSService,
@@ -1610,10 +1656,14 @@ async def test_openai_probe_result_is_not_attributed_after_revision_changes(
                 request_generation=request_generation,
             )
         )
-        await wait_for_signal(probe_started, what="the explicit catalog probe")
-        faked_service.revisions["openai"] = 2
-        release_probe.set()
-        await worker
+        try:
+            await wait_for_background_signal(
+                probe_started, worker, what="the explicit catalog probe"
+            )
+            faked_service.revisions["openai"] = 2
+        finally:
+            release_probe.set()
+            await await_background_task(worker, what="the revision-change probe")
 
         changed = build_provider_test_fingerprint(
             state,
@@ -1626,6 +1676,7 @@ async def test_openai_probe_result_is_not_attributed_after_revision_changes(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_openai_probe_result_is_not_attributed_after_fingerprint_changes(
     faked_service: FakeTTSService,
@@ -1678,33 +1729,36 @@ async def test_openai_probe_result_is_not_attributed_after_fingerprint_changes(
                 request_generation=request_generation,
             )
         )
-        await wait_for_signal(probe_started, what="the explicit catalog probe")
-        runtime_values.update(
-            {
-                "COMPREHENSIVE_CONFIG_RAW": {
-                    "app_tts": {
-                        "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech"
+        try:
+            await wait_for_background_signal(
+                probe_started, worker, what="the explicit catalog probe"
+            )
+            runtime_values.update(
+                {
+                    "COMPREHENSIVE_CONFIG_RAW": {
+                        "app_tts": {
+                            "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech"
+                        }
                     }
                 }
-            }
-        )
-        changed_state = load_global_speech_tts_state(runtime_values, environment={})
-        changed = build_provider_test_fingerprint(
-            changed_state,
-            provider_id="openai",
-            saved_revision=1,
-        )
-        assert initial != changed
-        release_probe.set()
-        await worker
+            )
+            changed_state = load_global_speech_tts_state(runtime_values, environment={})
+            changed = build_provider_test_fingerprint(
+                changed_state,
+                provider_id="openai",
+                saved_revision=1,
+            )
+            assert initial != changed
+        finally:
+            release_probe.set()
+            await await_background_task(worker, what="the fingerprint-change probe")
 
         evidence = process_provider_test_evidence_store(app)
-        assert (
-            evidence.catalog_state(initial) is SpeechTTSConnectionState.NOT_TESTED
-        )
+        assert evidence.catalog_state(initial) is SpeechTTSConnectionState.NOT_TESTED
         assert evidence.catalog_state(changed) is SpeechTTSConnectionState.NOT_TESTED
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_refresh_retains_catalog_as_stale_with_model_recovery(
     faked_service: FakeTTSService,
@@ -1744,6 +1798,7 @@ async def test_failed_refresh_retains_catalog_as_stale_with_model_recovery(
         assert status.recovery_action is SpeechTTSNavigationIntent.REFRESH_MODELS
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_initial_service_failure_is_unavailable_not_loading_or_not_checked(
     faked_service: FakeTTSService,
@@ -1776,6 +1831,7 @@ async def test_initial_service_failure_is_unavailable_not_loading_or_not_checked
         assert "private initialization detail" not in provider_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_failure_is_stale_with_voice_recovery(
     faked_service: FakeTTSService,
@@ -1818,6 +1874,7 @@ async def test_voice_failure_is_stale_with_voice_recovery(
         assert status.recovery_action is SpeechTTSNavigationIntent.REFRESH_VOICES
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unverified_exact_voice_blocks_until_server_default_is_selected(
     faked_service: FakeTTSService,
@@ -1873,6 +1930,7 @@ async def test_unverified_exact_voice_blocks_until_server_default_is_selected(
         assert str(voice_select.query_one(SelectCurrent).label) == "Server default"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_fresh_install_seeds_no_axis_defaults_and_paints_no_markers(
     faked_service: FakeTTSService,
@@ -1975,6 +2033,7 @@ def _controls(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reapplying_same_model_value_refreshes_its_visible_label(
     monkeypatch: pytest.MonkeyPatch,
@@ -2148,6 +2207,7 @@ async def test_a_user_edit_updates_the_marker(
         assert pane.axis_values.get("tts-speed-input") == "1.7"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_test_preset_marks_exact_axes_as_profile_sourced(
     monkeypatch: pytest.MonkeyPatch,
@@ -2190,9 +2250,7 @@ async def test_profile_test_preset_marks_exact_axes_as_profile_sourced(
         ):
             label = app.query_one(f"#{axis_chip_id(axis)}", Static)
             assert "Profile test selection" in str(label.tooltip)
-        banner = str(
-            app.query_one("#tts-profile-preview-status", Static).render()
-        )
+        banner = str(app.query_one("#tts-profile-preview-status", Static).render())
         assert "Testing voice profile" in banner
         assert "Needs test" in banner
 
@@ -2209,6 +2267,7 @@ _ADOPTED_PRESET_PROVIDER_CASES = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2270,6 +2329,7 @@ async def test_adopted_preset_unverified_copy_distinguishes_no_catalog_legacy(
         assert "without fallback" in banner
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2324,6 +2384,7 @@ async def test_reconfiguring_voice_failure_status_distinguishes_no_catalog_legac
         assert "shows a warning" in status
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2384,6 +2445,7 @@ async def test_generic_voice_failure_status_distinguishes_no_catalog_legacy(
 # presentation` for the full trace) and confirmed live below.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2426,6 +2488,7 @@ async def test_adopted_preset_preview_never_shows_a_null_revision_refresh(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2491,6 +2554,7 @@ async def test_adopted_preset_preview_revision_mismatch_refresh_recovers_for_bot
             assert "no catalog check" in banner_after
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_adopted_preset_preview_registry_closed_during_voice_fetch_is_symmetric(
     monkeypatch: pytest.MonkeyPatch,

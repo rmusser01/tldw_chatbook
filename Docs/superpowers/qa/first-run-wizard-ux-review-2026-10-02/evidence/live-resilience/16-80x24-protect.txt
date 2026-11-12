@@ -1,0 +1,24 @@
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                             Set up tldw chatbook                             │
+│                                                                              │
+│▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│
+│     ┌──┐        ┌──┐         ┌──┐         ┌──┐        ┌──┐         ┌──┐      │
+│     │✓ │        │! │         │! │         │✓ │        │5 │         │6 │      │
+│     └──┘        └──┘         └──┘         └──┘        └──┘         └──┘      │
+│──────────────────────────────────────────────────────────────────────────────│
+│                                                                              │
+│                              Protect your keys                               │
+│                                                                              │
+│  Encrypt the API keys in your config file with a password. You'll be asked   │
+│  for this password each time chatbook starts. Skip to leave keys as plain    │
+│  text (you can enable this later in Settings ▸ Privacy & Security).          │
+│                                                                              │
+│  No API keys saved yet — nothing to protect. This step matters once a key    │
+│  is stored; Next continues.                                                  │
+│                                                                              │
+│▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+│                                                                              │
+│    Step 5 of 6                    ← Back          Next →       Exit setup    │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+Small terminal (80×24) — setup works best at 100×30 or larger. Everything still

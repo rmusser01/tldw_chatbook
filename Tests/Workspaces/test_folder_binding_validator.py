@@ -59,15 +59,14 @@ def test_sensitive_conflict_rejected(tmp_path, monkeypatch):
     project.mkdir()
     import tldw_chatbook.Workspaces.registry_service as rs
 
-    monkeypatch.setattr(
-        rs, "find_root_binding_conflict", lambda p: Path("/protected")
-    )
+    monkeypatch.setattr(rs, "find_root_binding_conflict", lambda p: Path("/protected"))
     with pytest.raises(WorkspaceRegistryServiceError, match="protected path"):
         validate_folder_binding_path(project)
 
 
-def test_add_folder_binding_still_enforces(tmp_path):
+def test_add_folder_binding_still_enforces(tmp_path, request):
     db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="validator-tests")
+    request.addfinalizer(db.close)
     service = LocalWorkspaceRegistryService(db)
     service.create_workspace(workspace_id="workspace-local-1", name="Workspace 1")
     project = tmp_path / "project"
@@ -78,7 +77,7 @@ def test_add_folder_binding_still_enforces(tmp_path):
         service.add_folder_binding("workspace-local-1", project)
 
 
-def test_add_folder_binding_path_validation_before_db_lookup(tmp_path):
+def test_add_folder_binding_path_validation_before_db_lookup(tmp_path, request):
     """Verify path validation happens before list_folder_bindings is called.
 
     Regression test (evaluation-order guard): with broken ordering, the call
@@ -88,6 +87,7 @@ def test_add_folder_binding_path_validation_before_db_lookup(tmp_path):
     about the missing directory.
     """
     db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="validator-tests")
+    request.addfinalizer(db.close)
     service = LocalWorkspaceRegistryService(db)
     bad_path = tmp_path / "does_not_exist"
     # Empty workspace_id would fail in list_folder_bindings if called first
@@ -100,10 +100,11 @@ def test_add_folder_binding_path_validation_before_db_lookup(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _ssh_service_and_binding(tmp_path):
+def _ssh_service_and_binding(tmp_path, request):
     from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 
     db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="validator-tests")
+    request.addfinalizer(db.close)
     service = LocalWorkspaceRegistryService(db)
     service.create_workspace(workspace_id="workspace-ssh-1", name="SSH WS")
     binding = service.save_runtime_binding(
@@ -122,7 +123,7 @@ def _ssh_service_and_binding(tmp_path):
     return service, binding
 
 
-def test_add_binding_exclusion_accepts_ssh_binding_storing_raw_relative(tmp_path):
+def test_add_binding_exclusion_accepts_ssh_binding_storing_raw_relative(tmp_path, request):
     """SSH exclusions store RAW relative strings: no laptop resolve, no
     laptop stat (the remote host owns the filesystem). Kind defaults to
     "directory" -- subtree semantics cover not-yet-existing targets and
@@ -131,7 +132,7 @@ def test_add_binding_exclusion_accepts_ssh_binding_storing_raw_relative(tmp_path
     exactly like add-binding's advisory probe)."""
     from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
 
-    service, binding = _ssh_service_and_binding(tmp_path)
+    service, binding = _ssh_service_and_binding(tmp_path, request)
     updated = service.add_binding_exclusion(
         "workspace-ssh-1", "ssh-binding-1", "secrets"
     )
@@ -141,32 +142,32 @@ def test_add_binding_exclusion_accepts_ssh_binding_storing_raw_relative(tmp_path
     assert entries[0].kind == "directory"
 
 
-def test_add_binding_exclusion_ssh_rejects_escaping_paths(tmp_path):
-    service, binding = _ssh_service_and_binding(tmp_path)
+def test_add_binding_exclusion_ssh_rejects_escaping_paths(tmp_path, request):
+    service, binding = _ssh_service_and_binding(tmp_path, request)
     for bad in ("../escape", "/abs", "~", "a/../../b", ""):
         with pytest.raises(WorkspaceRegistryServiceError):
             service.add_binding_exclusion("workspace-ssh-1", "ssh-binding-1", bad)
 
 
-def test_add_binding_exclusion_ssh_rejects_root_itself(tmp_path):
+def test_add_binding_exclusion_ssh_rejects_root_itself(tmp_path, request):
     """The locator's own path is the binding root: not excludable (remove
     the binding instead), lexically decidable without any stat."""
-    service, binding = _ssh_service_and_binding(tmp_path)
+    service, binding = _ssh_service_and_binding(tmp_path, request)
     with pytest.raises(WorkspaceRegistryServiceError, match="whole root"):
         service.add_binding_exclusion("workspace-ssh-1", "ssh-binding-1", ".")
 
 
-def test_add_binding_exclusion_ssh_rejects_duplicates(tmp_path):
-    service, binding = _ssh_service_and_binding(tmp_path)
+def test_add_binding_exclusion_ssh_rejects_duplicates(tmp_path, request):
+    service, binding = _ssh_service_and_binding(tmp_path, request)
     service.add_binding_exclusion("workspace-ssh-1", "ssh-binding-1", "secrets")
     with pytest.raises(WorkspaceRegistryServiceError, match="already excluded"):
         service.add_binding_exclusion("workspace-ssh-1", "ssh-binding-1", "SECRETS")
 
 
-def test_remove_binding_exclusion_works_for_ssh_bindings(tmp_path):
+def test_remove_binding_exclusion_works_for_ssh_bindings(tmp_path, request):
     from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
 
-    service, binding = _ssh_service_and_binding(tmp_path)
+    service, binding = _ssh_service_and_binding(tmp_path, request)
     service.add_binding_exclusion("workspace-ssh-1", "ssh-binding-1", "secrets")
 
     updated = service.remove_binding_exclusion(
@@ -176,12 +177,13 @@ def test_remove_binding_exclusion_works_for_ssh_bindings(tmp_path):
     assert binding_exclusion_entries(updated) == ()
 
 
-def test_add_binding_exclusion_local_binding_still_stats_the_laptop(tmp_path):
+def test_add_binding_exclusion_local_binding_still_stats_the_laptop(tmp_path, request):
     """Local bindings keep the exact pre-Phase-3c behavior: resolve(strict)
     against the laptop root and file/dir inference from the laptop disk."""
     from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
 
     db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="validator-tests")
+    request.addfinalizer(db.close)
     service = LocalWorkspaceRegistryService(db)
     service.create_workspace(workspace_id="workspace-local-2", name="Local 2")
     project = tmp_path / "project"

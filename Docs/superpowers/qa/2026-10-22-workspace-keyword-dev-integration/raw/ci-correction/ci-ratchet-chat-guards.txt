@@ -1,0 +1,25 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+..F...                                                                   [100%]
+================================== FAILURES ===================================
+__ test_module_does_not_grow_past_its_budget[tldw_chatbook/app_lifecycle.py] __
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/app_lifecycle.py grew to 2338 lines (budget 2134, +204).
+E     
+E     tldw_chatbook/app_lifecycle.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 2338 <= 2134
+============================== warnings summary ===============================
+Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+
+(18 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app_lifecycle.py]
+1 failed, 5 passed, 1 warning in 1.12s

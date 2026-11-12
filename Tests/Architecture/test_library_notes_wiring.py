@@ -98,8 +98,36 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: wave 4: task-32536 adds ``failure_line``, the complete one-sentence
 #: blocker ("Can't use this note in Console -- ... Next: ...") that replaced
 #: the two disagreeing messages the critique found, rendered verbatim in
-#: place of the generic "{action} failed" line (105 + 1 = 106).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 106
+#: place of the generic "{action} failed" line (105 + 1 = 106). **107**:
+#: TASK-34000.1 adds ``autosave_burst``, the burst of unsaved typing the
+#: autosave max wait bounds (106 + 1 = 107). **108**: TASK-34000.2 adds
+#: ``tree_attention_folder_ids``, the sync folders held for attention whose
+#: tree row and list status say so (107 + 1 = 108). **109**: TASK-34000.50
+#: fix round 1 adds ``tree_unwatched_folder_ids``, the healthy sync folders
+#: nothing is watching, whose tree row reads "⚠ Sync stopped" (108 + 1 = 109).
+#: **110**: TASK-34000.25 -- ``create_caret``, where the caret lands once a
+#: just-created note's editor is ready ("title" for every create today,
+#: "body-end" for the Media Reader's Note action) (109 + 1 = 110). **111**:
+#: TASK-34000.10 -- ``validation_field``, the field a standing validation
+#: veto named, which the editor outlines with the reason under it
+#: (110 + 1 = 111). **112**: TASK-34000.10 fix round 1 -- ``validation_message``,
+#: that veto's own reason, kept with the field so the mark can outlive a key
+#: typed into another field (111 + 1 = 112). **113-114**: TASK-34000.11
+#: (2026-10-23) -- ``link_picker_generation``, the ``[[`` picker's
+#: candidate-load generation that drops a stale answer, and
+#: ``link_picker_latch``, the completion start Escape dismissed so the picker
+#: stays closed until the context changes (112 + 2 = 114). **115**:
+#: TASK-34000.11 final fix round (2026-10-23) -- ``link_picker_request``, the
+#: ``(start, query)`` completion the picker was last asked for, the one
+#: field every hot path (caret move, Tab, resize frame) reads before doing
+#: anything, and the reason one keystroke starts one candidate load
+#: (114 + 1 = 115). **116**: TASK-34000.28 polish-1a task 4 (2026-10-26) --
+#: ``notice_refresh_offered``, whether the folder-conflict notice offers its
+#: Refresh control (115 + 1 = 116). **117**: TASK-34000.28 polish-1a task 5
+#: (2026-10-26) -- ``link_origin``, the ``(note_id, title)`` a followed
+#: backlink or note link came from, offered as the editor heading's
+#: ``‹ <title>`` one-hop way back (116 + 1 = 117).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 117
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_
@@ -314,10 +342,16 @@ def test_the_four_member_list_entry_focus_family_stays_screen_owned() -> None:
 #: + 4 ``action_*``) are exempt from the census outright; SS4's third member,
 #: ``on_<message>`` NAME dispatch, contributes ZERO for notes and
 #: ``test_no_notes_handler_is_name_dispatched_by_textual`` keeps that proven.
-#: 26 of 185 = 14.05%.
+#: 26 of 185 = 14.05%. **28**: TASK-34000.1 pruned two more,
+#: ``_fire_library_note_autosave`` and ``_gc_pending_blank_note``. Their only
+#: screen-side callers moved into ``Library_Modules/library_note_autosave.py``
+#: and ``library_pending_work.py``, which call the controller directly. That
+#: offsets the screen's two new quit hooks in its method budget.
 _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     (
         "_apply_library_note_saved_presentation",
+        "_fire_library_note_autosave",
+        "_gc_pending_blank_note",
         "_apply_library_notes_operation_state",
         "_defer_library_notes_settled_focus_restore",
         "_exit_library_notes_lasting_sync",
@@ -344,6 +378,18 @@ _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_selected_library_note_handoff_payload",
         "_settle_library_notes_final_scroll",
     )
+)
+
+#: Moved names a later task DELETED outright -- from the controller AND the
+#: screen -- because nothing calls them any more. They stay in the 185-name
+#: census above (it records what the extraction moved), and the ownership and
+#: delegation pins instead assert each is absent from both classes, so an
+#: accidental re-add fails loudly. 2026-10-25, TASK-34000.28 (N-23):
+#: ``_library_notes_folder_target_options`` built the folder pickers' choices
+#: from the branches this visit had loaded; the pickers now page every active
+#: folder through ``_page_library_notes_folder_targets``.
+_NOTES_CLUSTER_RETIRED: frozenset[str] = frozenset(
+    ("_library_notes_folder_target_options",)
 )
 
 
@@ -705,9 +751,19 @@ def test_notes_controller_owns_its_cluster() -> None:
     missing = [
         name
         for name in _NOTES_CLUSTER_METHOD_NAMES
-        if not callable(getattr(LibraryNotesController, name, None))
+        if name not in _NOTES_CLUSTER_RETIRED
+        and not callable(getattr(LibraryNotesController, name, None))
     ]
     assert not missing, f"LibraryNotesController is missing: {missing!r}"
+    revived = [
+        name
+        for name in sorted(_NOTES_CLUSTER_RETIRED)
+        if getattr(LibraryNotesController, name, None) is not None
+    ]
+    assert not revived, (
+        f"retired names are back on the controller: {revived!r} -- drop them "
+        "from _NOTES_CLUSTER_RETIRED if that is deliberate"
+    )
 
 
 @pytest.mark.unit
@@ -728,6 +784,11 @@ def test_screen_delegates_notes_handlers() -> None:
 
     not_delegators = []
     for name in _NOTES_CLUSTER_METHOD_NAMES:
+        if name in _NOTES_CLUSTER_RETIRED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was retired but is back on the screen"
+            )
+            continue
         if name in _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED:
             assert getattr(LibraryScreen, name, None) is None, (
                 f"{name!r} was pruned from the screen but is back -- either "

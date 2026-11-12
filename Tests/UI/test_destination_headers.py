@@ -75,6 +75,7 @@ def _screen_for_route(route: str, app):
     raise AssertionError(f"unmapped route: {route}")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(("route", "expected_title"), _SIMPLE_SCREEN_ROUTES)
 def test_folded_screen_composes_destination_header_first(route, expected_title):
     app = _build_test_app()
@@ -150,6 +151,7 @@ async def test_evals_screen_composes_destination_header_in_the_workbench_shell()
         assert str(status.renderable) == "Ready"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_llm_screen_composes_destination_header_in_the_lab_frame():
     """Equivalent of test_folded_screen_composes_destination_header_first
@@ -211,6 +213,7 @@ class _StudyHarness(ConsolidatedCSSApp):
         await self.push_screen(self._screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_screen_mounts_destination_header_and_clears_nav_highlight():
     """task-2854: unlike the other folded screens above (Media, Writing,
@@ -263,8 +266,7 @@ async def test_study_screen_mounts_destination_header_and_clears_nav_highlight()
         library_button = screen.query_one("#nav-library")
         assert not library_button.has_class("is-active")
         assert not any(
-            button.has_class("is-active")
-            for button in screen.query(".nav-button")
+            button.has_class("is-active") for button in screen.query(".nav-button")
         )
 
 
@@ -300,6 +302,7 @@ async def test_folded_screens_box_owning_destination_in_nav():
             assert app.query_one(f"#{expected_button_id}").has_class("is-active"), route
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stts_screen_composes_destination_header_in_the_lab_frame():
     """Equivalent of test_folded_screen_composes_destination_header_first for

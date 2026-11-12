@@ -1,0 +1,41 @@
+### Spec Compliance
+
+- ❌ **Issues found:** I1 violates the explicit prohibition on a registry lock spanning SQLite I/O. The remaining reviewed reconciliation and fixture changes match the scoped brief.
+- ⚠️ **Cannot verify from this package:** current-head Qodo/required CI/PerfGuard, fresh remote-dev ancestry, publication and merge remain root gates. The dated ADR219 clarification and earlier whole-feature/schema/scanner/Task7 reviews are carried by the supplied preservation/freeze maps, not independently re-audited here. This is a Task8 source gate, not merge approval.
+
+### Strengths
+
+- `tldw_chatbook/Chat/console_chat_controller.py:19639`, `:19680`, `:19748`: exact approved-record revalidation precedes persistence; the owner-loop restore refuses a closed source; the completion observer resolves the current callback only when executed. The saved conversation/draft survives Close, while uncertain launch-metadata writes retain the existing review-required outcome. The legacy fork completion/orphan path is preserved by the three-input comparison.
+- `Tests/Chat/test_console_chat_start.py:3094`, `:3145`, `:1016`, `:1071`: bounded decision-worker controls expose the recursive-lock RED; six save/restore controls assert exact retained metadata, no placement/start/retry and retired authority. Actual committed Close is exercised on both sides of native acceptance, including charge, receipt, answer and exact draft consumption.
+- `Tests/UI/test_console_session_tab_close.py:708`, `:750`, `:1012`, `:1106`: surviving-child fixtures create actual AgentRuns rows and inherit the exact child actor. They prove live preparation before Close, preserve absence of a primary owning turn and keep the original sibling/cancellation assertions. The verified-primary grant-race correction at `Tests/Chat/test_console_chat_create_confirm.py:409` preserves every original assertion.
+- `task-8-final-preservation.json:1` and `task-8-final-freeze-map.json:1`: the maps retain all 11,572 required QA blobs, all 11,750 checkpoint QA blobs, 42 incoming QA additions and all 34 Task7 function ASTs. The only incoming nonoverlap exceptions are the two authorized mounted-test files. App's three incoming changed methods match upstream, with no feature collision. The three production collisions are explicitly represented in the immutable package.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None found in this scoped review.
+
+#### Important (Should Fix)
+
+- **I1 — SQLite reads still execute under the chat-creation registry lock.** `tldw_chatbook/Chat/console_chat_controller.py:19534`, `:19870`, `:20012` call `_chat_creation_source_live` through `_chat_creation_record_locked` while `_pending_chat_create_lock` is held. The dependency excerpt at `console_chat_controller.py:19268` shows `bridge.runs_db.get_run(run_id)` and, for a child, another `get_run(parent_id)`. The requested frozen `tldw_chatbook/DB/AgentRuns_DB.py:2656` excerpt proves these enter `connection()` and execute SQLite SELECTs. Thus the implementation/report's no-registry-lock-across-SQLite claim is false. A delayed connection/read holds the same lock needed by pending-decision cancellation and Close's sweep; the passing worker test detects recursive reentry but does not cover a blocked database read. **The brief-mandated unchanged-validation factoring inherits this defect** and conflicts with its separate no-I/O requirement. Separate storage reads from the lock-owned exact-record/Close/cancel/grant decision while preserving trusted identity and lifecycle revalidation; do not weaken validation or substitute an RLock/authority boolean. Add one focused blocked-read/Close control for that correction. No extra test was run by this reviewer.
+
+#### Minor (Nice to Have)
+
+- **M1 — Two Task8 child-process FD warnings are missing from the report's warning assessment.** `task-8-safe-evidence/907b89d38dec3bf3-pytest.log:25` reports **+265 FDs** for the passing pending-projection group; `task-8-safe-evidence/4ecf6a78f65b90b5-pytest.log:4` reports **+233 FDs** for the final passing surviving-child group. `task-8-report.md:33` discusses the older Task7 +223 warning but does not identify these two Task8 results. Their copies are correctly retained and their hashes verify, but passing parent receipts do not establish clean child teardown. Explicitly carry both warnings and their unresolved attribution into the report/final qualification. These logs alone do not prove which resource or change caused the growth; do not call it a fixed or newly introduced production leak without evidence.
+- **M2 — Final startup qualification retains three budget warnings.** `task-8-final-startup-navigation.log:4`, `:8`, `:12` reports import weight 681/686, ready modules 1033/1033 and preimport modules 557/557, including snapshot drift. The unchanged caps pass, so this is retained capacity/diagnostic debt, not a reason to raise a threshold or replay broad suites. Keep the limitation visible; the result is 58 passed **with three warnings**, not pristine output.
+
+### Checks and evidence
+
+- Read the task brief first, binding constraints, implementer report, immutable collision inputs and six-file corrective diff. For the large repeated collision bodies, compared complete parsed method bodies and inspected their semantic differences; read the corrective delta in consecutive sections. No mutable source, sibling SDD, shared checkout or git re-derivation was used.
+- Verified package size **381,687 bytes** and SHA256 `f47863d20d5f9543ca66605d18a2fb74b54c84a5c0a37bcbe96b06d515119470`. Verified the seven-method dependency excerpt (**25,386 bytes**, `a106f1c5a52a63967fb29cfcaba2dab7560e697993381a4d91f1145a2de1f93c`) and requested get_run excerpt (**766 bytes**, `f19460c2b4dd7d2f06d4ae9fbd51b2e57cfa7143d2af23dc73b1f3d70c501607`). Named focused dependency checks: Close atomicity/cancellation; lock-free source-open/store.sessions; faithful child liveness; native preaccept source fence; SQLite behavior reached under the registry lock.
+- Independently hashed all **116 safe evidence copies** against their manifest: no size/hash mismatch. Checked receipt before/after equality and final-source mappings. Final startup's controller formatting change and the surviving-child fixture's formatting chain are covered by full-module AST proofs; older lock and integration evidence carries only for the unchanged relevant branches. The final save-phase and postacceptance tests are explicitly present in the final 58-case receipt.
+- Read the XML/log outcomes: 16 phase/native cases pass; 11 executor cases pass; affected receipt remains 68 passed/2 failed; primary follow-up passes its grant control while its mounted group still fails; final faithful mounted group passes. The naive-lock RED fails its bounded join. The stripped-primary attempt remains a **302.85-second failed outer receipt**, with its child reporting a **300-second executor join warning** (`task-8-safe-evidence/b28425f80311f161-pytest.log:2260`); it is not Close evidence. Earlier synthetic-source/persistence/identity failures are retained rather than relabeled as passing qualification.
+- Final startup XML reports 58 tests, zero failures/errors/skips. Fatal Ruff, touched formatter ratchet and source whitespace receipts pass. Full-diff whitespace's 3,211 findings remain confined to immutable historical QA and match the rebase-union output.
+- Checked exact census owner unions, six wizard owner moves, no new worker-contract violations, UI census 135 at upstream floor 133, and CSS before/after hash equality. Diagnostic reconstruction reports 650 owners/16 sinks; the controller's shared row is correctly backed by the separate exact statement union (90 feature calls plus two incoming calls), rather than a false whole-row equality. Three-way safe pins retain all 199 classified rows. No tests, installs, source fixes, tracked/index/HEAD/branch changes or external publication actions were performed.
+
+### Assessment
+
+**Task quality: Needs fixes.**
+
+**Reasoning:** The phase boundaries, retained drafts, acceptance controls and source-preservation evidence are strong. I1 leaves a prohibited storage operation inside the registry critical section; M1 and M2 must remain visible limitations when reporting the otherwise passing qualification.

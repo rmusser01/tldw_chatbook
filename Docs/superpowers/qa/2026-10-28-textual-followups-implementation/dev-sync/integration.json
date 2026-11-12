@@ -1,0 +1,235 @@
+{
+  "integrated_source_head": "6d3fae765f460e8f3388066bdf811225d3a3a400",
+  "base": "38c9d2edcf10bc69d0d7597514fa319db7e4ccd2",
+  "manual_conflicts": [
+    "scripts/check_ui_pr_gate_census.py",
+    "scripts/ui_pr_gate_census.txt"
+  ],
+  "review_approved": true,
+  "ruling_count": 14,
+  "checked_links": [
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-local-evidence.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-local-receipts.tar.gz"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-implementation-report.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-fix1-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-local-evidence.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-local-receipts.tar.gz"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-implementation-report.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-local-evidence.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-local-receipts.tar.gz"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-implementation-report.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/parameter-id-collection.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/capacity-replay.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/hosted-source-head.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/final-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/decision-ledger.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/integration-local-evidence.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/integration-local-receipts.tar.gz"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/backlog-closure.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/diagnostic-inventory.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/artifact-followup-ownership.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/failed-metadata-head.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/media-typing-ownership.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/media-filter-investigation.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/note-open-investigation.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/native-investigations.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave-report.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/dev-sync/qualified-predecessor.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/dev-sync/capacity.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/dev-sync/source-conservation.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/dev-sync/diagnostic.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/dev-sync/integration.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/dev-sync/review.md"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md",
+      "target": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md",
+      "target": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md",
+      "target": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md"
+    }
+  ],
+  "members": {
+    "all-owned-conservation.json": {
+      "bytes": 26044,
+      "sha256": "95bc6583ba154f68ac6077a75bbb61a8168603dd1b3039e8ecf147eac0f9111d"
+    },
+    "capacity.json": {
+      "bytes": 143202,
+      "sha256": "b35a520716ec2271d14061f426a7f3cf937dd1337ba0c353f9568dc618b50f70"
+    },
+    "command.json": {
+      "bytes": 1207,
+      "sha256": "300d38854829dbd668fcf027a3836c776a118e945d6f47cea81387a59c4ac83c"
+    },
+    "diagnostic.json": {
+      "bytes": 584,
+      "sha256": "3713fe0ef7b0d5b715e7c2ecc9875bc90f7355a651f8f8afcc27a857d3827aa3"
+    },
+    "qualified-predecessor.json": {
+      "bytes": 28791,
+      "sha256": "5f1af3767ba59a30455b2d902818362adb76b5344ca166363b70fe6a5e90fbdb"
+    },
+    "result.xml": {
+      "bytes": 40065,
+      "sha256": "0e02347451fe60f8c6f82327e679d430a1b1a16004df3b1f3726769215399252"
+    },
+    "review.md": {
+      "bytes": 5597,
+      "sha256": "093eb7db922809ca2bc419ff1d9a5e14620a46bd85e0612c26a04b17cea49f95"
+    },
+    "source-conservation.json": {
+      "bytes": 1327,
+      "sha256": "b99f62a1aebf3cbe06e49aa24f42cc7e7547ef90b60bb4e11091b9c31505a5e2"
+    },
+    "verification.json": {
+      "bytes": 508,
+      "sha256": "b8e2bf863864ef0c2542d7392bcec174c7967899eaeafc248eba0c479f31726b"
+    }
+  },
+  "qualification": "251 actual targeted contract cases pass,0F/E/S. All product and previous CI-repair blobs conserved; capacity based on real successful dev job phase rows. Historical predecessor CI is retained, not used as rebased proof. Final pushed-head all-application/required/Perf success,44new+5dev selection execution,oldNotes/canonical passes,and0reviewthreads remain mandatory and recorded in the PR description."
+}

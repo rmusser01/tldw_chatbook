@@ -1,7 +1,7 @@
 """Personas workbench policy-rules editor (workspace-assistant-defaults).
 
 A list + mini-form CRUD editor over a persona's ``policy_rules`` — the
-narrowing-only tool policy carried by local persona records (ADR-079).
+narrowing-only tool policy carried by local persona records (ADR-325).
 Follows the ``settings_agents_panel`` list/form idiom, but owns no storage:
 every mutation posts ``PersonaPolicyRulesChanged`` and the screen persists
 through the persona service's existing update flow.
@@ -163,9 +163,7 @@ class PersonasPolicyRulesEditor(Vertical):
         kind = self.query_one("#personas-policy-kind", Input).value.strip()
         name = self.query_one("#personas-policy-name", Input).value.strip()
         if kind not in _VALID_KINDS:
-            self._set_status(
-                f"Invalid kind {kind!r}: must be mcp_tool or skill."
-            )
+            self._set_status(f"Invalid kind {kind!r}: must be mcp_tool or skill.")
             return None
         if not name:
             self._set_status("Rule name is required.")

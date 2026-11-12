@@ -1,0 +1,29 @@
+{
+  "exit_code": 0,
+  "timed_out": false,
+  "elapsed_seconds": 23.47155912499875,
+  "pid": 7831,
+  "closed": true,
+  "source_hashes_stable": true,
+  "log_sha256": "435045318960347f2cb4bb798b6aa0245e3f4523c20d7f80f282244247682b92",
+  "xml_present": true,
+  "suites": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "1",
+      "time": "19.328",
+      "timestamp": "2026-10-04T18:55:12.474328-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    }
+  ],
+  "cases": [
+    {
+      "classname": "Tests.UI.test_console_runtime_ownership",
+      "name": "test_accepted_agent_chat_start_has_visible_stop_in_mounted_target",
+      "status": "passed"
+    }
+  ]
+}

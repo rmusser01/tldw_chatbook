@@ -238,7 +238,9 @@ def _read_style_config_section() -> Dict[str, Any]:
         from tldw_chatbook.config import load_settings
 
         raw = (load_settings().get("image_generation", {}) or {}).get("styles", {})
-    except Exception as e:  # pragma: no cover - defensive; load_settings is well-tested elsewhere
+    except (
+        Exception
+    ) as e:  # pragma: no cover - defensive; load_settings is well-tested elsewhere
         logger.warning(f"Failed to read [image_generation.styles] config section: {e}")
         return {}
     return raw if isinstance(raw, dict) else {}
@@ -320,7 +322,9 @@ def _coerce_generation_template(
         description = ""
 
     default_params_raw = data.get("default_params")
-    default_params = dict(default_params_raw) if isinstance(default_params_raw, dict) else {}
+    default_params = (
+        dict(default_params_raw) if isinstance(default_params_raw, dict) else {}
+    )
 
     context_mappings_raw = data.get("context_mappings")
     context_mappings: Dict[str, str] = {}
@@ -387,7 +391,9 @@ def _load_directory_templates() -> Dict[str, GenerationTemplate]:
             with open(path, "rb") as f:
                 data = tomllib.load(f)
         except Exception as e:
-            logger.warning(f"Skipping unparsable style template file {path.name!r}: {e}")
+            logger.warning(
+                f"Skipping unparsable style template file {path.name!r}: {e}"
+            )
             continue
         template = _coerce_generation_template(
             template_id, data, source=f"templates dir file {path.name!r}"

@@ -626,6 +626,7 @@ def test_project_effective_memory_removes_only_removed_rows_sidecars() -> None:
     assert all("REMOVED" not in repr(row) for row in projected.rows)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_untyped_memory_adapter_preserves_newest_first_order(tmp_path) -> None:
     controller, store, session, _gateway, _db = _durable_controller(
@@ -668,6 +669,7 @@ async def test_untyped_memory_adapter_preserves_newest_first_order(tmp_path) -> 
     assert effective.memory.summary_text == "NEWEST-MEMORY"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("operation", "position", "applies"),
@@ -738,6 +740,7 @@ async def test_controller_operations_obey_range_activation_boundary(
         assert "<chatbook_conversation_memory>" not in wire
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "wire_style"),
@@ -844,6 +847,7 @@ async def test_controller_dispatch_projects_repository_memory_without_leaks(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_range_projection_is_shared_by_preflight_and_next_send_preview(
     tmp_path,
@@ -905,6 +909,7 @@ async def test_range_projection_is_shared_by_preflight_and_next_send_preview(
     assert "q4 preview" in preview_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_duplicates_complete_system_and_memory_dispatch_block(
     tmp_path,
@@ -954,6 +959,7 @@ async def test_preview_duplicates_complete_system_and_memory_dispatch_block(
     assert prepared.system_message.count("RANGE-MEMORY") == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_effective_legacy_memory_makes_automatic_and_compact_now_zero_call(
     tmp_path,
@@ -1196,6 +1202,7 @@ def _install_terminal_continuation(owner, db, checkpoint, *, expected_version: i
     owner.content = checkpoint.rounds[-1].assistant_content
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_from_commits_exact_inclusive_manual_range(tmp_path):
     controller, store, session, gateway, _db = _durable_controller(
@@ -1222,6 +1229,7 @@ async def test_summarize_from_commits_exact_inclusive_manual_range(tmp_path):
     assert store.session_context_summary(session.id) == (None, None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_summary_position_zero_attachment_label_does_not_false_stale(
     tmp_path,
@@ -1266,6 +1274,7 @@ async def test_manual_summary_position_zero_attachment_label_does_not_false_stal
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("from_here", [False, True], ids=["prefix", "range"])
 @pytest.mark.parametrize("image_only", [True, False], ids=["image-only", "mixed"])
@@ -1355,6 +1364,7 @@ async def test_manual_summary_sends_exact_visual_through_auxiliary_and_accountin
     assert "VU5JUVVFX0lNQUdFX0ZBQ1RfNzQyOQ" not in repr(gateway.captured_auxiliary)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_summary_refuses_visual_when_active_model_cannot_represent_it(
     tmp_path,
@@ -1384,6 +1394,7 @@ async def test_manual_summary_refuses_visual_when_active_model_cannot_represent_
     assert "vision" in result.visible_copy.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_summary_refuses_nonvisual_attachment_before_dispatch(
     tmp_path,
@@ -1427,6 +1438,7 @@ async def test_manual_summary_refuses_nonvisual_attachment_before_dispatch(
     assert "cannot safely" in result.visible_copy.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_summary_refuses_visual_when_exact_auxiliary_capacity_is_exceeded(
     tmp_path,
@@ -1456,6 +1468,7 @@ async def test_manual_summary_refuses_visual_when_exact_auxiliary_capacity_is_ex
     assert "one call" in result.visible_copy.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_summary_projects_durable_tool_call_result_envelope(tmp_path):
     controller, store, session, gateway, db = _durable_controller(
@@ -1481,6 +1494,7 @@ async def test_manual_summary_projects_durable_tool_call_result_envelope(tmp_pat
     assert '"content":"sunny"' in payload
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_summary_rejects_stale_runtime_continuation_before_call(tmp_path):
     controller, store, session, gateway, db = _durable_controller(
@@ -1715,6 +1729,7 @@ def _mutate_manual_fence(
         raise AssertionError(name)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_up_to_preserves_raw_prefix_larger_than_12k(tmp_path):
     controller, store, session, gateway, _db = _durable_controller(
@@ -1770,6 +1785,7 @@ async def test_summarize_up_to_preserves_raw_prefix_larger_than_12k(tmp_path):
     assert latest in raw_input
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "fence_name",
@@ -1842,6 +1858,7 @@ async def test_blocked_manual_summary_discards_every_controller_fence_mutation(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_old_effective_memory_remains_selected_while_manual_call_awaits(tmp_path):
     gateway = SummaryGateway(summary="S")
@@ -1919,6 +1936,7 @@ async def test_old_effective_memory_remains_selected_while_manual_call_awaits(tm
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_up_to_commits_manual_prefix_without_legacy_write(tmp_path):
     controller, store, session, gateway, _db = _durable_controller(
@@ -1941,6 +1959,7 @@ async def test_summarize_up_to_commits_manual_prefix_without_legacy_write(tmp_pa
     assert store.session_context_summary(session.id) == (None, None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_up_to_uses_exact_strict_complete_prefix(tmp_path):
     controller, store, session, gateway, _db = _durable_controller(
@@ -1959,6 +1978,7 @@ async def test_summarize_up_to_uses_exact_strict_complete_prefix(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_rejects_non_provider_visible_prefix_without_call(tmp_path):
     """task-2391 fix-now (audit follow-up): a committed voice turn whose
@@ -1998,6 +2018,7 @@ async def test_summarize_rejects_non_provider_visible_prefix_without_call(tmp_pa
     assert gateway.calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_nothing_before_target_when_only_prior_is_empty_transcript(
     tmp_path,
@@ -2029,6 +2050,7 @@ async def test_summarize_nothing_before_target_when_only_prior_is_empty_transcri
     assert store.session_context_summary(session.id) == (None, None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_provider_not_ready_blocks_and_stores_nothing(tmp_path):
     controller, store, session, gateway, _db = _durable_controller(
@@ -2073,6 +2095,7 @@ async def test_summarize_off_path_target_blocks_and_stores_nothing():
     assert store.session_context_summary(session.id) == (None, None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_incomplete_first_prompt_blocks_without_call(tmp_path):
     controller, store, session, gateway, _db = _durable_controller(tmp_path)
@@ -2087,6 +2110,7 @@ async def test_summarize_incomplete_first_prompt_blocks_without_call(tmp_path):
     assert store.session_context_summary(session.id) == (None, None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_empty_reply_stores_nothing(tmp_path):
     controller, store, session, gateway, _db = _durable_controller(
@@ -2101,6 +2125,7 @@ async def test_summarize_empty_reply_stores_nothing(tmp_path):
     assert store.session_context_summary(session.id) == (None, None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summarize_up_to_never_folds_or_rewrites_legacy_memory(tmp_path):
     controller, store, session, gateway, _db = _durable_controller(
@@ -2152,6 +2177,7 @@ async def test_native_message_id_key_stripped_before_provider():
     assert all("_native_message_id" not in row for row in captured)
 
 
+@pytest.mark.bootstrap_profile
 def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
     from tldw_chatbook.Agents.agent_models import AgentConfig
     from tldw_chatbook.Agents.agent_service import AgentService
@@ -2226,6 +2252,7 @@ def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snapshot_without_summary_unchanged_and_key_free():
     """No stored summary: preview shows full history and no private keys."""
@@ -2244,6 +2271,7 @@ async def test_snapshot_without_summary_unchanged_and_key_free():
     assert not any("_native_message_id" in row for row in rows)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snapshot_with_dangling_boundary_shows_full_history():
     """A dangling boundary leaves the preview un-compacted (leak rule parity)."""

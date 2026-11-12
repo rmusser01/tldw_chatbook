@@ -117,6 +117,7 @@ def setup(tmp_path, statuses=()):
     return coordinator, runner, writer, store, events
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manifest_commits_before_a_then_b_and_failed_a_does_not_borrow_previous(
     tmp_path,
@@ -143,6 +144,7 @@ async def test_manifest_commits_before_a_then_b_and_failed_a_does_not_borrow_pre
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edits_during_a_cannot_change_queued_b_and_concurrent_run_is_rejected(
     tmp_path,
@@ -171,6 +173,7 @@ async def test_edits_during_a_cannot_change_queued_b_and_concurrent_run_is_rejec
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_initial_save_failure_prevents_any_launch_and_retains_manifest(tmp_path):
     coordinator, runner, writer, store, _events = setup(tmp_path)
@@ -184,6 +187,7 @@ async def test_initial_save_failure_prevents_any_launch_and_retains_manifest(tmp
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_undo_removing_a_stops_worker_and_never_launches_b(tmp_path):
     coordinator, runner, _writer, _store, _events = setup(tmp_path)
@@ -200,6 +204,7 @@ async def test_undo_removing_a_stops_worker_and_never_launches_b(tmp_path):
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_restore_stops_before_replace_and_preserves_retry_authority(
     tmp_path,
@@ -221,6 +226,7 @@ async def test_failed_restore_stops_before_replace_and_preserves_retry_authority
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_malformed_restore_leaves_running_session_untouched(tmp_path):
     coordinator, runner, _writer, _store, _events = setup(tmp_path)
@@ -237,6 +243,7 @@ async def test_malformed_restore_leaves_running_session_untouched(tmp_path):
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_failure_retains_result_in_memory_and_retry_commits_it(tmp_path):
     coordinator, runner, writer, store, _events = setup(tmp_path)
@@ -261,6 +268,7 @@ async def test_save_failure_retains_result_in_memory_and_retry_commits_it(tmp_pa
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_close_failure_keeps_writer_retryable_and_memory_exportable(tmp_path):
     coordinator, _runner, writer, store, _events = setup(tmp_path)
@@ -280,6 +288,7 @@ async def wait_until(predicate):
             await asyncio.sleep(0.01)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_guard_survives_cancel_during_initial_manifest_commit(tmp_path):
     module = api()
@@ -322,6 +331,7 @@ async def test_clear_guard_survives_cancel_during_initial_manifest_commit(tmp_pa
         await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_canceled_restore_await_keeps_guard_until_commit_and_undo_restores(
     tmp_path,
@@ -356,6 +366,7 @@ async def test_canceled_restore_await_keeps_guard_until_commit_and_undo_restores
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recovery_admission_replaces_unpersistable_success_with_limited(
     tmp_path, monkeypatch
@@ -387,6 +398,7 @@ async def test_recovery_admission_replaces_unpersistable_success_with_limited(
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_subscribers_receive_small_copied_events_without_copying_blobs(
     tmp_path, monkeypatch
@@ -418,6 +430,7 @@ async def test_subscribers_receive_small_copied_events_without_copying_blobs(
     await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_capture_install_accept_and_initial_load_never_block_ui_loop(
     tmp_path, monkeypatch
@@ -583,6 +596,7 @@ async def test_real_worker_completion_is_durable_and_reopens_without_dispatch(tm
     await reopened.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["clear", "replace_recovery", "close"])
 async def test_transition_waits_for_run_not_its_callers_remaining_lifetime(
@@ -620,6 +634,7 @@ async def test_transition_waits_for_run_not_its_callers_remaining_lifetime(
         await coordinator.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_caller_can_join_the_close_already_waiting_for_its_run(tmp_path):
     coordinator, runner, _writer, _store, _events = setup(tmp_path)

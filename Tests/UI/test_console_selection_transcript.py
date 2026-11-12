@@ -49,9 +49,13 @@ class _SelectionTranscriptApp(App[None]):
         transcript.set_messages(
             [
                 ConsoleChatMessage(
-                    role=ConsoleMessageRole.USER, content="hello selectable world", id="m1"
+                    role=ConsoleMessageRole.USER,
+                    content="hello selectable world",
+                    id="m1",
                 ),
-                ConsoleChatMessage(role=ConsoleMessageRole.USER, content=_LONG_BODY, id="m2"),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content=_LONG_BODY, id="m2"
+                ),
                 ConsoleChatMessage(
                     role=ConsoleMessageRole.ASSISTANT, content="answer text", id="m3"
                 ),
@@ -70,7 +74,9 @@ async def _mounted_row(pilot, message_id: str) -> ConsoleTranscriptMessage:
     transcript.set_messages(transcript._messages)
     await transcript.refresh_messages()
     await pilot.pause()
-    return pilot.app.query_one(f"#console-message-{message_id}", ConsoleTranscriptMessage)
+    return pilot.app.query_one(
+        f"#console-message-{message_id}", ConsoleTranscriptMessage
+    )
 
 
 async def _wait_for_selected_event(app, pilot) -> None:
@@ -147,6 +153,7 @@ async def _drag_over_body(
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_exposes_selection_manager():
     app = _SelectionTranscriptApp()
@@ -156,6 +163,7 @@ async def test_transcript_exposes_selection_manager():
         assert transcript.selection_manager.state.selection is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_drag_selects_text_and_posts_selection_event():
     app = _SelectionTranscriptApp()
@@ -183,6 +191,7 @@ async def test_drag_selects_text_and_posts_selection_event():
         assert event.screen_y == release_y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_drag_maps_wrapped_body_lines_to_source_offsets():
     app = _SelectionTranscriptApp()
@@ -195,10 +204,14 @@ async def test_drag_maps_wrapped_body_lines_to_source_offsets():
 
         selection = transcript.selection_manager.state.selection
         assert selection is not None
-        assert (selection.start, selection.end) == (_LONG_LINE_1_START, _LONG_LINE_1_START + 3)
+        assert (selection.start, selection.end) == (
+            _LONG_LINE_1_START,
+            _LONG_LINE_1_START + 3,
+        )
         assert row.get_selection_text() == "nin"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_drag_release_does_not_toggle_message_selection():
     app = _SelectionTranscriptApp()
@@ -229,6 +242,7 @@ async def test_drag_release_does_not_toggle_message_selection():
         assert transcript.selected_message_id == "m1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_plain_click_without_drag_still_selects_message():
     app = _SelectionTranscriptApp()
@@ -244,6 +258,7 @@ async def test_plain_click_without_drag_still_selects_message():
         assert transcript.selection_manager.just_finished is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_plain_click_on_markdown_row_still_selects_message():
     app = _SelectionTranscriptApp()
@@ -257,6 +272,7 @@ async def test_plain_click_on_markdown_row_still_selects_message():
         assert transcript.selected_message_id == "m3"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_click_after_drag_on_markdown_row_toggles_selection():
     app = _SelectionTranscriptApp()
@@ -288,6 +304,7 @@ async def test_click_after_drag_on_markdown_row_toggles_selection():
         assert transcript.selected_message_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_drag_extends_while_mouse_is_captured():
     app = _SelectionTranscriptApp()
@@ -299,12 +316,17 @@ async def test_drag_extends_while_mouse_is_captured():
         # (event control = capturer), so extension must not depend on the
         # event's control pointing at the row.
         row.post_message(
-            _mouse_event(MouseDown, row, screen_x=body.region.x + 3, screen_y=body.region.y)
+            _mouse_event(
+                MouseDown, row, screen_x=body.region.x + 3, screen_y=body.region.y
+            )
         )
         await pilot.pause()
         transcript.post_message(
             _mouse_event(
-                MouseMove, transcript, screen_x=body.region.x + 11, screen_y=body.region.y
+                MouseMove,
+                transcript,
+                screen_x=body.region.x + 11,
+                screen_y=body.region.y,
             )
         )
         await pilot.pause()
@@ -325,6 +347,7 @@ async def test_drag_extends_while_mouse_is_captured():
         assert len(app.selected_events) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_drag_past_body_edges_clamps_to_text_bounds():
     app = _SelectionTranscriptApp()
@@ -333,13 +356,18 @@ async def test_drag_past_body_edges_clamps_to_text_bounds():
         row = await _mounted_row(pilot, "m1")
         body = _body_static(row)
         row.post_message(
-            _mouse_event(MouseDown, row, screen_x=body.region.x + 11, screen_y=body.region.y)
+            _mouse_event(
+                MouseDown, row, screen_x=body.region.x + 11, screen_y=body.region.y
+            )
         )
         await pilot.pause()
         # Above the body (over the header): clamp to the text start.
         transcript.post_message(
             _mouse_event(
-                MouseMove, transcript, screen_x=body.region.x + 11, screen_y=body.region.y - 1
+                MouseMove,
+                transcript,
+                screen_x=body.region.x + 11,
+                screen_y=body.region.y - 1,
             )
         )
         await pilot.pause()
@@ -350,7 +378,10 @@ async def test_drag_past_body_edges_clamps_to_text_bounds():
         # Below the body (over the following row): clamp to the text end.
         transcript.post_message(
             _mouse_event(
-                MouseMove, transcript, screen_x=body.region.x + 11, screen_y=body.region.y + 2
+                MouseMove,
+                transcript,
+                screen_x=body.region.x + 11,
+                screen_y=body.region.y + 2,
             )
         )
         await pilot.pause()
@@ -361,7 +392,10 @@ async def test_drag_past_body_edges_clamps_to_text_bounds():
         # Ending far right of the last wrapped line clamps to the line end.
         transcript.post_message(
             _mouse_event(
-                MouseMove, transcript, screen_x=body.region.x + 999, screen_y=body.region.y
+                MouseMove,
+                transcript,
+                screen_x=body.region.x + 999,
+                screen_y=body.region.y,
             )
         )
         await pilot.pause()
@@ -370,6 +404,7 @@ async def test_drag_past_body_edges_clamps_to_text_bounds():
         assert (selection.start, selection.end) == (11, len("hello selectable world"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_non_message_controls_never_start_selection():
     app = _SelectionTranscriptApp()
@@ -377,11 +412,14 @@ async def test_non_message_controls_never_start_selection():
         transcript = app.query_one(ConsoleTranscript)
         await _mounted_row(pilot, "m1")
 
-        transcript.post_message(_mouse_event(MouseDown, transcript, screen_x=1, screen_y=0))
+        transcript.post_message(
+            _mouse_event(MouseDown, transcript, screen_x=1, screen_y=0)
+        )
         await pilot.pause()
         assert transcript.selection_manager.state.active is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_markdown_rows_start_line_selection():
     """Task G flip: markdown rows arm drags and select whole source lines."""
@@ -429,6 +467,7 @@ async def test_markdown_rows_start_line_selection():
         assert len(app.selected_events) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_markdown_drag_release_does_not_toggle_message_selection():
     app = _SelectionTranscriptApp()
@@ -439,7 +478,9 @@ async def test_markdown_drag_release_does_not_toggle_message_selection():
         body = markdown_row.query_one(Markdown)
 
         markdown_row.post_message(
-            _mouse_event(MouseDown, markdown_row, screen_x=body.region.x, screen_y=body.region.y)
+            _mouse_event(
+                MouseDown, markdown_row, screen_x=body.region.x, screen_y=body.region.y
+            )
         )
         await pilot.pause()
         transcript.post_message(
@@ -495,6 +536,7 @@ async def test_markdown_drag_release_does_not_toggle_message_selection():
                 raise AssertionError("click landed on-visible but did not toggle")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mouse_up_outside_transcript_finishes_drag():
     app = _SelectionTranscriptApp()
@@ -503,12 +545,17 @@ async def test_mouse_up_outside_transcript_finishes_drag():
         row = await _mounted_row(pilot, "m1")
         body = _body_static(row)
         row.post_message(
-            _mouse_event(MouseDown, row, screen_x=body.region.x + 3, screen_y=body.region.y)
+            _mouse_event(
+                MouseDown, row, screen_x=body.region.x + 3, screen_y=body.region.y
+            )
         )
         await pilot.pause()
         transcript.post_message(
             _mouse_event(
-                MouseMove, transcript, screen_x=body.region.x + 11, screen_y=body.region.y
+                MouseMove,
+                transcript,
+                screen_x=body.region.x + 11,
+                screen_y=body.region.y,
             )
         )
         await pilot.pause()
@@ -516,7 +563,9 @@ async def test_mouse_up_outside_transcript_finishes_drag():
 
         # Mouse capture routes the release to the transcript even when the
         # pointer is elsewhere: the drag must finish, not stay active.
-        transcript.post_message(_mouse_event(MouseUp, transcript, screen_x=35, screen_y=29))
+        transcript.post_message(
+            _mouse_event(MouseUp, transcript, screen_x=35, screen_y=29)
+        )
         await pilot.pause()
 
         assert transcript.selection_manager.state.active is False
@@ -543,6 +592,7 @@ async def test_mouse_up_outside_transcript_finishes_drag():
         assert transcript.selected_message_id == "m2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_row_removal_cancels_selection_state():
     app = _SelectionTranscriptApp()
@@ -562,6 +612,7 @@ async def test_row_removal_cancels_selection_state():
         assert transcript.selection_manager.state.active is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mid_drag_row_removal_releases_capture():
     app = _SelectionTranscriptApp()
@@ -570,7 +621,9 @@ async def test_mid_drag_row_removal_releases_capture():
         row = await _mounted_row(pilot, "m1")
         body = _body_static(row)
         row.post_message(
-            _mouse_event(MouseDown, row, screen_x=body.region.x + 3, screen_y=body.region.y)
+            _mouse_event(
+                MouseDown, row, screen_x=body.region.x + 3, screen_y=body.region.y
+            )
         )
         await pilot.pause()
         assert transcript.selection_manager.state.active is True
@@ -586,6 +639,7 @@ async def test_mid_drag_row_removal_releases_capture():
         assert pilot.app.mouse_captured is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_menu_open_row_body_click_dismisses_menu_and_toggles():
     """Regression (final review): a row-body click must dismiss an open menu.
@@ -607,7 +661,9 @@ async def test_menu_open_row_body_click_dismisses_menu_and_toggles():
 
         # Click ANOTHER row's body. The press dismisses the selection UI and
         # the same genuine click still toggles the target row.
-        other_body = app.query_one("#console-message-m2 .console-transcript-message-body")
+        other_body = app.query_one(
+            "#console-message-m2 .console-transcript-message-body"
+        )
         await pilot.click(other_body, offset=(0, 1))
         await pilot.pause()
         assert not app.query(ConsoleSelectionMenu)  # folded
@@ -617,6 +673,7 @@ async def test_menu_open_row_body_click_dismisses_menu_and_toggles():
         assert transcript._selection_origin_row is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_menu_cleanup_raw_mouseup_commits_initial_press_without_click():
     app = _SelectionTranscriptApp()
@@ -650,6 +707,7 @@ async def test_menu_cleanup_raw_mouseup_commits_initial_press_without_click():
         assert transcript._selection_origin_row is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_clears_armed_press_and_mouse_capture():
     app = _SelectionTranscriptApp()
@@ -679,6 +737,7 @@ async def test_escape_clears_armed_press_and_mouse_capture():
         assert selected_row.get_selection_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_menu_open_right_button_dismisses_without_arming_drag():
     app = _SelectionTranscriptApp()
@@ -699,6 +758,7 @@ async def test_menu_open_right_button_dismisses_without_arming_drag():
         assert transcript.selection_manager.state.active is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_menu_descendant_press_keeps_menu_and_does_not_arm_drag():
     app = _SelectionTranscriptApp()
@@ -722,6 +782,7 @@ async def test_menu_descendant_press_keeps_menu_and_does_not_arm_drag():
         assert transcript.selection_manager.state.active is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_menu_cleanup_same_row_click_preserves_initial_target():
     app = _SelectionTranscriptApp()
@@ -741,6 +802,7 @@ async def test_menu_cleanup_same_row_click_preserves_initial_target():
         assert row.get_selection_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_menu_cleanup_markdown_layout_preserves_initial_plain_target():
     app = _SelectionTranscriptApp()
@@ -791,6 +853,7 @@ async def test_menu_cleanup_markdown_layout_preserves_initial_plain_target():
         assert markdown_row.get_selection_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_menu_open_protected_action_press_dismisses_menu_no_drag():
     """Deferred gap (final review): press a REAL protected in-row control.
@@ -828,6 +891,7 @@ async def test_menu_open_protected_action_press_dismisses_menu_no_drag():
         assert transcript.selection_manager.state.active is False  # no drag armed
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_terminal_press_without_control_arms_drag():
     """Live-terminal presses carry widget=None (screen forwarding never sets it).
@@ -864,9 +928,7 @@ async def test_real_terminal_press_without_control_arms_drag():
         await pilot.pause()
 
         assert transcript.selection_manager.state.active is True
-        assert (
-            transcript.selection_manager.state.selection.row_key == row.id
-        )
+        assert transcript.selection_manager.state.selection.row_key == row.id
 
         transcript.post_message(
             MouseMove(
@@ -905,6 +967,7 @@ async def test_real_terminal_press_without_control_arms_drag():
         assert row.get_selection_text() != ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_shaped_plain_click_toggles_message_selection():
     """Live spike 2026-08-16 ('can't select messages via mouse').
@@ -923,8 +986,15 @@ async def test_real_shaped_plain_click_toggles_message_selection():
 
     def raw(event_cls, x, y, button=1):
         return event_cls(
-            widget=None, x=x, y=y, delta_x=0, delta_y=0, button=button,
-            shift=False, meta=False, ctrl=False,
+            widget=None,
+            x=x,
+            y=y,
+            delta_x=0,
+            delta_y=0,
+            button=button,
+            shift=False,
+            meta=False,
+            ctrl=False,
         )
 
     app = _SelectionTranscriptApp()

@@ -69,6 +69,7 @@ async def _open_sources(pilot, host):
     return screen, pane
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_fetch_is_reported_as_a_failure_and_leaves_a_trace():
     """AC#1, AC#2, AC#4: the durable half.
@@ -127,11 +128,10 @@ async def test_a_failed_fetch_is_reported_as_a_failure_and_leaves_a_trace():
     assert runs[0]["failure_category"] == "connection_failure"
     assert runs[0]["retryable"] is True
     assert runs[0]["error_msg"] == "The source could not be reached."
-    assert runs[0]["next_action"] == (
-        "Retry when the network or source is available."
-    )
+    assert runs[0]["next_action"] == ("Retry when the network or source is available.")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_sources_status_column_shows_the_failure_after_the_toast_has_gone():
     """AC#1 (the surfaced half) and AC#2.
@@ -179,6 +179,7 @@ async def test_the_sources_status_column_shows_the_failure_after_the_toast_has_g
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
     """AC#3: the level that hid TASK-1100 for three UAT runs."""
@@ -232,6 +233,7 @@ async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_check_that_fails_before_execution_still_records_a_run():
     """AC#4's remaining gap.
@@ -589,6 +591,7 @@ def test_synchronous_debug_handlers_notify_or_have_exact_exemptions():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method_name", "expected_message"),
@@ -651,6 +654,7 @@ async def test_synchronous_source_loader_failure_is_safely_reported(
         assert sentinel not in repr(notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scoped_source_failure_notifies_once_per_failure_episode():
     """Repeated mounted reads share one toast until a successful recovery."""

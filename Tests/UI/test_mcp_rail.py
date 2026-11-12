@@ -242,9 +242,7 @@ async def test_rail_state_legend_decodes_present_states_under_heading():
         assert "no tools" not in text
         # ...and it sits under the "Servers" heading, before the rows.
         ids = [child.id for child in app.query_one(MCPRail).children]
-        assert ids.index("mcp-rail-state-legend") < ids.index(
-            f"{MCP_RAIL_ROW_PREFIX}0"
-        )
+        assert ids.index("mcp-rail-state-legend") < ids.index(f"{MCP_RAIL_ROW_PREFIX}0")
 
 
 @pytest.mark.asyncio
@@ -725,7 +723,9 @@ async def test_sync_state_recompose_releases_a_capture_that_lands_in_the_deferre
         await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}0")
         await pilot.pause()
         selected = [e for e in app.events if isinstance(e, MCPRail.ServerSelected)]
-        assert selected, "rail row click produced no event -- clicks are still swallowed"
+        assert selected, (
+            "rail row click produced no event -- clicks are still swallowed"
+        )
 
 
 class RailWithSiblingApp(ConsolidatedCSSApp):
@@ -824,7 +824,11 @@ def test_present_states_legend_abbreviates_when_short():
 
     snapshots = [
         _snap("local:docs", "docs", ReadinessState.NEEDS_SETUP),
-        _snap("builtin:tldw_chatbook", "tldw_chatbook (built-in)", ReadinessState.OFF_OPT_IN),
+        _snap(
+            "builtin:tldw_chatbook",
+            "tldw_chatbook (built-in)",
+            ReadinessState.OFF_OPT_IN,
+        ),
     ]
     short = _present_states_legend(snapshots, short=True)
     assert "setup" in short

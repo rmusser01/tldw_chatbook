@@ -22,14 +22,15 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger
 
-
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.Library.library_export_scope import ExportPreview, ExportScope
+from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+    LibraryExportController,
+)
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryEntryReconcileResult,
     LibraryScreen,
 )
-
 
 # --- _build_library_export_payload: include_media invariant -----------------
 
@@ -442,11 +443,14 @@ def test_export_via_service_never_calls_create_chatbook_when_export_fails(tmp_pa
     assert outcome["registry_recorded"] is False
 
 
-def test_export_via_service_reports_success_even_when_registry_recording_raises(tmp_path):
+def test_export_via_service_reports_success_even_when_registry_recording_raises(
+    tmp_path,
+):
     """The zip succeeded -- a registry-recording failure afterward must not
     flip the overall outcome to failure (the artifact genuinely exists on
     disk); only ``registry_recorded`` reflects the bookkeeping miss."""
     service = _FakeExportService(create_error=RuntimeError("disk full"))
+    service._export_result["path"] = str(tmp_path / "out.zip")
 
     outcome = LibraryScreen._run_library_export_via_service(
         service, _payload(tmp_path), name="Export", description="desc"
@@ -454,6 +458,7 @@ def test_export_via_service_reports_success_even_when_registry_recording_raises(
 
     assert service.calls == ["export_chatbook", "create_chatbook"]
     assert outcome["success"] is True
+    assert outcome["path"] == str(tmp_path / "out.zip")
     assert outcome["registry_recorded"] is False
 
 
@@ -471,6 +476,82 @@ def test_export_via_service_wraps_export_chatbook_exception_as_failure(tmp_path)
     assert outcome["success"] is False
     assert "boom" in outcome["message"]
     assert outcome["registry_recorded"] is False
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [None, ("other.db", "out.zip"), ("registry.db", "other.zip")],
+    ids=["missing", "other_registry", "other_destination"],
+)
+def test_export_controller_without_operation_refuses_before_async_service_effects(
+    tmp_path, paths
+):
+    from contextlib import nullcontext
+
+    from tldw_chatbook.Backup_Recovery.local_content_lifetime import operation
+
+    class FactoryRecordingService(_FakeExportService):
+        def export_chatbook(self, *args, **kwargs):
+            self.calls.append("export_factory")
+            return super().export_chatbook(*args, **kwargs)
+
+    payload = _payload(tmp_path)
+    service = FactoryRecordingService(export_result={"success": True})
+    service.registry_path = tmp_path / "registry.db"
+    scope = nullcontext() if paths is None else operation(tmp_path / p for p in paths)
+    reason = (
+        "local_content_operation_missing"
+        if paths is None
+        else "execution_scope_not_admitted"
+    )
+    with scope:
+        outcome = LibraryExportController._run_library_export_via_service(
+            service, payload, name="Export", description="desc"
+        )
+
+    assert service.calls == []
+    assert outcome == {
+        "success": False,
+        "message": f"Export failed: {reason}",
+        "path": "",
+        "dependency_info": {},
+        "registry_recorded": False,
+        "cancelled": False,
+    }
+    assert not (tmp_path / "out.zip").exists()
+    assert not service.registry_path.exists()
+
+
+def test_export_controller_with_operation_preserves_export_then_registry(tmp_path):
+    from unittest.mock import Mock
+
+    from tldw_chatbook.Backup_Recovery.local_content_lifetime import operation
+
+    payload = _payload(tmp_path)
+    service = _FakeExportService(export_result={"success": True})
+    service.registry_path = tmp_path / "registry.db"
+    export = Mock(wraps=service.export_chatbook)
+    service.export_chatbook = export
+    progress_callback, cancel_check = object(), object()
+    with operation((service.registry_path, payload["output_path"])):
+        outcome = LibraryExportController._run_library_export_via_service(
+            service,
+            payload,
+            name="Export",
+            description="desc",
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
+        )
+
+    assert service.calls == ["export_chatbook", "create_chatbook"]
+    export.assert_called_once_with(
+        payload, progress_callback=progress_callback, cancel_check=cancel_check
+    )
+    assert service.create_kwargs[0]["file_path"] == payload["output_path"]
+    assert service.create_kwargs[0]["tags"] == ["library-export"]
+    assert outcome["success"] and outcome["registry_recorded"]
+    assert outcome["path"] == payload["output_path"]
+    assert outcome["item_count"] is outcome["size_bytes"] is None
 
 
 # --- _build_library_export_success_message: task-158 counts surfacing -------

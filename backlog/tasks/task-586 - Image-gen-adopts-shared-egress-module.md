@@ -1,7 +1,7 @@
 ---
 id: TASK-586
 title: Image-gen adopts shared egress module (Utils/egress.py)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-23 12:00'
 labels: [image-generation, security, followup]
@@ -18,8 +18,15 @@ TASK-328 shipped `Utils/egress.py` (policy + guarded helpers with per-hop redire
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] `fetch_image_bytes` and `fetch_json` validate via the shared egress module
-- [ ] API-returned image URLs are evaluated with no trusted origins (fail-closed for private/metadata ranges)
-- [ ] User-configured backend `base_url` hosts are marked as trusted origins
-- [ ] Local backends (127.0.0.1 SwarmUI, local sd.cpp) continue to work
+- [x] `fetch_image_bytes` and `fetch_json` validate via the shared egress module
+- [x] API-returned image URLs are evaluated with no trusted origins (fail-closed for private/metadata ranges)
+- [x] User-configured backend `base_url` hosts are marked as trusted origins
+- [x] Local backends (127.0.0.1 SwarmUI, local sd.cpp) continue to work
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Image_Generation/http_client.py delegates to the shared module: 'Egress is enforced by Utils/egress.py (the app-wide SSRF policy, task-498)' — _validate_egress_or_raise calls egress.check_url_or_raise, API-returned URLs are enforced with no trusted origins, and configured backend base_url hosts are passed as trusted_origins (http_client.py:1-9, 44-68; landed a4ac6b5a7e, hardened faad737d1d).

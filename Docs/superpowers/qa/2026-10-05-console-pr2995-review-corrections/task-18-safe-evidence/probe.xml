@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="1.332" timestamp="2026-10-04T18:48:50.805853-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_buddy_speech" name="test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge" time="0.863"><failure message="TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given">@pytest.mark.asyncio
+    async def test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge():
+&gt;       app, store, owner, other, _, handler = setup()
+                                               ^^^^^^^
+
+Tests/UI/test_buddy_speech.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def setup():
+        store = ConsoleChatStore()
+        session = store.create_session(title="Research", ephemeral=True)
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="Owned response"
+        )
+        other = store.create_session(ephemeral=True)
+        handler = Handler()
+&gt;       host = InterruptRoundHost(SimpleNamespace(store=store))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/UI/test_buddy_speech.py:51: TypeError</failure></testcase></testsuite></testsuites>

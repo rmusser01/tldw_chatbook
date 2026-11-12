@@ -104,11 +104,11 @@ NOTE, MEDIA, CONVERSATION, PROMPT = "note", "media", "conversation", "prompt"
 _USER_ID = "prefix-fallback-user"
 _CLIENT_ID = "prefix-fallback-client"
 
+
 def _notes_body(marker: str) -> str:
     """A notes body carrying `EXACT` verbatim -- reachable by the AND primary."""
     return (
-        f"Inspection record {marker}: the {SHARED} gauge logs {EXACT} "
-        f"across the mast."
+        f"Inspection record {marker}: the {SHARED} gauge logs {EXACT} across the mast."
     )
 
 
@@ -143,8 +143,9 @@ def seams(tmp_path) -> Callable[..., Seams]:
     """
     closers: list[Callable[[], None]] = []
 
-    def build(*, notes: int = 1, media: int = 1, conversations: int = 1,
-              prompts: int = 1) -> Seams:
+    def build(
+        *, notes: int = 1, media: int = 1, conversations: int = 1, prompts: int = 1
+    ) -> Seams:
         notes_dir = tmp_path / "prefix_notes"
         notes_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
@@ -352,9 +353,9 @@ async def test_a_query_every_seam_matches_is_untouched_by_the_construction(
 
     rows = await _search(app, ALL_PRIMARY_QUERY)
 
-    assert sorted(_types(rows)) == sorted(
-        [NOTE, MEDIA, CONVERSATION, PROMPT]
-    ), f"every seam should have contributed its primary row: {_types(rows)!r}"
+    assert sorted(_types(rows)) == sorted([NOTE, MEDIA, CONVERSATION, PROMPT]), (
+        f"every seam should have contributed its primary row: {_types(rows)!r}"
+    )
     assert prefix_spy == [], (
         f"a fallback was built for an all-primary query: {prefix_spy!r}"
     )
@@ -362,7 +363,7 @@ async def test_a_query_every_seam_matches_is_untouched_by_the_construction(
 
 @pytest.mark.asyncio
 async def test_an_all_primary_query_issues_exactly_one_match_per_seam(seams):
-    """"No extra query" is a claim about the DATABASE, so count DB calls.
+    """ "No extra query" is a claim about the DATABASE, so count DB calls.
 
     Wraps the notes seam's own service call. A fallback that never fires
     still costs nothing only if the second MATCH is never issued.
@@ -413,9 +414,7 @@ async def test_a_zero_row_sub_leg_is_rescued_by_the_prefix_form(
     # vocabulary. Compared with `is` -- every Enum member is truthy, so a
     # truthiness check here would pass for FAILED too.
     assert state is SeamState.AVAILABLE
-    assert _types(rows) == [source_type], (
-        f"the {seam} seam was not rescued: {rows!r}"
-    )
+    assert _types(rows) == [source_type], f"the {seam} seam was not rescued: {rows!r}"
     assert prefix_spy == [SPLIT_QUERY], (
         f"expected exactly one prefix build for the empty sub-leg: {prefix_spy!r}"
     )
@@ -485,9 +484,9 @@ async def test_one_query_mixes_a_primary_sub_leg_with_three_rescued_ones(
 
     rows = await _search(app, SPLIT_QUERY)
 
-    assert sorted(_types(rows)) == sorted(
-        [NOTE, MEDIA, CONVERSATION, PROMPT]
-    ), f"expected one row per seam: {_types(rows)!r}"
+    assert sorted(_types(rows)) == sorted([NOTE, MEDIA, CONVERSATION, PROMPT]), (
+        f"expected one row per seam: {_types(rows)!r}"
+    )
     assert len(prefix_spy) == 3, (
         "expected exactly three prefix builds -- one per zero-row sub-leg, "
         f"none for the hitter: {prefix_spy!r}"
@@ -508,7 +507,8 @@ async def test_a_rescued_seam_does_not_change_another_seams_rows(seams):
     notes_only_rows = await _search(app, SPLIT_QUERY, sources=("notes",))
 
     notes_from_four = [
-        key for row, key in zip(four_seam_rows, _keys(four_seam_rows))
+        key
+        for row, key in zip(four_seam_rows, _keys(four_seam_rows))
         if row["provenance"]["source_type"] == NOTE
     ]
     assert notes_from_four == _keys(notes_only_rows)

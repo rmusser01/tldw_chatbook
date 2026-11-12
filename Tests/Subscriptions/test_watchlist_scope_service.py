@@ -225,9 +225,7 @@ def test_scope_service_returns_active_create_form_source_types(
         server_service=FakeServerWatchlists(),
     )
 
-    assert (
-        scope.create_form_source_types(runtime_backend=runtime_backend) == expected
-    )
+    assert scope.create_form_source_types(runtime_backend=runtime_backend) == expected
 
 
 @pytest.mark.asyncio
@@ -568,6 +566,7 @@ async def test_scope_service_observes_losing_claim_without_executing_it():
     local.execute_run.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_loser_timeout_preserves_stranded_winner(monkeypatch, tmp_path):
     path = tmp_path / "scope-timeout.db"
@@ -620,6 +619,7 @@ async def test_scope_loser_timeout_preserves_stranded_winner(monkeypatch, tmp_pa
     observer_db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_loser_cancellation_preserves_stranded_winner(tmp_path):
     path = tmp_path / "scope-cancel.db"
@@ -825,6 +825,7 @@ async def test_scope_service_routes_alert_rule_crud_with_watchlists_alert_rule_a
 # happening at all.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_cancelled_check_produces_exactly_one_notification_not_two(tmp_path):
     """N1 (Important, introduced by the C1 fix). Before the fix, a

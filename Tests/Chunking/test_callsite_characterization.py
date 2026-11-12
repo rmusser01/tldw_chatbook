@@ -33,10 +33,13 @@ from tldw_chatbook.RAG_Search.enhanced_chunking_service import (
 )
 
 
-TEXT = ("The first sentence is here. The second sentence follows. "
-        "A third sentence for good measure. And a fourth one. " * 5)
+TEXT = (
+    "The first sentence is here. The second sentence follows. "
+    "A third sentence for good measure. And a fourth one. " * 5
+)
 
 
+@pytest.mark.bootstrap_profile
 def test_book_ingestion_regex_path_shape():
     # Book_Ingestion_Lib:1793 → RAG_Search.chunking_service.improved_chunking_process.
     # Characterizes today's producer (chunking_service's own regex path);
@@ -62,21 +65,34 @@ def test_db_roundtrip_offsets_populated(tmp_path):
         TEXT, {"method": "words", "max_size": 10, "overlap": 2}
     )
     media_id, _, _ = db.add_media_with_keywords(
-        title="t", media_type="document", content=TEXT, keywords=None,
-        url=None, analysis_content=None, author=None, chunks=chunks,
+        title="t",
+        media_type="document",
+        content=TEXT,
+        keywords=None,
+        url=None,
+        analysis_content=None,
+        author=None,
+        chunks=chunks,
         chunk_options={"method": "words"},
     )
     assert media_id is not None, "ingest was skipped; nothing to round-trip"
-    rows = db.get_connection().execute(
-        "SELECT chunk_index, start_char, end_char FROM UnvectorizedMediaChunks "
-        "WHERE media_id = ? AND deleted = 0 ORDER BY chunk_index", (media_id,)
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT chunk_index, start_char, end_char FROM UnvectorizedMediaChunks "
+            "WHERE media_id = ? AND deleted = 0 ORDER BY chunk_index",
+            (media_id,),
+        )
+        .fetchall()
+    )
     assert rows
     for row in rows:
-        assert row["start_char"] is not None and row["end_char"] is not None, \
+        assert row["start_char"] is not None and row["end_char"] is not None, (
             "flat contract violated: DB offset columns went NULL"
+        )
 
 
+@pytest.mark.bootstrap_profile
 def test_ebook_chapters_through_rag_service():
     # §7.2 regression: no InvalidChunkingMethodError after whitelist removal.
     # Phase B (task 7) removed chunking_service's five-method whitelist; this
@@ -177,6 +193,7 @@ def _drive_preview_branches(config):
     return chunks
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("method", ["words", "sentences", "paragraphs"])
 async def test_preview_matches_ingest_basic_chunker_branch(method):
     # §7.3, basic-chunker branch: the modal's Chunker() preview must produce
@@ -202,6 +219,7 @@ async def test_preview_matches_ingest_basic_chunker_branch(method):
         assert c["word_count"] == len(c["text"].split()) > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("method", ["hierarchical", "structural", "contextual"])
 async def test_preview_matches_ingest_structural_branch(method):
     # §7.3, ECS branch: the modal's structural preview (chunk_text_with_structure

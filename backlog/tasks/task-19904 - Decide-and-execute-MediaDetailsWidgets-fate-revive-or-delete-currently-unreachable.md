@@ -1,7 +1,7 @@
 ---
 id: TASK-19904
 title: Decide and execute MediaDetailsWidget's fate — revive or delete (currently unreachable)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-21'
 labels:
@@ -22,7 +22,17 @@ A revive-or-delete **fork** is not an outcome: the task is done when a decision 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A revive-or-delete decision is recorded with reachability evidence (importer graph at implementation time) in the Implementation Notes, and the chosen branch is executed in the same task — not left open
-- [ ] #2 If deleted: no dangling references remain repo-wide (imports, CSS selectors, tests, packaging); if revived: the template Select is populated from the Media DB via the service layer and the widget is mounted on a reachable production surface
+- [x] #1 A revive-or-delete decision is recorded with reachability evidence (importer graph at implementation time) in the Implementation Notes, and the chosen branch is executed in the same task — not left open
+- [x] #2 If deleted: no dangling references remain repo-wide (imports, CSS selectors, tests, packaging); if revived: the template Select is populated from the Media DB via the service layer and the widget is mounted on a reachable production surface
 - [ ] #3 The `Media.chunking_config` writer situation is resolved either way — a live writer exists after revive, or deletion is coordinated with the parity sub-project's new writer (spec §9.2) so the column never ends up with zero writers and no ruling
 <!-- AC:END -->
+
+## Closeout audit 2026-10-11
+
+Board-prune audit (branch chore/board-prune-c, base a3c47c6c72): completed-but-unmarked. Evidence gathered 2026-10-11 against origin/dev:
+
+AC dispositions:
+- AC#1: met - Decision: DELETE - executed. Widgets/media_details_widget.py (1009 lines) deleted by a9eb6abfa8 'chore: delete five unreferenced top-level widget modules' with reachability evidence (zero importers).
+- AC#2: met - No dangling references: the paired orphan Widgets/chunk_preview_modal.py was deleted first by a5935ed694 (TASK-19905) and a9eb6abfa8 repaired the remaining incidental consumers (e.g. console_command_popup.py).
+- Both the widget and its only import target are absent from origin/dev (git ls-tree empty).
+- AC#3 not re-adjudicated in this sweep: the Media.chunking_config writer ruling from the parity spec is outside this audit's evidence window.

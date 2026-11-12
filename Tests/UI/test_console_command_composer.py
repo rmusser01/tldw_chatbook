@@ -19,6 +19,7 @@ from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
     _build_console_send_test_app,
     _configure_native_ready_console,
+    _wait_for_reply,
     _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -26,6 +27,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.UI.pump_probe import console_attach_ended, until
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -149,7 +151,10 @@ class _RawCliComposerHarness(ConsolidatedCSSApp):
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self):
-        yield ConsoleComposerBar(id="console-native-composer")
+        # TASK-33622.9: the composer reads the raw-CLI arm; this harness is armed.
+        yield ConsoleComposerBar(
+            id="console-native-composer", raw_cli_authority_provider=lambda: "armed"
+        )
 
 
 def _type_raw_cli_prefix(composer: ConsoleComposerBar) -> None:
@@ -521,9 +526,7 @@ async def test_escaped_chat_stash_keeps_segment_payload_and_restore_consistent()
 
     dispatched: list[tuple[str, ConsoleDraftStash | None]] = []
 
-    async def dispatch(
-        draft: str, *, stash: ConsoleDraftStash | None = None
-    ) -> bool:
+    async def dispatch(draft: str, *, stash: ConsoleDraftStash | None = None) -> bool:
         dispatched.append((draft, stash))
         return True
 
@@ -650,10 +653,17 @@ async def test_raw_cli_completed_prefix_survives_focus_detour() -> None:
 
 
 @pytest.mark.asyncio
-async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry() -> (
-    None
-):
+# TASK-27018: the raw-CLI danger foreground is $ds-status-error-readable,
+# which task-31264 (1a1b5c19e0) redefined from the dark-canvas-only literal
+# #ff8fa3 to Textual's theme-generated $text-error. The pin follows the
+# harness theme instead of the retired literal; the distinctness assertions
+# below still catch a CSS regression that drops the danger styling.
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry(
+    theme: str,
+) -> None:
     host = _RawCliComposerHarness()
+    host.theme = theme
 
     async with host.run_test(size=(120, 20)) as pilot:
         composer = host.query_one("#console-native-composer", ConsoleComposerBar)
@@ -676,8 +686,9 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
         semantic_error_color = composer.query_one(
             "#console-raw-cli-status", Static
         ).styles.color
-        # Production $ds-status-error-readable resolves to this AA-safe foreground.
-        readable_error_color = Color.parse("#ff8fa3")
+        # Production $ds-status-error-readable resolves to the theme's
+        # polarity-aware readable error foreground ($text-error).
+        readable_error_color = Color.parse(host.get_css_variables()["text-error"])
         assert semantic_error_color == readable_error_color
         assert semantic_error_color != ordinary_presentation[0]
 
@@ -752,6 +763,28 @@ async def _spy_submit_draft(console) -> AsyncMock:
     spy = AsyncMock(wraps=controller.submit_draft)
     controller.submit_draft = spy
     return spy
+
+
+async def _wait_for_gateway_row(pilot, gateway, expected_content: str) -> None:
+    """Poll until the capturing gateway has received a row with this content.
+
+    TASK-27018: the transcript's "accepted" marker appears when the submit is
+    admitted; the provider dispatch happens asynchronously after that (about
+    a second under load), so reading ``sent_messages`` immediately after the
+    marker races. Bounded to ~5 s, matching the other poll helpers here.
+    """
+    for _ in range(100):
+        if any(
+            row.get("content") == expected_content
+            for message in gateway.sent_messages
+            for row in message
+        ):
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"gateway never received {expected_content!r}: "
+        f"{[message[-1].get('content') for message in gateway.sent_messages]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -833,6 +866,7 @@ async def test_system_command_rejects_recipe_before_session_or_draft_mutation() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_unknown_command_first_enter_renders_hint_and_does_not_send():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -854,6 +888,16 @@ async def test_console_unknown_command_first_enter_renders_hint_and_does_not_sen
 
 
 @pytest.mark.asyncio
+# TASK-27018, two re-decisions against the current send contract:
+# (1) the mounted factory app reloads real config through the guarded
+#     loader, which under the per-test sandbox redirect fails closed with
+#     RecoveryRequired("raw_source_selection_changed") -- keep the
+#     collection-time profile (per-node marker, TASK-32873 pattern);
+# (2) since the Library-gated send seam (a26cdafd80, 2026-08-22) the
+#     runtime calls submit_draft with custody kwargs (origin,
+#     configuration, staged-evidence, custody hooks), so the exact
+#     signature pin now asserts the load-bearing call parts instead.
+@pytest.mark.bootstrap_profile
 async def test_console_unknown_command_second_unmodified_enter_sends_as_text():
     gateway = CapturingGateway()
     app = _build_console_send_test_app()
@@ -874,17 +918,22 @@ async def test_console_unknown_command_second_unmodified_enter_sends_as_text():
         submit_spy.assert_not_called()
 
         send_button.press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
-        submit_spy.assert_awaited_once_with(
-            "/nope x",
-            session_id=console._ensure_console_chat_store().active_session_id,
+        assert submit_spy.await_count == 1
+        submit_call = submit_spy.await_args
+        assert submit_call.args == ("/nope x",)
+        assert (
+            submit_call.kwargs["session_id"]
+            == console._ensure_console_chat_store().active_session_id
         )
+        await _wait_for_gateway_row(pilot, gateway, "/nope x")
         assert gateway.sent_messages[-1][-1]["content"] == "/nope x"
         assert console._console_unknown_send_armed is None
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_unknown_command_edit_between_enters_re_hints_and_does_not_send():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -919,6 +968,7 @@ async def test_console_unknown_command_edit_between_enters_re_hints_and_does_not
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_unknown_command_roundtrip_edit_back_to_armed_text_requires_fresh_arm():
     """Editing away and back to the armed text still disarms (Task 10 hardening).
 
@@ -957,6 +1007,7 @@ async def test_console_unknown_command_roundtrip_edit_back_to_armed_text_require
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_collapse_disarms_unknown_command_literal_send():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -984,6 +1035,12 @@ async def test_console_collapse_disarms_unknown_command_literal_send():
 
 
 @pytest.mark.asyncio
+# TASK-27018: same two re-decisions as the second-Enter test above -- the
+# mounted send app needs the collection-time profile past the guarded config
+# loader (per-node marker, TASK-32873 pattern), and the Library-gated send
+# seam (a26cdafd80) calls submit_draft with custody kwargs, so the pin
+# asserts the load-bearing call parts instead of the exact signature.
+@pytest.mark.bootstrap_profile
 async def test_console_collapsed_paste_starting_with_slash_sends_normally():
     gateway = CapturingGateway()
     app = _build_console_send_test_app()
@@ -1001,18 +1058,23 @@ async def test_console_collapsed_paste_starting_with_slash_sends_normally():
         submit_spy = await _spy_submit_draft(console)
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
-        submit_spy.assert_awaited_once_with(
-            pasted_text,
-            session_id=console._ensure_console_chat_store().active_session_id,
+        assert submit_spy.await_count == 1
+        submit_call = submit_spy.await_args
+        assert submit_call.args == (pasted_text,)
+        assert (
+            submit_call.kwargs["session_id"]
+            == console._ensure_console_chat_store().active_session_id
         )
+        await _wait_for_gateway_row(pilot, gateway, pasted_text)
         assert gateway.sent_messages[-1][-1]["content"] == pasted_text
         assert console._console_unknown_send_armed is None
         assert composer.draft_text() == ""
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prompt_command_dispatches_insert_prompt_stub():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1038,6 +1100,7 @@ async def test_console_prompt_command_dispatches_insert_prompt_stub():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_system_command_dispatches_apply_system_stub():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1138,6 +1201,7 @@ async def test_console_prompt_replacement_resyncs_stale_command_popup(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prompt_command_captures_before_resolution_and_refuses_stale_draft():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1172,6 +1236,7 @@ async def test_console_prompt_command_captures_before_resolution_and_refuses_sta
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prompt_slash_fallback_threads_dispatch_snapshot_to_picker():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1745,6 +1810,7 @@ async def test_console_prompt_command_picker_escape_leaves_draft_untouched(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount():
     """The staged handoff is consumed by the real ``on_mount`` wiring itself
     (not just the private method called directly) -- proves the Library
@@ -1770,6 +1836,7 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume():
     """Same as the ``on_mount`` variant above, but exercises the real
     ``on_screen_resume`` timer path -- the finding this regression guards
@@ -1803,6 +1870,7 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_resume_triggered_prompt_insert_survives_stale_session_switch():
     """Regression for the resume wipe-race: if a session switch races ahead
     of a resume-triggered insert, ``_console_visible_draft_session_id`` can
@@ -1827,10 +1895,15 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
 
         store = console._ensure_console_chat_store()
         first_session = store.ensure_session()
-        # Let the mount-time sync pass settle the visible-draft tracker onto
-        # the first session before simulating a session switch that races
-        # ahead of the not-yet-fired resume consumption below.
-        await pilot.pause(0.1)
+        # Let the attach's sync pass settle the visible-draft tracker onto the
+        # first session before simulating a session switch that races ahead
+        # of the not-yet-fired resume consumption below. The attach must have
+        # ended: a sync pass after the switch would move the tracker itself.
+        await console_attach_ended(console)
+        await until(
+            lambda: console._console_visible_draft_session_id == first_session.id,
+            5.0,
+        )
         assert console._console_visible_draft_session_id == first_session.id
 
         second_session = store.create_session(
@@ -1848,7 +1921,16 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
             _library_prompt_application(console, "resume-triggered insert"),
         )
         console.on_screen_resume()
-        await pilot.pause(0.25)  # past the 0.15s consumption timer
+        # The resume consumes the handoff on its 0.15 s settle timer.
+        await until(
+            lambda: (
+                not app.pending_handoffs.has_pending(
+                    HandoffChannel.CONSOLE_PROMPT_INSERT
+                )
+                and "resume-triggered insert" in composer.draft_text()
+            ),
+            5.0,
+        )
 
         assert not app.pending_handoffs.has_pending(
             HandoffChannel.CONSOLE_PROMPT_INSERT
@@ -1865,6 +1947,7 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_insert():
     """An empty composer draft gets a clean insert -- no separator noise."""
     app = _build_test_app()
@@ -1891,6 +1974,7 @@ async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_inser
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft():
     """Library's insert-in-console NEVER clobbers an in-progress draft --
     it appends onto it instead."""
@@ -1921,6 +2005,7 @@ async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_large_body_appends_as_collapsed_token():
     """An oversized appended body still collapses to a display token, exactly
     like a real paste onto an existing draft."""
@@ -1951,6 +2036,7 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast():
     """First-run setup blocked (no provider/model configured): the insert
     shows the exact toast copy, leaves the draft completely untouched, and
@@ -1983,6 +2069,7 @@ async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending():
     """Nothing pending: no-op, no notify, draft untouched."""
     app = _build_test_app()
@@ -2011,6 +2098,7 @@ async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_rejects_empty_user_only_append_as_noop():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2038,6 +2126,7 @@ async def test_console_rejects_empty_user_only_append_as_noop():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_targets_draft_at_consumption_and_preserves_attachment():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2061,6 +2150,7 @@ async def test_console_library_append_targets_draft_at_consumption_and_preserves
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_expired_claim_warns_once_and_discards():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2093,6 +2183,7 @@ async def test_console_library_append_expired_claim_warns_once_and_discards():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_latest_wins_and_wrong_session_is_discarded():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2127,6 +2218,7 @@ async def test_console_library_append_latest_wins_and_wrong_session_is_discarded
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_stale_system_discards_before_draft_mutation():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2159,6 +2251,7 @@ async def test_console_library_append_stale_system_discards_before_draft_mutatio
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_missing_composer_releases_for_retry():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2183,6 +2276,7 @@ async def test_console_library_append_missing_composer_releases_for_retry():
 
 @pytest.mark.parametrize("transient", ["sync", "composer"])
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_expiry_during_transient_release_warns_once(
     transient,
 ):
@@ -2231,6 +2325,7 @@ async def test_console_library_append_expiry_during_transient_release_warns_once
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_expiry_during_cancelled_sync_warns_once():
     now = [129.9]
     app = _build_test_app()
@@ -2268,6 +2363,7 @@ async def test_console_library_append_expiry_during_cancelled_sync_warns_once():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_system_only_leaves_draft_and_warns_on_persistence_failure(
     monkeypatch,
 ):
@@ -2315,6 +2411,7 @@ async def test_console_library_system_only_leaves_draft_and_warns_on_persistence
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_rolls_back_draft_when_system_mutation_raises(
     monkeypatch,
 ):
@@ -2381,6 +2478,7 @@ async def test_console_library_append_rolls_back_draft_when_system_mutation_rais
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_rolls_back_when_paste_mutates_then_raises(
     monkeypatch,
 ):
@@ -2417,6 +2515,7 @@ async def test_console_library_append_rolls_back_when_paste_mutates_then_raises(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_system_only_replaces_stale_prompt_undo(
     monkeypatch,
 ):
@@ -2474,6 +2573,7 @@ async def test_console_library_system_only_replaces_stale_prompt_undo(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prefill_command_arms_one_shot_and_confirms():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2495,6 +2595,7 @@ async def test_console_prefill_command_arms_one_shot_and_confirms():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prefill_pin_and_clear_round_trip():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2522,6 +2623,7 @@ async def test_console_prefill_pin_and_clear_round_trip():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prefill_pin_seeds_settings_on_settings_less_session():
     """PR #729 Qodo finding 3: a session created without settings (e.g. by a
     bare system-message append before any send) must not make `/prefill pin`

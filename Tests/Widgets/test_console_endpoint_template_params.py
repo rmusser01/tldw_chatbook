@@ -1,4 +1,4 @@
-"""Params table editor on the Console endpoint template modal (ADR-147,
+"""Params table editor on the Console endpoint template modal (ADR-344,
 TASK-32477 task 9).
 
 Harness and config-isolation patterns mirror

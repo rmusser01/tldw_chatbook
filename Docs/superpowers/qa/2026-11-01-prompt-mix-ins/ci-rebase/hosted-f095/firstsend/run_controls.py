@@ -1,0 +1,8 @@
+import os,sys
+sys.path.insert(0,os.getcwd())
+import pytest
+class Profile:
+ def pytest_collection_modifyitems(self,items):
+  for item in items:item.add_marker(pytest.mark.bootstrap_profile)
+nodes=['Tests/UI/test_console_first_send_preimport.py::test_no_warm_up_step_loads_a_third_party_package_it_does_not_name','Tests/UI/test_console_first_send_preimport.py::test_a_harness_send_imports_nothing_lazy_beyond_the_list','Tests/UI/test_console_first_send_preimport.py::test_an_automatic_library_send_loads_only_the_two_library_modules_lazily','Tests/UI/test_console_first_send_preimport.py::test_html_parser_dependencies_have_their_own_ordered_steps','Tests/UI/test_console_first_send_preimport.py::test_web_tool_catalog_import_keeps_deep_search_footer_cold','Tests/UI/test_console_first_send_preimport.py::test_every_live_first_send_import_is_listed','Tests/Tools/test_web_deep_search.py::test_deep_search_footer_reads_current_tool_global','Tests/Tools/test_web_deep_search.py::test_deep_search_happy_path','Tests/Web_Scraping/test_deep_search_citations.py::test_tool_footer_surfaces_citation_verification','Tests/Web_Scraping/test_deep_search_citations.py::test_tool_footer_silent_without_verification','Tests/Web_Scraping/test_deep_search_citations.py::test_footer_summary_omits_zero_sections','Tests/Web_Scraping/test_deep_search_citations.py::test_footer_summary_names_unknown_and_misquotes_and_uncited']
+raise SystemExit(pytest.main(nodes+['-v','--tb=short','--timeout=300','-p','no:cacheprovider','--basetemp=/private/tmp/mixins-f095-firstsend/green-tmp','--junitxml=/private/tmp/mixins-f095-firstsend/green.xml'],plugins=[Profile()]))

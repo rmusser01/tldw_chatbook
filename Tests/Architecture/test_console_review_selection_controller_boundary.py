@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import ast
-import subprocess
 from collections import Counter
 from pathlib import Path
 
 import pytest
+
+from Tests.Architecture.test_screen_size_ratchet import _BUDGETS as _SCREEN_SIZE_BUDGETS
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -16,17 +17,16 @@ REVIEW_PATH = REPO_ROOT / "tldw_chatbook/UI/Console_Modules/review_selection.py"
 WIRING_PATH = REPO_ROOT / "tldw_chatbook/UI/Console_Modules/wiring.py"
 RATCHET_PATH = REPO_ROOT / "Tests/Architecture/test_screen_size_ratchet.py"
 SCREEN_RELATIVE_PATH = "tldw_chatbook/UI/Screens/chat_screen.py"
-REVIEW_RELATIVE_PATH = "tldw_chatbook/UI/Console_Modules/review_selection.py"
-TASK_BASE = "c6218918d1e70c1938f7e11df592d0c70ca60383"
-GIT_TIMEOUT_SECONDS = 10
-TASK_BASE_COUNTS = (17_624, 539)
-FAMILY_LINES = 850
-MOVE_LINES = 280
-STAY_LINES = 426
-MINIMUM_LINE_REDUCTION = 409
-MINIMUM_METHOD_REDUCTION = 7
-PROJECTED_LINE_CEILING = 17_215
-PROJECTED_METHOD_CEILING = 532
+#: 2026-11-06, TASK-38988 (owner size waiver): the live ChatScreen ceiling is
+#: the screen-size ratchet's own ChatScreen row (24,616 / 741 on that day),
+#: read from that file rather than re-pinned here. A pin at the measured
+#: 24,604 would go red unseen whenever the row is raised by a dated waiver
+#: (review r10a-rev1). TASK-39055 retired the frozen-revision projection.
+_, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+]
+#: The screen-size ratchet row this file holds unraised, re-pinned the same day.
+LIVE_RATCHET_ROW = ("ChatScreen", 24_617, 741)
 MAX_DELEGATE_LINES = 5
 
 MOVE_METHODS = frozenset(
@@ -57,7 +57,6 @@ STAY_METHODS = frozenset(
         "on_console_review_notes_requested",
     }
 )
-FAMILY_METHODS = MOVE_METHODS | DELEGATE_METHODS | STAY_METHODS
 STATE_SLOTS = {
     "_console_annotation_loaded_conversation": (
         "_review_selection",
@@ -86,6 +85,12 @@ CONTROLLER_DEPENDENCIES = frozenset(
         "marshal_to_ui",
         "present_trajectory",
         "notify",
+        "copy_to_clipboard",
+        "clipboard_revision_accessor",
+        "selection_note_context_active",
+        "save_selection_note",
+        "open_selection_note",
+        "offer_selection_note_open",
     }
 )
 
@@ -142,37 +147,6 @@ def _method_counts(owner: ast.ClassDef) -> Counter[str]:
 def _span(node: FunctionNode) -> int:
     """Return physical definition span without decorators."""
     return node.end_lineno - node.lineno + 1
-
-
-def _counts(source: str) -> tuple[int, int]:
-    """Return physical source lines and unique direct ChatScreen method names."""
-    owner = _class_from_source(source, "ChatScreen")
-    return len(source.splitlines()), len(_methods(owner))
-
-
-def _source_at_revision(revision: str, relative_path: str) -> str:
-    """Read a repository file at one revision with a bounded subprocess."""
-    return subprocess.run(
-        ["git", "show", f"{revision}:{relative_path}"],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=GIT_TIMEOUT_SECONDS,
-    ).stdout
-
-
-def _optional_source_at_revision(revision: str, relative_path: str) -> str | None:
-    """Read an optional revision path, distinguishing absence from Git failure."""
-    try:
-        return _source_at_revision(revision, relative_path)
-    except subprocess.CalledProcessError as error:
-        if (
-            "does not exist" in error.stderr
-            or "exists on disk, but not in" in error.stderr
-        ):
-            return None
-        raise
 
 
 def _call_name(call: ast.Call) -> str | None:
@@ -325,18 +299,6 @@ def _review_calls(method: FunctionNode) -> list[ast.Call]:
     return calls
 
 
-def _assert_final_ownership(screen_source: str, review_source: str) -> None:
-    """Assert final method ownership in an arbitrary complete revision."""
-    screen = _class_from_source(screen_source, "ChatScreen")
-    controller = _class_from_source(review_source, "ConsoleReviewSelectionController")
-    screen_counts = _method_counts(screen)
-    controller_counts = _method_counts(controller)
-    assert all(controller_counts[name] == 1 for name in MOVE_METHODS)
-    assert all(screen_counts[name] == 0 for name in MOVE_METHODS)
-    assert all(screen_counts[name] == 1 for name in STAY_METHODS | DELEGATE_METHODS)
-    assert all(controller_counts[name] == 0 for name in STAY_METHODS | DELEGATE_METHODS)
-
-
 @pytest.mark.unit
 def test_review_selection_controller_path_and_exact_method_ownership() -> None:
     """The dedicated controller owns seven methods and the six stays do not move."""
@@ -366,7 +328,10 @@ def test_review_selection_delegates_are_complete_and_bounded() -> None:
         "on_console_selection_feedback_requested": (
             "on(ConsoleSelectionFeedbackRequested)",
         ),
-        "on_console_selection_note_requested": ("on(ConsoleSelectionNoteRequested)",),
+        "on_console_selection_note_requested": (
+            "on(ConsoleTraceCopyRequested)",
+            "on(ConsoleSelectionNoteRequested)",
+        ),
     }
     for name in DELEGATE_METHODS:
         method = methods[name]
@@ -509,7 +474,12 @@ def test_build_console_controllers_is_the_single_explicit_constructor() -> None:
 def test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise() -> None:
     """The extraction earns the conservative screen reduction itself."""
     source = CHAT_SCREEN_PATH.read_text(encoding="utf-8")
-    assert _counts(source) <= (PROJECTED_LINE_CEILING, PROJECTED_METHOD_CEILING)
+    # Lines and methods separately (a tuple `<=` is lexicographic), and the
+    # methods as the ratchet counts them: direct definitions, not unique names
+    # (review r10a-rev2).
+    owner = _class_from_source(source, "ChatScreen")
+    assert len(source.splitlines()) <= LIVE_SCREEN_LINE_CEILING
+    assert sum(_method_counts(owner).values()) <= LIVE_SCREEN_METHOD_CEILING
     ratchet_tree = ast.parse(RATCHET_PATH.read_text(encoding="utf-8"))
     assignment = next(
         node
@@ -520,47 +490,4 @@ def test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise() 
     )
     assert assignment.value is not None
     budgets = ast.literal_eval(assignment.value)
-    assert budgets[SCREEN_RELATIVE_PATH] == ("ChatScreen", 16_966, 563)
-
-
-@pytest.mark.unit
-def test_frozen_task_base_family_and_projection_match_review() -> None:
-    """The written 7/3/6 arithmetic remains reproducible at the exact base."""
-    source = _source_at_revision(TASK_BASE, SCREEN_RELATIVE_PATH)
-    owner = _class_from_source(source, "ChatScreen")
-    methods = _methods(owner)
-    assert _counts(source) == TASK_BASE_COUNTS
-    assert all(_method_counts(owner)[name] == 1 for name in FAMILY_METHODS)
-    assert sum(_span(methods[name]) for name in FAMILY_METHODS) == FAMILY_LINES
-    assert sum(_span(methods[name]) for name in MOVE_METHODS) == MOVE_LINES
-    assert sum(_span(methods[name]) for name in STAY_METHODS) == STAY_LINES
-    residue = STAY_LINES + len(DELEGATE_METHODS) * MAX_DELEGATE_LINES
-    assert FAMILY_LINES - residue == MINIMUM_LINE_REDUCTION
-    assert len(MOVE_METHODS) == MINIMUM_METHOD_REDUCTION
-    assert (
-        TASK_BASE_COUNTS[0] - MINIMUM_LINE_REDUCTION,
-        TASK_BASE_COUNTS[1] - MINIMUM_METHOD_REDUCTION,
-    ) == (PROJECTED_LINE_CEILING, PROJECTED_METHOD_CEILING)
-
-
-@pytest.mark.unit
-def test_origin_dev_review_selection_family_still_matches_review() -> None:
-    """Latest dev is a complete reviewed pre- or post-extraction state."""
-    screen_source = _source_at_revision("origin/dev", SCREEN_RELATIVE_PATH)
-    review_source = _optional_source_at_revision("origin/dev", REVIEW_RELATIVE_PATH)
-    screen = _class_from_source(screen_source, "ChatScreen")
-    counts = _method_counts(screen)
-    if all(counts[name] == 1 for name in MOVE_METHODS):
-        methods = _methods(screen)
-        assert all(counts[name] == 1 for name in FAMILY_METHODS)
-        assert sum(_span(methods[name]) for name in FAMILY_METHODS) == FAMILY_LINES
-        assert sum(_span(methods[name]) for name in MOVE_METHODS) == MOVE_LINES
-        assert sum(_span(methods[name]) for name in STAY_METHODS) == STAY_LINES
-        projected = (
-            _counts(screen_source)[0] - MINIMUM_LINE_REDUCTION,
-            _counts(screen_source)[1] - MINIMUM_METHOD_REDUCTION,
-        )
-        assert projected <= (PROJECTED_LINE_CEILING, PROJECTED_METHOD_CEILING)
-        return
-    assert review_source is not None
-    _assert_final_ownership(screen_source, review_source)
+    assert budgets[SCREEN_RELATIVE_PATH] == LIVE_RATCHET_ROW

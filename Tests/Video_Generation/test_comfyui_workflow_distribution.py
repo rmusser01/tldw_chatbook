@@ -74,13 +74,13 @@ def _wheel_members(path: Path) -> set[str]:
 def _workflow_members(members: set[str]) -> set[str]:
     prefix = "tldw_chatbook/Video_Generation/workflows/"
     return {
-        name
-        for name in members
-        if name.startswith(prefix) and name.endswith(".json")
+        name for name in members if name.startswith(prefix) and name.endswith(".json")
     }
 
 
-def _run(command: list[str], *, cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: list[str], *, cwd: Path, timeout: int
+) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         command,
         cwd=cwd,

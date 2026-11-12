@@ -33,6 +33,8 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
 def _active_native_session(console: ChatScreen):
     store = console._ensure_console_chat_store()
     return next(s for s in store.sessions() if s.id == store.active_session_id)

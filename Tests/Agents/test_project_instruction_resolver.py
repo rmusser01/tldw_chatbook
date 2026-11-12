@@ -213,6 +213,9 @@ def test_unreadable_override_suppresses_standard_fallback(
             raise PermissionError("private detail must not escape")
         return real_open(path, flags)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "open", refuse_override)
 
     candidate = _resolve(tmp_path)
@@ -236,6 +239,9 @@ def test_oversized_override_is_not_read_and_suppresses_standard_fallback(
         opened.append(Path(path))
         return real_open(path, flags)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "open", recording_open)
 
     candidate = _resolve(tmp_path, max_bytes=4)
@@ -316,10 +322,12 @@ def test_startup_never_recursively_walks_the_binding(
     def recursive_discovery_is_forbidden(*_args, **_kwargs):
         raise AssertionError("startup discovery must remain O(1)")
 
-    monkeypatch.setattr(resolver_module.os, "walk", recursive_discovery_is_forbidden)
-    monkeypatch.setattr(resolver_module.os, "scandir", recursive_discovery_is_forbidden)
-
-    candidate = _resolve(tmp_path)
+    with monkeypatch.context() as tripwire:
+        tripwire.setattr(resolver_module.os, "walk", recursive_discovery_is_forbidden)
+        tripwire.setattr(
+            resolver_module.os, "scandir", recursive_discovery_is_forbidden
+        )
+        candidate = _resolve(tmp_path)
 
     assert candidate.source is None
 
@@ -335,6 +343,9 @@ def test_startup_examines_only_the_binding_root_and_two_candidate_names(
         examined.append(Path(path))
         return real_lstat(path)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", recording_lstat)
 
     candidate = _resolve(tmp_path)
@@ -371,6 +382,9 @@ def test_root_replacement_between_override_and_standard_fails_closed(
                 (root / "AGENTS.md").write_text("replacement standard")
             raise
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", replace_root_on_missing_override)
 
     candidate = _resolve(root, dispatch_started_wall_ns=2**63 - 1)
@@ -403,6 +417,9 @@ def test_override_created_between_candidates_suppresses_standard_fallback(
             )
         return real_lstat(path)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", create_override_before_standard)
 
     candidate = _resolve(tmp_path, dispatch_started_wall_ns=dispatch_started)
@@ -433,6 +450,9 @@ def test_empty_override_mutating_between_candidates_suppresses_standard_fallback
             os.utime(override, ns=(dispatch_started - 1, dispatch_started - 1))
         return real_lstat(path)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", mutate_override_before_standard)
 
     candidate = _resolve(tmp_path, dispatch_started_wall_ns=dispatch_started)
@@ -467,6 +487,9 @@ def test_override_created_while_standard_is_absent_reports_stale_override(
                 )
             raise
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(
         resolver_module.os, "lstat", create_override_on_missing_standard
     )
@@ -507,6 +530,9 @@ def test_empty_override_mutation_supersedes_invalid_or_omitted_standard_outcome(
             os.utime(override, ns=(dispatch_started - 1, dispatch_started - 1))
         return real_lstat(path)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", mutate_override_before_standard)
 
     candidate = _resolve(
@@ -537,6 +563,9 @@ def test_ancestor_disappearing_after_root_validation_is_not_treated_as_absent_fi
                 raise FileNotFoundError
         return real_lstat(path)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", disappearing_root)
 
     candidate = _resolve(tmp_path)
@@ -564,6 +593,9 @@ def test_ancestor_metadata_becoming_unverifiable_omits_only_selected_source(
             return value
         return SimpleNamespace(st_mode=value.st_mode)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", losing_identity)
 
     candidate = _resolve(tmp_path)
@@ -627,6 +659,9 @@ def test_posix_open_uses_no_follow(
         observed_flags.append(flags)
         return real_open(path, flags)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "open", recording_open)
 
     candidate = _resolve(tmp_path)
@@ -656,6 +691,9 @@ def test_descriptor_open_includes_required_platform_flag(
         observed_flags.append(flags)
         return real_open(path, flags & ~sentinel)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "open", recording_open)
 
     candidate = _resolve(tmp_path)
@@ -685,6 +723,9 @@ def test_raced_regular_file_to_fifo_fails_closed_without_blocking(
             assert flags & os.O_NONBLOCK
         return real_open(path, flags)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "open", race_to_fifo)
 
     candidate = _resolve(tmp_path)
@@ -762,6 +803,9 @@ def test_unrelated_ancestor_mtime_drift_does_not_invalidate_source(
         file_opened = True
         return descriptor
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", changing_directory_mtime)
     monkeypatch.setattr(resolver_module.os, "open", mark_open)
 
@@ -827,6 +871,9 @@ def test_ancestor_identity_change_during_read_fails_closed(
         file_opened = True
         return descriptor
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", changing_lstat)
     monkeypatch.setattr(resolver_module.os, "open", mark_open)
 
@@ -897,6 +944,9 @@ def test_windows_reparse_attribute_is_refused(
             st_file_attributes=(0x400 if Path(path) == tmp_path / "AGENTS.md" else 0),
         )
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", reparse_lstat)
 
     candidate = _resolve(tmp_path)
@@ -947,6 +997,9 @@ def test_windows_raced_in_reparse_attribute_is_refused_after_read(
         file_opened = True
         return descriptor
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", with_reparse_state)
     monkeypatch.setattr(resolver_module.os, "fstat", with_descriptor_attributes)
     monkeypatch.setattr(resolver_module.os, "open", mark_open)
@@ -978,6 +1031,9 @@ def test_missing_required_platform_metadata_fails_only_source_closed(
             fields["st_file_attributes"] = 0
         return SimpleNamespace(**fields)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(
         resolver_module.os, "lstat", metadata_without_windows_attributes
     )
@@ -1011,6 +1067,9 @@ def test_unusable_windows_reparse_metadata_fails_source_closed(
             st_file_attributes=(attributes if Path(path) == instruction else 0),
         )
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", unusable_attributes)
 
     candidate = _resolve(tmp_path)
@@ -1222,14 +1281,15 @@ def test_remote_startup_prefers_override_without_laptop_disk(
     # The remote read may never open laptop files nor reach ANY of the
     # local-only IO helpers (os.open is patched exactly like the local
     # suite's unreadable-file tests; the helpers pin the branch).
-    monkeypatch.setattr(resolver_module.os, "open", no_laptop_io)
     monkeypatch.setattr(resolver_module, "_read_candidate", no_local_branch)
     monkeypatch.setattr(
         resolver_module, "_capture_ancestor_identities", no_local_branch
     )
     monkeypatch.setattr(resolver_module, "path_is_excluded", no_local_branch)
 
-    candidate, reader = _resolve_remote(root)
+    with monkeypatch.context() as tripwire:
+        tripwire.setattr(resolver_module.os, "open", no_laptop_io)
+        candidate, reader = _resolve_remote(root)
 
     assert candidate.source is not None
     assert candidate.source.kind == "override"

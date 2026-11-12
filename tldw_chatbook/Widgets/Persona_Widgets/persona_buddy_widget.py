@@ -25,6 +25,7 @@ from tldw_chatbook.Persona_Buddy.preferences import (
     PersonaBuddyGeometry,
     PersonaBuddyPreferences,
 )
+from tldw_chatbook.Persona_Buddy.rendering import PERSONA_BUDDY_FRAME_UNAVAILABLE
 
 _DEFAULT_WIDTH = 28
 _DEFAULT_HEIGHT = 12
@@ -60,7 +61,6 @@ def _visual_identity(visual: Any) -> tuple[object, ...]:
         getattr(visual, "cache_identity", None),
         getattr(visual, "frame_rate", None),
         getattr(visual, "loop", None),
-        getattr(visual, "animate", None),
         tuple(
             (
                 getattr(frame, "cache_identity", None),
@@ -353,7 +353,18 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             current_snapshot = self._controller.snapshot()
             if self._resolution_authority(current_snapshot) != authority:
                 continue
-            if visual is not None:
+            if visual is not None and visual.available and (
+                visual.reason == PERSONA_BUDDY_FRAME_UNAVAILABLE
+            ):
+                # Only this view owns the budget of the frame it painted.
+                accepted = self._accepted_render
+                if accepted and accepted.visual.graph_identity == visual.graph_identity:
+                    self._accepted_render = replace(
+                        accepted, visual=replace(accepted.visual, animate=False)
+                    )
+                else:
+                    self._accepted_render = None
+            elif visual is not None:
                 content_box = _stable_content_box(visual)
                 if content_box is not None:
                     self._accepted_render = _AcceptedRender(
@@ -365,20 +376,17 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                         content_height=content_box[1],
                     )
                     collapsed = bool(current_snapshot.collapsed)
+                    state = current_snapshot.state
                     alert_entry = self._alert_entry_authority
-                    if current_snapshot.state not in _ACTIONABLE_ALERTS:
+                    if state not in _ACTIONABLE_ALERTS:
                         self._display_content_boxes[collapsed] = content_box
                     elif (
                         alert_entry is not None
-                        and alert_entry[:2] == (current_snapshot.state, collapsed)
+                        and alert_entry[:2] == (state, collapsed)
                         and alert_entry[2] != budget
                     ):
                         self._display_content_boxes[collapsed] = content_box
-                        self._alert_entry_authority = (
-                            current_snapshot.state,
-                            collapsed,
-                            budget,
-                        )
+                        self._alert_entry_authority = (state, collapsed, budget)
             self._resolved_authority = authority
             self.refresh_from_controller(schedule_resolution=False)
             current_visual = current_snapshot.visual
@@ -559,8 +567,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         * ``_paint_frame`` reads the compact class, the alert for
           ``snapshot.state``, and the accepted render (via
           ``_accepted_render_for_paint``, which also reads ``display``);
-        * ``_sync_frame_timer`` reads the accepted render's animation fields,
-          carried here by ``accepted.visual_identity``.
+        * ``_sync_frame_timer`` also reads ``animate``. Keep it separate from
+          frame identity so a decode failure can freeze the painted frame.
 
         The controller generations ride along so any authority move the
         painted fields happen not to expose still opens the gate. The frame
@@ -589,6 +597,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             getattr(focused, "id", None),
             accepted.authority if accepted is not None else None,
             accepted.visual_identity if accepted is not None else None,
+            accepted.visual.animate if accepted is not None else None,
             accepted.collapsed if accepted is not None else None,
             accepted.content_width if accepted is not None else None,
             accepted.content_height if accepted is not None else None,

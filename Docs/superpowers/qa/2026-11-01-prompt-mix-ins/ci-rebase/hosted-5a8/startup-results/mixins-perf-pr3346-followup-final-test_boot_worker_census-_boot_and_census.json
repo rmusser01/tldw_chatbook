@@ -1,0 +1,260 @@
+{
+  "workers": [
+    {
+      "name": "restore_ingest_jobs",
+      "group": "ingest_restore"
+    },
+    {
+      "name": "resume_startup",
+      "group": "research_source_association_startup"
+    },
+    {
+      "name": "_sweep_research_paste_staging",
+      "group": "research_paste_staging_startup"
+    },
+    {
+      "name": "_reconcile_research_quick_notes_startup",
+      "group": "research-quick-notes-startup-reconciliation"
+    },
+    {
+      "name": "_refresh_console_persisted_rows_cache",
+      "group": "console-persisted-browser-cache"
+    },
+    {
+      "name": "_load_manual_unread_rows",
+      "group": "console-manual-unread-load"
+    },
+    {
+      "name": "_load_subagent_counts",
+      "group": "console-subagent-counts"
+    },
+    {
+      "name": "_refresh_workspace_files_availability_snapshot",
+      "group": "console-workspace-files-availability"
+    },
+    {
+      "name": "_refresh",
+      "group": "console-readiness-config"
+    },
+    {
+      "name": "_load_historical_presentation",
+      "group": "console-agent-history"
+    },
+    {
+      "name": "refresh_if_scope_changed",
+      "group": "console-character-context-refresh"
+    },
+    {
+      "name": "load",
+      "group": "console-prompt-history"
+    },
+    {
+      "name": "_sync_native_console_chat_ui",
+      "group": "console-readiness-publication"
+    },
+    {
+      "name": "_persist_sidebar_state_off_loop",
+      "group": "sidebar-state-persist"
+    },
+    {
+      "name": "_refresh_workspace_files_availability_snapshot",
+      "group": "console-workspace-files-availability"
+    },
+    {
+      "name": "run",
+      "group": "scheduling"
+    },
+    {
+      "name": "reconcile_at_boot",
+      "group": "dreams"
+    },
+    {
+      "name": "deferred_actor_pack_recovery",
+      "group": "actor_pack_recovery"
+    },
+    {
+      "name": "_refresh",
+      "group": "console-readiness-config"
+    },
+    {
+      "name": "_refresh_console_hooks",
+      "group": "console-hook-refresh"
+    },
+    {
+      "name": "_sync_console_legacy_workspace_context_aliases",
+      "group": "console-workspace-context-legacy-aliases"
+    },
+    {
+      "name": "_reconcile_console_after_attach",
+      "group": "console-attach-reconciliation"
+    },
+    {
+      "name": "_sync_console_legacy_workspace_context_aliases",
+      "group": "console-workspace-context-legacy-aliases"
+    },
+    {
+      "name": "_sync_console_legacy_workspace_context_aliases",
+      "group": "console-workspace-context-legacy-aliases"
+    },
+    {
+      "name": "_persist_sidebar_state_off_loop",
+      "group": "sidebar-state-persist"
+    },
+    {
+      "name": "_refresh",
+      "group": "console-readiness-config"
+    },
+    {
+      "name": "_refresh",
+      "group": "console-context-presentation"
+    },
+    {
+      "name": "_sync_native_console_chat_ui",
+      "group": "console-readiness-publication"
+    },
+    {
+      "name": "_sync_native_console_chat_ui",
+      "group": "console-context-publication"
+    },
+    {
+      "name": "_sync_console_legacy_workspace_context_aliases",
+      "group": "console-workspace-context-legacy-aliases"
+    },
+    {
+      "name": "_sync_native_console_chat_ui",
+      "group": "console-sync"
+    },
+    {
+      "name": "_refresh_workspace_files_availability_snapshot",
+      "group": "console-workspace-files-availability"
+    },
+    {
+      "name": "_load_subagent_counts",
+      "group": "console-subagent-counts"
+    },
+    {
+      "name": "_refresh",
+      "group": "console-readiness-config"
+    },
+    {
+      "name": "_prune_console_rail_preferences",
+      "group": "default"
+    },
+    {
+      "name": "_reconcile_console_after_attach",
+      "group": "console-attach-reconciliation"
+    }
+  ],
+  "threads": [
+    {
+      "name": "chatbook-storage-admission",
+      "module": "tldw_chatbook.Backup_Recovery.storage_admission",
+      "qualname": "_Hold._run"
+    },
+    {
+      "name": "ThreadPoolExecutor-0_0",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "ThreadPoolExecutor-0_1",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "ThreadPoolExecutor-0_2",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "ThreadPoolExecutor-0_3",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_0",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "ui-stall-watchdog",
+      "module": "tldw_chatbook.Utils.ui_responsiveness",
+      "qualname": "UIResponsivenessMonitor._watch_loop"
+    },
+    {
+      "name": "asyncio_0",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_1",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_2",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_3",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_4",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_5",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_6",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "ui-stall-persist",
+      "module": "tldw_chatbook.Utils.ui_responsiveness",
+      "qualname": "UIResponsivenessMonitor._drain_stalls"
+    },
+    {
+      "name": "asyncio_7",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_8",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_9",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_10",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_11",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "asyncio_12",
+      "module": "concurrent.futures.thread",
+      "qualname": "_worker"
+    },
+    {
+      "name": "tldw-screen-preimport",
+      "module": "tldw_chatbook.app",
+      "qualname": "TldwCli._preimport_heavy_screens"
+    }
+  ]
+}

@@ -17,13 +17,13 @@ class AssistantGenerationState(str, Enum):
     DISCARDED = "discarded"
 
 
+#: TASK-33621.6 AC#3: a row cannot tell whether this device or another one
+#: sent it, and the Console renders a local unresolved row with this same
+#: copy, so it names no device. The recovery panel of an imported owner
+#: (``REMOTE_*``) still says "on another device" / "on the source device".
 _UNRESOLVED_IMPORTED_STATE_COPY = {
-    AssistantGenerationState.ACCEPTED: (
-        "Response accepted on another device; waiting for dispatch."
-    ),
-    AssistantGenerationState.DISPATCH_STARTED: (
-        "Response delivery status is unknown on the source device."
-    ),
+    AssistantGenerationState.ACCEPTED: "Response accepted; waiting for dispatch.",
+    AssistantGenerationState.DISPATCH_STARTED: "Response delivery status is unknown.",
 }
 
 

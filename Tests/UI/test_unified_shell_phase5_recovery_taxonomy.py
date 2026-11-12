@@ -237,7 +237,6 @@ def test_service_backed_policy_destinations_use_async_workers_without_asyncio_ru
     screen_paths = [
         Path("tldw_chatbook/UI/Screens/library_screen.py"),
         Path("tldw_chatbook/UI/Screens/personas_screen.py"),
-        Path("tldw_chatbook/UI/Screens/skills_screen.py"),
     ]
 
     # asyncio.run on the UI thread is banned. A worker-thread usage is

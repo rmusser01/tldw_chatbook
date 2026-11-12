@@ -129,6 +129,7 @@ async def _open_import_row(screen, pilot) -> Input:
     return path_input
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_row_typing_reaches_the_screen_owned_path(tmp_path) -> None:
     """``@on(Input.Changed, "#library-prompts-import-path")`` really fires.
@@ -166,6 +167,7 @@ async def test_import_row_typing_reaches_the_screen_owned_path(tmp_path) -> None
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_run_button_reaches_the_blank_path_gate(tmp_path) -> None:
     """``@on(Button.Pressed, "#library-prompts-import-run")`` really fires.
@@ -209,6 +211,7 @@ async def test_import_run_button_reaches_the_blank_path_gate(tmp_path) -> None:
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_path_enter_reaches_the_blank_path_gate(tmp_path) -> None:
     """``@on(Input.Submitted, "#library-prompts-import-path")`` really fires.
@@ -253,6 +256,7 @@ async def test_import_path_enter_reaches_the_blank_path_gate(tmp_path) -> None:
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editor_discard_drops_the_dirty_draft_and_returns_to_the_list(
     tmp_path,

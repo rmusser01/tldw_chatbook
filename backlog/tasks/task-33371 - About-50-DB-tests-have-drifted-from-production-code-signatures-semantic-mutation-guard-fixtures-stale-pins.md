@@ -25,6 +25,13 @@ Besides the RecoveryRequired class (TASK-33370), about 52 DB and ChaChaNotesDB f
 - test_core_sqlite_owner_privacy.py fails 7 times with 'core owner resolved the selected database path', and one backup test with 'backup resolved its selected source or target path'. Those assertions guard a privacy contract, so they may be real product regressions rather than test drift. Found 2026-09-28 while verifying PERF-02 (PR #2887) and PERF-01 (PR #2888): the failures reproduce on the unchanged base commit 9cd9aad65f (dev 48019b1914 plus the audit docs commit), so they are pre-existing on dev.
 <!-- SECTION:DESCRIPTION:END -->
 
+Cross-reference (TASK-22280 closure, 2026-10-02, dev `e92b01515f`): the
+`console_trace_graph_epoch` fixture gap was re-verified with exact tracebacks
+(seeding dies in `soft_delete_message`/`_update_message_uncoordinated` ->
+`_advance_semantic_graph_epoch`, ChaChaNotes_DB.py:13668; table declared at
+`chachanotes_v55_to_v56_console_semantic_trace.sql:370`); candidate fix shapes
+and guard/lesson pointers are recorded in TASK-22280's Implementation Notes.
+
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Each failing test is triaged as test drift (test fixed) or product defect (code fixed, or a task filed and named in this task's notes)

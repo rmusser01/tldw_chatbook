@@ -1,0 +1,428 @@
+{
+  "schema_version": 1,
+  "scope": "TASK-35865 through TASK-35870",
+  "base_merge": "1ffc1ef0d63a1a1d594c7c8dcae7f216f59493d5",
+  "native_runtime": {
+    "python": "3.12.10",
+    "textual": "8.2.8"
+  },
+  "census_admission": {
+    "baseline_run": 39460622542,
+    "baseline_head": "5a5c59e991199e007443ba2fe7998058626dc260",
+    "before_entries": 408,
+    "after_entries": 415,
+    "floor": 415,
+    "all_previous_retained_once": true,
+    "prior_slots363_407_unchanged": true,
+    "new_nodes": [
+      {
+        "task": 35865,
+        "node": "Tests/UI/test_automation_definition_form.py::test_double_save_while_insert_pending_creates_one_definition",
+        "local_seconds": 14.23
+      },
+      {
+        "task": 35866,
+        "node": "Tests/UI/test_schedules_results_tab.py::test_mark_all_read_survives_overlapping_dismiss",
+        "local_seconds": 62.54
+      },
+      {
+        "task": 35867,
+        "node": "Tests/UI/test_settings_remaining_input_event_origin.py::test_remaining_stale_events_keep_latest_edit_and_invalid_draft",
+        "local_seconds": 53.16
+      },
+      {
+        "task": 35868,
+        "node": "Tests/UI/test_watchlists_rule_drafts.py::test_list_refresh_keeps_raw_rule_draft_and_focus[wide-Edit]",
+        "local_seconds": 13.67,
+        "timing_receipt": "task-4-report.md final green ordinary call duration"
+      },
+      {
+        "task": 35868,
+        "node": "Tests/UI/test_watchlists_rule_drafts.py::test_section_return_restores_rule_draft_without_saving[Edit]",
+        "local_seconds": 64.65
+      },
+      {
+        "task": 35869,
+        "node": "Tests/UI/test_evals_grid_shortcuts.py::test_grid_footer_and_f1_follow_keyboard_panes[compact]",
+        "local_seconds": 17.96
+      },
+      {
+        "task": 35870,
+        "node": "Tests/UI/test_chunking_lab_shortcuts.py::test_busy_hints_refresh_without_focus_change",
+        "local_seconds": 20.27,
+        "timing_receipt": "task-6-report.md final same-product five-pass batch, candidate-only correction does not change busy test"
+      }
+    ],
+    "timing_multiplier": 2.6,
+    "swaps": [
+      {
+        "indices": [
+          202,
+          47
+        ],
+        "entries_before": [
+          "Tests/UI/test_settings_save_reach.py",
+          "Tests/UI/test_approval_batch_geometry.py"
+        ],
+        "measured_seconds": [
+          203.825135,
+          30.946317
+        ]
+      },
+      {
+        "indices": [
+          190,
+          195
+        ],
+        "entries_before": [
+          "Tests/UI/test_settings_connect_paint.py",
+          "Tests/UI/test_settings_providers_models_card_geometry.py"
+        ],
+        "measured_seconds": [
+          247.571692,
+          90.2217
+        ]
+      },
+      {
+        "indices": [
+          134,
+          39
+        ],
+        "entries_before": [
+          "Tests/UI/test_quit_prompt_vanish.py",
+          "Tests/UI/test_console_pending_interrupt_projection.py"
+        ],
+        "measured_seconds": [
+          7.133636,
+          112.328154
+        ]
+      },
+      {
+        "indices": [
+          180,
+          348
+        ],
+        "entries_before": [
+          "Tests/UI/test_personal_context_provenance.py",
+          "Tests/UI/test_model_config_field_labels.py"
+        ],
+        "measured_seconds": [
+          15.565856,
+          57.124778
+        ]
+      },
+      {
+        "indices": [
+          193,
+          36
+        ],
+        "entries_before": [
+          "Tests/UI/test_console_settings_saved_defaults.py",
+          "Tests/UI/test_console_model_popover_no_provider.py"
+        ],
+        "measured_seconds": [
+          37.279359,
+          2.006506
+        ]
+      },
+      {
+        "indices": [
+          161,
+          155
+        ],
+        "entries_before": [
+          "Tests/UI/test_library_note_autosave_recovers.py",
+          "Tests/UI/test_speech_playground_model.py"
+        ],
+        "measured_seconds": [
+          20.034001,
+          3.378836
+        ]
+      }
+    ],
+    "projected_job_wall_seconds": [
+      1137.42493,
+      1130.886835,
+      1127.2111820000002,
+      1134.423147,
+      1137.896518,
+      1130.0051569999998,
+      1134.272853,
+      1122.878818,
+      1137.439078,
+      1136.409482
+    ],
+    "minimum_projected_margin_seconds": 62.103481999999985,
+    "status": "Estimated placement; hosted current-head CI pending; no three-minute/three-run claim. TASK-35834 open.",
+    "limits_unchanged": {
+      "shards": 10,
+      "job_minutes": 20,
+      "pytest_timeout_seconds": 180
+    },
+    "census_guard": "exit0:415 entries/floor415, all literal nodes resolve",
+    "new_node_collection": "exit0:exact7 nodes collected, inherited warnings visible"
+  },
+  "metadata_guards": {
+    "task_files": 5589,
+    "duplicate_ids": 0,
+    "unreadable": 0,
+    "relative_links_checked": 49,
+    "broken_relative_links": 0
+  },
+  "execution_rulings": [
+    "Refuse overlapping Results mutations with visible busy feedback rather than queueing them. This preserves the admitted target and avoids stale queued gestures. Cost if wrong: users must deliberately retry after completion; a future queue would require explicit intent/retargeting policy.",
+    "Preserve the existing native profile admission boundary and attribute legacy Results setup errors separately. 35 undecorated nodes stop at Tests/UI/conftest.py::_disable_model_catalog_refresh -> app.py:693 load_settings -> Backup_Recovery/raw_participants.py:307 RecoveryRequired('raw_source_selection_changed'), before Results code; this exact native boundary was reproduced on unchanged merged dev during prior qualification. Validate changed behavior using new real private-profile UI controls plus 29 targeted service/outbox passes, not fixture bypass or broad migration. Cost if wrong: legacy UI controls remain unverified locally; disclose and check hosted scoped admission.",
+    "Trim Task 6 extracted brief at the higher-level Controller closeout heading. The task-brief helper carried controller steps into its last task, conflicting with explicit implementer ownership/no-agent rules. Controller retains those integration/review/lifecycle steps; no task requirement removed. Cost if wrong: none to product scope; original master plan retains every step.",
+    "Task 3 AC3 includes a genuine edit queued before a backing sync can deliver its Changed event. Permit bounded ephemeral projection/pending-edit bookkeeping at the existing screen/Input owner, using explicit initial values/public Textual mechanisms, never private _initial_value or new draft/persistence authority. Also consider a real edit returning to a prior display; last-projection equality alone does not prove origin. Native prevent remains the projection boundary. Cost if wrong: small local bookkeeping could need simplification; silently discarded input would violate the explicit AC.",
+    "Task3 category-return assertion is scoped to its explicit eight fields: exact values/originals projection and dirty_keys exactly the eight genuine edits. Existing unchanged mount handlers add23 unrelated values (background_effects/defaults etc.); capture their keys/value/original/dirty evidence and require all extras equal originals, so narrowing cannot hide unintended dirty edits. Preserve original direct-eight-field refresh test's exact whole-draft assertion. Cost if wrong: unrelated legacy initialization entries remain locally observed but unfixed; disclose/deduplicate ownership, do not expand this bounded task silently.",
+    "record in final QA as an inherited observation/diagnostic lead; no speculative duplicate backlog task or expansion without a distinct reproduced outcome. Cost if wrong: a latent unrelated-field refresh issue remains for later scoped evidence.",
+    "Task5 includes a bounded Evals-local F6 handler via existing app.py949/app_lifecycle.py1958 delegation. AC5 already demands real F6 movement and existing F1 advertises it. No Evals F6 owner found beyond35869;32887Done covers help and1064 has no F6 item. Restore intended existing seam, skip unavailable compact panes, preserve Tab/text; no binding/framework/newADR. Cost if wrong: small local focus behavior change; omitting it leaves advertised F6 and explicit acceptance false. Plan/brief/Backlog plan clarified before handler implementation.",
+    "Accept Task5 contemporaneous recorded original-code RED plus unchanged baseline scope evidence; do not replay original code solely to recreate automatically retired numbered pytest logs. Independent reviewer inspected named final receipts and controller independently reproduced exact BASE/current one-F401 equality. Eight legacy constructors remain unqualified. Cost if wrong: original RED raw output cannot be independently reinspected; retain this limitation and named receipts, and document numbered-temp retention incident.",
+    "Task6 preserves existing Pin button and keyboard/direct readiness-refusal guidance when current completed B is missing (AC3), while hiding p execution hints until completed/non-stale B and explaining readiness in F1. Busy/guarded/leaving retain disabled mutation gates; Run/Save validation stays reachable. One local projection may distinguish ready execution from useful explanation. Cost if wrong: deliberate early Pin still yields existing guidance, without advertising successful readiness.",
+    "Task6 may use existing mounted-destination harness conventions (ConsolidatedCSSApp + real Lifecycle F1/F6 delegation + actual Lab screen/coordinator/app_instance), as Task5 does. Initial full-app wide test body passed but teardown reported Native app workers remain uncertain /executor join3s after unrelated visual-identity startup. Preserve named failure and disclose full startup/teardown unqualified; never bypass guards or raise joins/timeouts. Same original RED assertions/state owners remain, so no original-product replay solely for this harness change. Cost if wrong: unrelated full-app startup/quit integration remains unverified by these bounded Lab controls."
+  ],
+  "task6": {
+    "status": "Done",
+    "execution_commit": "615956f69a",
+    "review": "Astra spec compliant / Approved",
+    "passing_groups": {
+      "new_nodes": 6,
+      "existing_controls": 5,
+      "guards": 4
+    },
+    "limits": {
+      "legacy_profile_stops": 56,
+      "unchanged_pre_mount_fixture_refusals": 3,
+      "posix_skips": 2,
+      "initial_full_app_teardown_cause": "unqualified"
+    },
+    "new_pass_evidence": "five final-product passing batch nodes +candidate-only oracle-corrected passing rerun; not one all-green batch"
+  },
+  "combined_guard_results": {
+    "worker": {
+      "exit": 0,
+      "post_await_sites": 312,
+      "functions": 148,
+      "new_violations": 0,
+      "wait_dismiss_pushes": 43,
+      "nonworker_entries": 23
+    },
+    "markup": {
+      "exit": 0,
+      "notify": 313,
+      "button": 79,
+      "tooltip": 60,
+      "pins": 541
+    },
+    "preimport": {
+      "exit": 0,
+      "modules": 557,
+      "module_ceiling": 558,
+      "loc": 420444,
+      "loc_ceiling": 425347,
+      "fattest_route_loc": 128378,
+      "fattest_route_ceiling": 135111
+    },
+    "census": {
+      "exit": 0,
+      "entries": 415,
+      "floor": 415,
+      "exact_new_nodes_collected": 7
+    }
+  },
+  "whole_branch_review": {
+    "reviewer": "Superpowers gpt-6-astra/high",
+    "base": "02ab8bc89b597f31b6ae8c41956631f3a318fef7",
+    "head": "bbc3c3b0724cdc8fff5b2f262929f6aa6030cb4c",
+    "ready_for_pr_and_current_head_ci": true,
+    "introduced_critical": 0,
+    "introduced_important": 0,
+    "introduced_actionable_minor": 0,
+    "report": "### Strengths\n\n- All six implementations match their binding acceptance criteria and stay within existing UI, persistence, validation, and recovery owners. No schema, dependency, global registry, or global binding change was introduced.\n- Save admission is synchronous; Results mutations retain captured targets and scope through settlement. Tests distinguish physical SQLite completion from cancellation of an async waiter.\n- Settings protects genuine queued edits while suppressing programmatic publication. Watchlists preserves raw fields and original editing identity without rebuilding the editor during list refresh.\n- Evals derives footer/help vocabulary and reachability from the mounted grid. Its local F6 handler restores the existing delegated contract. Lab shares control/readiness facts while preserving useful validation and refusal paths.\n- Regression tests exercise mounted widgets, actual keys, meaningful state transitions, and real persistence where relevant. Documentation accurately distinguishes passing evidence from unqualified paths.\n\n### Issues\n\n**Critical:** None found.\n\n**Important:** None found.\n\n**Minor:** No introduced actionable finding. The deferred pytest-asyncio/Pydantic/audioop warnings, unchanged Settings/Watchlists/Evals/Lab lint debt, and seven baseline formatter edits in the census checker do **not** require correction in this branch. Keep their disclosure; broad cleanup or warning suppression would add unrelated scope.\n\n### Integration and evidence assessment\n\nI independently compared the census against the exact base: **408 previous entries remain exactly once, 415 entries total, and slots 363-407 are unchanged**. The twelve changed earlier slots match the six documented swaps. The diff preserves shard count and time limits and lowers both module-size caps.\n\nThe seven admitted nodes represent all six tasks, including both Watchlists lifecycle boundaries. Recorded collection and census checks support admission. The estimated **62.1-second minimum margin** supports trying current-head hosted CI; it does not establish hosted performance or complete TASK-35834.\n\nI inspected the named Lab XML receipts: five nodes passed in the recorded batch, its candidate node failed, and the separate corrected candidate run passed. This supports six individually passing nodes on the final product, exactly as disclosed-not an all-green batch. The copied Evals final receipt records four passing mounted cases.\n\nNo material plan conflict found. The bounded F6 restoration, pending-edit bookkeeping, and distinction between Pin readiness hints and reachable refusal guidance are justified by the acceptance criteria.\n\n### Checks performed\n\nReviewed the supplied 15-commit package in bounded segments, the plan, all six full Backlog contracts, qualification/evidence files, review records, and rulings/deferred minors.\n\nNamed supplementary checks:\n\n- Searched Results helper callers to assess the changed internal parameter contract: only its definition and updated host caller exist.\n- Read omitted Lab refresh context to check that Pin readiness follows current B even when another result is displayed.\n- Read the exact base census to independently check coverage retention and slot placement.\n\nNo tests rerun, agents dispatched, or checkout/index/branch mutations made.\n\n### Declined to judge\n\n- **Full-app Lab startup/quit health:** the initial teardown failure remains cause-unqualified; the destination harness excludes startup services and cannot clear that failure.\n- **Legacy UI journeys blocked by `raw_source_selection_changed`:** they stop before changed behavior. Their failures remain verification gaps, not passing controls.\n- **Three legacy Lab viewport fixture refusals:** their precise recipe incompatibility remains undiagnosed and precedes ResultsApp construction.\n- **The 23 unrelated Settings initialization entries:** evidence establishes equal-original, non-dirty values only; no distinct faulty Save or stale-refresh outcome is demonstrated.\n- **Hosted CI timing and TASK-35834 completion:** local estimates cannot establish hosted qualification, three-run stability, or three-minute headroom.\n- **Retired original Evals RED logs:** contemporaneous reports remain available, but missing raw receipts cannot be independently reinspected.\n- **Broad service/network/crash semantics and native terminal coverage:** these owners are unchanged; targeted evidence does not qualify every existing application journey or a full-suite run.\n\n### Assessment\n\n**Ready for PR and current-head CI: Yes.**\n\n**Ready to merge: Not yet qualified.** No introduced blocking defect was found, but hosted current-head checks remain pending and no merge is authorized. Preserve the disclosed verification limits and leave TASK-35834 open.\n",
+    "executor_dispositions": {
+      "full_app_teardown": "Retain cause-unqualified scope limit; do not claim clean startup/quit. Existing mounted coordinator retirement verified.",
+      "legacy_profile_journeys": "Retain setup coverage gap; native guard unchanged. New private-profile behavior controls pass.",
+      "three_lab_fixture_refusals": "Retain undiagnosed pre-screen fixture limit; no runtime/validation relaxation or unsupported user-bug claim.",
+      "settings23_entries": "Retain equal-original/non-dirty observation; no demonstrated new faulty Save/refresh outcome or speculative duplicate task.",
+      "hosted_ci": "Continue current-head hosted checks now; TASK-35834 remains open regardless of one qualification run.",
+      "expired_red_receipts": "Retain report-only originalRED qualification and retention lesson; final named receipts inspected.",
+      "broad_network_crash_native_terminal": "Outside bounded changed-owner qualification; targeted scope and no-full-suite rule retained, no broader health claim."
+    }
+  },
+  "hosted_ci_receipts": "Follow-up PR current-head checks and description after native qualification; no merge authorized.",
+  "controller_static": {
+    "general_lint": "passed",
+    "format": "inherited baseline drift unchanged",
+    "format_edits": [
+      {
+        "tag": "replace",
+        "before": [
+          "def _value_id(node: ast.AST, argname: str, index: int, scope: dict[str, ast.AST]) -> str:"
+        ],
+        "after": [
+          "def _value_id(",
+          "    node: ast.AST, argname: str, index: int, scope: dict[str, ast.AST]",
+          ") -> str:"
+        ]
+      },
+      {
+        "tag": "replace",
+        "before": [
+          "            values = ast.Tuple(elts=list(item.args)) if len(argnames) > 1 else item.args[0]"
+        ],
+        "after": [
+          "            values = (",
+          "                ast.Tuple(elts=list(item.args)) if len(argnames) > 1 else item.args[0]",
+          "            )"
+        ]
+      },
+      {
+        "tag": "replace",
+        "before": [
+          "        if not isinstance(values, (ast.Tuple, ast.List)) or len(values.elts) != len(argnames):"
+        ],
+        "after": [
+          "        if not isinstance(values, (ast.Tuple, ast.List)) or len(values.elts) != len(",
+          "            argnames",
+          "        ):"
+        ]
+      },
+      {
+        "tag": "replace",
+        "before": [
+          "    name = target.attr if isinstance(target, ast.Attribute) else getattr(target, \"id\", None)"
+        ],
+        "after": [
+          "    name = (",
+          "        target.attr",
+          "        if isinstance(target, ast.Attribute)",
+          "        else getattr(target, \"id\", None)",
+          "    )"
+        ]
+      },
+      {
+        "tag": "replace",
+        "before": [
+          "            available.update(_fixtures(ast.parse(conftest.read_text(encoding=\"utf-8\")).body))"
+        ],
+        "after": [
+          "            available.update(",
+          "                _fixtures(ast.parse(conftest.read_text(encoding=\"utf-8\")).body)",
+          "            )"
+        ]
+      },
+      {
+        "tag": "replace",
+        "before": [
+          "            combined = [f\"{left}-{right}\" if left else right for left in combined for right in ids]"
+        ],
+        "after": [
+          "            combined = [",
+          "                f\"{left}-{right}\" if left else right",
+          "                for left in combined",
+          "                for right in ids",
+          "            ]"
+        ]
+      },
+      {
+        "tag": "replace",
+        "before": [
+          "            if inner.startswith(outer_path + \"::\") or inner.startswith(outer_path + \"[\"):"
+        ],
+        "after": [
+          "            if inner.startswith(outer_path + \"::\") or inner.startswith(",
+          "                outer_path + \"[\"",
+          "            ):"
+        ]
+      }
+    ],
+    "changed_format_edits": 0,
+    "whitespace_exit": 0,
+    "exact_module_sizes": {
+      "Settings": 35732,
+      "Watchlists": 14283
+    }
+  },
+  "integration_rebase": {
+    "pre_rebase_base": "1ffc1ef0d63a1a1d594c7c8dcae7f216f59493d5",
+    "pre_rebase_head": "a2bd0fb09737aa7ea83ea647e128d89be8433884",
+    "rebased_base": "02ab8bc89b597f31b6ae8c41956631f3a318fef7",
+    "rebased_head": "0499d2d21c6e3da278d104041b7545932c8054fd",
+    "changed_tree_paths": [
+      "backlog/tasks/task-34915 - The-UI-ready-module-census-fails-under-load-because-a-Console-module-can-load-before-UI-ready.md"
+    ],
+    "all_product_test_and_qualification_bytes_identical": true,
+    "commit_map": [
+      {
+        "execution_commit": "d7bdba861bab80fef0fc9b00b0d447fd72e5aa56",
+        "rebased_commit": "2f0991c7f4be21a9c592dc1c7498ef1cc79a999b",
+        "subject": "docs: record post-merge Textual follow-up backlog"
+      },
+      {
+        "execution_commit": "b719113f878fa104b66f3b02e7a9bbf33ea0bd5a",
+        "rebased_commit": "d45ce4f3c4b8c77b96fb2bed0f2a84bd7732ec0d",
+        "subject": "docs: plan six Textual follow-up fixes"
+      },
+      {
+        "execution_commit": "7d00f8490d81242a1db8a046eaed41ab3f22f738",
+        "rebased_commit": "2b79288bba398be811cdf538cb0660954b215222",
+        "subject": "fix(scheduling): admit automation Save once while pending"
+      },
+      {
+        "execution_commit": "902f8c534a7be49f5f7201ef15efb69be47fefeb",
+        "rebased_commit": "c66e889ad0ec0ac04fa0cff0df9e2acf88e7e3c9",
+        "subject": "docs: close Save admission task and start Results admission"
+      },
+      {
+        "execution_commit": "17122d75d1b57f9817822c9dfef920b6346b7208",
+        "rebased_commit": "eaee220ce59e9cbf08c1d47875a3e806181002d1",
+        "subject": "fix(scheduling): retain admitted Results review mutations"
+      },
+      {
+        "execution_commit": "26de383f6ecdff425fec1b1faaef7ed272f10015",
+        "rebased_commit": "18718279cc9ac1e568a6d660855e00366e044cc8",
+        "subject": "docs: close Results admission task and start Settings origin fix"
+      },
+      {
+        "execution_commit": "8989b69f0f13d2a81d166bff516b6b7c4012d889",
+        "rebased_commit": "5f0d51074726881793de714377ac96cf9c4d4d46",
+        "subject": "fix(settings): preserve remaining Console input edit origins"
+      },
+      {
+        "execution_commit": "3e5b8315ed94381ca882a86e76916f2a44bf0dbc",
+        "rebased_commit": "96bae8947276732cef3fe1671fc7eab0868cde87",
+        "subject": "docs: close Settings origin fix and start Rule draft preservation"
+      },
+      {
+        "execution_commit": "3e2327eb3cffe0f2a0138fd4f603e3cd9ec4179e",
+        "rebased_commit": "67b78e96a7dbfa0f7a41dd2b76cc3d2995712597",
+        "subject": "fix(watchlists): preserve raw rule editor drafts"
+      },
+      {
+        "execution_commit": "da702d67f3c70efb83015fcd981bd4b8c0e5c378",
+        "rebased_commit": "c0ffc975de717d44518dc4e2c6698c0891ae6fb3",
+        "subject": "docs: close Rule draft task and start Evals shortcut scope"
+      },
+      {
+        "execution_commit": "e40cbe6d10eeb3c96e05a05dead5e77ebb3912d0",
+        "rebased_commit": "79c94d6ddbce964a6142fe26d13172fa5ff3321d",
+        "subject": "fix(evals): scope grid shortcuts and help to active keyboard context"
+      },
+      {
+        "execution_commit": "8a553f668a25a64a8e0a56e8abd8e2c0fcd1a111",
+        "rebased_commit": "a3c2b5b62c45ec7bdeac798ea75c2778dfd3ace9",
+        "subject": "docs: close Evals scope task and start Chunking Lab follow-up"
+      },
+      {
+        "execution_commit": "615956f69a58d319a602d277a507683ef1c9f2e3",
+        "rebased_commit": "93853ca14d6ceabc7ef83f307df9293266bf4a30",
+        "subject": "fix: keep Chunking Lab shortcuts and help in sync"
+      },
+      {
+        "execution_commit": "a2bd0fb09737aa7ea83ea647e128d89be8433884",
+        "rebased_commit": "0499d2d21c6e3da278d104041b7545932c8054fd",
+        "subject": "test: admit Textual follow-up regressions and close six-task backlog"
+      }
+    ]
+  }
+}

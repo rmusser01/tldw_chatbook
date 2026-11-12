@@ -7,9 +7,9 @@ resolves one itself (spec decision D2 -- the Library screen's own Search
 canvas call sites never pass this keyword, so they stay byte-identical);
 scoped keyword search restricts the media/notes seams to the scope's id
 allowlists and excludes the conversations seam entirely (spec D5), scoped
-semantic search runs one store query per allowlisted source type merged by
-score; an EMPTY effective scope must never reach the service at all; and
-the Console call site (``UI/Screens/chat_screen.py``) resolves the active
+semantic search passes the union of per-source-type allowlists to ONE engine
+search, merged by score inside the engine (review-B B2); an EMPTY effective
+scope must never reach the service at all; and the Console call site (``UI/Screens/chat_screen.py``) resolves the active
 conversation's effective scope the same way the task-5 chat entry point
 does before calling the service.
 
@@ -23,6 +23,7 @@ real-``TldwCli``/real-``ChatScreen`` recipe for the Console call site.
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -156,7 +157,13 @@ def _sem_item(source_id: str, source_type: str, score: float) -> dict[str, Any]:
 
 
 class _SpyRagService:
-    """Mirrors RAGService.search's signature, keyed on metadata_allowlist."""
+    """Mirrors RAGService.search's signature, keyed on metadata_allowlist.
+
+    Review-B B2: the caller passes the WHOLE union (a list of one
+    AND-group per source type) in a single search call, so this double
+    materializes iterable allowlists to tuples the way the engine does and
+    serves each entry's rows merged back, sorted by score descending.
+    """
 
     def __init__(self, results_by_source_type: dict[str, list[dict]] | None = None):
         self.results_by_source_type = results_by_source_type or {}
@@ -173,14 +180,25 @@ class _SpyRagService:
         *,
         metadata_allowlist=None,
     ):
-        self.calls.append({"query": query, "metadata_allowlist": metadata_allowlist})
         if metadata_allowlist is None:
+            entries = None
+        elif isinstance(metadata_allowlist, Mapping):
+            entries = (metadata_allowlist,)
+        else:
+            entries = tuple(metadata_allowlist)
+        self.calls.append({"query": query, "metadata_allowlist": entries})
+        if entries is None:
             merged: list[dict] = []
             for items in self.results_by_source_type.values():
                 merged.extend(items)
-            return merged
-        source_type = next(iter(metadata_allowlist.get("source_type", ())), None)
-        return list(self.results_by_source_type.get(source_type, []))
+            merged.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+            return merged[:top_k] if top_k else merged
+        merged = []
+        for entry in entries:
+            source_type = next(iter(entry.get("source_type", ())), None)
+            merged.extend(self.results_by_source_type.get(source_type, []))
+        merged.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+        return merged[:top_k] if top_k else merged
 
 
 def _scoped(**allowlist: set) -> EffectiveScope:
@@ -666,7 +684,14 @@ async def test_scoped_keyword_search_zero_results_marker():
 
 
 @pytest.mark.asyncio
-async def test_scoped_semantic_search_runs_one_query_per_type_and_merges_by_score():
+async def test_scoped_semantic_search_sends_one_union_call_merged_by_score():
+    """Review-B B2: ONE engine search carries the whole union allowlist.
+
+    The caller used to loop one full search (one query embedding) per
+    allowlist entry; `_search_semantic` now passes the union to a single
+    call exactly as `_search_hybrid` does, and the engine runs the
+    per-entry store queries and the score merge internally.
+    """
     rag = _SpyRagService(
         {
             "media": [_sem_item("m1", "media", 0.5)],
@@ -679,10 +704,11 @@ async def test_scoped_semantic_search_runs_one_query_per_type_and_merges_by_scor
 
     result = await service.search("q", ("notes", "media"), "rag", top_k=5, scope=scope)
 
-    assert len(rag.calls) == 2
-    allowlists = [call["metadata_allowlist"] for call in rag.calls]
-    assert {"source_type": {"media"}, "source_id": {"m1"}} in allowlists
-    assert {"source_type": {"note"}, "source_id": {"n1"}} in allowlists
+    assert len(rag.calls) == 1
+    assert rag.calls[0]["metadata_allowlist"] == (
+        {"source_type": {"media"}, "source_id": {"m1"}},
+        {"source_type": {"note"}, "source_id": {"n1"}},
+    )
     ids_in_order = [row["source_id"] for row in result["results"]]
     assert ids_in_order == ["n1", "m1"]  # merged, sorted by score descending
 

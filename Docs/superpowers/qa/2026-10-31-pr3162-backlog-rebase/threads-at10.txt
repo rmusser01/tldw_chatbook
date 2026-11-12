@@ -1,0 +1,108 @@
+Thread 0x00038498 (most recent call first):
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 774 in _poll
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 445 in select
+  File "C:\Python312\Lib\asyncio\base_events.py", line 1961 in _run_once
+  File "C:\Python312\Lib\asyncio\base_events.py", line 645 in run_forever
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 322 in run_forever
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Chat\console_agent_bridge.py", line 2480 in _run
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00036040 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 359 in wait
+  File "C:\Python312\Lib\queue.py", line 180 in get
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Utils\ui_responsiveness.py", line 131 in _drain_stalls
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00036aa0 (most recent call first):
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 90 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x000315cc (most recent call first):
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Utils\windows_files.py", line 563 in open_handle
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Utils\windows_files.py", line 658 in _parent
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Utils\windows_files.py", line 767 in stat
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Backup_Recovery\bootstrap.py", line 422 in _registry
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Backup_Recovery\bootstrap.py", line 506 in startup_permission
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1505 in _acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1397 in acquire_storage
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Backup_Recovery\admission_runtime.py", line 179 in execution
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Agents\activation.py", line 202 in call
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Chat\console_agent_bridge.py", line 7678 in run_reply
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Chat\console_agent_bridge.py", line 290 in wrapped
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Agents\activation.py", line 210 in call
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Chat\console_automatic_submission.py", line 373 in run_owned_chat_operation
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Chat\console_chat_controller.py", line 11508 in _run_owned_chat_db_operation
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Agents\activation.py", line 247 in call
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Current thread 0x00038c48 (most recent call first):
+  File "<string>", line 15 in dump
+  File "C:\Python312\Lib\threading.py", line 1433 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0002bae4 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 359 in wait
+  File "C:\Python312\Lib\threading.py", line 655 in wait
+  File "C:\Python312\Lib\threading.py", line 1431 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00038a88 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 355 in wait
+  File "C:\Python312\Lib\threading.py", line 655 in wait
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3162-resync\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 531 in _run
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00039a08 (most recent call first):
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 774 in _poll
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 445 in select
+  File "C:\Python312\Lib\asyncio\base_events.py", line 1961 in _run_once
+  File "C:\Python312\Lib\asyncio\base_events.py", line 645 in run_forever
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 322 in run_forever
+  File "C:\Python312\Lib\asyncio\base_events.py", line 678 in run_until_complete
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 773 in inner
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\python.py", line 159 in pytest_pyfunc_call
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121 in _multicall
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120 in _hookexec
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512 in __call__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\python.py", line 1627 in runtest
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 508 in runtest
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 174 in pytest_runtest_call
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121 in _multicall
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120 in _hookexec
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512 in __call__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 242 in <lambda>
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 341 in from_call
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 241 in call_and_report
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 132 in runtestprotocol
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 113 in pytest_runtest_protocol
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121 in _multicall
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120 in _hookexec
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512 in __call__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 362 in pytest_runtestloop
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121 in _multicall
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120 in _hookexec
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512 in __call__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 337 in _main
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 283 in wrap_session
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 330 in pytest_cmdline_main
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121 in _multicall
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120 in _hookexec
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512 in __call__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\config\__init__.py", line 175 in main
+  File "<string>", line 25 in <module>

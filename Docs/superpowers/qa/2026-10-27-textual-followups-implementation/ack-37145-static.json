@@ -1,0 +1,166 @@
+{
+  "files": {
+    "tldw_chatbook/Widgets/Console/console_transcript.py": {
+      "current": {
+        "sha256_utf8": "d068c16e02d7d92ebc4e167b02a3f8b7f8893d33eccc55d998ffbee3ac904238",
+        "sha256_on_disk": "4830027463b1f4331324369fe2ca57065d0dfc68866e05f13868714c7c97a027",
+        "lines": 8652,
+        "ast": "PASS",
+        "ruff_exit": 1,
+        "ruff": [
+          {
+            "cell": null,
+            "code": "E721",
+            "end_location": {
+              "column": 35,
+              "row": 4838
+            },
+            "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Widgets\\Console\\console_transcript.py",
+            "fix": null,
+            "location": {
+              "column": 17,
+              "row": 4838
+            },
+            "message": "Do not compare types, use `isinstance()`",
+            "noqa_row": 4838,
+            "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+          },
+          {
+            "cell": null,
+            "code": "E721",
+            "end_location": {
+              "column": 35,
+              "row": 4850
+            },
+            "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Widgets\\Console\\console_transcript.py",
+            "fix": null,
+            "location": {
+              "column": 17,
+              "row": 4850
+            },
+            "message": "Do not compare types, use `isinstance()`",
+            "noqa_row": 4850,
+            "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+          },
+          {
+            "cell": null,
+            "code": "E721",
+            "end_location": {
+              "column": 49,
+              "row": 7181
+            },
+            "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Widgets\\Console\\console_transcript.py",
+            "fix": null,
+            "location": {
+              "column": 28,
+              "row": 7181
+            },
+            "message": "Do not compare types, use `isinstance()`",
+            "noqa_row": 7181,
+            "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+          }
+        ],
+        "format_exit": 1,
+        "format_output": ""
+      },
+      "baseline": {
+        "sha256_utf8": "87c702e09f2587aa023f3152545253c241f595c9854d83aa8911055e9196f832",
+        "sha256_on_disk": null,
+        "lines": 8652,
+        "ast": "PASS",
+        "ruff_exit": 1,
+        "ruff": [
+          {
+            "cell": null,
+            "code": "E721",
+            "end_location": {
+              "column": 35,
+              "row": 4838
+            },
+            "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Widgets\\Console\\console_transcript.py",
+            "fix": null,
+            "location": {
+              "column": 17,
+              "row": 4838
+            },
+            "message": "Do not compare types, use `isinstance()`",
+            "noqa_row": 4838,
+            "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+          },
+          {
+            "cell": null,
+            "code": "E721",
+            "end_location": {
+              "column": 35,
+              "row": 4850
+            },
+            "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Widgets\\Console\\console_transcript.py",
+            "fix": null,
+            "location": {
+              "column": 17,
+              "row": 4850
+            },
+            "message": "Do not compare types, use `isinstance()`",
+            "noqa_row": 4850,
+            "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+          },
+          {
+            "cell": null,
+            "code": "E721",
+            "end_location": {
+              "column": 49,
+              "row": 7181
+            },
+            "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Widgets\\Console\\console_transcript.py",
+            "fix": null,
+            "location": {
+              "column": 28,
+              "row": 7181
+            },
+            "message": "Do not compare types, use `isinstance()`",
+            "noqa_row": 7181,
+            "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+          }
+        ],
+        "format_exit": 1,
+        "format_output": ""
+      }
+    },
+    "Tests/UI/test_console_send_acknowledgement.py": {
+      "current": {
+        "sha256_utf8": "84edd785bf7367d39a6644077080687bd4800cc6e40a929a9633b6edec26900b",
+        "sha256_on_disk": "37bd6a12464fd787a8c1ec87c545925a228867912c096c8bfdb8f1daafadd49d",
+        "lines": 661,
+        "ast": "PASS",
+        "ruff_exit": 0,
+        "ruff": [],
+        "format_exit": 0,
+        "format_output": ""
+      },
+      "baseline": {
+        "sha256_utf8": "a0dc2cb1e2ab277ddd3e18678c752bd99f2d005b472435d2788ccd40d14341ee",
+        "sha256_on_disk": null,
+        "lines": 640,
+        "ast": "PASS",
+        "ruff_exit": 0,
+        "ruff": [],
+        "format_exit": 0,
+        "format_output": ""
+      }
+    },
+    "Tests/UI/test_console_transcript_ack_repaint.py": {
+      "current": {
+        "sha256_utf8": "663f0cd3918ce5c02c250e1b7e52d07325989b3a5016329a0f47fe3aad803319",
+        "sha256_on_disk": "663f0cd3918ce5c02c250e1b7e52d07325989b3a5016329a0f47fe3aad803319",
+        "lines": 165,
+        "ast": "PASS",
+        "ruff_exit": 0,
+        "ruff": [],
+        "format_exit": 0,
+        "format_output": ""
+      }
+    }
+  },
+  "diff_check_exit": 0,
+  "diff_check_output": "warning: in the working copy of 'Docs/superpowers/plans/2026-10-27-textual-37031-37034.md', LF will be replaced by CRLF the next time Git touches it\n"
+}

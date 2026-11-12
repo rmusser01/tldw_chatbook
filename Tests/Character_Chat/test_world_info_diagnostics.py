@@ -413,7 +413,9 @@ def test_regex_entry_fires_on_pattern_a_literal_would_miss():
     result = proc.process_messages("The Wardon appears.", [])  # matches ward[eo]n
     assert any("grim jailer" in c for c in result["injections"]["before_char"])
     # A literal (non-regex) entry with the same key would NOT match "Wardon".
-    lit = WorldInfoProcessor(world_books=[_book(1, "B", [_entry(1, ["ward[eo]n"], "x")])])
+    lit = WorldInfoProcessor(
+        world_books=[_book(1, "B", [_entry(1, ["ward[eo]n"], "x")])]
+    )
     assert lit.process_messages("The Wardon appears.", [])["matched_entries"] == []
 
 
@@ -429,7 +431,7 @@ def test_regex_backstop_downgrades_bad_pattern_to_literal():
     # pattern: the processor downgrades it to literal so matching can't hang.
     book = _book(1, "B", [_entry(1, ["(a+)+"], "content", regex=True)])
     proc = WorldInfoProcessor(world_books=[book])
-    assert proc.entries[0]["regex"] is False           # downgraded at load
+    assert proc.entries[0]["regex"] is False  # downgraded at load
     # Matched literally: the literal "(a+)+" won't appear in normal text.
     assert proc.process_messages("aaaaaaaaaa!", [])["matched_entries"] == []
     # It DOES match the literal pattern text (proves literal matching, no hang).

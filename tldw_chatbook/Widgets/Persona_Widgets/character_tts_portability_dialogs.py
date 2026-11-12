@@ -15,9 +15,7 @@ from tldw_chatbook.TTS.profile_service import PortableProfileImportPlan
 PortableCollisionChoice = Literal["reuse", "copy"]
 
 
-class CharacterTTSProfileCollisionDialog(
-    ModalScreen[PortableCollisionChoice | None]
-):
+class CharacterTTSProfileCollisionDialog(ModalScreen[PortableCollisionChoice | None]):
     """Require an explicit reuse/copy decision for an imported collision."""
 
     BINDINGS = (("escape", "dismiss", "Cancel"),)

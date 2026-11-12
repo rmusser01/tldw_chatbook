@@ -1,0 +1,30 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook",
+  "env": {
+    "PYTHONPATH": ".",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "Tests/Chat/test_console_archive_recovery_followup.py",
+    "Tests/Chat/test_console_trace_service.py",
+    "-k",
+    "agent_factory_thinking_alias or thinking_tool_call_reference_identity",
+    "-q",
+    "--tb=short",
+    "--basetemp=/private/tmp/archive-capture-task3-style-stores"
+  ],
+  "exit": 0,
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "128f9efc12e430ea085b08cc82475e85226da6e7a6eb491fd282f28f0c218b13",
+    "tldw_chatbook/Chat/console_runtime.py": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+    "tldw_chatbook/Chat/console_agent_bridge.py": "6496825e63066a05541d900a01e1dd4f790bcd04dfee5af17e630a1ce71bb912",
+    "Tests/Chat/test_console_archive_recovery_followup.py": "540fcc5823293eb755e4dcd18585400c2e8970a9e9ac45ff9e5c5909f78813ef",
+    "tldw_chatbook/Chat/console_trace_service.py": "2e769ebbbb4e7b5917e4a8e84f47e3b0c38ce87033444c202eaeca298b6b213e",
+    "Tests/Chat/test_console_trace_service.py": "624a73f62a88b7585d0211944e39f549b6fe4dcdfe85e81225dde923b6a30f20"
+  }
+}

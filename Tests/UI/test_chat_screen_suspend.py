@@ -16,6 +16,7 @@ Removing ``ChatScreen``'s override therefore only removes the redundant
 ``save_state()`` call, not screen-suspend behavior in general.
 """
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -71,7 +72,7 @@ async def _run_suspend_with_stubs(screen) -> list[str]:
     screen._fleet = SimpleNamespace(
         _stop_console_fleet_survivor_tick=lambda: calls.append("stop:survivor")
     )
-    screen._stop_console_cost_ttl_timer = lambda: calls.append("stop:cost_ttl")
+    context_spend_for_test(screen)._stop_console_cost_ttl_timer = lambda: calls.append("stop:cost_ttl")
     screen._console_draft_spend_refresh = SimpleNamespace(
         stop=lambda: calls.append("stop:draft_spend")
     )

@@ -1,0 +1,141 @@
+class _ConsolePromptMixinsFlow:
+    """One Workbench's exact-origin adapter over existing runtime/source owners."""
+
+    def __init__(self, *, service, session_id: str, is_current) -> None:
+        self.service, self.session_id, self.is_current = service, session_id, is_current
+        self.scope = service.prompt_scope_service
+        self.session = service.store._sessions[session_id]
+        self.incarnation = self.session.incarnation_id
+        self.binding = self.session.conversation_binding_revision
+        self.identity = None
+        try:
+            self.identity = self.scope.mixin_source_identity(mode='local')
+        except Exception:  # noqa: BLE001 - unsupported source stays visible.
+            pass
+        self.query, self.page = '', 1
+
+    def _current(self, intent=None) -> None:
+        from ...Chat.console_prompt_mixins import MixinSourceChangedError
+
+        if (not self.is_current() or self.service.store._sessions.get(self.session_id) is not self.session
+                or self.session.incarnation_id != self.incarnation
+                or self.session.conversation_binding_revision != self.binding
+                or self.service.prompt_scope_service is not self.scope):
+            raise MixinSourceChangedError('mixin_workbench_stale')
+        if self.identity is not None:
+            now = self.scope.mixin_source_identity(mode='local')
+            if now[0] != self.identity[0] or any(a is not b for a, b in zip(now[1:], self.identity[1:])):
+                raise MixinSourceChangedError('mixin_source_changed')
+        if intent is not None and (intent.session_id != self.session_id
+                or intent.incarnation_id != self.incarnation
+                or intent.revision != self.service.preferences(self.session_id).revision):
+            raise MixinSourceChangedError('mixin_workbench_revision_changed')
+
+    async def project(self, *, query=None, page=None):
+        from ...Chat.console_chat_store import ConsoleSettingsComponent
+        from ...Chat.console_prompt_mixins import MixinSourceRef
+        from ...Widgets.Console.console_prompt_mixins_view import MixinWorkbenchProjection
+
+        self._current()
+        prefs = self.service.preferences(self.session_id)
+        if query is not None:
+            self.query = query
+        if page is not None:
+            self.page = page
+        candidates, unavailable, updated = [], set(), set()
+        status = []
+        total_pages = 1
+        if self.identity is not None:
+            try:
+                result = await self.scope.browse_prompts(mode='local', artifact_type='mixin', query=self.query,
+                    page=self.page, page_size=10, sort_by='name', sort_order='asc')
+                self._current()
+                self.page = result.get('page', self.page)
+                total_pages = result.get('total_pages', 1)
+                candidates = [(row['name'], MixinSourceRef(self.identity[0], 'local', row['uuid'])) for row in result['items']]
+            except Exception:  # noqa: BLE001 - source failures have bounded recovery copy.
+                status.append('Library unavailable. Reopen Prompts to retry.')
+        for row in prefs.entries:
+            try:
+                records = await self.scope.read_mixin_records(mode=row.source.backend, record_uuids=(row.source.record_uuid,))
+                self._current()
+                if self.identity is None or row.source.authority_key != self.identity[0]:
+                    raise ValueError('mixin_source_changed')
+                record = records[0]
+                if row.last_used_version is not None and record['version'] != row.last_used_version:
+                    updated.add(row.source)
+                if decode_prompt_artifact(record).definition.placement != row.placement:
+                    updated.add(row.source)
+            except Exception:  # noqa: BLE001 - disabled unavailable choices remain removable.
+                unavailable.add(row.source)
+        self._current()
+        if self.service.preferences(self.session_id) != prefs:
+            raise ValueError('mixin_workbench_revision_changed')
+        unsaved = ConsoleSettingsComponent.PROMPT_MIXINS in self.session.settings_persistence_failures
+        if unsaved:
+            status.append('Choices are live but unsaved. Retry saving before closing this chat.')
+        if unavailable:
+            status.append('Unavailable selections remain counted when enabled; disable or remove them to send.')
+        if updated:
+            status.append('Updated Library definitions apply to the next send; placement changes move to the new group end.')
+        return MixinWorkbenchProjection(self.session_id, self.incarnation, prefs, tuple(candidates),
+            ' '.join(status), unsaved, frozenset(unavailable), frozenset(updated), self.page, total_pages)
+
+    async def apply(self, intent):
+        from ...Chat.console_chat_store import ConsoleSettingsComponent
+
+        self._current(intent)
+        prefs = self.service.preferences(self.session_id)
+        if intent.action == 'add':
+            await self.service.enable_reference(self.session_id, source=intent.source,
+                target_incarnation_id=self.incarnation, expected_revision=intent.revision,
+                expected_source_fences=(self.scope, *self.identity[1:]), is_current=self.is_current)
+        elif intent.action == 'retry':
+            failure = self.session.settings_persistence_failures.get(ConsoleSettingsComponent.PROMPT_MIXINS)
+            if failure is not None:
+                await self.service.store.retry_settings_persistence_component(self.session_id,
+                    component=ConsoleSettingsComponent.PROMPT_MIXINS, expected_failure=failure)
+        else:
+            entries = list(prefs.entries)
+            index = next(i for i, row in enumerate(entries) if row.source == intent.source)
+            if intent.action == 'toggle':
+                entries[index] = replace(entries[index], enabled=not entries[index].enabled)
+            elif intent.action == 'remove':
+                entries.pop(index)
+            elif intent.action in {'up', 'down'}:
+                group = [i for i, row in enumerate(entries) if row.placement == entries[index].placement]
+                target = group.index(index) + (-1 if intent.action == 'up' else 1)
+                if not 0 <= target < len(group):
+                    return
+                other = group[target]
+                entries[index], entries[other] = entries[other], entries[index]
+            else:
+                raise ValueError('mixin_invalid_action')
+            self.service.replace_preferences(self.session_id, expected_revision=intent.revision,
+                value=replace(prefs, entries=tuple(entries)))
+
+    async def inspect(self, intent):
+        self._current(intent)
+        if self.identity is None or intent.source.authority_key != self.identity[0]:
+            raise ValueError('mixin_source_changed')
+        records = await self.scope.read_mixin_records(mode=intent.source.backend, record_uuids=(intent.source.record_uuid,))
+        self._current(intent)
+        return records[0], decode_prompt_artifact(records[0]).definition
+
+    async def save(self, intent, record, name, definition):
+        self._current(intent)
+        if not name.strip():
+            raise ValueError('mixin_name_required')
+        await self.scope.save_prompt(mode=intent.source.backend, prompt_identifier=intent.source.record_uuid,
+            expected_version=record['version'], name=name, artifact_type='mixin', prompt_format='structured',
+            prompt_schema_version=3, prompt_definition={'kind':'text_mixin', 'schema_version':3,
+                'body':definition.body, 'placement':definition.placement})
+        self._current(intent)
+
+    async def preview(self, intent):
+        self._current(intent)
+        snapshot = await self.service.capture(self.session_id, expected_revision=intent.revision, publish_facts=False)
+        self._current(intent)
+        return snapshot
+
+

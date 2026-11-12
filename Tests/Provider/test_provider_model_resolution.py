@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.UI.Screens import provider_model_resolution
+from tldw_chatbook.LLM_Provider_Catalog import provider_model_resolution
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     SELECTOR_MERGE_CAP,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
 )
-from tldw_chatbook.UI.Screens.provider_model_resolution import (
+from tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution import (
     MODEL_CAPABILITY_UNKNOWN_WARNING,
     ResolvedProviderModelOption,
     resolve_effective_provider_model,
@@ -90,6 +90,29 @@ def test_effective_values_fall_back_to_persisted_defaults_without_app_state() ->
 def test_effective_resolver_rejects_non_mapping_defaults() -> None:
     with pytest.raises(TypeError, match="mapping"):
         resolve_effective_provider_model(object())
+
+
+@pytest.mark.parametrize(
+    ("selection", "model"),
+    [
+        ({"console_provider": "llama_cpp"}, None),
+        ({"settings_provider": "Anthropic"}, None),
+        # The same identity rule as resolve_effective_chat_configuration.
+        ({"console_provider": "openai"}, "gpt-5.6-terra"),
+        ({"settings_provider": "OpenAI-Compatible"}, "gpt-5.6-terra"),
+        ({}, "gpt-5.6-terra"),
+    ],
+    ids=["console-other", "settings-other", "console-same", "legacy-alias", "none"],
+)
+def test_chat_defaults_model_belongs_only_to_its_own_provider(selection, model):
+    """TASK-33001.8 AC#1 (ADR-006): a provider chosen without a model never
+    borrows ``chat_defaults.model`` from another provider."""
+    resolved = resolve_effective_provider_model(
+        {"provider": "OpenAI", "model": "gpt-5.6-terra"}, **selection
+    )
+
+    assert resolved.model == model
+    assert resolved.model_source == ("chat_defaults" if model else "none")
 
 
 @pytest.mark.asyncio

@@ -92,9 +92,7 @@ def _request_with_retries_json(
     last_failure: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            response = client.request(
-                method, url, json=body, timeout=timeout
-            )
+            response = client.request(method, url, json=body, timeout=timeout)
             status = int(getattr(response, "status_code", 0) or 0)
             if status in _RETRYABLE_STATUS:
                 last_failure = AcademicProviderError(f"http {status} from {url}")
@@ -110,7 +108,9 @@ def _request_with_retries_json(
             if attempt < max_retries:
                 _sleep_backoff(attempt)
                 continue
-            raise AcademicProviderError(f"{url} failed after {max_retries + 1} attempt(s): {exc}") from exc
+            raise AcademicProviderError(
+                f"{url} failed after {max_retries + 1} attempt(s): {exc}"
+            ) from exc
     raise AcademicProviderError(f"{url} failed: {last_failure}")
 
 
@@ -134,7 +134,11 @@ def _request_with_retries(
     for attempt in range(max_retries + 1):
         try:
             response = client.request(
-                method, url, headers=dict(headers or {}), params=dict(params or {}), timeout=timeout
+                method,
+                url,
+                headers=dict(headers or {}),
+                params=dict(params or {}),
+                timeout=timeout,
             )
             status = int(getattr(response, "status_code", 0) or 0)
             if status in _RETRYABLE_STATUS:
@@ -151,7 +155,9 @@ def _request_with_retries(
             if attempt < max_retries:
                 _sleep_backoff(attempt)
                 continue
-            raise AcademicProviderError(f"{url} failed after {max_retries + 1} attempt(s): {exc}") from exc
+            raise AcademicProviderError(
+                f"{url} failed after {max_retries + 1} attempt(s): {exc}"
+            ) from exc
     raise AcademicProviderError(f"{url} failed: {last_failure}")
 
 
@@ -238,7 +244,9 @@ def search_arxiv(
                 author_node.findtext(
                     "atom:name", default="", namespaces=_ATOM_NAMESPACES
                 )
-                for author_node in entry.findall("atom:author", namespaces=_ATOM_NAMESPACES)
+                for author_node in entry.findall(
+                    "atom:author", namespaces=_ATOM_NAMESPACES
+                )
             )
             if str(name).strip()
         ]
@@ -381,9 +389,7 @@ def search_semantic_scholar(
         external_ids = item.get("externalIds") or {}
         doi = external_ids.get("DOI") if isinstance(external_ids, dict) else None
         item["doi"] = doi
-        item["url"] = item.get("url") or (
-            f"https://doi.org/{doi}" if doi else None
-        )
+        item["url"] = item.get("url") or (f"https://doi.org/{doi}" if doi else None)
         item["source"] = "semantic_scholar"
         items.append(item)
     total_results = int(payload.get("total") or len(items))
@@ -521,15 +527,23 @@ def search_openalex(
     }
     if client is not None:
         response = _request_with_retries(
-            client, "GET", f"{OPENALEX_API_BASE}/works",
-            timeout=timeout, max_retries=max_retries, params=params,
+            client,
+            "GET",
+            f"{OPENALEX_API_BASE}/works",
+            timeout=timeout,
+            max_retries=max_retries,
+            params=params,
         )
         data = _json_or_error(response, "openalex")
     else:
         with httpx.Client() as http:
             response = _request_with_retries(
-                http, "GET", f"{OPENALEX_API_BASE}/works",
-                timeout=timeout, max_retries=max_retries, params=params,
+                http,
+                "GET",
+                f"{OPENALEX_API_BASE}/works",
+                timeout=timeout,
+                max_retries=max_retries,
+                params=params,
             )
             data = _json_or_error(response, "openalex")
 
@@ -547,13 +561,14 @@ def search_openalex(
                 "authors": ", ".join(
                     str((a.get("author") or {}).get("display_name"))
                     for a in (raw.get("authorships") or [])
-                    if isinstance(a, dict) and (a.get("author") or {}).get("display_name")
-                ) or None,
+                    if isinstance(a, dict)
+                    and (a.get("author") or {}).get("display_name")
+                )
+                or None,
                 "published_date": str(raw.get("publication_year") or "") or None,
                 "abstract": _invert_abstract(raw.get("abstract_inverted_index")),
-                "url": location.get("landing_page_url") or (
-                    f"https://doi.org/{doi}" if doi else None
-                ),
+                "url": location.get("landing_page_url")
+                or (f"https://doi.org/{doi}" if doi else None),
                 "pdf_url": location.get("pdf_url"),
                 "source": "openalex",
             }
@@ -594,15 +609,23 @@ def search_crossref(
     params = {"query": query, "rows": max(1, results_per_page), "offset": 0}
     if client is not None:
         response = _request_with_retries(
-            client, "GET", f"{CROSSREF_API_BASE}/works",
-            timeout=timeout, max_retries=max_retries, params=params,
+            client,
+            "GET",
+            f"{CROSSREF_API_BASE}/works",
+            timeout=timeout,
+            max_retries=max_retries,
+            params=params,
         )
         data = _json_or_error(response, "crossref")
     else:
         with httpx.Client() as http:
             response = _request_with_retries(
-                http, "GET", f"{CROSSREF_API_BASE}/works",
-                timeout=timeout, max_retries=max_retries, params=params,
+                http,
+                "GET",
+                f"{CROSSREF_API_BASE}/works",
+                timeout=timeout,
+                max_retries=max_retries,
+                params=params,
             )
             data = _json_or_error(response, "crossref")
 
@@ -611,11 +634,14 @@ def search_crossref(
     for raw in message.get("items") or []:
         if not isinstance(raw, dict):
             continue
-        authors = ", ".join(
-            f"{a.get('given', '').strip()} {a.get('family', '').strip()}".strip()
-            for a in (raw.get("author") or [])
-            if isinstance(a, dict)
-        ).strip() or None
+        authors = (
+            ", ".join(
+                f"{a.get('given', '').strip()} {a.get('family', '').strip()}".strip()
+                for a in (raw.get("author") or [])
+                if isinstance(a, dict)
+            ).strip()
+            or None
+        )
         issued = raw.get("issued") or {}
         date_parts = (issued.get("date-parts") or [[None]])[0]
         items.append(
@@ -624,7 +650,9 @@ def search_crossref(
                 "doi": _clean_doi(raw.get("DOI")),
                 "title": (raw.get("title") or [None])[0],
                 "authors": authors,
-                "published_date": str(date_parts[0]) if date_parts and date_parts[0] else None,
+                "published_date": str(date_parts[0])
+                if date_parts and date_parts[0]
+                else None,
                 "abstract": _strip_tags(raw.get("abstract")),
                 "url": f"https://doi.org/{raw['DOI']}" if raw.get("DOI") else None,
                 "pdf_url": None,
@@ -667,19 +695,27 @@ def search_zenodo(
     params = {"q": query, "size": max(1, results_per_page), "page": 1}
     if client is not None:
         response = _request_with_retries(
-            client, "GET", ZENODO_API_BASE,
-            timeout=timeout, max_retries=max_retries, params=params,
+            client,
+            "GET",
+            ZENODO_API_BASE,
+            timeout=timeout,
+            max_retries=max_retries,
+            params=params,
         )
         data = _json_or_error(response, "zenodo")
     else:
         with httpx.Client() as http:
             response = _request_with_retries(
-                http, "GET", ZENODO_API_BASE,
-                timeout=timeout, max_retries=max_retries, params=params,
+                http,
+                "GET",
+                ZENODO_API_BASE,
+                timeout=timeout,
+                max_retries=max_retries,
+                params=params,
             )
             data = _json_or_error(response, "zenodo")
 
-    hits = (data.get("hits") or {})
+    hits = data.get("hits") or {}
     items: list[dict[str, Any]] = []
     for raw in hits.get("hits") or []:
         if not isinstance(raw, dict):
@@ -695,10 +731,13 @@ def search_zenodo(
                     str(c.get("name"))
                     for c in (metadata.get("creators") or [])
                     if isinstance(c, dict) and c.get("name")
-                ) or None,
+                )
+                or None,
                 "published_date": metadata.get("publication_date"),
                 "abstract": _strip_tags(metadata.get("description")),
-                "url": f"https://zenodo.org/records/{record_id}" if record_id is not None else None,
+                "url": f"https://zenodo.org/records/{record_id}"
+                if record_id is not None
+                else None,
                 "pdf_url": None,
                 "source": "zenodo",
             }
@@ -740,15 +779,23 @@ def search_figshare(
     body = {"search_for": query, "page": 1, "page_size": max(1, results_per_page)}
     if client is not None:
         response = _request_with_retries_json(
-            client, "POST", FIGSHARE_API_BASE, timeout=timeout,
-            max_retries=max_retries, body=body,
+            client,
+            "POST",
+            FIGSHARE_API_BASE,
+            timeout=timeout,
+            max_retries=max_retries,
+            body=body,
         )
         data = _json_or_error(response, "figshare")
     else:
         with httpx.Client() as http:
             response = _request_with_retries_json(
-                http, "POST", FIGSHARE_API_BASE, timeout=timeout,
-                max_retries=max_retries, body=body,
+                http,
+                "POST",
+                FIGSHARE_API_BASE,
+                timeout=timeout,
+                max_retries=max_retries,
+                body=body,
             )
             data = _json_or_error(response, "figshare")
 
@@ -766,11 +813,16 @@ def search_figshare(
                     str(a.get("full_name"))
                     for a in (raw.get("authors") or [])
                     if isinstance(a, dict) and a.get("full_name")
-                ) or None,
+                )
+                or None,
                 "published_date": str(raw.get("published_date") or "") or None,
                 "abstract": _strip_tags(raw.get("description")),
-                "url": raw.get("url_publication") or raw.get("url") or (
-                    f"https://figshare.com/articles/_{article_id}" if article_id is not None else None
+                "url": raw.get("url_publication")
+                or raw.get("url")
+                or (
+                    f"https://figshare.com/articles/_{article_id}"
+                    if article_id is not None
+                    else None
                 ),
                 "pdf_url": raw.get("download_url"),
                 "source": "figshare",
@@ -814,11 +866,17 @@ def search_osf(
         "page[size]": max(1, min(results_per_page, 100)),
         "page[number]": 1,
     }
-    headers = {"Accept": "application/json"}  # server-adapter parity: OSF returns HTML without it
+    headers = {
+        "Accept": "application/json"
+    }  # server-adapter parity: OSF returns HTML without it
     if client is not None:
         response = _request_with_retries(
-            client, "GET", OSF_API_BASE,
-            timeout=timeout, max_retries=max_retries, params=params,
+            client,
+            "GET",
+            OSF_API_BASE,
+            timeout=timeout,
+            max_retries=max_retries,
+            params=params,
             headers=headers,
         )
         data = _json_or_error(response, "osf")
@@ -827,8 +885,12 @@ def search_osf(
         # follow redirects by default, which yielded empty 301 bodies.
         with httpx.Client(follow_redirects=True) as http:
             response = _request_with_retries(
-                http, "GET", OSF_API_BASE,
-                timeout=timeout, max_retries=max_retries, params=params,
+                http,
+                "GET",
+                OSF_API_BASE,
+                timeout=timeout,
+                max_retries=max_retries,
+                params=params,
                 headers=headers,
             )
             data = _json_or_error(response, "osf")
@@ -849,9 +911,8 @@ def search_osf(
                 "authors": None,
                 "published_date": created[:10] if created else None,
                 "abstract": _strip_tags(attributes.get("description")),
-                "url": links.get("html") or (
-                    f"https://osf.io/preprints/{osf_id}" if osf_id else None
-                ),
+                "url": links.get("html")
+                or (f"https://osf.io/preprints/{osf_id}" if osf_id else None),
                 "pdf_url": None,
                 "source": "osf",
             }
@@ -948,13 +1009,19 @@ def search_biorxiv(
             continue
         title = str(raw.get("title") or "")
         abstract = str(raw.get("abstract") or "")
-        if needle and needle not in title.casefold() and needle not in abstract.casefold():
+        if (
+            needle
+            and needle not in title.casefold()
+            and needle not in abstract.casefold()
+        ):
             continue
         doi = str(raw.get("doi") or "")
         version = raw.get("version")
         v_suffix = f"v{version}" if str(version or "").isdigit() else ""
         base_host = "biorxiv.org" if server_norm == "biorxiv" else "medrxiv.org"
-        content_url = f"https://www.{base_host}/content/{doi}{v_suffix}" if doi else None
+        content_url = (
+            f"https://www.{base_host}/content/{doi}{v_suffix}" if doi else None
+        )
         items.append(
             {
                 "id": doi or None,
@@ -972,8 +1039,12 @@ def search_biorxiv(
             break
 
     return {
-        "query_echo": {"query": query, "server": server_norm,
-                       "from_date": f, "to_date": t},
+        "query_echo": {
+            "query": query,
+            "server": server_norm,
+            "from_date": f,
+            "to_date": t,
+        },
         "items": items,
         "total_results": total,
         "results_per_page": results_per_page,
@@ -1011,8 +1082,12 @@ def search_pubmed(
             error.
     """
     if not query.strip():
-        return {"query_echo": {"query": query}, "items": [], "total_results": 0,
-                "results_per_page": results_per_page}
+        return {
+            "query_echo": {"query": query},
+            "items": [],
+            "total_results": 0,
+            "results_per_page": results_per_page,
+        }
 
     esearch_params: dict[str, Any] = {
         "db": "pubmed",
@@ -1025,12 +1100,18 @@ def search_pubmed(
     if from_year or to_year:
         fy = int(from_year or to_year)
         ty = int(to_year or from_year)
-        esearch_params.update({"datetype": "pdat", "mindate": str(fy), "maxdate": str(ty)})
+        esearch_params.update(
+            {"datetype": "pdat", "mindate": str(fy), "maxdate": str(ty)}
+        )
 
     def _run(http: Any) -> tuple[list[str], int, dict[str, Any]]:
         esearch = _request_with_retries(
-            http, "GET", f"{PUBMED_EUTILS_BASE}/esearch.fcgi",
-            timeout=timeout, max_retries=max_retries, params=esearch_params,
+            http,
+            "GET",
+            f"{PUBMED_EUTILS_BASE}/esearch.fcgi",
+            timeout=timeout,
+            max_retries=max_retries,
+            params=esearch_params,
         )
         esr = json.loads(esearch.text).get("esearchresult") or {}
         ids = [str(i) for i in (esr.get("idlist") or [])]
@@ -1038,8 +1119,11 @@ def search_pubmed(
         if not ids:
             return ids, count, {}
         esummary = _request_with_retries(
-            http, "GET", f"{PUBMED_EUTILS_BASE}/esummary.fcgi",
-            timeout=timeout, max_retries=max_retries,
+            http,
+            "GET",
+            f"{PUBMED_EUTILS_BASE}/esummary.fcgi",
+            timeout=timeout,
+            max_retries=max_retries,
             params={"db": "pubmed", "id": ",".join(ids), "retmode": "json"},
         )
         return ids, count, json.loads(esummary.text).get("result") or {}
@@ -1050,8 +1134,12 @@ def search_pubmed(
         with httpx.Client() as http:
             idlist, total, result = _run(http)
     if not idlist:
-        return {"query_echo": {"query": query}, "items": [],
-                "total_results": total, "results_per_page": results_per_page}
+        return {
+            "query_echo": {"query": query},
+            "items": [],
+            "total_results": total,
+            "results_per_page": results_per_page,
+        }
 
     items: list[dict[str, Any]] = []
     for uid in result.get("uids") or idlist:
@@ -1069,11 +1157,14 @@ def search_pubmed(
                 doi = value
             elif idtype == "pmc":
                 pmcid = value.replace("PMC", "") if value.startswith("PMC") else value
-        authors = ", ".join(
-            str(a.get("name"))
-            for a in (raw.get("authors") or [])
-            if isinstance(a, dict) and a.get("name")
-        ) or None
+        authors = (
+            ", ".join(
+                str(a.get("name"))
+                for a in (raw.get("authors") or [])
+                if isinstance(a, dict) and a.get("name")
+            )
+            or None
+        )
         items.append(
             {
                 "id": str(uid),
@@ -1085,7 +1176,9 @@ def search_pubmed(
                 "published_date": raw.get("pubdate") or raw.get("epubdate"),
                 "abstract": raw.get("abstract"),
                 "url": f"https://pubmed.ncbi.nlm.nih.gov/{uid}/",
-                "pdf_url": f"https://pmc.ncbi.nlm.nih.gov/{pmcid}/pdf" if pmcid else None,
+                "pdf_url": f"https://pmc.ncbi.nlm.nih.gov/{pmcid}/pdf"
+                if pmcid
+                else None,
                 "source": "pubmed",
             }
         )
@@ -1142,7 +1235,8 @@ def _default_academic_providers() -> list[str]:
         The configured provider names, lowercased and deduplicated.
     """
     raw = get_cli_setting(
-        "SearchSettings", "research_academic_providers",
+        "SearchSettings",
+        "research_academic_providers",
         "arxiv,semantic_scholar",
     )
     names: list[str] = []
@@ -1241,9 +1335,7 @@ async def search_papers(
     # "repositories", ...); unknown names raise instead of silently
     # narrowing the search.
     requested = expand_source_selection(
-        list(providers)
-        if providers is not None
-        else _default_academic_providers()
+        list(providers) if providers is not None else _default_academic_providers()
     )
     selected: list[str] = []
     for name in requested:

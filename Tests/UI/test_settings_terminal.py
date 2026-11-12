@@ -124,6 +124,7 @@ def test_terminal_live_session_count_failure_logs_safe_runtime_context(caplog):
     assert "runtime_type=SimpleNamespace" in caplog.text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unlock_save_warns_when_terminal_cleanup_inspection_fails(monkeypatch):
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
@@ -158,6 +159,7 @@ async def test_unlock_save_warns_when_terminal_cleanup_inspection_fails(monkeypa
     assert "could not be inspected" in notifications[-1][0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_terminal_control_uses_shared_unlock_and_an_independent_launch_arm():
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
@@ -210,6 +212,7 @@ async def test_terminal_control_uses_shared_unlock_and_an_independent_launch_arm
     assert fresh_app.terminal_session_manager.disclosure_acknowledged is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_terminal_disclosure_is_static_once_per_launch_and_armed_state_is_red(
     monkeypatch,
@@ -283,6 +286,7 @@ async def test_terminal_disclosure_is_static_once_per_launch_and_armed_state_is_
         assert arm_calls == [True, False]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_terminal_disarm_confirms_one_cleanup_cohort_without_revoking_raw(
     monkeypatch,

@@ -144,6 +144,7 @@ def test_workspace_probe_sees_background_session_captured_roots(
     assert not controller.run_active_for_workspace(str(root_b))
 
 
+@pytest.mark.bootstrap_profile
 def test_send_refusal_is_per_session_and_capped(
     controller_with_two_sessions, monkeypatch
 ):
@@ -189,6 +190,7 @@ def test_lowering_cap_never_kills_running(controller_with_two_sessions, monkeypa
     assert controller.in_flight_run_count() == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_orphaned_closed_session_does_not_consume_cap_slot(
     controller_with_two_sessions, monkeypatch
 ):
@@ -219,6 +221,7 @@ def test_orphaned_closed_session_does_not_consume_cap_slot(
     assert controller.send_refusal_copy(session_b) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_cap_refusal_truncates_and_k_more_suffix():
     """Test that send_refusal_copy shows exactly first N titles + 'and K more'.
 

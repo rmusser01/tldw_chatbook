@@ -2,6 +2,8 @@
 
 from dataclasses import replace
 
+import pytest
+
 from Tests.Chat.test_console_agent_bridge import (
     _bridge_with_gateway,
     _ChunkGateway,
@@ -13,36 +15,43 @@ from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 
 
-def _delta(text):
+def _delta(text, provider="llama_cpp"):
     return ProviderThinkingDelta(
         text=text,
-        provider="llama_cpp",
+        provider=provider,
         model="reasoner",
         protocol="chat_completions",
         source_format="reasoning_content",
     )
 
 
-def test_aggregate_tool_thinking_cannot_become_final_answer_thinking():
+@pytest.mark.parametrize("provider", ["llama_cpp", "strata", "polystrata"])
+def test_aggregate_tool_thinking_cannot_become_final_answer_thinking(provider):
     capture = ThinkingCapture(assistant_owner_id="answer")
-    capture.observe(_delta("tool thought"))
+    capture.observe(_delta("tool thought", provider))
     capture.observe_tool()
     capture.observe_answer("final answer without thinking")
     envelope = capture.settle("complete").envelope
     assert envelope.blocks[0].source_format == "reasoning_content:tool_call"
 
 
-def test_live_native_loop_passes_exact_call_envelope_before_preparation(tmp_path):
+@pytest.mark.parametrize("provider", ["llama_cpp", "strata", "polystrata"])
+@pytest.mark.bootstrap_profile
+def test_live_native_loop_passes_exact_call_envelope_before_preparation(
+    tmp_path, provider
+):
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
     class Gateway(_ChunkGateway):
         def __init__(self):
             super().__init__(
                 [
                     [
-                        _delta("first tool"),
+                        _delta("first tool", provider),
                         _native_calls("calculator", {"expression": "1+1"}),
                     ],
                     [
-                        _delta("second tool"),
+                        _delta("second tool", provider),
                         _native_calls("calculator", {"expression": "2+2"}, "c2"),
                     ],
                     ["The answer is 4."],
@@ -56,7 +65,15 @@ def test_live_native_loop_passes_exact_call_envelope_before_preparation(tmp_path
 
     gateway = Gateway()
     bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
-    outcome = _run(bridge, store, session, aid, resolution=_native_resolution())
+    resolution = replace(
+        _native_resolution(),
+        provider=provider,
+        execution_key=provider,
+        reasoning_replay=ReasoningReplayPolicy(
+            "server_default", "default", native_tools=True
+        ),
+    )
+    outcome = _run(bridge, store, session, aid, resolution=resolution)
     assert outcome.final_text == "The answer is 4."
     assert len(gateway.prepared) == 2
     rows, sidecars = gateway.prepared[-1]
@@ -127,7 +144,7 @@ def test_runtime_steering_retains_current_exchange_annotation():
 
 
 def test_agent_budget_counts_exact_model_projected_reasoning():
-    from tldw_chatbook.Agents.agent_service import _count_model_messages
+    from tldw_chatbook.Agents.agent_service import count_model_messages
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
     capture = ThinkingCapture(assistant_owner_id="tool")
@@ -146,14 +163,14 @@ def test_agent_budget_counts_exact_model_projected_reasoning():
         {"role": "assistant", "content": "call", "_tldw_call_thinking": envelope},
     ]
     policy = ReasoningReplayPolicy("all", "override")
-    included = _count_model_messages(
+    included = count_model_messages(
         messages,
         "org/exact-model",
         "llama_cpp",
         reasoning_replay=policy,
         tokenizer_model="exact-model",
     )
-    excluded = _count_model_messages(
+    excluded = count_model_messages(
         messages,
         "org/exact-model",
         "llama_cpp",
@@ -163,9 +180,7 @@ def test_agent_budget_counts_exact_model_projected_reasoning():
     assert included > excluded + 100
 
 
-import pytest
-
-
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "conversation_policy,expected",
     [("auto", None), ("include", "first tool"), ("exclude", None)],
@@ -237,6 +252,7 @@ def test_local_live_native_payload_respects_conversation_override(
         asyncio.run(real_gateway.aclose())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("child_model", ["test-model", "child-model"])
 def test_child_inherits_policy_and_only_replays_its_own_calls(
     tmp_path, monkeypatch, child_model
@@ -330,6 +346,7 @@ def test_child_inherits_policy_and_only_replays_its_own_calls(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_active_local_call_thinking_keeps_trace_owner_through_real_admission(
     tmp_path,
 ):

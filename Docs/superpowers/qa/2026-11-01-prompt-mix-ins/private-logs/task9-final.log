@@ -1,0 +1,31 @@
+........................................................................ [ 28%]
+........................................................................ [ 57%]
+........................................................................ [ 86%]
+.................................                                        [100%]
+============================= slowest 25 durations =============================
+5.17s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]
+4.86s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size2]
+4.66s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]
+4.13s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[save_as_new]
+3.86s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_conflict_export_and_dirty_escape
+3.78s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+3.31s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_create_and_filtered_pagination_totals
+3.09s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate]
+2.86s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry
+2.65s call     Tests/UI/test_library_prompt_mixins.py::test_real_console_mixin_consumer_enables_without_touching_composer_or_system
+2.62s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size2]
+2.61s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size0]
+2.55s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size1]
+2.45s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+2.28s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+2.20s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+2.20s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+2.20s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined
+2.19s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments
+2.17s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog
+2.14s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+2.13s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available
+2.06s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+1.97s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+1.71s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+249 passed in 197.26s (0:03:17)

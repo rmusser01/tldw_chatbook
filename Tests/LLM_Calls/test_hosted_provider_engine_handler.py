@@ -488,3 +488,162 @@ def test_streaming_reasoning_only_length_stop_reaches_caller_as_token_limit(
     assert caught.value.status_code == 400
     assert "max-tokens limit before writing a reply" in str(caught.value)
 
+
+
+_NAMES_OPTION = b'{"error":{"message":"stream_options unsupported"}}'
+_OTHER_400 = b'{"error":{"message":"tools are unsupported"}}'
+_FASTAPI_422 = (
+    b'{"detail":[{"type":"extra_forbidden","loc":["body","stream_options"],'
+    b'"msg":"Extra inputs are not permitted"}]}'
+)
+
+
+@pytest.mark.parametrize(
+    ("record_key", "status", "body", "streaming", "attempt_count"),
+    [
+        # Tolerant custom endpoint: a rejection naming the option degrades once.
+        ("custom-hosted", 400, _NAMES_OPTION, True, 2),
+        ("custom-hosted", 422, _FASTAPI_422, True, 2),
+        ("custom-hosted", 400, _OTHER_400, True, 1),
+        ("custom-hosted", 400, _NAMES_OPTION, False, 1),
+        # A record whose stream may end without usage also degrades.
+        ("arcee", 400, _NAMES_OPTION, True, 2),
+        # A strict record needs streamed usage: the clean 400/422 stands.
+        ("together", 400, _NAMES_OPTION, True, 1),
+        ("together", 422, _FASTAPI_422, True, 1),
+    ],
+    ids=[
+        "custom-400-names",
+        "custom-422-names",
+        "custom-400-other",
+        "custom-nonstream",
+        "usage-optional-400",
+        "strict-400",
+        "strict-422",
+    ],
+)
+def test_stream_options_degrade_only_where_missing_usage_is_tolerated(
+    monkeypatch, record_key, status, body, streaming, attempt_count
+):
+    """Retry without the usage option only when a usage-free stream can finish.
+
+    A strict preset would otherwise bill a full generation and then fail with
+    "terminated before required metadata" instead of the clean refusal.
+    """
+    import requests
+
+    from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
+    from tldw_chatbook.LLM_Calls import provider_sessions
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    record = RECORDS_BY_KEY[record_key]
+    attempts = []
+    response = requests.Response()
+    response.status_code = status
+    response._content = body
+    response._content_consumed = True
+
+    class Session:
+        def post(self, _url, **kwargs):
+            attempts.append(kwargs["json"])
+            return response
+
+    monkeypatch.setattr(provider_sessions, "get_session", lambda *_args: Session())
+    monkeypatch.setattr(
+        hosted_provider_engine,
+        "resolve_hosted_request",
+        lambda record, **kwargs: replace(
+            _resolution(streaming=streaming, model="test-model"),
+            provider=record.key,
+            api_key="secret",
+            base_url="https://endpoint.invalid/v1",
+        ),
+    )
+    with pytest.raises(ChatBadRequestError) as error:
+        build_hosted_chat_handler(record)(
+            input_data=[{"role": "user", "content": "hi"}],
+            streaming=streaming,
+        )
+    # The typed refusal carries 400 and names the server's own status.
+    assert error.value.status_code == 400
+    assert f"status {status}" in str(error.value)
+    assert len(attempts) == attempt_count
+    if not streaming:
+        assert "stream_options" not in attempts[0]
+        return
+    assert attempts[0]["stream_options"] == {"include_usage": True}
+    if attempt_count == 2:
+        # One degrade retry, then the server's own refusal stands.
+        assert attempts[1] == {
+            key: value for key, value in attempts[0].items() if key != "stream_options"
+        }
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [(422, _OTHER_400), (422, _FASTAPI_422)],
+    ids=["other", "names-option"],
+)
+def test_stream_options_check_reads_the_error_body_bounded_and_safely(
+    monkeypatch, status, body
+):
+    """The option check never turns a 4xx into a network failure.
+
+    A body that fails mid-read stays the provider's typed refusal, and a
+    readable body that does not name the option keeps its provider reason.
+    """
+    import io
+
+    import requests
+
+    from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
+    from tldw_chatbook.LLM_Calls import provider_sessions
+    from tldw_chatbook.provider_registry import CUSTOM_HOSTED
+
+    class BrokenBody(requests.Response):
+        def iter_content(self, *args, **kwargs):
+            raise requests.exceptions.ChunkedEncodingError("reset mid-body")
+
+        @property
+        def content(self):
+            raise requests.exceptions.ChunkedEncodingError("reset mid-body")
+
+    attempts = []
+    for broken in (True, False):
+        attempts.clear()
+        response = BrokenBody() if broken else requests.Response()
+        response.status_code = status
+        if not broken:
+            response.raw = io.BytesIO(body)
+
+        class Session:
+            def post(self, _url, _response=response, **kwargs):
+                attempts.append(kwargs["json"])
+                return _response
+
+        session = Session()
+        monkeypatch.setattr(
+            provider_sessions, "get_session", lambda *_args, _s=session: _s
+        )
+        monkeypatch.setattr(
+            hosted_provider_engine,
+            "resolve_hosted_request",
+            lambda record, **kwargs: replace(
+                _resolution(streaming=True, model="test-model"),
+                provider=record.key,
+                api_key="secret",
+                base_url="https://endpoint.invalid/v1",
+            ),
+        )
+        with pytest.raises(ChatBadRequestError) as error:
+            build_hosted_chat_handler(CUSTOM_HOSTED)(
+                input_data=[{"role": "user", "content": "hi"}], streaming=True
+            )
+        assert "status 422" in str(error.value)
+        if broken or body is _OTHER_400:
+            assert len(attempts) == 1
+        if not broken and body is _OTHER_400:
+            assert getattr(error.value, "provider_reason", "") == (
+                "tools are unsupported"
+            )
+

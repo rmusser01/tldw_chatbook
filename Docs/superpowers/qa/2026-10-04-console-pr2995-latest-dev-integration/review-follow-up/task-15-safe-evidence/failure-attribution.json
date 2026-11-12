@@ -1,0 +1,35 @@
+{
+  "red_foreign_attempt": {
+    "kind": "new_test_setup",
+    "failure": "immutable owner_id UPDATE rejected by real trigger",
+    "correction": "prepare under foreign durable runtime owner, then replace runtime owner row",
+    "corrected_red": "red-extra.xml"
+  },
+  "green_boundaries_replacement": {
+    "kind": "new_test_setup",
+    "failure": "begin_preparation refuses replacement while original preparation still owns session; test assertion inside publication produces truthful outcome_unconfirmed fallback",
+    "correction": "abandon exact original preparation through real controller API before installing real replacement",
+    "production_changes_needed": false
+  },
+  "replacement_green": {
+    "kind": "new_test_setup",
+    "failure": "ordinary abandonment cannot cancel COMMITTING preparation; existing cancel CAS correctly refuses invalid transition",
+    "evidence": "console_chat_controller._rollback_committing_preparation and store.cancel_preparation/apply_preparation_transition",
+    "correction": "use existing rollback from COMMITTING to PAUSED then exact abandonment before replacement",
+    "production_changes_needed": false
+  },
+  "private_verifier_setup": [
+    {
+      "failure": "AssertionError changed definitions == []",
+      "cause": "suffix console_chat_start.py also matched test_console_chat_start.py",
+      "fix": "exact production relative path condition",
+      "source_unchanged": true
+    },
+    {
+      "failure": "TypeError run() takes 1 positional argument but 2 were given",
+      "cause": "private AST accessor shadowed command runner name",
+      "fix": "rename AST accessor to get_run",
+      "source_unchanged": true
+    }
+  ]
+}

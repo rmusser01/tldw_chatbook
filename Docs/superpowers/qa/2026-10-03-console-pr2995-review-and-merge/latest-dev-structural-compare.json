@@ -1,0 +1,164 @@
+{
+  "base": "81c7c94f486491d6fde09584710dc3a3172225a0",
+  "dev": "ca2992cb10b24307fbae050643472ffb0a4388e7",
+  "head": "e7cc5337617781e9a4b08b9e324297b537fcad07",
+  "upstream_changed_paths": 1863,
+  "feature_changed_paths": 1741,
+  "intersection_all": 25,
+  "overlap_python": [
+    {
+      "path": "Tests/Architecture/test_persistent_diagnostic_inventory.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "Tests/Chat/test_message_metadata.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "Tests/DB/test_chachanotes_console_library_policy_migration.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "Tests/DB/test_schema_table_allowlist_guard.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "Tests/UI/test_console_launch_wake.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "Tests/UI/test_console_prompt_queue.py",
+      "ast_equal_upstream": false
+    },
+    {
+      "path": "Tests/UI/test_console_send_draft_snapshot.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "Tests/UI/test_console_session_controller.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "Tests/UI/test_console_store_continuity.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "Tests/Utils/test_egress.py",
+      "ast_equal_upstream": false
+    },
+    {
+      "path": "Tests/conftest.py",
+      "ast_equal_upstream": false
+    },
+    {
+      "path": "scripts/check_schema_table_allowlist.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/Agents/tool_catalog.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_store.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/message_metadata.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/DB/AgentRuns_DB.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "ast_equal_upstream": false
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+      "ast_equal_upstream": false
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/app.py",
+      "ast_equal_upstream": true
+    },
+    {
+      "path": "tldw_chatbook/config.py",
+      "ast_equal_upstream": true
+    }
+  ],
+  "functional_or_unknown": [
+    {
+      "path": "Tests/UI/test_console_prompt_queue.py",
+      "ast_equal_upstream": false
+    },
+    {
+      "path": "Tests/Utils/test_egress.py",
+      "ast_equal_upstream": false
+    },
+    {
+      "path": "Tests/conftest.py",
+      "ast_equal_upstream": false
+    },
+    {
+      "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "ast_equal_upstream": false
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+      "ast_equal_upstream": false
+    }
+  ],
+  "canonical_followup": [
+    {
+      "path": "Tests/UI/test_console_prompt_queue.py",
+      "ast_equal_without_docstrings": false,
+      "canonical_diff": "latest-dev-canonical-Tests--UI--test_console_prompt_queue.py.diff",
+      "diff_bytes": 6171
+    },
+    {
+      "path": "Tests/Utils/test_egress.py",
+      "ast_equal_without_docstrings": false,
+      "canonical_diff": "latest-dev-canonical-Tests--Utils--test_egress.py.diff",
+      "diff_bytes": 3443
+    },
+    {
+      "path": "Tests/conftest.py",
+      "ast_equal_without_docstrings": false,
+      "canonical_diff": "latest-dev-canonical-Tests--conftest.py.diff",
+      "diff_bytes": 4789
+    },
+    {
+      "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "ast_equal_without_docstrings": false,
+      "canonical_diff": "latest-dev-canonical-tldw_chatbook--DB--ChaChaNotes_DB.py.diff",
+      "diff_bytes": 4407
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+      "ast_equal_without_docstrings": false,
+      "canonical_diff": "latest-dev-canonical-tldw_chatbook--UI--Console_Modules--prompt_queue.py.diff",
+      "diff_bytes": 8961
+    }
+  ]
+}

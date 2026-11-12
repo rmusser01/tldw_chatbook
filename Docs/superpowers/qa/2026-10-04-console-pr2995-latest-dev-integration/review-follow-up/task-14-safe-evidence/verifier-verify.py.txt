@@ -1,0 +1,39 @@
+from common import *
+import ast,xml.etree.ElementTree as ET,copy
+pre=json.loads((S/'task-14-latest-dev-preflight-selection.json').read_text());overlay='Tests/UI/test_console_runtime_ownership.py';incoming={r['path'] for r in pre['overlay_map'] if r['path'].endswith('.py')};exceptions=incoming|{overlay}
+qualified=json.loads((S/'task-13-safe-evidence/final-source-union.json').read_text())['source_hashes_from_execution'];assert len(qualified)==8123
+rows={p:{'original_qualified_sha256':h,'actual_sha256':sha((W/p).read_bytes()),'exact':h==sha((W/p).read_bytes())} for p,h in qualified.items()};changed={p for p,r in rows.items() if not r['exact']};assert changed==exceptions
+union=json.loads((O/'rebase-source-union.json').read_text());current=tree('HEAD');assert union['paths']==current
+actual=snapshot();expected=dict(union['paths']);expected[overlay]=subprocess.check_output(['git','hash-object','--stdin'],input=(W/overlay).read_bytes(),cwd=W).decode().strip()
+assert git('diff','--name-only').decode().splitlines()==[overlay]
+dump('source-exceptions-carry.json',{'original_map':'task-13-safe-evidence/final-source-union.json#source_hashes_from_execution','original_pin_count':8123,'exact_original_pins':8115,'exception_paths':sorted(changed),'seven_incoming_exceptions':sorted(incoming),'one_fixture_exception':overlay,'rows':rows,'original_map_unchanged':True,'source_hashes_from_execution':actual})
+prior=json.loads((S/'task-13-safe-evidence/loading-source-carry.json').read_text());lr={p:{'historical_sha256':r['historical_sha256'],'actual_sha256':sha((W/p).read_bytes()),'exact':r['historical_sha256']==sha((W/p).read_bytes())} for p,r in prior['sources'].items()};lc={p for p,r in lr.items() if not r['exact']};assert lc==set(prior['changed_sources'])|exceptions
+# The fixture overlay is reversed by fixture-reversal.json, preserving the historical guard's original AST.
+detail=json.loads((S/'task-13-safe-evidence/loading-authority-detail.json').read_text());guards=detail['unchanged_guard_route_CSS_profile_sources'];gr={p:{'task13_sha256':r['final_sha256'],'actual_sha256':sha((W/p).read_bytes()),'exact':r['final_sha256']==sha((W/p).read_bytes())} for p,r in guards.items()};assert {p for p,r in gr.items() if not r['exact']}=={overlay}
+assert all((W/k.split('::')[0]).read_bytes()==blob(BASE,k.split('::')[0]) for k in detail['unchanged_authority_constructor_methods'])
+dump('loading-authority-carry.json',{'historical_source':prior['historical_source'],'historical_passes':35,'fresh_loading_run':False,'historical_pin_count':7689,'historical_exact_pins':sum(r['exact'] for r in lr.values()),'exception_paths':sorted(lc),'sources':lr,'guard_count':98,'whole_file_exact_guards':97,'fixture_guard_reversible_ast_exception':overlay,'guards':gr,'nineteen_authority_constructor_declarations_unchanged':detail['unchanged_authority_constructor_methods'],'caps':pre['caps_preserved'],'historical_warnings':['app681/686','ready1033/1033','preimport557/557;415310/425347LOC;library127527/135111LOC','CSS607326/608090bytes','Task13 FD start14/end383,growth369 over200; unsuppressed; no new attribution']})
+prod={}
+for p in sorted(incoming):
+ if not p.startswith('tldw_chatbook/'):continue
+ old=ast.parse(blob(BASE,p));new=ast.parse((W/p).read_bytes())
+ def im(t):return [ast.dump(n,include_attributes=False) for n in ast.walk(t) if isinstance(n,(ast.Import,ast.ImportFrom))]
+ def calls(t):return sorted(ast.dump(n,include_attributes=False) for n in ast.walk(t) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr in ('run_worker','set_timer','set_interval','push_screen','push_screen_wait'))
+ assert im(old)==im(new) and calls(old)==calls(new)
+ def ds(t):return {n.name:sha(ast.dump(n,include_attributes=False).encode()) for n in t.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef))}
+ od=ds(old);nd=ds(new);changes=[k for k in od.keys()|nd.keys() if od.get(k)!=nd.get(k)];expected_defs=next(r['changed_top_level_declarations'] for r in pre['overlay_map'] if r['path']==p);assert set(changes)==set(expected_defs)
+ prod[p]={'all_import_nodes_ast_exact':True,'worker_timer_route_calls_ast_exact':True,'changed_top_level_declarations':changes,'old_declarations':od,'actual_declarations':nd,'actual_exact_upstream_bytes':(W/p).read_bytes()==blob(NEW,p)}
+dump('production-import-worker-carry.json',prod)
+q=json.loads((O/'initial-qa-pins.json').read_text());assert all(current[p]==b for p,b in q.items());older=json.loads((S/'task-13-safe-evidence/historical-qa-carry.json').read_text());assert all(current[p]==r['final_blob'] for p,r in older['paths'].items())
+ziprow=pre['archive_carry'];zp=W/ziprow['zip_path'];assert sha(zp.read_bytes())==ziprow['zip_sha256'] and zp.stat().st_size==ziprow['zip_bytes'];dump('historical-qa-archive-carry.json',{'all_initial_qa_blobs_exact':True,'initial_qa_count':len(q),'paths':q,'older_qa_count':12337,'older_original_whole_files_exact':12336,'existing_prefix_append_exception':older['exception'],'archive_carry':ziprow,'fresh_zip_hash_exact':True,'no_decompression_or_replay':True})
+pins=json.loads((O/'initial-safe-artifact-pins.json').read_text());differences={p:{'initial_sha256':h,'actual_sha256':sha((S/p).read_bytes())} for p,h in pins.items() if sha((S/p).read_bytes())!=h};assert set(differences)=={'progress.md'};dump('safe-artifact-carry.json',{'count':len(pins),'exact_count':len(pins)-1,'all_source_QA_and_receipt_pins_exact':True,'live_coordination_metadata_exception':differences,'root_provenance':'Root confirmed editing only ignored/untracked progress.md to record ruling66 and Task15 preflight decisions during source ownership. Preserve initial pin map unchanged; no source or QA exception.','pins':pins})
+out={}
+for group in ('red','together','reconciliation'):
+ root=ET.parse(O/(group+'.xml')).getroot();cases=[]
+ for c in root.iter('testcase'):
+  f=c.find('failure');e=c.find('error');skip=c.find('skipped');status='failed' if f is not None else 'error' if e is not None else 'xfail' if skip is not None and skip.get('type')=='pytest.xfail' else 'skipped' if skip is not None else 'passed';cases.append({'id':c.get('classname').replace('.','/')+'.py::'+c.get('name'),'status':status,'message':(f if f is not None else e if e is not None else skip).get('message') if any(x is not None for x in (f,e,skip)) else None})
+ out[group]={'cases':cases,'counts':{s:sum(c['status']==s for c in cases) for s in ('passed','failed','error','xfail','skipped')}}
+assert out['together']['counts']['passed']==20 and out['reconciliation']['counts']['passed']==6 and out['reconciliation']['counts']['xfail']==1 and out['red']['counts']['failed']==1
+dump('actual-case-outcomes.json',out)
+ci=S/'task-14-pr-fastlane-failure.log';dump('original-ci-failure-receipt.json',{'published_head':PUB,'run':37229906610,'job':111518400864,'log_path':str(ci.relative_to(S)),'log_sha256':sha(ci.read_bytes()),'diagnosis_sha256':sha((S/'task-14-ci-fixture-diagnosis.md').read_bytes()),'original_failures':[x for x in ci.read_text().splitlines() if 'FAILED Tests/UI/' in x],'summary':[x for x in ci.read_text().splitlines() if '6 failed, 216 passed' in x],'local_red_same_missing_consumer':True})
+dump('expected-final-tree.json',{'paths':expected,'source_hashes':actual,'source_union_rebase':union['rebase_intermediate'],'only_overlay_path':overlay})
+print('Carry verified:8115 original pins; historical loading exact',sum(r['exact'] for r in lr.values()),'of7689; all QA/safe artifacts exact; actual20+6passed/1xfail.')

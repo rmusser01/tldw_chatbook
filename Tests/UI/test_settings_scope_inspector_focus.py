@@ -18,7 +18,7 @@ from Tests.UI.test_destination_shells import (
     _build_test_app,
     _wait_for_selector,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import NO_FOCUSED_SETTING_COPY
 
 
@@ -36,6 +36,7 @@ async def _tab_to(pilot, widget_id: str, limit: int = 120) -> bool:
     return str(getattr(pilot.app.focused, "id", "") or "") == widget_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_setting_line_names_the_control_that_holds_focus():
     """AC1/AC3: two distinct settings, one reached each way."""
@@ -57,9 +58,7 @@ async def test_focused_setting_line_names_the_control_that_holds_focus():
             == "settings-appearance-reduce-motion"
         ), "precondition: search landing put focus on Reduce motion"
         assert _guide_line(screen, "appearance") == "Focused setting: Reduce motion"
-        assert (
-            screen._active_settings_field_id == "settings-appearance-reduce-motion"
-        )
+        assert screen._active_settings_field_id == "settings-appearance-reduce-motion"
 
         # Route 2: plain Tab traversal onto a different setting.
         assert await _tab_to(pilot, "settings-appearance-density"), (
@@ -69,6 +68,7 @@ async def test_focused_setting_line_names_the_control_that_holds_focus():
         assert _guide_line(screen, "appearance") == "Focused setting: Density"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_setting_line_says_so_when_focus_is_not_on_a_setting():
     """AC2: a container or non-setting control must not borrow a name."""
@@ -99,6 +99,7 @@ async def test_focused_setting_line_says_so_when_focus_is_not_on_a_setting():
         assert screen._active_settings_field_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_setting_line_names_the_model_context_window():
     """AC1 on the second category that renders the line.

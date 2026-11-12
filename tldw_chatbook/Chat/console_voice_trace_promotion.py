@@ -206,7 +206,7 @@ class PostDispatchTraceHeaderOmission:
 
 @dataclass(frozen=True, slots=True)
 class PostDispatchTraceSystemComponent:
-    """One ordered token from ADR-097's system-composition header model."""
+    """One ordered token from ADR-337's system-composition header model."""
 
     reference_kind: Literal[
         "transform_start", "transform_end", "revision", "artifact", "omission"
@@ -294,7 +294,7 @@ class PostDispatchTraceSystemComponent:
         )
 
     def as_json_object(self) -> dict[str, object]:
-        """Return the exact existing ADR-097 JSON token shape."""
+        """Return the exact existing ADR-337 JSON token shape."""
 
         if self.reference_kind in {"transform_start", "transform_end"}:
             return {"kind": self.reference_kind, "transform": self.transform_name}

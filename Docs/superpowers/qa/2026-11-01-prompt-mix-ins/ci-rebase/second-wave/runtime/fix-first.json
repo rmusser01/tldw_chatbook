@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_local_reasoning_gateway.py::test_real_local_dispatcher_preserves_native_schema_and_reasoning[True-True-llama_cpp-reasoning_content]",
+    "Tests/Chat/test_local_reasoning_gateway.py::test_real_local_dispatcher_preserves_native_schema_and_reasoning[True-True-local_vllm-reasoning_content]",
+    "Tests/Chat/test_local_reasoning_gateway.py::test_real_local_dispatcher_preserves_native_schema_and_reasoning[True-True-local_ollama-reasoning]",
+    "Tests/Chat/test_local_reasoning_gateway.py::test_real_local_dispatcher_preserves_native_schema_and_reasoning[False-True-llama_cpp-reasoning_content]",
+    "Tests/Chat/test_local_reasoning_gateway.py::test_real_local_dispatcher_preserves_native_schema_and_reasoning[False-True-local_vllm-reasoning_content]",
+    "Tests/Chat/test_local_reasoning_gateway.py::test_real_local_dispatcher_preserves_native_schema_and_reasoning[False-True-local_ollama-reasoning]",
+    "Tests/Chat/test_console_refused_stream_retry.py::test_self_hosted_retry_that_also_fails_shows_the_retry_failure",
+    "Tests/Chat/test_console_refused_stream_retry.py::test_cloud_refused_stream_is_not_retried_and_names_streaming[anthropic]",
+    "Tests/Chat/test_console_refused_stream_retry.py::test_cloud_refused_stream_is_not_retried_and_names_streaming[zenmux]",
+    "Tests/Chat/test_console_refused_stream_retry.py::test_cloud_refused_stream_is_not_retried_and_names_streaming[custom-ep:box]",
+    "Tests/Chat/test_console_refused_stream_retry.py::test_cloud_refusal_of_a_request_that_was_not_streamed_does_not_name_streaming",
+    "Tests/Chat/test_self_hosted_retry_accounting.py::test_capture_on_retry_retains_both_calls_usage_and_project_context[custom]",
+    "Tests/Chat/test_self_hosted_retry_accounting.py::test_capture_on_retry_retains_both_calls_usage_and_project_context[vllm]",
+    "Tests/Chat/test_self_hosted_retry_accounting.py::test_fallback_trace_recovery_keeps_accepted_owner",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_operational_inspection_and_display_count_never_authorize_retry",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/fix-first-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/fix-first.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 1,
+  "elapsed": 37.67537058307789
+}

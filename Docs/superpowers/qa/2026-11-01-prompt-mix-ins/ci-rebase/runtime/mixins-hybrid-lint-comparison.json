@@ -1,0 +1,12 @@
+{
+  "Tests/Backup_Recovery/test_canvas_recovery_validation.py": {
+    "before": 0,
+    "after": 0,
+    "added": []
+  },
+  "tldw_chatbook/DB/recovery_operations.py": {
+    "before": 2,
+    "after": 2,
+    "added": []
+  }
+}

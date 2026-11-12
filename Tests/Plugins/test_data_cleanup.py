@@ -826,3 +826,264 @@ def test_later_grants_preserve_released_history_without_refreshing_held_epochs(
     finally:
         case.stack.call(lambda: case.stack.owner.settle_process(token, True))
         usage.unfence(fence)
+
+
+def test_boot_reconciliation_rejects_reduced_marker_backend(data_cleanup_case):
+    case = data_cleanup_case
+    ref = create_root(case)
+    with pytest.raises(PermissionError, match="backend_unqualified"):
+        case.stack.call(
+            lambda: case.stack.coordinator.review_data_boot_reconciliation((ref,))
+        )
+
+
+@pytest.mark.parametrize("foreign_dirty", [False, True, "commit"])
+def test_boot_reconciliation_requires_clean_exact_proof_at_review_and_apply(
+    data_cleanup_case, monkeypatch, foreign_dirty
+):
+    """Simulated reboot + isolated qualified marker double; no real reboot/keychain claim."""
+    from tldw_chatbook.Plugins import data_cleanup
+
+    case, stack = data_cleanup_case, data_cleanup_case.stack
+    ref = create_root(case)
+    authority = stack.authority
+    # The production reduced file backend is still refused above. This is a
+    # separately held test marker seam for the protected-checkpoint branch.
+    monkeypatch.setattr(authority.marker_store, "reduced_protection", False)
+    stack.call(lambda: authority.save_runtime_checkpoint("a" * 32, "clean"))
+    stack.call(lambda: setattr(stack.coordinator.root_usage, "dirty", False))
+    with pytest.raises(PermissionError, match="reboot_proof_unavailable"):
+        stack.call(lambda: stack.coordinator.review_data_boot_reconciliation((ref,)))
+    monkeypatch.setattr(
+        data_cleanup, "boot_identity", lambda: "11111111-2222-3333-4444-555555555555"
+    )
+    review = stack.call(
+        lambda: stack.coordinator.review_data_boot_reconciliation((ref,))
+    )
+    if foreign_dirty:
+        if foreign_dirty == "commit":
+
+            def race(phase):
+                if phase == "materialized":
+                    authority.save_runtime_checkpoint("b" * 32, "dirty")
+
+            stack.call(lambda: setattr(stack.coordinator, "progress", race))
+        else:
+            stack.call(lambda: authority.save_runtime_checkpoint("b" * 32, "dirty"))
+        with pytest.raises(PermissionError, match="quiescence_unproven"):
+            stack.call(
+                lambda: stack.coordinator.reconcile_data(review, review.operation_id)
+            )
+        return
+    rebound = stack.call(
+        lambda: stack.coordinator.reconcile_data(review, review.operation_id)
+    )
+    assert len(rebound) == 1 and rebound[0].generation > ref.generation
+    with pytest.raises(PermissionError, match="root_review_stale"):
+        stack.call(lambda: stack.coordinator.root_usage.validate_ref(ref))
+
+
+@pytest.mark.asyncio
+async def test_root_status_reports_complete_boundary_without_raising_page_cap(
+    native_console,
+):
+    case = native_console
+    installed = await case.install(enable=False)
+    review = await case.service.review_data_creation(installed.installation_id)
+    ref = await case.service.create_data(review, review.operation_id)
+    claims = []
+    usage = case.service._coordinator.root_usage
+    try:
+        for _ in range(50):
+            claim, _, _ = await case.service._call(
+                lambda: usage.begin_grants(
+                    (ref,), installed.installation_id, "workspace-a", "known"
+                )
+            )
+            claims.append(claim)
+        row = (await case.service.data_status((ref,)))[0]
+        assert len(row["blockers"]) == 50
+        assert row["blockers_complete"] is True
+        claim, _, _ = await case.service._call(
+            lambda: usage.begin_grants(
+                (ref,), installed.installation_id, "workspace-b", "known"
+            )
+        )
+        claims.append(claim)
+        row = (await case.service.data_status((ref,)))[0]
+        assert len(row["blockers"]) == 50
+        assert row["blockers_complete"] is False
+        tail = await case.service._call(
+            lambda: usage.blocker_status((ref,), limit=1, offset=50)
+        )
+        assert tail["blockers_complete"] is False
+        assert await case.service._call(
+            lambda: usage.blockers((ref,), limit=1, offset=50)
+        ) == ({"owner_token": claim, "reason": "live_root_user"},)
+        with pytest.raises(ValueError):
+            await case.service._call(lambda: usage.blockers((ref,), limit=51))
+    finally:
+        for claim in claims:
+            await case.service._call(lambda claim=claim: usage.abandon_grants(claim))
+
+
+@pytest.mark.asyncio
+async def test_retained_root_filter_precedes_pagination_and_preserves_attached_refs(
+    native_console,
+):
+    from dataclasses import replace
+
+    case = native_console
+    first = await case.install(enable=False)
+    second = await case.install(enable=False)
+    roots = []
+    for installed in (first, second):
+        review = await case.service.review_data_creation(installed.installation_id)
+        roots.append(await case.service.create_data(review, review.operation_id))
+    page = await case.service.data_status(
+        installation_id=second.installation_id, limit=1
+    )
+    assert tuple(row["root"] for row in page) == (roots[1],)
+    assert not await case.service.data_status(
+        installation_id=second.installation_id, limit=1, offset=1
+    )
+    assert not await case.service.data_status(installation_id="missing-owner", limit=1)
+    with pytest.raises(ValueError, match="root_review_stale"):
+        await case.service.data_status(
+            (replace(roots[1], generation=999),), installation_id=second.installation_id
+        )
+    with pytest.raises(ValueError, match="root_review_stale"):
+        await case.service.data_status(
+            (roots[0],), installation_id=second.installation_id
+        )
+    attachment = await case.service.review_data_attachment(
+        (roots[0],), second.installation_id
+    )
+    await case.service.delete_data((roots[0],), attachment.operation_id)
+    details = await case.service.management_details(
+        second.installation_id, workspace_id="workspace-a"
+    )
+    rows = await case.service.data_status(details["roots"])
+    assert {row["root"].root_id for row in rows} == {root.root_id for root in roots}
+    assert (await case.service.data_status(installation_id=first.installation_id))[0][
+        "root"
+    ].root_id == roots[0].root_id
+
+
+@pytest.mark.asyncio
+async def test_held_root_status_transaction_does_not_delay_emergency_fence(
+    native_console, monkeypatch
+):
+    import contextlib
+    import inspect
+    import threading
+
+    from tldw_chatbook.Plugins.revocation import RevocationTarget
+
+    case = native_console
+    installed = await case.install()
+    creation = await case.service.review_data_creation(installed.installation_id)
+    ref = await case.service.create_data(creation, creation.operation_id)
+    entries = (
+        await case.service.admit(
+            case.service.capture_maximum("workspace-a"), "held-status-admit"
+        )
+    )["available_skills"]
+    cancelled = threading.Event()
+    await asyncio.to_thread(
+        case.service.bind_run, entries, "held-status-run", cancelled.set
+    )
+    registry = case.service._coordinator.registry
+    original = registry.transaction
+    entered, release = threading.Event(), threading.Event()
+
+    @contextlib.contextmanager
+    def held_transaction(*args, **kwargs):
+        with original(*args, **kwargs) as cursor:
+            if any(frame.function == "blocker_status" for frame in inspect.stack()):
+                entered.set()
+                assert release.wait(5)
+            yield cursor
+
+    monkeypatch.setattr(registry, "transaction", held_transaction)
+    status = asyncio.create_task(case.service.data_status((ref,)))
+    request = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        import time
+
+        started = time.monotonic()
+        request = case.service.begin_disable(
+            RevocationTarget(installed.installation_id, None, True)
+        )
+        assert time.monotonic() - started < 1
+        assert await asyncio.to_thread(cancelled.wait, 1)
+        assert not release.is_set() and not status.done()
+    finally:
+        release.set()
+        await status
+        await asyncio.to_thread(case.service.complete_run, "held-status-run")
+    assert request is not None
+    assert (await case.service.finish_revocation(request)).committed
+
+
+@pytest.mark.asyncio
+async def test_public_cleaned_absence_requires_current_authenticated_root(
+    native_console, monkeypatch
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Plugins import data_cleanup
+
+    case = native_console
+    installed = await case.install(enable=False)
+    creation = await case.service.review_data_creation(installed.installation_id)
+    ref = await case.service.create_data(creation, creation.operation_id)
+    retained = (await case.service.data_status((ref,)))[0]
+    assert retained["recovery_reason"] is None and ref.path.is_dir()
+    assert retained["cleaned_absent"] is False
+    deletion = await case.service.review_data_deletion((ref,))
+    assert (await case.service.delete_data((ref,), deletion.operation_id)).committed
+    before = ref
+    cleaned = (
+        await case.service.data_status(installation_id=installed.installation_id)
+    )[0]
+    ref = cleaned["root"]
+    with pytest.raises(ValueError, match="root_review_stale"):
+        await case.service.data_status((before,))
+    assert not ref.path.exists() and cleaned["recovery_reason"] is None
+    assert cleaned["cleaned_absent"] is True
+    assert "custody" not in cleaned and "checkpoint" not in cleaned
+    assert (await case.service.data_status(installation_id=installed.installation_id))[
+        0
+    ] == cleaned
+    assert not await case.service.data_status((ref,), offset=1)
+    with pytest.raises(ValueError, match="root_review_stale"):
+        await case.service.data_status((replace(ref, generation=ref.generation + 1),))
+    ref.path.mkdir()
+    try:
+        recreated = (await case.service.data_status((ref,)))[0]
+        assert recreated["cleaned_absent"] is False
+        assert recreated["recovery_reason"] == "root_unexpected_after_cleanup"
+    finally:
+        ref.path.rmdir()
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            data_cleanup,
+            "boot_identity",
+            lambda: "11111111-2222-3333-4444-555555555555",
+        )
+        changed_boot = (await case.service.data_status((ref,)))[0]
+        assert changed_boot["cleaned_absent"] is False
+        assert changed_boot["recovery_reason"] == "root_boot_identity_changed"
+    usage = case.service._coordinator.root_usage
+    await case.service._call(
+        lambda: usage.recovery.update({ref.root_id: "unknown_writer"})
+    )
+    try:
+        unknown = (await case.service.data_status((ref,)))[0]
+        assert unknown["cleaned_absent"] is False
+        assert unknown["recovery_reason"] == "unknown_writer"
+    finally:
+        await case.service._call(lambda: usage.recovery.pop(ref.root_id))
+    assert (await case.service.data_status((ref,)))[0]["cleaned_absent"] is True

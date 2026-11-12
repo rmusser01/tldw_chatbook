@@ -72,9 +72,7 @@ def _ingest(
     return media_id
 
 
-def _chunk_column_rows(
-    db: MediaDatabase, media_id: int, column: str
-) -> list[Any]:
+def _chunk_column_rows(db: MediaDatabase, media_id: int, column: str) -> list[Any]:
     cursor = db.execute_query(
         f"SELECT {column} FROM UnvectorizedMediaChunks "
         "WHERE media_id = ? AND deleted = 0 ORDER BY chunk_index",
@@ -97,6 +95,7 @@ def _media_chunking_config(db: MediaDatabase, media_id: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_template_ingest_fills_chunk_columns_and_config(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -121,6 +120,7 @@ def test_template_ingest_fills_chunk_columns_and_config(
     assert parsed["template"] == "tiny-words"
 
 
+@pytest.mark.bootstrap_profile
 def test_chunking_config_satisfies_like_reader(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -147,6 +147,7 @@ def test_chunking_config_satisfies_like_reader(
     assert documents[0]["config"]["template"] == "tiny-words"
 
 
+@pytest.mark.bootstrap_profile
 def test_chunking_config_satisfies_json_extract_reader(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -170,6 +171,7 @@ def test_chunking_config_satisfies_json_extract_reader(
     assert stats["configured_documents"] == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_non_ascii_template_name_still_satisfies_both_readers(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -208,6 +210,7 @@ def test_non_ascii_template_name_still_satisfies_both_readers(
     assert {"template": name, "count": 1} in stats["most_used_templates"]
 
 
+@pytest.mark.bootstrap_profile
 def test_rechunk_resolution_reads_back_stored_choice(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -220,9 +223,7 @@ def test_rechunk_resolution_reads_back_stored_choice(
     get_chunking_service(media_db).create_template(
         name="tiny-words",
         description="persistence round-trip template",
-        template_json={
-            k: v for k, v in TEMPLATE_TINY.items() if k != "name"
-        },
+        template_json={k: v for k, v in TEMPLATE_TINY.items() if k != "name"},
     )
     source = tmp_path / "fixture.txt"
     source.write_text(_FIXTURE_TEXT, encoding="utf-8")
@@ -230,11 +231,14 @@ def test_rechunk_resolution_reads_back_stored_choice(
 
     stored = _media_chunking_config(media_db, media_id)
     assert stored is not None
-    resolved = resolve_ingest_template(media_db, per_media=json.loads(stored)["template"])
+    resolved = resolve_ingest_template(
+        media_db, per_media=json.loads(stored)["template"]
+    )
     assert resolved is not None
     assert resolved["name"] == "tiny-words"
 
 
+@pytest.mark.bootstrap_profile
 def test_plain_options_ingest_writes_no_template_persistence(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -249,6 +253,7 @@ def test_plain_options_ingest_writes_no_template_persistence(
     assert _media_chunking_config(media_db, media_id) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_two_templates_persist_their_own_names(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:

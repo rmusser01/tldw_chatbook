@@ -421,3 +421,128 @@ async def test_partial_persona_failure_reports_saved_buddy_and_safe_retry_revisi
         expected_revision=failed.value.buddy_retry_revision,
     )
     assert assignment.apply.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cold_saved_binding_is_named_and_presentation_apply_keeps_it(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+    from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
+        BuddyManagementChoice,
+    )
+
+    db = CharactersRAGDB(tmp_path / "cold-management.db", "buddy-management")
+    try:
+        local = ChatConversationService(db)
+        saved_id = local.create_conversation(
+            title="Saved Buddy owner", runtime_backend="local", scope_type="global"
+        )
+        binding = BuddyBinding(
+            "conversation", "previous-runtime", conversation_id=saved_id
+        )
+        runtime = SimpleNamespace(chat_store=None, chat_controller=None)
+        app = SimpleNamespace(
+            app_config={},
+            console_runtime=runtime,
+            local_chat_conversation_service=local,
+        )
+        manager = coordinator_module().BuddyManagementCoordinator(
+            app, controller=PersonaBuddyController()
+        )
+        manager.preferences = BuddyInteractionPreferences(binding=binding)
+        targets = await manager._target_choices()
+        assert len(targets) == 1
+        assert targets[0].binding == binding
+        assert "Saved Buddy owner" in targets[0].label
+        assert not targets[0].persona_editable
+        assert manager._binding_for_form(targets) == binding
+        assert runtime.chat_store is None
+        assert runtime.chat_controller is None
+        writes = []
+        monkeypatch.setattr(
+            config,
+            "save_settings_to_cli_config",
+            lambda value: writes.append(value) or True,
+        )
+        await manager.apply_choice(
+            BuddyManagementChoice(binding=binding, animated=False)
+        )
+        assert manager.preferences.binding == binding
+        assert not manager.preferences.animated
+        assert writes[0]["buddy_interaction"]["conversation_id"] == saved_id
+        assert runtime.chat_store is None
+        assert runtime.chat_controller is None
+        with pytest.raises(ValueError, match="conversation or workspace"):
+            await manager.apply_choice(
+                BuddyManagementChoice(binding=binding, persona_choice="#none")
+            )
+        assert len(writes) == 1
+        assert db.get_conversation_by_id(saved_id)["id"] == saved_id
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason", ["missing", "deleted", "remote", "temporary", "repurposed"]
+)
+async def test_cold_saved_binding_rejects_unavailable_or_repurposed_owner(
+    tmp_path, reason
+):
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "unavailable-management.db", "buddy-management")
+    try:
+        local = ChatConversationService(db)
+        saved_id = local.create_conversation(
+            title="Original owner", runtime_backend="local", scope_type="global"
+        )
+        if reason == "deleted":
+            row = db.get_conversation_by_id(saved_id)
+            db.soft_delete_conversation(saved_id, row["version"])
+        elif reason == "remote":
+            with db.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE conversations SET runtime_backend = ? WHERE id = ?",
+                    ("server", saved_id),
+                )
+        sessions = ()
+        if reason == "repurposed":
+            sessions = (
+                ConsoleChatSession(
+                    id="old-runtime",
+                    persisted_conversation_id="different",
+                    conversation_binding_revision=1,
+                ),
+            )
+        binding = BuddyBinding(
+            "conversation",
+            "old-runtime",
+            conversation_id=None
+            if reason == "temporary"
+            else "missing-id"
+            if reason == "missing"
+            else saved_id,
+            ephemeral=reason == "temporary",
+        )
+        app = SimpleNamespace(
+            app_config={},
+            local_chat_conversation_service=local,
+            console_runtime=SimpleNamespace(
+                chat_store=SimpleNamespace(sessions=lambda: sessions),
+                chat_controller=None,
+            ),
+        )
+        manager = coordinator_module().BuddyManagementCoordinator(app)
+        manager.preferences = BuddyInteractionPreferences(binding=binding)
+        targets = await manager._target_choices()
+        assert all(target.binding != binding for target in targets)
+        with pytest.raises(ValueError, match="unavailable"):
+            await manager._validate_binding(binding)
+    finally:
+        db.close_connection()

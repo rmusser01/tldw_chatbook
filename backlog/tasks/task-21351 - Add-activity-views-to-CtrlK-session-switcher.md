@@ -85,7 +85,7 @@ ADR required: yes
 ADR path: `backlog/decisions/085-console-activity-receipts-and-switcher-ownership.md`
 Reason: ADR-085 records durable acknowledgement ownership, the derived FLEET
 mark relationship, canonical switcher subjects/targets, and the deliberate
-modal-scoped F3 exception to ADR-031. Phase 2 server correlation requires its
+modal-scoped F3 exception to ADR-299. Phase 2 server correlation requires its
 own later task and ADR.
 
 ## Renumbering provenance

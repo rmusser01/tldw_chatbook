@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation        Collapse     ││                                                                                                                        │ │
+│ │     Import…                    ││ Sources                                                                                                                │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ ││  Scope: all local sources                                                                                              │ │
+│ │ ▊ chunk size sweep        ▎▊x▎ ││   ☑ Notes (122)                                                                                                        │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ ││                                                                                                                      ▇ │ │
+│ │                                ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││   ☑ Media (23)                                                                                                         │ │
+│ │ Browse                     ▾   ││                                                                                                                        │ │
+│ │    Media (23) — your files     ││                                                                                                                        │ │
+│ │    Conversations (12)          ││   ☑ Conversations (12)                                                                                                 │ │
+│ │    Notes (122)                 ││                                                                                                                        │ │
+│ │    Prompts (10) — reuse        ││                                                                                                                        │ │
+│ │    Skills (4) — AI add-ons     ││   ☑ Prompts (10)                                                                                                       │ │
+│ │    Collections (6)             ││                                                                                                                        │ │
+│ │  ▸ Search / RAG — find all     ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Artifacts                  ▾   ││ Answer                                                                                                               ▃ │ │
+│ │    All artifacts               ││ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │ │
+│ │    Chatbooks                   ││ │ The answer does not cite available staged evidence.                                                               │  │ │
+│ │    Reports                     ││ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Create                     ▾   ││                                                                                                                        │ │
+│ │    New note                    ││  *(mock reply)* You said: "UNTRUSTED EVIDENCE BEGIN                                                                    │ │
+│ │    New prompt                  ││  [Staged evidence]                                                                                                     │ │
+│ │    New skill                   ││  Evidence bundle: library-rag:chunk%20size%20sweep                                                                     │ │
+│ │ ────────────────────────────── ││  Evidence query: chunk size ". Staying in character as You are answering a question using only the evidence staged .   │ │
+│ │ Study                      ▾   ││  The wind shifts, a lantern flickers, and the story moves forward one beat.                                            │ │
+│ │    Study decks (0)             ││                                                                                                                        │ │
+│ │    Flashcards due: 0           ││                                                                                                                        │ │
+│ │    Quizzes (0)                 ││ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Import / Export            ▾   ││  openai · gpt-5.6-terra · $0.0006 (95 tok)                                                                             │ │
+│ │    Import…                     ││                                                                                                                        │ │
+│ │    Export                      ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││ Evidence · top 15                                                                                                      │ │
+│ │ Details                    ▸   ││  4 results for 'chunk size sweep'.                                                                                     │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc leave field | after esc: u use Library context in Console · o open evidence · / focus search | F1 · F6 · Ctrl+P · Ctrl+Q

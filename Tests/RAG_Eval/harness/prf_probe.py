@@ -72,6 +72,7 @@ pre-import bootstrap, so under pytest that read is sandboxed; a bare
 real `~/.config/tldw_cli/config.toml` instead. Task 2's probe runs under
 pytest, which is where this stays a non-issue.
 """
+
 from __future__ import annotations
 
 import re
@@ -211,9 +212,7 @@ def derive_expansion_terms(
         for term, count in Counter(terms).items():
             if term in excluded:
                 continue
-            weights[term] = weights.get(term, Fraction(0)) + Fraction(
-                count, length
-            )
+            weights[term] = weights.get(term, Fraction(0)) + Fraction(count, length)
 
     ranked = sorted(weights.items(), key=lambda item: (-item[1], item[0]))
     return tuple(term for term, _weight in ranked[:n_terms])
@@ -239,9 +238,7 @@ def _quoted_content_tokens(query: str) -> list[str]:
     ]
 
 
-def compose_prf_expression(
-    query: str, expansion_terms: Sequence[str]
-) -> str:
+def compose_prf_expression(query: str, expansion_terms: Sequence[str]) -> str:
     """The PRF second pass: the query's content terms, OR-extended.
 
     Query side first in query order, then the expansion terms in their

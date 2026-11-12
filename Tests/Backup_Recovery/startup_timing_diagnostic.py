@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import CodeType
 
 
 class ConfigTimings:
@@ -70,7 +71,7 @@ class ConfigTimings:
                     if event == "yielded":
                         if row["function"] in {"config_lock", "config_operation"} and row["acquired"] is None:
                             row["acquired"] = now
-                        if row["function"].startswith("test_"):
+                        if row["function"].startswith(("test_", "timer_")):
                             row["suspended_at"] = {
                                 "file": Path(code.co_filename).name[:128],
                                 "function": code.co_name[:128], "line": frame.f_lineno,
@@ -216,6 +217,38 @@ class ConfigTimingPlugin:
         self.source = source
         self.timings = ConfigTimings({})
 
+    def _select_timer_codes(self):
+        """Observe loaded Windows timer owners without replacing their callbacks."""
+        windows = sys.modules.get("textual._win_sleep")
+        if windows is None:
+            return
+        package = Path(sys.modules["textual"].__file__).resolve().parent
+        timer = sys.modules["textual.timer"]
+        labels = {
+            "_stop_all": "timer_stop_all",
+            "stop_timer": "timer_stop",
+            "wait": "timer_wait",
+            "wait_inner": "timer_wait_inner",
+            "cancel": "timer_cancel",
+            "cancel_inner": "timer_cancel_inner",
+        }
+        selected = {}
+        for function, filename in (
+            (timer.Timer._stop_all, "timer.py"),
+            (windows.sleep, "_win_sleep.py"),
+        ):
+            pending = [function.__code__]
+            while pending:
+                code = pending.pop()
+                if Path(code.co_filename).resolve() != package / filename:
+                    raise ValueError("timer_timing_source_mismatch")
+                if code.co_name in labels:
+                    selected[code] = labels[code.co_name]
+                pending.extend(
+                    value for value in code.co_consts if isinstance(value, CodeType)
+                )
+        self.timings.codes.update(selected)
+
     def pytest_collection_modifyitems(self, items):
         """Observe only the collected GGUF test and its four fixed async helpers."""
         import inspect
@@ -266,6 +299,7 @@ class ConfigTimingPlugin:
                 if Path(code.co_filename).resolve() != expected:
                     raise ValueError("config_operation_timing_source_mismatch")
                 self.timings.codes[code] = "config_operation"
+            self._select_timer_codes()
             self.timings.start()
         except Exception as error:  # noqa: BLE001 - observation must not replace collection.
             self.timings._error(error)
@@ -310,12 +344,13 @@ def snapshot(profile: cProfile.Profile, source: Path, label: str) -> dict:
 
 
 def main() -> int:
-    """Run one actual case with its existing 60-second ceiling in a fresh process."""
+    """Run one actual case with its existing workflow ceiling in a fresh process."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--node", required=True)
     parser.add_argument("--label", choices=("dev", "candidate"), required=True)
     parser.add_argument("--no-profile", action="store_true", help="Observe finite code events without cProfile overhead.")
+    parser.add_argument("--timeout", type=int, choices=(60, 180), default=60)
     args = parser.parse_args()
     source = args.source.resolve(strict=True)
     os.chdir(source)
@@ -356,7 +391,8 @@ def main() -> int:
         except RuntimeError as error:
             failures.append(type(error).__name__)
         return pytest.main(
-            [args.node, "--timeout=60", "-q", "--capture=no"], plugins=[config_timing]
+            [args.node, f"--timeout={args.timeout}", "-q", "--capture=no"],
+            plugins=[config_timing],
         )
     finally:
         config_timing.timings.close()

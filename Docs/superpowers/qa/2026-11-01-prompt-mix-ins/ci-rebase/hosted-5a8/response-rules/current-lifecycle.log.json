@@ -1,0 +1,4 @@
+{
+  "sha256": "da95e934ecbd65df22b48f6708b1be277cb8fd6111266abeaba69da1dc97f58a",
+  "raw_text": ".                                                                        [100%]\n============================= slowest 25 durations =============================\n5.20s call     Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[ancestry-size1]\n\n(2 durations < 1s hidden.)\n1 passed in 7.70s\n"
+}

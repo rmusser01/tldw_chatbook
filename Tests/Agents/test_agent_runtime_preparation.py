@@ -212,10 +212,8 @@ def test_retry_appends_fixed_stubs_then_separate_context_and_skips_dispatch():
     assert out.status == RUN_DONE
     assert reviewed == [] and gated == [] and invoked == []
     deferred = seen_requests[1][-3:]
-    assert [(row["tool_call_id"], row["name"]) for row in deferred[:2]] == [
-        ("a", "one"),
-        ("b", "two"),
-    ]
+    assert [row["tool_call_id"] for row in deferred[:2]] == ["a", "b"]
+    assert all(set(row) == {"role", "tool_call_id", "content"} for row in deferred[:2])
     assert all(
         "Deferred because project instructions were loaded" in row["content"]
         for row in deferred[:2]
@@ -295,8 +293,9 @@ def test_dispatch_gate_receives_only_calls_with_effective_proceed_verdict():
             [_native_turn(calls), ModelTurn(text="done")],
             review_tool_calls=lambda _batch: {"call-1": "denied"},
             before_tool_dispatch=lambda batch, _pure: gated.append(list(batch)),
-            invoke_tool=lambda call: invoked.append(call.name)
-            or ToolResult(ok=True, content="ok"),
+            invoke_tool=lambda call: (
+                invoked.append(call.name) or ToolResult(ok=True, content="ok")
+            ),
         ),
     )
 
@@ -323,10 +322,10 @@ def test_raised_review_hook_still_runs_dispatch_gate_before_fail_open_dispatch()
             before_tool_dispatch=lambda batch, _pure: events.append(
                 ("gate", list(batch))
             ),
-            invoke_tool=lambda tool_call: events.append(
-                ("invoke", tool_call.name)
-            )
-            or ToolResult(ok=True, content="ok"),
+            invoke_tool=lambda tool_call: (
+                events.append(("invoke", tool_call.name))
+                or ToolResult(ok=True, content="ok")
+            ),
         ),
     )
 

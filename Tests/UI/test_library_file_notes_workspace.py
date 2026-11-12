@@ -7,7 +7,8 @@ import hashlib
 import sqlite3
 import threading
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 from itertools import product
 from pathlib import Path
@@ -29,6 +30,8 @@ from Tests.UI.consolidated_css import (
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.errors import NoWidget
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea, Tree
 
 import Tests.UI._optional_module_stubs  # noqa: F401
@@ -52,6 +55,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     SessionChange,
 )
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
+    ACTIVATION_WARNING,
     INTERACTIVE_FILE_CHARS,
     LARGE_FILE_EXCERPT_CHARS,
     FileNoteEntry,
@@ -83,6 +87,7 @@ from Tests.UI.test_library_shell import (  # noqa: E402
     _two_conversations,
     _two_notes,
     _wait_for_condition,
+    _open_note_editor,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -355,6 +360,21 @@ def _painted_style_of_text(app: App, region, needle: str):
                 return segment.style
             x += len(segment.text)
     return None
+
+
+def _seen_cells(widget: Widget) -> int:
+    """Columns of ``widget`` inside its compositor clip and the screen.
+
+    TASK-38757: ``region.width > 0`` holds for a widget laid out wholly past
+    its parent's clip, so it cannot show a control is visible.
+    """
+    screen = widget.screen
+    try:
+        clip = screen.find_widget(widget).clip
+    except NoWidget:
+        return 0
+    region = widget.region
+    return min(region.right, clip.right, screen.size.width) - max(region.x, clip.x, 0)
 
 
 def _painted_text_in_region(app: App, region) -> str:
@@ -656,6 +676,12 @@ async def test_folder_files_shared_shell_retains_state_across_breakpoints(
             "Folder Files did not mount",
         )
         assert await workspace.open_path("folder/draft.md")
+        # Opening holds a path transition, which moves the session owner's
+        # revision. The next refresh then rehydrates Git state and resets
+        # the push phase this test sets below. Left to the 10 s poll tick,
+        # that refresh can land inside the resize loop under load, so run
+        # it now, before any state is set (TASK-38648).
+        assert await workspace.refresh_files()
 
         shell = workspace.query_one(
             "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
@@ -827,10 +853,29 @@ async def test_folder_files_automatic_items_priority_does_not_steal_focus_or_per
         )
         persisted.clear()
 
+        # TASK-38695: 79 columns crosses the compact breakpoint, and that
+        # transition restores the focus it captured (the Items grip) twice,
+        # the second time a few turns later. Focusing the editor before the
+        # second restore lands lets it move focus back to the grip, and the
+        # Items reopen at 78 then takes it to New (seen on a Linux CI runner).
+        # Wait for that settled restore before placing focus.
+        settled: list[object] = []
+        controller_type = type(screen._notes_controller)
+        restore_settled = controller_type._restore_library_notes_settled_focus
+
+        def record_settled_restore(controller, *args, **kwargs):
+            settled.append(args)
+            return restore_settled(controller, *args, **kwargs)
+
+        monkeypatch.setattr(
+            controller_type,
+            "_restore_library_notes_settled_focus",
+            record_settled_restore,
+        )
         await pilot.resize_terminal(79, 30)
         await _wait_until(
             pilot,
-            lambda: workspace.narrow,
+            lambda: workspace.narrow and bool(settled),
             "Folder Files did not enter narrow geometry",
         )
         workspace._narrow_view = "navigator"
@@ -843,10 +888,10 @@ async def test_folder_files_automatic_items_priority_does_not_steal_focus_or_per
                 workspace.narrow
                 and shell.effective_layout.priority_pane == "items"
                 and shell.effective_layout.items_open
+                and screen.focused is editor
             ),
-            "Automatic narrow Items priority did not settle",
+            "Automatic narrow Items priority did not settle with the editor focused",
         )
-        assert screen.focused is editor
         assert editor.has_focus
         assert persisted == []
 
@@ -865,6 +910,204 @@ async def test_folder_files_automatic_items_priority_does_not_steal_focus_or_per
         )
 
     await workspace.shutdown()
+
+
+@asynccontextmanager
+async def _folder_files_compact_transition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Folder files at 160x45, resized to 79x30 with the settled restore held.
+
+    Shared by TASK-38957's Tab case and TASK-39050's click case. Yields
+    ``(screen, pilot, workspace, editor, held, settled_restore)`` once the
+    compact transition has queued its settled restore. TASK-39050 review:
+    every wait is a wall-clock deadline (``_wait_for_condition``, 15 s); the
+    file's ``_wait_until`` counts 150 pauses, which ran out at the mount under
+    load 35-55.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "draft.md").write_text("body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "replica.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    monkeypatch.setattr(
+        library_screen_module,
+        "save_setting_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(160, 45)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            message="Notes source chooser did not mount",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            message="Folder Files did not mount",
+        )
+        assert await workspace.open_path("draft.md")
+        shell = workspace.query_one(
+            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        screen.set_focus(workspace.query_one("#file-notes-tree", Tree))
+        await pilot.pause()
+        shell.items_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not shell.effective_layout.items_open,
+            message="Manual Items close did not settle",
+        )
+
+        held: list[tuple[object, tuple, dict]] = []
+        controller_type = type(screen._notes_controller)
+        settled_restore = controller_type._restore_library_notes_settled_focus
+
+        def hold(controller, *args, **kwargs):
+            held.append((controller, args, kwargs))
+
+        monkeypatch.setattr(
+            controller_type, "_restore_library_notes_settled_focus", hold
+        )
+        await pilot.resize_terminal(79, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: workspace.narrow and bool(held) and editor.region.width > 0,
+            message="the compact transition did not queue its settled restore",
+        )
+        yield screen, pilot, workspace, editor, held, settled_restore
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_user_focus_between_compact_restores_is_kept(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38957: the compact transition restores the focus it captured, then
+    again a few turns later. In Folder files a user's focus change in between
+    did not advance the Notes focus generation (only Database Notes, the rail,
+    Media and Conversations did), so the settled restore took focus back.
+    Here the settled restore is held, the user Tabs to the editor, and the
+    restore then runs: the editor keeps focus. (TASK-39050 covers the click.)"""
+    async with _folder_files_compact_transition(tmp_path, monkeypatch) as (
+        screen,
+        pilot,
+        _workspace,
+        editor,
+        held,
+        settled_restore,
+    ):
+        for _ in range(20):  # the user's own choice, between the restores
+            if editor.has_focus:
+                break
+            await pilot.press("tab")
+            await pilot.pause()
+        assert editor.has_focus, screen.focused
+        controller, args, kwargs = held.pop(0)
+        settled_restore(controller, *args, **kwargs)
+        for _ in range(3):
+            await pilot.pause()
+        assert editor.has_focus, screen.focused
+
+
+@pytest.mark.asyncio
+async def test_database_notes_click_between_compact_restores_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-39050: Textual focuses a clicked control before the screen hears
+    the click's MouseDown, and only real input ends a resize's settling. So
+    after a resize across the compact breakpoint the first click's focus read
+    as programmatic: the focus generation stayed put, and the transition's
+    held settled restore took focus back to the body. The click on the title
+    must advance the generation and keep the title."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    screen = LibraryScreen(app)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(170, 48)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+        body = screen.query_one("#library-note-body", TextArea)
+        body.focus()
+        await pilot.pause()
+
+        held: list[tuple[object, tuple, dict]] = []
+        controller_type = type(screen._notes_controller)
+        settled_restore = controller_type._restore_library_notes_settled_focus
+
+        def hold(controller, *args, **kwargs):
+            held.append((controller, args, kwargs))
+
+        monkeypatch.setattr(
+            controller_type, "_restore_library_notes_settled_focus", hold
+        )
+        await pilot.resize_terminal(100, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._notes_state.compact and bool(held) and screen.focused is body
+            ),
+            message="the compact transition did not queue its settled restore",
+        )
+        # No input since the resize: the click below is the first.
+        assert screen._notes_state.resize_settling
+        title = screen.query_one("#library-note-title", Input)
+        generation = screen._notes_state.focus_intent_generation
+        await pilot.click(title)  # the user's own choice, between the restores
+        assert title.has_focus, screen.focused
+        assert screen._notes_state.focus_intent_generation > generation
+        controller, args, kwargs = held.pop(0)
+        settled_restore(controller, *args, **kwargs)
+        for _ in range(3):
+            await pilot.pause()
+        assert title.has_focus, screen.focused
+
+
+@pytest.mark.asyncio
+async def test_folder_files_click_between_compact_restores_is_kept(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-39050: TASK-38957's case with a click instead of Tab. Textual
+    focuses the clicked control before the screen hears the click's MouseDown,
+    and only real input ends a resize's settling, so after a resize the first
+    click's focus read as programmatic: the focus generation stayed put and the
+    held settled restore took focus back to the Items grip. The click must
+    advance the generation and keep the editor."""
+    async with _folder_files_compact_transition(tmp_path, monkeypatch) as (
+        screen,
+        pilot,
+        _workspace,
+        editor,
+        held,
+        settled_restore,
+    ):
+        # No input since the resize: the click below is the first.
+        assert screen._notes_state.resize_settling
+        assert not editor.has_focus, screen.focused
+        generation = screen._notes_state.focus_intent_generation
+        await pilot.click(editor)  # the user's own choice, between the restores
+        assert editor.has_focus, screen.focused
+        assert screen._notes_state.focus_intent_generation > generation
+        controller, args, kwargs = held.pop(0)
+        settled_restore(controller, *args, **kwargs)
+        for _ in range(3):
+            await pilot.pause()
+        assert editor.has_focus, screen.focused
 
 
 @pytest.mark.asyncio
@@ -1259,7 +1502,6 @@ async def test_notes_authority_round_trip_retains_both_workspaces(
     await workspace.shutdown()
 
 
-
 @pytest.mark.asyncio
 async def test_folder_files_routes_rail_descendants_to_visible_authority(
     tmp_path: Path,
@@ -1629,9 +1871,14 @@ async def test_file_notes_field_labels_persist_across_path_context(
         await pilot.pause()
         assert str(search_label.renderable) == "Search"
         workspace.query_one("#file-notes-path-cancel", Button).press()
-        await pilot.pause()
-        assert workspace.path_task == "none"
-        assert str(path_label.renderable) == expected_label
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.path_task == "none"
+                and str(path_label.renderable) == expected_label
+            ),
+            "Cancel of the new path task did not restore the field label",
+        )
 
         assert await workspace.open_path("open.md")
         assert str(path_label.renderable) == expected_label
@@ -1645,8 +1892,14 @@ async def test_file_notes_field_labels_persist_across_path_context(
         path.value = "moved.md"
         await pilot.pause()
         workspace.query_one("#file-notes-path-cancel", Button).press()
-        await pilot.pause()
-        assert str(path_label.renderable) == expected_label
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.path_task == "none"
+                and str(path_label.renderable) == expected_label
+            ),
+            "Cancel of the move path task did not restore the field label",
+        )
 
         for save_state in ("dirty", "conflict", "error"):
             workspace._set_save_state(save_state)
@@ -1884,7 +2137,14 @@ async def test_folder_files_capability_inventory_and_modes(
             "Delete did not reach the file service",
         )
         restore = workspace.query_one("#file-notes-restore", Button)
-        assert restore.display and not restore.disabled
+        # TASK-38646: Delete sets the deleted path before it rescans, inside
+        # its path transition, and Restore stays disabled until that ends.
+        # press() on a hidden or disabled Button is a silent no-op.
+        await _wait_until(
+            pilot,
+            lambda: restore.display and not restore.disabled,
+            "Restore was not offered after Delete",
+        )
         restore.press()
         await _wait_until(
             pilot,
@@ -2453,9 +2713,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
             "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
         )
 
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert shell.effective_layout.library_open is True
         assert writes == []
 
@@ -2508,8 +2766,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._notes_state.work_session_phase
-                is NotesWorkSessionPhase.INACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
             ),
             message="Explicit Folder identity clear did not reset work session",
         )
@@ -2533,8 +2790,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._notes_state.work_session_phase
-                is NotesWorkSessionPhase.INACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
             ),
             message="Admitted Folder root change did not reset work session",
         )
@@ -2569,9 +2825,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
         await screen._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         assert screen._notes_state.source == "database"
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert writes == []
 
         screen.query_one("#library-notes-create-blank", Button).press()
@@ -2591,9 +2845,7 @@ async def test_folder_notes_work_session_activates_once_and_resets_exactly(
             lambda: screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA,
             message="Deep link did not leave Notes",
         )
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert writes == []
 
     await workspace.shutdown()
@@ -2649,9 +2901,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             lambda: workspace.initialized and workspace.is_mounted,
             "Folder Files did not mount",
         )
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert await workspace.open_path("file.md")
         folder_editor = workspace.query_one("#file-notes-editor", TextArea)
         await _wait_for_condition(
@@ -2668,9 +2918,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             lambda: screen._notes_state.source == "database",
             message="Database Notes did not return",
         )
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert screen._notes_state.selected_note_id == database_id
         assert screen.query_one("#library-note-body", TextArea) is database_editor
         assert screen._notes_state.reader_preferences == database_preferences
@@ -2682,9 +2930,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             lambda: screen._notes_state.source == "files",
             message="Folder Files did not return",
         )
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert workspace.current_path == "file.md"
         assert workspace.query_one("#file-notes-editor", TextArea) is folder_editor
         assert screen._notes_state.reader_preferences == database_preferences
@@ -2706,9 +2952,7 @@ async def test_notes_authority_round_trip_resets_only_transient_work_session(
             message="Search destination did not open",
         )
         assert screen._notes_state.source == "files"
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
 
         await screen._open_library_item_by_id("notes", database_id)
         await _wait_for_condition(
@@ -3063,9 +3307,7 @@ def test_header_never_says_git_for_a_non_repository_with_changes() -> None:
         repository_confirmed=False,
     )
 
-    assert channels.authority_git == (
-        "Folder files · Folder: vault · 1 session change"
-    )
+    assert channels.authority_git == ("Folder files · Folder: vault · 1 session change")
     assert "Git" not in channels.authority_git
     plural = resolve_file_note_status_channels(
         root="/notes/vault",
@@ -3315,6 +3557,345 @@ async def test_file_notes_linked_root_leads_with_friendly_folder_identity(
     replica.close()
 
 
+async def _settled_root_row(
+    pilot,
+    workspace: LibraryFileNotesWorkspace,
+    settled: Callable[[str], bool] | None = None,
+) -> str:
+    """Return the folder row's painted status once its deferred fit has run.
+
+    ``settled`` is the painted state the caller asserts. With it the wait ends
+    on that state rather than on any text that happens to fit (TASK-38710).
+    """
+    status = workspace.query_one("#file-notes-root-status", Static)
+
+    def painted() -> str:
+        return _painted_text_in_region(pilot.app, status.region)
+
+    await pilot.pause()
+    await _wait_until(
+        pilot,
+        lambda: (
+            0
+            < cell_len(_static_text(workspace, "#file-notes-root-status"))
+            <= status.content_region.width
+        )
+        and (settled is None or settled(painted())),
+        "folder row status was not fitted to its width, or not to the asserted state",
+    )
+    await pilot.pause()
+    return painted()
+
+
+def _is_middle_elision_of(fitted: str, full: str) -> bool:
+    """Whether ``fitted`` is ``full`` whole or with only its middle cut."""
+    if fitted == full:
+        return True
+    head, separator, tail = fitted.partition("...")
+    return bool(
+        separator and head and tail and full.startswith(head) and full.endswith(tail)
+    )
+
+
+@pytest.mark.asyncio
+async def test_file_notes_root_row_keeps_state_and_folder_at_60_columns(
+    tmp_path: Path,
+) -> None:
+    """TASK-36513: every linked state paints whole beside Details and Change….
+
+    The pairing review takes room on the row only while a restored pairing
+    awaits review, which the service reports as its activation warning.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    # The reconciles below are seeded by hand; keep the poll from replacing them.
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        review = workspace.query_one("#file-notes-recovery-review", Button)
+        locked = "Recovery unavailable: replica locked"
+        for state, result, pairing in (
+            ("Linked", ReconcileResult(status="ok"), False),
+            ("Offline", ReconcileResult(status="offline", offline=True), False),
+            ("Warning", ReconcileResult(status="ok", replica_warning=locked), False),
+            (
+                "Warning",
+                ReconcileResult(status="ok", replica_warning=ACTIVATION_WARNING),
+                True,
+            ),
+        ):
+            workspace._apply_reconcile(result, ())
+            painted = await _settled_root_row(pilot, workspace)
+            prefix = f"{state} · "
+            assert painted.startswith(prefix), (state, pairing, painted)
+            folder = painted.removeprefix(prefix).removeprefix("Local folder: ")
+            assert _is_middle_elision_of(folder, "Research Notes"), painted
+            assert review.display is pairing, (state, pairing)
+            on_row = ["#file-notes-root-details", "#file-notes-choose-root"]
+            if pairing:
+                on_row.append("#file-notes-recovery-review")
+            for selector in on_row:
+                button = workspace.query_one(selector, Button)
+                assert button.display, selector
+                assert 0 <= button.region.x and button.region.right <= 60, (
+                    selector,
+                    button.region,
+                )
+
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("state", "offline"), (("Warning", False), ("Offline", True))
+)
+@pytest.mark.asyncio
+async def test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_columns(
+    tmp_path: Path,
+    state: str,
+    offline: bool,
+) -> None:
+    """TASK-36513: with a pairing pending, 40 columns still paint the state word.
+
+    Details, Change… and the pairing review leave the status 9 cells; the
+    folder name goes, and Offline outranks Warning when only one word fits.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._apply_reconcile(
+            ReconcileResult(
+                status="offline" if offline else "ok",
+                offline=offline,
+                replica_warning=ACTIVATION_WARNING,
+            ),
+            (),
+        )
+
+        def shows_state(painted: str) -> bool:
+            return painted == state or painted.startswith(f"{state} · ")
+
+        painted = await _settled_root_row(pilot, workspace, shows_state)
+        assert shows_state(painted), painted
+        review = workspace.query_one("#file-notes-recovery-review", Button)
+        assert review.display
+        assert "pairing" in str(review.tooltip)
+        for selector in (
+            "#file-notes-root-details",
+            "#file-notes-choose-root",
+            "#file-notes-recovery-review",
+        ):
+            button = workspace.query_one(selector, Button)
+            assert button.display, selector
+            assert 0 <= button.region.x and button.region.right <= 40, (
+                selector,
+                button.region,
+            )
+
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("state", "offline"), (("Warning", False), ("Offline", True))
+)
+@pytest.mark.asyncio
+async def test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    offline: bool,
+) -> None:
+    """TASK-38710: the folder row fits again once layout narrows it.
+
+    TASK-36513 defers the fit with ``call_after_refresh``, which runs no
+    layout pass. Here every fit that reconcile defers runs before the layout
+    that seats "Review…". On the base build the row stayed fitted to the old
+    18 cells inside 9.
+    """
+    fits = 0
+    fit = LibraryFileNotesWorkspace._fit_root_status
+
+    def counted(self: LibraryFileNotesWorkspace) -> None:
+        nonlocal fits
+        fits += 1
+        fit(self)
+
+    monkeypatch.setattr(LibraryFileNotesWorkspace, "_fit_root_status", counted)
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _settled_root_row(pilot, workspace)
+        status = workspace.query_one("#file-notes-root-status", Static)
+        before = status.content_region.width
+        after_refresh = workspace.call_after_refresh
+
+        def before_layout(callback, *args, **kwargs):
+            if callback == workspace._fit_root_status:
+                callback(*args, **kwargs)
+                return True
+            return after_refresh(callback, *args, **kwargs)
+
+        monkeypatch.setattr(workspace, "call_after_refresh", before_layout)
+        workspace._apply_reconcile(
+            ReconcileResult(
+                status="offline" if offline else "ok",
+                offline=offline,
+                replica_warning=ACTIVATION_WARNING,
+            ),
+            (),
+        )
+        monkeypatch.setattr(workspace, "call_after_refresh", after_refresh)
+        stale = _static_text(workspace, "#file-notes-root-status")
+        assert status.content_region.width == before
+        assert cell_len(stale) > len(state), stale
+
+        def shows_state(painted: str) -> bool:
+            return painted == state or painted.startswith(f"{state} · ")
+
+        painted = await _settled_root_row(pilot, workspace, shows_state)
+        linked_width = status.content_region.width
+        assert linked_width < before
+        assert shows_state(painted), painted
+        # It settles: a refit cannot resize a 1fr, one-row status.
+        settled_fits = fits
+        for _ in range(10):
+            await pilot.pause()
+        assert fits == settled_fits
+
+        # Unlink: the prompt's auto width. Relink with the fit before layout:
+        # it fits the prompt's width, and layout restores the linked width.
+        workspace._root = None
+        workspace._update_root_surface()
+        await _wait_until(
+            pilot,
+            lambda: status.content_region.width != linked_width,
+            "the unlinked prompt kept the linked width",
+        )
+        # Reading ``region`` can arrange the map before the screen's own
+        # layout posts Resize. One pause ends in that layout; the next waits
+        # until the status has handled its Resize.
+        await pilot.pause()
+        await pilot.pause()
+        monkeypatch.setattr(workspace, "call_after_refresh", before_layout)
+        workspace._root = root
+        workspace._update_root_surface()
+        monkeypatch.setattr(workspace, "call_after_refresh", after_refresh)
+        assert status.content_region.width != linked_width
+        painted = await _settled_root_row(pilot, workspace, shows_state)
+        assert status.content_region.width == linked_width
+        assert shows_state(painted), painted
+
+    replica.close()
+
+
+# TASK-38710: every column from 40 to 61 (the crash sat at 48 and 50), then
+# the narrow/wide boundary and a sample up to a full-screen MacBook.
+_ROW_STATE_SWEEP_WIDTHS = (
+    *range(40, 62),
+    64,
+    70,
+    76,
+    79,
+    80,
+    81,
+    90,
+    100,
+    120,
+    150,
+    170,
+    211,
+    235,
+)
+
+
+@pytest.mark.parametrize(
+    ("result", "pairing"),
+    (
+        (ReconcileResult(status="ok"), False),
+        (ReconcileResult(status="offline", offline=True), False),
+        (
+            ReconcileResult(
+                status="offline",
+                offline=True,
+                replica_warning="Recovery unavailable: replica locked",
+            ),
+            False,
+        ),
+        (ReconcileResult(status="ok", replica_warning=ACTIVATION_WARNING), True),
+    ),
+    ids=("linked", "offline", "offline-warning", "pairing-pending"),
+)
+@pytest.mark.asyncio
+async def test_file_notes_folder_row_states_lay_out_at_every_width_40_to_235(
+    tmp_path: Path,
+    result: ReconcileResult,
+    pairing: bool,
+) -> None:
+    """TASK-38710: no folder-row state can make a layout pass raise.
+
+    At 50x20 Offline, the narrow navigator left the work pane 8 cells, two
+    nested scrollbars left the stacked toolbar a 4-cell grid column, and
+    "More file actions" asked Rich to wrap its label at width 0
+    (``ValueError: range() arg 3 must not be zero``), which ends the app.
+    The first sweep is that navigator view; the second opens a file in
+    Manage, where the control is used, and checks it is still reachable.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    (root / "note.md").write_text("body", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _CssTrueWorkspaceHarness(workspace).run_test(size=(120, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._apply_reconcile(result, ())
+        review = workspace.query_one("#file-notes-recovery-review", Button)
+        toggle = workspace.query_one("#file-notes-maintenance-toggle", Button)
+        for opened in (False, True):
+            if opened:
+                assert await workspace.open_path("note.md")
+                workspace.query_one("#file-notes-manage", Button).press()
+            for width in _ROW_STATE_SWEEP_WIDTHS:
+                await pilot.resize_terminal(width, 20)
+                await pilot.pause()
+                await pilot.pause()
+                assert pilot.app._exception is None, (width, pilot.app._exception)
+                assert review.display is pairing, width
+                if not opened:
+                    continue
+                assert toggle.display and not toggle.disabled, width
+                assert toggle in pilot.app.screen.focus_chain, width
+                toggle.focus()
+                await pilot.pause()
+                assert pilot.app.focused is toggle, width
+                assert 0 <= toggle.region.x and toggle.region.right <= width, (
+                    width,
+                    toggle.region,
+                )
+                assert "More" in _painted_text_in_region(pilot.app, toggle.region), (
+                    width
+                )
+
+    replica.close()
+
+
 @pytest.mark.asyncio
 async def test_file_notes_root_details_preserve_exact_path_and_warning(
     tmp_path: Path,
@@ -3381,7 +3962,9 @@ async def test_file_notes_navigation_and_key_guidance_use_one_phrase() -> None:
     workspace = LibraryFileNotesWorkspace(root=None)
 
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        # TASK-36383: one pause let the body end while the init worker was in
+        # flight; teardown then removed its controls under it (NoMatches).
+        await _wait_until(pilot, lambda: workspace.initialized, "init did not finish")
         editor_back = workspace.query_one("#file-notes-back", Button)
         git_back = workspace.query_one("#file-notes-git-back", Button)
         guide = _static_text(workspace, "#file-notes-git-guide")
@@ -3710,10 +4293,11 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
                 scan_started.is_set,
                 "initial root scan did not start",
             )
-            assert "Checking" in _static_text(
-                workspace,
-                "#file-notes-root-status",
-            )
+            # TASK-36513: the painted row, once its deferred fit has run --
+            # at 60x20 it used to be "Chec...otes" behind an always-shown
+            # pairing-review button.
+            painted = await _settled_root_row(pilot, workspace)
+            assert painted.startswith("Checking · "), painted
             authority = _static_text(workspace, "#file-notes-authority")
             assert "Checking folder" in authority
             assert "Folder: notes" in authority
@@ -5144,12 +5728,31 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
         )
 
         workspace.query_one("#file-notes-edit", Button).press()
-        await pilot.pause()
-        workspace.query_one("#file-notes-restore", Button).press()
+        restore = workspace.query_one("#file-notes-restore", Button)
+        # press() on a hidden or disabled Button is a silent no-op.
+        await _wait_until(
+            pilot,
+            lambda: restore.display and not restore.disabled,
+            "Restore was not offered",
+        )
+        restore.press()
         await _wait_until(
             pilot,
             lambda: (root / "moved.md").exists(),
             "restore did not recreate exact file",
+        )
+        # TASK-36383: the file lands before the handler rescans, reopens it
+        # and re-renders the Git rows; leaving then tore the app down under
+        # that render (MountError on #file-notes-git-rows).
+        git_panel = workspace.query_one(
+            "#file-notes-git-panel", LibraryFileNotesGitPanel
+        )
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.current_path == "moved.md" and not git_panel._replacing_rows
+            ),
+            "restore did not reopen the file and settle the Git rows",
         )
         assert (
             _static_text(workspace, "#file-notes-session-changes")
@@ -5951,7 +6554,13 @@ async def test_conflict_resolution_discard_keeps_cancel_first_confirmation(
             "discard did not open the destructive confirmation",
         )
         cancel = workspace.query_one("#file-notes-reload-cancel", Button)
-        assert cancel.has_focus
+        # The confirmation focuses Cancel through `call_later`, after
+        # `reload_confirmation_active` is already true.
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "destructive confirmation did not focus Cancel",
+        )
         assert editor.text == "retained draft"
         assert workspace.save_state == "conflict"
 
@@ -6054,7 +6663,13 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
             "Discard the draft in the editor and load the current disk version? "
             "This cannot be undone."
         )
-        assert cancel.has_focus
+        # The confirmation focuses Cancel through `call_later`, after
+        # `reload_confirmation_active` is already true.
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "destructive reload confirmation did not focus Cancel",
+        )
         assert str(cancel.label) == "Cancel"
         assert str(confirm.label) == "Discard draft and load disk"
         assert copy.region.right <= screen.size.width
@@ -6071,7 +6686,12 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
         )
         assert editor.text == "draft to preserve"
         assert workspace.save_state == "conflict"
-        assert reload_button.has_focus
+        # Closing refocuses the opener through `call_after_refresh`.
+        await _wait_until(
+            pilot,
+            lambda: reload_button.has_focus,
+            "Cancel did not return focus to Reload from disk",
+        )
 
         await pilot.press("enter")
         await _wait_until(
@@ -6087,13 +6707,22 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
         )
         assert editor.text == "draft to preserve"
         assert workspace.save_state == "conflict"
-        assert reload_button.has_focus
+        await _wait_until(
+            pilot,
+            lambda: reload_button.has_focus,
+            "Escape did not return focus to Reload from disk",
+        )
 
         await pilot.press("enter")
         await _wait_until(
             pilot,
             lambda: workspace.reload_confirmation_active,
             "third destructive reload confirmation did not open",
+        )
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "third destructive reload confirmation did not focus Cancel",
         )
         await pilot.press("tab")
         assert confirm.has_focus
@@ -6208,9 +6837,10 @@ async def test_high_stakes_file_notes_states_keep_explicit_labels_and_classes(
         )
         assert root_status.has_class("-offline")
         assert root_status.has_class("-warning")
+        # TASK-38983: Save Copy writes into the offline folder, so it fails.
         assert _static_text(workspace, "#file-notes-save-status") == (
             "Conflict — the disk file changed; your draft is preserved. "
-            "Next: Save Copy."
+            "Next: Reconnect the folder."
         )
         assert _static_text(workspace, "#file-notes-save-detail") == (
             "Content detail: file changed on disk"
@@ -6337,6 +6967,22 @@ async def test_high_stakes_file_notes_states_are_legible_in_shipped_themes(
                     )
                 )
                 assert status.styles.padding.width == 0
+
+        # TASK-38715: the shared error rule (Save failed and the Git commit
+        # error) painted over litestep's mid-tone desktop $background, 3.54:1.
+        # paradise_virtua's mid-tone $surface is now the thinnest pass.
+        for theme_name in ("litestep", "paradise_virtua"):
+            pilot.app.theme = theme_name
+            workspace._set_save_state("error", "permission denied")
+            await pilot.pause()
+            await pilot.pause()
+            _assert_legible_painted_text(
+                pilot.app,
+                save_status,
+                "Save failed",
+                theme_name=theme_name,
+                minimum_ratio=4.5,
+            )
 
     await workspace.shutdown()
     replica.close()
@@ -6560,6 +7206,556 @@ async def test_poll_and_narrow_navigation_retain_the_text_area(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["navigator", "editor", "after-back"])
+async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
+    tmp_path: Path,
+    phase: str,
+) -> None:
+    """TASK-38757: the narrow navigator gave the work pane what the Files
+    pane and both 5-cell grips left (2 cells at 44, none at 42), and Tab
+    reached its controls off screen. In the navigator view the work pane is
+    hidden or at least ``_NARROW_WORK_MIN_WIDTH`` cells wide (what 60
+    columns leaves it), no focusable widget is outside its clip, Tab never
+    lands outside the screen, and the editor view still shows and focuses
+    the work pane."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    (root / "two.md").write_text("second", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+        autosave_delay=30,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(79, 24)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.narrow,
+            "workspace did not choose narrow mode from its width",
+        )
+        shell = workspace.query_one(LibraryAdaptiveReaderShell)
+        screen = workspace.screen
+
+        async def resize(width: int) -> None:
+            await pilot.resize_terminal(width, 24)
+
+            def settled() -> bool:
+                layout = shell.effective_layout
+                total = (
+                    layout.library_width
+                    + layout.items_width
+                    + layout.reader_width
+                    + 2 * layout.grip_width
+                )
+                return (
+                    shell.region.width == width
+                    and total == width
+                    and (
+                        not layout.items_open
+                        or shell.items.region.width == layout.items_width
+                    )
+                )
+
+            await _wait_until(pilot, settled, f"layout did not settle at {width}")
+            await pilot.pause()
+
+        def off_screen() -> list[tuple[str | None, int, int]]:
+            return [
+                (widget.id, widget.region.x, widget.region.width)
+                for widget in screen.focus_chain
+                if _seen_cells(widget) <= 0
+            ]
+
+        async def sweep_navigator() -> None:
+            tree = workspace.query_one("#file-notes-tree", Tree)
+            for width in range(40, 80):
+                await resize(width)
+                assert workspace.navigator_visible, width
+                work = shell.work
+                assert not work.display or (
+                    work.region.width >= workspace_module._NARROW_WORK_MIN_WIDTH
+                ), (
+                    width,
+                    work.region.width,
+                )
+                assert not off_screen(), (width, off_screen())
+                tree.focus()
+                await pilot.press("tab")
+                await pilot.pause()
+                landing = screen.focused
+                assert landing is not None, width
+                assert _seen_cells(landing) > 0, (width, landing.id)
+
+        async def sweep_editor(widths: range | tuple[int, ...]) -> None:
+            back = workspace.query_one("#file-notes-back", Button)
+            for width in widths:
+                await resize(width)
+                assert workspace.editor_visible, width
+                assert shell.work.display, width
+                assert shell.work.region.width == width - 10, width
+                assert back.display and back in screen.focus_chain, width
+                assert not off_screen(), (width, off_screen())
+            back.focus()
+            await pilot.pause()
+            assert back.has_focus
+
+        if phase == "navigator":
+            await sweep_navigator()
+        elif phase == "editor":
+            assert await workspace.open_path("one.md")
+            await sweep_editor(range(40, 80))
+        else:
+            assert await workspace.open_path("one.md")
+            workspace.query_one("#file-notes-back", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: workspace.navigator_visible and not workspace.editor_visible,
+                "Back did not return to the navigator",
+            )
+            await sweep_navigator()
+            # The editor case sweeps every width; after Back, both ends.
+            assert await workspace.open_path("two.md")
+            await sweep_editor((79, 40))
+    await workspace.shutdown()
+    replica.close()
+
+
+@asynccontextmanager
+async def _library_folder_files(tmp_path: Path, size: tuple[int, int]):
+    """Open Library ▸ Notes ▸ Folder files on the real screen at ``size``.
+
+    Yields ``(pilot, screen, workspace, shell)`` once the workspace has
+    mounted, with ``one.md`` and ``gone.md`` in the linked folder.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    (root / "gone.md").write_text("gone", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    async with LibraryHarness(app, screen=screen).run_test(size=size) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        shell = workspace.query_one(
+            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+        yield pilot, screen, workspace, shell
+    await workspace.shutdown()
+
+
+_NEW_CASES = ("new", "new-create", "new-cancel", "new-escape", "new-cancel-open")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "deleted",
+        "open-error",
+        "save-error",
+        "new",
+        "new-create",
+        "new-cancel",
+        "new-escape",
+        "new-cancel-open",
+        "resize-failure",
+    ],
+)
+@pytest.mark.asyncio
+async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    """TASK-38757 review: at 50 columns the navigator hides the work pane, and
+    the Library screen owns the shell's layout. Selecting a deleted note, an
+    open that fails, an autosave that fails after Back, and New (whose path
+    form is in the work pane) each write to the work pane, so each must bring
+    it forward: Restore visible and focusable, "Open failed" and "Save
+    failed" painted, the path field painted and focused. Creating the file
+    keeps the editor view; cancelling that New (button or Escape, with or
+    without a file open) returns to the navigator with New focused. A failure
+    shown beside the navigator at 65 columns stays shown after a resize to
+    55; ‹ Files then still reaches the navigator, and opening another file is
+    refused and brings the failure forward again."""
+
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        raise PermissionError("permission denied")
+
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        new = workspace.query_one("#file-notes-new", Button)
+
+        async def back_to_navigator(*, work_shown: bool) -> None:
+            workspace.query_one("#file-notes-back", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.navigator_visible and shell.work.display is work_shown
+                ),
+                f"Back did not show the navigator (work pane shown: {work_shown})",
+            )
+
+        await _wait_until(
+            pilot,
+            lambda: workspace.navigator_visible and not shell.work.display,
+            "the 50-column navigator did not hide its work pane",
+        )
+        service = workspace._service
+        assert service is not None
+        if case == "deleted":
+            assert service.delete_file("gone.md").status == "ok"
+            assert await workspace.refresh_files()
+            assert workspace.select_deleted("gone.md")
+            target = workspace.query_one("#file-notes-restore", Button)
+            expected = "Restore"
+        elif case == "open-error":
+            monkeypatch.setattr(service, "open_file", refuse)
+            assert not await workspace.open_path("one.md")
+            target = workspace.query_one("#file-notes-action-status", Static)
+            expected = "Open failed"
+        elif case in {"save-error", "resize-failure"}:
+            if case == "resize-failure":
+                await pilot.resize_terminal(65, 24)
+            assert await workspace.open_path("one.md")
+            _replace_editor_text(workspace._editor_widget, "draft after Back")
+            await back_to_navigator(work_shown=case == "resize-failure")
+            assert workspace.save_state == "dirty"
+            monkeypatch.setattr(service, "save_file", refuse)
+            workspace._start_autosave()  # what the autosave timer runs
+            target = workspace.query_one("#file-notes-save-status", Static)
+            expected = "Save failed"
+            if case == "resize-failure":
+                # At 65 the failure shows beside the navigator; 55 would hide
+                # the work pane, so the failure keeps it in view instead.
+                await _wait_until(
+                    pilot,
+                    lambda: (
+                        workspace.navigator_visible
+                        and expected
+                        in _painted_text_in_region(pilot.app, target.region)
+                    ),
+                    "the failure did not show beside the 65-column navigator",
+                )
+                await pilot.resize_terminal(55, 24)
+        else:
+            if case == "new-cancel-open":
+                assert await workspace.open_path("one.md")
+                await back_to_navigator(work_shown=False)
+            new.press()
+            target = workspace.query_one("#file-notes-path", Input)
+            expected = "relative/path.md"
+
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.editor_visible
+                and shell.work.display
+                and _seen_cells(target) > 0
+                and expected in _painted_text_in_region(pilot.app, target.region)
+            ),
+            f"{case}: {expected!r} did not come forward",
+        )
+        if case == "resize-failure":
+            # TASK-38757 re-review: an explicit ‹ Files still wins; the
+            # failure stays reachable because another open is refused and
+            # brings it forward again.
+            await back_to_navigator(work_shown=False)
+            assert not await workspace.open_path("gone.md")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.editor_visible
+                    and shell.work.display
+                    and expected in _painted_text_in_region(pilot.app, target.region)
+                ),
+                "a refused open did not bring the standing failure forward",
+            )
+        if case == "deleted":
+            assert target in screen.focus_chain
+            target.focus()
+            await pilot.pause()
+            assert target.has_focus
+        elif case in _NEW_CASES:
+            await _wait_until(
+                pilot, lambda: target.has_focus, "New did not focus its path field"
+            )
+        if case == "new-create":
+            target.value = "made.md"
+            workspace.query_one("#file-notes-path-submit", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.current_path == "made.md"
+                    and workspace.path_task == "none"
+                    and workspace.editor_visible
+                    and shell.work.display
+                ),
+                "a created file did not stay in the editor view",
+            )
+        if case in {"new-cancel", "new-cancel-open"}:
+            workspace.query_one("#file-notes-path-cancel", Button).press()
+        elif case == "new-escape":
+            await pilot.press("escape")
+        if case in {"new-cancel", "new-escape", "new-cancel-open"}:
+            # TASK-38757 re-review: the cancel goes back to the navigator the
+            # New came from, with New focused, not to an empty work pane.
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.path_task == "none"
+                    and workspace.navigator_visible
+                    and not shell.work.display
+                    and new.has_focus
+                    and _seen_cells(new) > 0
+                ),
+                f"{case}: cancelling New did not return to the navigator",
+            )
+            if case == "new-cancel-open":
+                assert workspace.current_path == "one.md"
+
+
+@pytest.mark.parametrize("case", ["offline-back", "grip-from-editor"])
+@pytest.mark.asyncio
+async def test_file_notes_narrow_navigator_choice_wins_on_the_library_screen(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    """TASK-38757 re-review: at 50 columns an explicit navigator choice wins.
+    ‹ Files reaches the navigator during a failure with no way out in the
+    editor (the folder renamed away under a draft), and the Folder files grip
+    pressed in the editor view gives the navigator the stage instead of
+    reopening it beside an 8-cell work pane."""
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        assert await workspace.open_path("one.md")
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.editor_visible
+                and shell.work.display
+                and not shell.effective_layout.items_open
+            ),
+            "opening a file did not show the narrow editor",
+        )
+        if case == "offline-back":
+            _replace_editor_text(workspace._editor_widget, "draft before offline")
+            await _wait_until(
+                pilot,
+                lambda: workspace.save_state == "dirty",
+                "the edit did not mark the draft dirty",
+            )
+            root = workspace.root
+            assert root is not None
+            root.rename(tmp_path / "renamed away")
+            workspace._start_autosave()  # what the autosave timer runs
+            await _wait_until(
+                pilot,
+                lambda: workspace.save_state in {"error", "conflict"},
+                "saving into the renamed-away folder did not fail",
+            )
+            workspace.query_one("#file-notes-back", Button).press()
+        else:
+            shell.items_grip.press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.navigator_visible
+                and not shell.work.display
+                and shell.items.region.width == 50 - 2 * shell.items_grip.grip_width
+            ),
+            f"{case}: the navigator did not take the narrow stage",
+        )
+        unseen = [
+            widget.id
+            for widget in screen.focus_chain
+            if workspace in widget.ancestors and _seen_cells(widget) <= 0
+        ]
+        assert not unseen, unseen
+
+
+@pytest.mark.parametrize("decade", ["40", "50", "60", "70"])
+@pytest.mark.asyncio
+async def test_file_notes_back_leaves_focus_on_a_visible_navigator_control(
+    tmp_path: Path,
+    decade: str,
+) -> None:
+    """TASK-38982 AC#1: ‹ Files hid itself (the navigator view drops Back) and
+    nothing took focus, so it fell to None at every width 40-79 on the real
+    Library screen. Now it lands on a visible control in the Files pane. One
+    case per ten widths, so each stays well inside the lane's entry budget."""
+    first = int(decade)
+    async with _library_folder_files(tmp_path, (first + 9, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        back = workspace.query_one("#file-notes-back", Button)
+        for width in range(first, first + 10):
+            await pilot.resize_terminal(width, 24)
+            assert await workspace.open_path("one.md"), width
+            await _wait_until(
+                pilot,
+                lambda: workspace.editor_visible and _seen_cells(back) > 0,
+                f"{width}: the narrow editor did not show ‹ Files",
+            )
+            back.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.navigator_visible
+                    and screen.focused is not None
+                    and shell.items in screen.focused.ancestors
+                    and _seen_cells(screen.focused) > 0
+                ),
+                f"{width}: ‹ Files left focus on {screen.focused!r}",
+            )
+
+
+@pytest.mark.asyncio
+async def test_file_notes_session_git_is_reachable_from_the_narrow_navigator(
+    tmp_path: Path,
+) -> None:
+    """TASK-38982 AC#2: below 60 columns the navigator hides the work pane,
+    which holds Manage and Session Git, so with no file open neither could be
+    reached. Tab from the tree reaches a visible Manage; Enter on it and on
+    Review session changes opens Session Git, all by keyboard."""
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        await _wait_until(
+            pilot,
+            lambda: workspace.navigator_visible and not shell.work.display,
+            "the 50-column navigator did not hide its work pane",
+        )
+        assert workspace.current_path == ""
+
+        async def tab_to(predicate: Callable[[Widget], bool], what: str) -> None:
+            for _ in range(20):
+                focused = screen.focused
+                if focused is not None and predicate(focused):
+                    return
+                await pilot.press("tab")
+                await pilot.pause()
+            raise AssertionError(f"Tab never reached {what}")
+
+        workspace.query_one("#file-notes-tree", Tree).focus()
+        await pilot.pause()
+        await tab_to(
+            lambda widget: (
+                isinstance(widget, Button)
+                and str(widget.label) == "Manage"
+                and _seen_cells(widget) > 0
+            ),
+            "a visible Manage",
+        )
+        await pilot.press("enter")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        await _wait_until(
+            pilot,
+            lambda: shell.work.display and _seen_cells(entry) > 0,
+            "Manage did not show Session Git",
+        )
+        await tab_to(lambda widget: widget is entry, "Review session changes")
+        await pilot.press("enter")
+        panel = workspace.query_one("#file-notes-git-panel", LibraryFileNotesGitPanel)
+        await _wait_until(
+            pilot,
+            lambda: panel.display and _seen_cells(panel) > 0,
+            "Review session changes did not open Session Git",
+        )
+
+
+@pytest.mark.asyncio
+async def test_file_notes_failed_refresh_shows_beside_the_hidden_work_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38982 AC#3: a failed background reconcile wrote "Refresh failed"
+    only into the work pane, which the 50-column navigator hides. It shows on
+    the authority line instead, without moving the view, and the next
+    healthy pass clears it."""
+    async with _library_folder_files(tmp_path, (50, 24)) as (
+        pilot,
+        screen,
+        workspace,
+        shell,
+    ):
+        await _wait_until(
+            pilot,
+            lambda: workspace.navigator_visible and not shell.work.display,
+            "the 50-column navigator did not hide its work pane",
+        )
+        service = workspace._service
+        assert service is not None
+        healthy = service.reconcile
+
+        def fail() -> object:
+            raise OSError("disk went away")
+
+        authority = workspace.query_one("#file-notes-authority", Static)
+        monkeypatch.setattr(service, "reconcile", fail)
+        assert not await workspace.refresh_files()  # what the poll runs
+        await _wait_until(
+            pilot,
+            lambda: "Refresh failed"
+            in _painted_text_in_region(pilot.app, authority.region),
+            "the failed reconcile was not shown beside the navigator",
+        )
+        assert workspace.navigator_visible and not shell.work.display
+
+        monkeypatch.setattr(service, "reconcile", healthy)
+        assert await workspace.refresh_files()
+        await _wait_until(
+            pilot,
+            lambda: "Refresh failed"
+            not in _painted_text_in_region(pilot.app, authority.region),
+            "the next healthy pass did not clear the failure",
+        )
+        assert "Refresh failed" not in _static_text(
+            workspace, "#file-notes-action-status"
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(40, 20), (120, 40), (160, 45)])
 async def test_library_notes_source_choices_render_and_switch_by_keyboard(
     tmp_path: Path,
@@ -6713,8 +7909,7 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
             assert database.display is True
             assert files.display is True
             assert (
-                screen.query_one("#library-notes-task-return", Button).display
-                is False
+                screen.query_one("#library-notes-task-return", Button).display is False
             )
             for _ in range(240):
                 if database.has_focus:
@@ -7069,18 +8264,143 @@ async def test_file_notes_combined_non_ready_authority_matrix_paints_at_60x20(
             assert "Git · 1" not in painted
             if push_copy:
                 assert push_copy not in painted
+            # TASK-38983: offline, neither Choose folder (the draft refuses
+            # it) nor Save Copy (same folder) works.
             expected_next = (
-                "Next: Save Copy."
-                if save_state == "conflict"
-                else (
-                    "Next: Choose folder."
-                    if root_state == "offline"
-                    else "Next: Save Copy."
-                )
+                "Next: Reconnect the folder."
+                if root_state == "offline"
+                else "Next: Save Copy."
             )
             assert expected_next in content_words
 
     await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_failed_save_names_a_working_step_and_retries_unchanged(
+    tmp_path: Path,
+) -> None:
+    """TASK-38983: with the folder renamed away under a failed autosave, the
+    hint names a step that works (not Choose folder, which the leave guard
+    refuses), a refused folder change says why on the folder row, and once
+    the folder is back Retry save writes the unchanged draft."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    other = tmp_path / "other"
+    other.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("one.md")
+        _replace_editor_text(workspace._editor_widget, "draft kept")
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "dirty", "edit was not dirty"
+        )
+        away = tmp_path / "away"
+        root.rename(away)
+        workspace._start_autosave()  # what the autosave timer runs
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "error", "save did not fail"
+        )
+        await workspace.refresh_files()  # the poll marks the folder offline
+        assert workspace._root_offline is True
+        status = _static_text(workspace, "#file-notes-save-status")
+        assert "Next: Reconnect the folder." in status, status
+
+        linked = workspace.root
+        assert not await workspace.set_root(other)
+        assert workspace.root == linked
+        assert _static_text(workspace, "#file-notes-root-status") == (
+            "Folder not changed · your draft is not saved yet."
+        )
+
+        away.rename(root)
+        assert await workspace.refresh_files()
+        assert workspace._root_offline is False
+        assert "Next: Save Copy." in _static_text(workspace, "#file-notes-save-status")
+        retry = workspace.query_one("#file-notes-recovery-retry", Button)
+        assert retry.display and not retry.disabled
+        assert str(retry.label) == "Retry save"
+        retry.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "saved", "Retry did not save"
+        )
+        assert (root / "one.md").read_text(encoding="utf-8") == "draft kept"
+        assert workspace._editor_widget.text == "draft kept"
+        assert workspace._editor_widget.has_focus, workspace.app.focused
+        assert "Linked" in _static_text(workspace, "#file-notes-root-status")
+        assert await workspace.set_root(other)
+
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_retry_after_the_file_changed_on_disk_ends_in_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38983 review: Retry save re-runs the guarded save. When the file
+    changed on disk after the failed save, Retry ends in Conflict and writes
+    nothing; the conflict keeps Save Copy and Reload, without Retry."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    note = root / "one.md"
+    note.write_text("first", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("one.md")
+        _replace_editor_text(workspace._editor_widget, "draft kept")
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "dirty", "edit was not dirty"
+        )
+        service = workspace._service
+        assert service is not None
+        healthy = service.save_file
+
+        def refuse(*_args: object, **_kwargs: object) -> object:
+            raise PermissionError("permission denied")
+
+        monkeypatch.setattr(service, "save_file", refuse)
+        workspace._start_autosave()  # what the autosave timer runs
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "error", "save did not fail"
+        )
+        monkeypatch.setattr(service, "save_file", healthy)
+        note.write_text("changed on disk", encoding="utf-8")
+
+        retry = workspace.query_one("#file-notes-recovery-retry", Button)
+        retry.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "conflict",
+            f"Retry did not end in Conflict ({workspace.save_state})",
+        )
+        await pilot.pause()
+        assert note.read_text(encoding="utf-8") == "changed on disk"
+        assert workspace._editor_widget.text == "draft kept"
+        assert not retry.display
+        assert workspace.query_one("#file-notes-recovery-save-copy", Button).display
+        assert workspace.query_one("#file-notes-recovery-reload", Button).display
+
+    await workspace.shutdown()
+    replica.close()
 
 
 @pytest.mark.asyncio
@@ -7130,11 +8450,35 @@ async def test_poll_completion_ignores_partially_detached_surface(
     replica.close()
 
 
+class _ThreadPerCallExecutor(ThreadPoolExecutor):
+    """Run every call on a new thread, as a busy default pool does (TASK-36531).
+
+    A file-backed replica closes only on the thread that opened it. An idle
+    pool often hands the open and the close the same thread and hides a
+    leak that a loaded one shows.
+    """
+
+    def submit(self, fn, /, *args, **kwargs):
+        future: Future = Future()
+
+        def run() -> None:
+            if not future.set_running_or_notify_cancel():
+                return
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except BaseException as error:
+                future.set_exception(error)
+
+        threading.Thread(target=run, daemon=True).start()
+        return future
+
+
 @pytest.mark.asyncio
 async def test_library_database_files_switch_retains_workspace_and_database_canvas(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    asyncio.get_running_loop().set_default_executor(_ThreadPerCallExecutor())
     root = tmp_path / "notes"
     root.mkdir()
     (root / "library.md").write_text("library file", encoding="utf-8")
@@ -7204,6 +8548,15 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             lambda: screen._notes_state.source == "files",
             "Files source handler did not run",
         )
+        # The Database fetch was in flight across the switch. Release it now,
+        # not after the Files mount: the product bounds a note load at
+        # LIBRARY_NOTE_LOAD_DEADLINE_SECONDS (3.0 s), and under load the mount
+        # and first scan alone took 3.95-4.90 s, timing the load out
+        # (TASK-36531).
+        release_detail.set()
+        await detail_task
+        assert screen._library_note_detail is not None
+        assert screen._library_note_detail["id"] == "db-note-1"
         await _wait_until(
             pilot,
             lambda: bool(screen.query("#library-file-notes-workspace")),
@@ -7221,14 +8574,12 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         editor = retained.query_one("#file-notes-editor", TextArea)
         owned_replica = retained._replica
         assert owned_replica is not None
+        owned_connection = owned_replica._connection
+        assert owned_connection is not None
         assert retained is workspace
         # task-2850: Files mode renders INSIDE the same rail + canvas frame
         # every other notes view uses -- it must never blank the rail.
         assert screen.query_one("#library-rail")
-
-        release_detail.set()
-        await detail_task
-        assert screen._library_note_detail is not None
         assert screen._library_note_detail["id"] == "db-note-1"
         screen._notes_state.view = "list"
         screen._notes_state.selected_note_id = None
@@ -7409,8 +8760,165 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         assert text_during_open == before_open
     assert workspace._shutdown
     await workspace.shutdown()
+    # TASK-36531: the connection the workspace opened is closed by its quit.
+    # A closed file-backed replica reopens on its next use (b5251e9a6e), so
+    # reusing the replica proves nothing; probe the retired handle instead.
+    assert owned_replica._connection is None
     with pytest.raises(sqlite3.ProgrammingError):
-        owned_replica.list_deleted(str(root.resolve()))
+        owned_connection.execute("SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_quit_closes_owned_replica_behind_a_search_in_flight(
+    tmp_path: Path,
+) -> None:
+    """TASK-38711: a direct replica read in flight at quit cannot leak it.
+
+    ``_core_closing`` refuses, silently, to close a file-backed replica while
+    any core operation on it is in flight. The search is submitted before
+    quit and enters its replica operation once quit's retention pass is done
+    (that pass needs the replica's lock), and quit waits for it to be inside.
+    It is released once the close has run (and was refused, on the base
+    build) or is queued behind it on the replica's one owner thread.
+    """
+    asyncio.get_running_loop().set_default_executor(_ThreadPerCallExecutor())
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("findable body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=3600,
+    )
+    retention_done = threading.Event()
+    search_started = threading.Event()
+    read_held = threading.Event()
+    release_read = threading.Event()
+    close_submitted = threading.Event()
+    close_returned = threading.Event()
+    holding = threading.local()
+    held_on_owner_thread = False
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace._replica is not None,
+            "owned-replica workspace did not initialize",
+        )
+        owned_replica = workspace._replica
+        service = workspace._service
+        owner = workspace._replica_thread
+        assert owned_replica is not None and service is not None
+        assert owner is not None
+        owned_connection = owned_replica._connection
+        assert owned_connection is not None
+        locked_connection = owned_replica._locked_connection
+        search = owned_replica.search
+        close = owned_replica.close
+        retention = service.enforce_retention
+        submit = owner.submit
+
+        @contextmanager
+        def held_connection():
+            nonlocal held_on_owner_thread
+            with locked_connection():
+                if getattr(holding, "search", False):
+                    held_on_owner_thread = threading.current_thread().name.startswith(
+                        "file-notes-replica"
+                    )
+                    read_held.set()
+                    assert release_read.wait(5)
+                yield
+
+        def held_search(*args, **kwargs):
+            search_started.set()
+            assert retention_done.wait(5)
+            holding.search = True
+            try:
+                return search(*args, **kwargs)
+            finally:
+                holding.search = False
+
+        def observed_retention():
+            try:
+                return retention()
+            finally:
+                retention_done.set()
+                assert read_held.wait(5)
+
+        def observed_close():
+            try:
+                close()
+            finally:
+                close_returned.set()
+
+        def observed_submit(fn, /, *args, **kwargs):
+            if fn == workspace._close_owned_replica:
+                close_submitted.set()
+            return submit(fn, *args, **kwargs)
+
+        owned_replica._locked_connection = held_connection
+        owned_replica.search = held_search
+        owned_replica.close = observed_close
+        service.enforce_retention = observed_retention
+        owner.submit = observed_submit
+
+        workspace._start_search("findable")
+        # Quit only once the read is running; a read submitted after quit
+        # began would be skipped, and the test would prove nothing.
+        await _wait_until(pilot, search_started.is_set, "the search never started")
+        shutdown_task = asyncio.create_task(workspace.shutdown())
+        await _wait_until(pilot, read_held.is_set, "the search never held")
+        await _wait_until(
+            pilot,
+            lambda: close_returned.is_set()
+            or (close_submitted.is_set() and held_on_owner_thread),
+            "quit neither closed nor queued its close",
+        )
+        release_read.set()
+        await shutdown_task
+
+    assert owned_replica._connection is None
+    with pytest.raises(sqlite3.ProgrammingError):
+        owned_connection.execute("SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_read_started_after_quit_cannot_reopen_owned_replica(
+    tmp_path: Path,
+) -> None:
+    """TASK-38711: a closed file-backed replica reopens on its next use.
+
+    A deleted-files read that captured the replica before quit (as
+    ``_initialize`` does across its scan) must not be the one that reopens it.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=3600,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace._replica is not None,
+            "owned-replica workspace did not initialize",
+        )
+        owned_replica = workspace._replica
+        service = workspace._service
+        assert owned_replica is not None and service is not None
+        await workspace.shutdown()
+        assert owned_replica._connection is None
+
+        deleted = await workspace._load_deleted_paths(
+            replica=owned_replica, service=service
+        )
+
+    assert deleted == ()
+    assert owned_replica._connection is None
 
 
 @pytest.mark.asyncio
@@ -7610,6 +9118,7 @@ async def test_file_notes_primary_actions_follow_editor_state(
                 "file-notes-recovery-save-copy",
             },
             "error": {
+                "file-notes-recovery-retry",
                 "file-notes-recovery-reload",
                 "file-notes-recovery-save-copy",
             },
@@ -7882,7 +9391,7 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
     replica.close()
 
 
-@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+@pytest.mark.parametrize("size", ((120, 40), (40, 20), (211, 44), (235, 52)))
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_file_notes_delete_is_spatially_separated_from_new(
@@ -7932,10 +9441,12 @@ async def test_file_notes_delete_is_spatially_separated_from_new(
         assert new.display and delete.display
         assert str(new.label) == "New"
         assert delete.render_line(0).text.strip() == "Delete"
-        if size[0] == 120:
+        if size[0] >= 120:
             assert not workspace.has_class("-stack-editor-actions")
             assert spacer.display
-            assert new.region.width > 0
+            # TASK-38757 review: every cell of New inside its header row's clip.
+            assert new.region.width >= len("New")
+            assert _seen_cells(new) == new.region.width
             assert delete.region.width > 0
             assert not new.region.overlaps(delete.region)
         else:
@@ -7996,9 +9507,16 @@ async def test_disabled_file_notes_actions_carry_marker_and_visible_recovery(
     replica.close()
 
 
+# TASK-38695: all 72 themes took 105-123 s in one test, over the UI lane's
+# 30 s per-entry budget; each group checks every eighth theme.
+_CONTRAST_THEME_GROUPS = (0, 1, 2, 3, 4, 5, 6, 7)
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("group", _CONTRAST_THEME_GROUPS)
 async def test_disabled_file_notes_actions_meet_contrast_in_every_shipped_theme(
     tmp_path: Path,
+    group: int,
 ) -> None:
     root = tmp_path / "notes"
     root.mkdir()
@@ -8028,7 +9546,7 @@ async def test_disabled_file_notes_actions_meet_contrast_in_every_shipped_theme(
             workspace_reason = workspace.query_one("#file-notes-action-status")
             git_reason = panel.query_one("#file-notes-git-push-result-reason")
 
-            for theme_name in theme_names:
+            for theme_name in theme_names[group :: len(_CONTRAST_THEME_GROUPS)]:
                 pilot.app.theme = theme_name
                 workspace._navigator_mode = "files"
                 workspace._narrow_view = "editor"

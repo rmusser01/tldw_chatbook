@@ -36,6 +36,7 @@ async def _activate(screen, host, pilot, selector, label):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -232,6 +233,7 @@ async def test_skill_edit_save_and_discard_keyboard_journey(
         assert not (tmp_path / "help").exists()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_save_preserves_edits_made_while_write_is_running(
     tmp_path, monkeypatch

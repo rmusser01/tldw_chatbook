@@ -207,6 +207,7 @@ def _option_pairs(select: Select) -> list[tuple[str, object]]:
     return [(str(label), value) for label, value in select._options]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_switch_preserves_the_complete_open_create_draft():
     app = _build_test_app()
@@ -230,9 +231,9 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
         pane.query_one("#sources-create-watchlist", Select).value = watchlist_id
         pane.query_one("#sources-create-tags", Input).value = "news, daily"
         pane.query_one("#sources-create-frequency", Select).value = 86_400
-        pane.query_one("#sources-create-ignore-selectors", TextArea).text = (
-            ".ad\n.counter"
-        )
+        pane.query_one(
+            "#sources-create-ignore-selectors", TextArea
+        ).text = ".ad\n.counter"
         await pilot.pause(0.2)
 
         await _choose_runtime_backend(screen, pilot, "server")
@@ -245,18 +246,18 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
             ("Forum", "forum"),
         ]
         assert pane.query_one("#sources-create-type", Select).value == "rss"
-        assert not pane.query("#sources-create-frequency")
-        assert not pane.query("#sources-create-ignore-selectors")
+        assert pane.query_one("#sources-create-frequency").display is False
+        assert pane.query_one("#sources-create-ignore-selectors").display is False
         assert pane.query_one("#sources-create-name", Input).value == "Morning"
         assert (
-            pane.query_one("#sources-create-url", Input).value
-            == "https://example.test"
+            pane.query_one("#sources-create-url", Input).value == "https://example.test"
         )
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert (
-            pane.query_one("#sources-create-watchlist", Select).value
-            == watchlist_id
-        )
+        destination = pane.query_one("#sources-create-watchlist", Select)
+        assert destination.display is True
+        assert destination.disabled is True
+        assert destination.value == SourcesPane.UNASSIGNED_DESTINATION
+        assert pane.create_draft_destination == watchlist_id
         assert pane.query_one("#sources-create-tags", Input).value == "news, daily"
 
         await _choose_runtime_backend(screen, pilot, "local")
@@ -269,19 +270,20 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
             ("Web page", "url"),
         ]
         assert pane.query_one("#sources-create-type", Select).value == "rss"
-        assert pane.query_one("#sources-create-frequency", Select).value == 86_400
+        frequency = pane.query_one("#sources-create-frequency", Select)
+        assert frequency.display is True
+        assert frequency.value == 86_400
         await _choose_source_type(pilot, pane, "url")
-        assert (
-            pane.query_one("#sources-create-ignore-selectors", TextArea).text
-            == ".ad\n.counter"
-        )
+        noise = pane.query_one("#sources-create-ignore-selectors", TextArea)
+        assert noise.display is True
+        assert noise.text == ".ad\n.counter"
         assert pane.query_one("#sources-create-active", Switch).value is False
-        assert (
-            pane.query_one("#sources-create-watchlist", Select).value
-            == watchlist_id
-        )
+        destination = pane.query_one("#sources-create-watchlist", Select)
+        assert destination.disabled is False
+        assert destination.value == watchlist_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_create_form_focuses_its_first_field_when_it_opens(size):
@@ -301,6 +303,7 @@ async def test_create_form_focuses_its_first_field_when_it_opens(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_sources_reload_interleaving_the_open_does_not_lose_focus():
     """TASK-1345: force the exact interleave the recompose/focus race needs.
@@ -336,9 +339,7 @@ async def test_a_sources_reload_interleaving_the_open_does_not_lose_focus():
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
         screen.active_section = "sources"
-        await _wait_for_selector(
-            screen, pilot, "#watchlists-sources-pane", timeout=5.0
-        )
+        await _wait_for_selector(screen, pilot, "#watchlists-sources-pane", timeout=5.0)
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
 
         # Open the form: arms `_pending_create_focus` and queues a
@@ -369,14 +370,19 @@ async def test_a_sources_reload_interleaving_the_open_does_not_lose_focus():
         await pilot.pause()
         await pilot.pause()
 
-        assert pane.query("#sources-create-form"), "the create form should still be open"
-        assert screen.focused is not None and screen.focused.id == "sources-create-name", (
+        assert pane.query("#sources-create-form"), (
+            "the create form should still be open"
+        )
+        assert (
+            screen.focused is not None and screen.focused.id == "sources-create-name"
+        ), (
             "a `sources` reload interleaving the create form's own opening "
             "lost the focus intent: expected 'sources-create-name', got "
             f"{screen.focused.id if screen.focused else None!r}"
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_external_rebuild_does_not_yank_focus_back_to_the_first_field():
     """TASK-1345 regression guard for case 2 in `SourcesPane.recompose`.
@@ -422,14 +428,19 @@ async def test_an_external_rebuild_does_not_yank_focus_back_to_the_first_field()
         await pilot.pause()
         await pilot.pause()
 
-        assert pane.query("#sources-create-form"), "the create form should still be open"
-        assert screen.focused is not None and screen.focused.id == "sources-create-url", (
+        assert pane.query("#sources-create-form"), (
+            "the create form should still be open"
+        )
+        assert (
+            screen.focused is not None and screen.focused.id == "sources-create-url"
+        ), (
             "an unrelated `sources` reload yanked focus back to the first "
             "field instead of leaving it on the user's field: got "
             f"{screen.focused.id if screen.focused else None!r}"
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_external_rebuild_does_not_yank_focus_to_a_stale_pending_target():
     """TASK-1345 Qodo follow-up: FIX A's `recompose` ordering.
@@ -477,14 +488,19 @@ async def test_an_external_rebuild_does_not_yank_focus_to_a_stale_pending_target
         await pilot.pause()
         await pilot.pause()
 
-        assert pane.query("#sources-create-form"), "the create form should still be open"
-        assert screen.focused is not None and screen.focused.id == "sources-create-url", (
+        assert pane.query("#sources-create-form"), (
+            "the create form should still be open"
+        )
+        assert (
+            screen.focused is not None and screen.focused.id == "sources-create-url"
+        ), (
             "a stale pending focus intent yanked the user back to field 0 "
             "instead of leaving them on the field they had Tabbed to: got "
             f"{screen.focused.id if screen.focused else None!r}"
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_confirm_create_focus_gives_up_after_max_attempts():
     """TASK-1345 Qodo follow-up: FIX B's bound on `_confirm_create_focus`.
@@ -525,18 +541,20 @@ async def test_confirm_create_focus_gives_up_after_max_attempts():
 
         pane.call_after_refresh = _spy
 
-        pane._confirm_create_focus(target, attempts=pane._CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS)
+        pane._confirm_create_focus(
+            target, attempts=pane._CREATE_FOCUS_CONFIRM_MAX_ATTEMPTS
+        )
 
         assert pane._pending_create_focus is None, (
             "the intent must clear once the reschedule bound is reached, "
             "or it stays armed forever with focus never confirmed"
         )
         assert calls == [], (
-            "_confirm_create_focus rescheduled itself past its own bound: "
-            f"{calls}"
+            f"_confirm_create_focus rescheduled itself past its own bound: {calls}"
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_confirm_create_focus_clears_on_any_in_form_field_not_only_target():
     """TASK-1345 Qodo follow-up: FIX B's any-in-form clear.
@@ -586,6 +604,7 @@ async def test_confirm_create_focus_clears_on_any_in_form_field_not_only_target(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_typing_straight_after_opening_the_form_lands_in_name(size):
@@ -603,6 +622,7 @@ async def test_typing_straight_after_opening_the_form_lands_in_name(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize(
     "runtime_backend,source_type,field_order",
@@ -620,9 +640,16 @@ async def test_tab_walks_the_create_form_in_visual_order(
         if runtime_backend != "local":
             await _choose_runtime_backend(screen, pilot, runtime_backend)
         screen, pane = await _open_sources_create_form(pilot, host)
+        tab_order = field_order
         if runtime_backend == "server":
-            assert not pane.query("#sources-create-frequency")
-            assert not pane.query("#sources-create-ignore-selectors")
+            assert pane.query_one("#sources-create-frequency").display is False
+            assert pane.query_one("#sources-create-ignore-selectors").display is False
+            destination = pane.query_one("#sources-create-watchlist", Select)
+            assert destination.display is True
+            assert destination.disabled is True
+            tab_order = [
+                field_id for field_id in field_order if field_id != destination.id
+            ]
         if source_type != "rss":
             await _choose_source_type(pilot, pane, source_type)
             pane.query_one("#sources-create-name", Input).focus()
@@ -630,14 +657,13 @@ async def test_tab_walks_the_create_form_in_visual_order(
 
         assert screen.focused is not None, "nothing focused; see AC#3 test"
         seen = [screen.focused.id]
-        for _ in range(len(field_order) - 1):
+        for _ in range(len(tab_order) - 1):
             await pilot.press("tab")
             await pilot.pause(0.05)
             seen.append(screen.focused.id if screen.focused else None)
 
-        assert seen == field_order, (
-            f"Tab order through the create form is {seen}, expected "
-            f"{field_order}"
+        assert seen == tab_order, (
+            f"Tab order through the create form is {seen}, expected {tab_order}"
         )
 
         # "Visual order" is not just DOM order: every step must move down the
@@ -658,6 +684,7 @@ async def test_tab_walks_the_create_form_in_visual_order(
             previous = (region.y, region.x)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_create_and_cancel_sit_side_by_side_like_the_dialog(size):
@@ -687,6 +714,7 @@ async def test_create_and_cancel_sit_side_by_side_like_the_dialog(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize(
     "runtime_backend,source_type,field_order",
@@ -714,8 +742,9 @@ async def test_the_whole_create_form_fits_inside_the_sources_pane(
             await _choose_runtime_backend(screen, pilot, runtime_backend)
         screen, pane = await _open_sources_create_form(pilot, host)
         if runtime_backend == "server":
-            assert not pane.query("#sources-create-frequency")
-            assert not pane.query("#sources-create-ignore-selectors")
+            assert pane.query_one("#sources-create-frequency").display is False
+            assert pane.query_one("#sources-create-ignore-selectors").display is False
+            assert pane.query_one("#sources-create-watchlist", Select).display is True
         if source_type != "rss":
             await _choose_source_type(pilot, pane, source_type)
 
@@ -727,8 +756,7 @@ async def test_the_whole_create_form_fits_inside_the_sources_pane(
                 f"{pane.region} at {size} -- the user cannot reach it"
             )
             assert region.y >= pane.region.y, (
-                f"#{field_id} at {region} starts above the Sources pane "
-                f"{pane.region}"
+                f"#{field_id} at {region} starts above the Sources pane {pane.region}"
             )
 
         # The table must survive too: the form is transient, the list is not.
@@ -743,6 +771,7 @@ async def test_the_whole_create_form_fits_inside_the_sources_pane(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_a_source_can_be_created_end_to_end_through_the_form(size):
@@ -801,6 +830,7 @@ async def test_a_source_can_be_created_end_to_end_through_the_form(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_submission_backend_governs_creation_filing_and_confirmation():
     app = _build_test_app()
@@ -842,8 +872,8 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
         assert screen._tree_watchlists
         screen._controller.create_source = record_create
         screen._controller.list_sources = record_source_reload
-        screen._notify_watchlists = (
-            lambda message, severity="information", **_kwargs: notices.append(message)
+        screen._notify_watchlists = lambda message, severity="information", **_kwargs: (
+            notices.append(message)
         )
 
         original_create_source = screen._create_source
@@ -862,9 +892,7 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
 
         _screen, pane = await _open_sources_create_form(pilot, host)
         pane.query_one("#sources-create-name", Input).value = "Race Feed"
-        pane.query_one("#sources-create-url", Input).value = (
-            "https://race.example/feed"
-        )
+        pane.query_one("#sources-create-url", Input).value = "https://race.example/feed"
         pane.query_one("#sources-create-watchlist", Select).value = watchlist_id
         await pilot.pause(0.2)
         pane.query_one("#sources-create-submit", Button).press()
@@ -888,6 +916,7 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
         assert reload_backends[-1] == "server"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_existing_source_is_filed_without_claiming_it_was_created():
     app = _build_test_app()
@@ -915,8 +944,8 @@ async def test_existing_source_is_filed_without_claiming_it_was_created():
             }
 
         screen._controller.create_source = resolve_existing
-        screen._notify_watchlists = (
-            lambda message, severity="information", **_kwargs: notices.append(message)
+        screen._notify_watchlists = lambda message, severity="information", **_kwargs: (
+            notices.append(message)
         )
         await screen._create_source(
             {"name": "Existing Feed", "watchlist_id": watchlist_id},
@@ -930,6 +959,7 @@ async def test_existing_source_is_filed_without_claiming_it_was_created():
     assert "created" not in notices[0].casefold()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unrelated_create_failure_keeps_the_generic_error_copy():
     host = _watchlists_host()
@@ -942,10 +972,8 @@ async def test_unrelated_create_failure_keeps_the_generic_error_copy():
             raise ValueError("the supported RSS source failed for another reason")
 
         screen._controller.create_source = fail_create
-        screen.app_instance.notify = (
-            lambda message, severity="information", **_kwargs: notices.append(
-                (message, severity)
-            )
+        screen.app_instance.notify = lambda message, severity="information", **_kwargs: (
+            notices.append((message, severity))
         )
         pane.query_one("#sources-create-name", Input).value = "Broken RSS"
         pane.query_one("#sources-create-url", Input).value = "https://broken.test/rss"
@@ -959,6 +987,7 @@ async def test_unrelated_create_failure_keeps_the_generic_error_copy():
         assert notices == [("Failed to create source.", "error")]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_clicking_any_row_of_the_name_input_focuses_it(size):
@@ -994,6 +1023,7 @@ async def test_clicking_any_row_of_the_name_input_focuses_it(size):
             await pilot.pause(0.05)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_creating_a_source_refreshes_the_table_and_the_tree_counts():
     """TASK-1040: creation only refreshed the view that read the data directly.
@@ -1016,9 +1046,11 @@ async def test_creating_a_source_refreshes_the_table_and_the_tree_counts():
             created.append(payload)
 
         async def fake_list(*, runtime_backend, limit=100):
-            return [
-                {"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True}
-            ] if created else []
+            return (
+                [{"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True}]
+                if created
+                else []
+            )
 
         screen._controller.create_source = fake_create
         screen._controller.list_sources = fake_list
@@ -1068,6 +1100,7 @@ async def test_creating_a_source_refreshes_the_table_and_the_tree_counts():
 # be satisfied by a screen-level rebuild papering over an empty pane.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_background_refresh_does_not_tear_down_an_open_create_form():
     """AC#1: a half-typed create form survives a background load landing.
@@ -1092,7 +1125,11 @@ async def test_a_background_refresh_does_not_tear_down_an_open_create_form():
         # fires, and the pair whose recomposes TASK-1960 caught destroying this
         # pane.
         screen._apply_local_wc_snapshot(
-            (), 0, True, "Watchlists services unavailable; retry Watchlists later.", None
+            (),
+            0,
+            True,
+            "Watchlists services unavailable; retry Watchlists later.",
+            None,
         )
         screen._load_tree_data()
         for _ in range(300):
@@ -1115,6 +1152,7 @@ async def test_a_background_refresh_does_not_tear_down_an_open_create_form():
         assert pane.query("#sources-create-form"), "the form must still be open"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_closing_the_create_form_repopulates_the_same_pane(size):

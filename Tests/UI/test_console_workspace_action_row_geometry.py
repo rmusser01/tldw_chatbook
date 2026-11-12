@@ -31,6 +31,7 @@ class StyledConsoleHarness(ConsoleHarness):
     CSS_PATH = [str(BUNDLE)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", [(100, 48), (235, 52)])
 async def test_workspace_action_buttons_fit_inside_their_rows(terminal_size) -> None:
@@ -69,6 +70,7 @@ async def test_workspace_action_buttons_fit_inside_their_rows(terminal_size) -> 
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_action_row_holds_switch_and_new_side_by_side() -> None:
     """Both actions must coexist on the shared row without either collapsing."""
@@ -90,6 +92,7 @@ async def test_workspace_action_row_holds_switch_and_new_side_by_side() -> None:
         assert new.region.width >= len("New")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_files_is_a_dedicated_row_immediately_after_primary_actions() -> None:
     """Files remains a complete, keyboard-reachable rail action.

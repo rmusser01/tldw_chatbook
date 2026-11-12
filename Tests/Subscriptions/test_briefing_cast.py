@@ -96,6 +96,15 @@ def _db(tmp_path) -> SubscriptionsDB:
     return SubscriptionsDB(tmp_path / "subs.db", "test")
 
 
+@pytest.fixture
+def db(tmp_path):
+    database = _db(tmp_path)
+    try:
+        yield database
+    finally:
+        database.close()
+
+
 def _complete_briefing(
     db, watchlist_id, *, body: str = "## This week\n\nSomething happened.\n"
 ) -> int:
@@ -299,8 +308,8 @@ def test_build_cast_prompt_includes_roster_style_notes_and_output_contract():
 
 
 @pytest.mark.asyncio
-async def test_generate_script_happy_path_writes_everything(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_generate_script_happy_path_writes_everything(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(
         db, watchlist, body="## Body\n\nAcme shipped a thing."
@@ -331,8 +340,8 @@ async def test_generate_script_happy_path_writes_everything(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generate_script_snapshot_embeds_the_resolved_character_name(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_generate_script_snapshot_embeds_the_resolved_character_name(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
@@ -449,18 +458,18 @@ async def test_explicit_provider_and_model_win_over_the_presets_own(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_no_preset_provider_or_model_falls_back_to_the_app_default(
-    tmp_path, monkeypatch
+    db,
 ):
     """A preset with no provider/model of its own (and no explicit
     override) must reach the app's configured default endpoint -- the
     third leg of the fallback chain `_default_provider`'s own docstring
     names.
     """
-    monkeypatch.setattr(
-        app_config, "default_api_endpoint", "local-llama", raising=False
+    assert app_config.save_settings_to_cli_config(
+        {"chat_defaults": {"provider": "llama_cpp", "model": "briefing-test-model"}}
     )
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)  # no provider/model set
@@ -468,17 +477,17 @@ async def test_no_preset_provider_or_model_falls_back_to_the_app_default(
     chat = _FakeChat()
     row = await generate_script(db, briefing_id, preset_id=preset_id, chat=chat)
 
-    assert chat.calls[0]["api_endpoint"] == "local-llama"
+    assert chat.calls[0]["api_endpoint"] == "llama_cpp"
     assert chat.calls[0].get("model") is None
-    assert row["model_used"] == "local-llama"
+    assert row["model_used"] == "llama_cpp"
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_fails_naming_the_card_when_load_character_returns_none(
-    tmp_path,
+    db,
 ):
     """Spec: "fails the cast at that point, naming the card"."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
@@ -498,11 +507,11 @@ async def test_generate_script_fails_naming_the_card_when_load_character_returns
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_fails_naming_the_card_when_load_character_is_none(
-    tmp_path,
+    db,
 ):
     """Same failed-naming path when no character lookup is available at all."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
@@ -515,10 +524,10 @@ async def test_generate_script_fails_naming_the_card_when_load_character_is_none
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_chat_failure_is_a_failed_row_and_leaves_the_briefing_untouched(
-    tmp_path,
+    db,
 ):
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -536,10 +545,10 @@ async def test_generate_script_chat_failure_is_a_failed_row_and_leaves_the_brief
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_parse_failure_is_a_failed_row_naming_the_defect(
-    tmp_path,
+    db,
 ):
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -622,7 +631,8 @@ async def test_generate_script_propagates_a_real_db_error(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_generate_script_db_work_runs_off_the_event_loop_thread(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_generate_script_db_work_runs_off_the_event_loop_thread(db):
     """Mirrors `test_the_db_work_runs_off_the_event_loop_thread` (phase 1):
     `generate_script` is dispatched from a Textual worker in the real
     caller (Task 5), so its DB work must not run directly on the event
@@ -641,7 +651,6 @@ async def test_generate_script_db_work_runs_off_the_event_loop_thread(tmp_path):
     not just the DB writes above, is what catches a regression back to the
     direct (unthreaded) call.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
@@ -792,8 +801,8 @@ async def test_a_second_cast_for_a_claimed_briefing_raises_before_any_row_insert
 
 
 @pytest.mark.asyncio
-async def test_the_cast_claim_is_released_after_a_successful_cast(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_the_cast_claim_is_released_after_a_successful_cast(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -805,8 +814,8 @@ async def test_the_cast_claim_is_released_after_a_successful_cast(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_cast_claim_is_released_after_a_cast_failure(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_the_cast_claim_is_released_after_a_cast_failure(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -823,7 +832,9 @@ async def test_the_cast_claim_is_released_after_a_cast_failure(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_cast_claim_is_released_when_a_db_error_escapes(tmp_path, monkeypatch):
+async def test_the_cast_claim_is_released_when_a_db_error_escapes(
+    tmp_path, monkeypatch
+):
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
@@ -840,11 +851,11 @@ async def test_the_cast_claim_is_released_when_a_db_error_escapes(tmp_path, monk
     assert briefing_id not in active_cast_claims()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_a_concurrent_cast_for_the_same_briefing_is_refused(tmp_path):
+async def test_a_concurrent_cast_for_the_same_briefing_is_refused(db):
     """Pins that the claim is held through the chat call, exactly like
     `test_briefing_service.py`'s own concurrency pin."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -860,14 +871,15 @@ async def test_a_concurrent_cast_for_the_same_briefing_is_refused(tmp_path):
     first = asyncio.ensure_future(
         generate_script(db, briefing_id, preset_id=preset_id, chat=_slow_chat)
     )
-    await entered.wait()
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
 
-    assert briefing_id in active_cast_claims()
-    with pytest.raises(GenerationInFlightError, match=str(briefing_id)):
-        await generate_script(db, briefing_id, preset_id=preset_id, chat=_FakeChat())
-
-    release.set()
-    row = await first
+        assert briefing_id in active_cast_claims()
+        with pytest.raises(GenerationInFlightError, match=str(briefing_id)):
+            await generate_script(db, briefing_id, preset_id=preset_id, chat=_FakeChat())
+    finally:
+        release.set()
+        row = await asyncio.wait_for(first, timeout=5)
     assert row["status"] == STATUS_COMPLETE
     assert briefing_id not in active_cast_claims()
 
@@ -890,9 +902,10 @@ def test_active_cast_claim_row_ids_is_an_empty_snapshot_by_default():
     assert active_cast_claim_row_ids() == frozenset()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_row_scoped_exclude_sweeps_a_same_briefing_zombie_while_sparing_the_live_row(
-    tmp_path,
+    db,
 ):
     """The coexistence case the docstring used to over-claim protection
     for: a crash-zombie script row and a genuinely live claim, both
@@ -901,7 +914,6 @@ async def test_row_scoped_exclude_sweeps_a_same_briefing_zombie_while_sparing_th
     -- briefing-scoped `exclude` (the pre-task-1890 shape) cannot tell them
     apart and would spare both.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -924,28 +936,28 @@ async def test_row_scoped_exclude_sweeps_a_same_briefing_zombie_while_sparing_th
     first = asyncio.ensure_future(
         generate_script(db, briefing_id, preset_id=preset_id, chat=_slow_chat)
     )
-    await entered.wait()
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
 
-    # The live claim now protects its OWN row, not merely its briefing.
-    live_ids = active_cast_claim_row_ids()
-    assert live_ids, "a live claim's row must be recorded by the time chat runs"
-    assert zombie_id not in live_ids, (
-        "the zombie's id must never be recorded by a claim it did not make"
-    )
+        # The live claim now protects its OWN row, not merely its briefing.
+        live_ids = active_cast_claim_row_ids()
+        assert live_ids, "a live claim's row must be recorded by the time chat runs"
+        assert zombie_id not in live_ids, (
+            "the zombie's id must never be recorded by a claim it did not make"
+        )
 
-    swept = fail_interrupted_scripts(db, exclude=live_ids)
+        swept = fail_interrupted_scripts(db, exclude=live_ids)
 
-    assert swept == 1
-    assert db.get_briefing_script(zombie_id)["status"] == "failed"
-    assert db.get_briefing_script(zombie_id)["error"] == "interrupted"
-    live_id = next(iter(live_ids))
-    assert db.get_briefing_script(live_id)["status"] == "generating", (
-        "row-scoped exclude must not falsify the row a live claim is "
-        "actually writing"
-    )
-
-    release.set()
-    row = await first
+        assert swept == 1
+        assert db.get_briefing_script(zombie_id)["status"] == "failed"
+        assert db.get_briefing_script(zombie_id)["error"] == "interrupted"
+        live_id = next(iter(live_ids))
+        assert db.get_briefing_script(live_id)["status"] == "generating", (
+            "row-scoped exclude must not falsify the row a live claim is actually writing"
+        )
+    finally:
+        release.set()
+        row = await asyncio.wait_for(first, timeout=5)
     assert row["status"] == STATUS_COMPLETE
 
 
@@ -1028,9 +1040,7 @@ def test_a_cast_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_ro
         assert row_ids == frozenset(), "the row id is not recorded in this window"
         assert briefing_id in pending
 
-        swept = fail_interrupted_scripts(
-            db, exclude=row_ids, exclude_briefings=pending
-        )
+        swept = fail_interrupted_scripts(db, exclude=row_ids, exclude_briefings=pending)
 
     assert swept == 0
     assert db.get_briefing_script(live_row)["status"] == "generating", (
@@ -1039,9 +1049,10 @@ def test_a_cast_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_ro
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_row_scoped_exclude_still_sweeps_a_same_briefing_zombie_once_the_id_lands(
-    tmp_path,
+    db,
 ):
     """The task-1890 coexistence fix, re-asserted alongside the new guard:
     once a claim's row id IS recorded, `pending_cast_claim_briefing_ids()`
@@ -1050,7 +1061,6 @@ async def test_row_scoped_exclude_still_sweeps_a_same_briefing_zombie_once_the_i
     same-briefing crash zombie is still swept even though the briefing
     itself has a live claim.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -1070,27 +1080,28 @@ async def test_row_scoped_exclude_still_sweeps_a_same_briefing_zombie_once_the_i
     first = asyncio.ensure_future(
         generate_script(db, briefing_id, preset_id=preset_id, chat=_slow_chat)
     )
-    await entered.wait()
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
 
-    row_ids = active_cast_claim_row_ids()
-    pending = pending_cast_claim_briefing_ids()
-    assert row_ids, "the live claim's row id must be recorded by the time chat runs"
-    assert briefing_id not in pending, (
-        "once the row id lands, the briefing is no longer 'pending'"
-    )
+        row_ids = active_cast_claim_row_ids()
+        pending = pending_cast_claim_briefing_ids()
+        assert row_ids, "the live claim's row id must be recorded by the time chat runs"
+        assert briefing_id not in pending, (
+            "once the row id lands, the briefing is no longer 'pending'"
+        )
 
-    swept = fail_interrupted_scripts(db, exclude=row_ids, exclude_briefings=pending)
+        swept = fail_interrupted_scripts(db, exclude=row_ids, exclude_briefings=pending)
 
-    assert swept == 1
-    assert db.get_briefing_script(zombie_id)["status"] == "failed"
-    live_id = next(iter(row_ids))
-    assert db.get_briefing_script(live_id)["status"] == "generating", (
-        "the live row must survive even with exclude_briefings passed "
-        "alongside row-scoped exclude"
-    )
-
-    release.set()
-    row = await first
+        assert swept == 1
+        assert db.get_briefing_script(zombie_id)["status"] == "failed"
+        live_id = next(iter(row_ids))
+        assert db.get_briefing_script(live_id)["status"] == "generating", (
+            "the live row must survive even with exclude_briefings passed "
+            "alongside row-scoped exclude"
+        )
+    finally:
+        release.set()
+        row = await asyncio.wait_for(first, timeout=5)
     assert row["status"] == STATUS_COMPLETE
 
 
@@ -1112,8 +1123,9 @@ async def test_row_scoped_exclude_still_sweeps_a_same_briefing_zombie_once_the_i
 
 
 @pytest.mark.asyncio
-async def test_generate_script_from_text_happy_path_writes_into_kept_scripts(tmp_path):
-    subs_db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_generate_script_from_text_happy_path_writes_into_kept_scripts(tmp_path, db):
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db, body="## Kept\n\nAcme shipped a thing.")
@@ -1145,21 +1157,23 @@ async def test_generate_script_from_text_happy_path_writes_into_kept_scripts(tmp
         # Findable via the listing interface, newest first.
         assert chacha_db.list_kept_scripts(kept_id)[0]["id"] == row["id"]
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_app_default_when_preset_id_is_none(
-    tmp_path, monkeypatch
+    tmp_path, db
 ):
     """`preset_id=None`: app default provider/model, no style notes,
     `preset_name` is the literal `APP_DEFAULT_PRESET_NAME`, and the roster
     is a single unbound "Narrator" speaker (there is no other source for a
     roster when no preset supplies one)."""
-    monkeypatch.setattr(
-        app_config, "default_api_endpoint", "local-llama", raising=False
+    assert app_config.save_settings_to_cli_config(
+        {"chat_defaults": {"provider": "llama_cpp", "model": "briefing-test-model"}}
     )
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1170,15 +1184,16 @@ async def test_generate_script_from_text_app_default_when_preset_id_is_none(
         )
 
         assert row["preset_name"] == APP_DEFAULT_PRESET_NAME
-        assert row["model_used"] == "local-llama"
-        assert chat.calls[0]["api_endpoint"] == "local-llama"
+        assert row["model_used"] == "llama_cpp"
+        assert chat.calls[0]["api_endpoint"] == "llama_cpp"
         assert chat.calls[0].get("model") is None
         snapshot = load_roster(row["roster_snapshot_json"])
         assert [speaker["name"] for speaker in snapshot] == ["Narrator"]
         # No style notes reached the prompt for an app-default cast.
         assert "Style notes" not in chat.calls[0]["system_message"]
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
@@ -1244,13 +1259,14 @@ async def test_generate_script_from_text_refuses_when_preset_is_missing(tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_fails_naming_the_card_when_load_character_is_none(
-    tmp_path,
+    tmp_path, db,
 ):
     """The roster always comes from the PRESET being cast with, never from
     the kept briefing's own (roster-less) snapshot -- so a card-bound
     speaker fails exactly like a live cast's does."""
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1268,16 +1284,18 @@ async def test_generate_script_from_text_fails_naming_the_card_when_load_charact
 
         assert chacha_db.list_kept_scripts(kept_id) == []
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_chat_failure_raises_and_writes_no_row(
-    tmp_path,
+    tmp_path, db,
 ):
     """The named asymmetry: unlike `generate_script`, a chat failure here
     RAISES rather than becoming a `failed` row."""
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1291,14 +1309,16 @@ async def test_generate_script_from_text_chat_failure_raises_and_writes_no_row(
 
         assert chacha_db.list_kept_scripts(kept_id) == []
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_parse_failure_raises_and_writes_no_row(
-    tmp_path,
+    tmp_path, db,
 ):
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1315,16 +1335,18 @@ async def test_generate_script_from_text_parse_failure_raises_and_writes_no_row(
 
         assert chacha_db.list_kept_scripts(kept_id) == []
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_never_touches_the_kept_briefing_row(
-    tmp_path,
+    tmp_path, db,
 ):
     """THE named invariant, both directions: a cast failure AND a cast
     success leave `kept_briefings` byte-for-byte unchanged."""
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1350,16 +1372,18 @@ async def test_generate_script_from_text_never_touches_the_kept_briefing_row(
         assert row["kept_briefing_id"] == kept_id
         assert before == after_success
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
-async def test_recast_needs_no_subscriptions_rows(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_recast_needs_no_subscriptions_rows(tmp_path, db):
     """Named test (AC #4): keep a briefing, delete the watchlist AND the
     original preset through real paths, then cast with a DIFFERENT
     currently-existing preset -- succeeds, lands in `kept_scripts` with
     the new preset's name and `source_script_id=NULL`."""
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         watchlist_id = WatchlistBundleService(subs_db).create(name="Security")["id"]
@@ -1398,7 +1422,8 @@ async def test_recast_needs_no_subscriptions_rows(tmp_path):
         # The kept briefing itself is untouched by the recast.
         assert chacha_db.get_kept_briefing(kept_id) is not None
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 # --- In-process kept-cast claims (task-1780, Task 4) -------------------------
@@ -1443,11 +1468,12 @@ def test_kept_and_live_cast_claims_do_not_collide_across_id_spaces():
     assert 7 not in active_kept_cast_claims()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_a_concurrent_kept_cast_for_the_same_kept_briefing_is_refused(tmp_path):
+async def test_a_concurrent_kept_cast_for_the_same_kept_briefing_is_refused(tmp_path, db):
     """Pins that the kept claim is held through the chat call, mirroring
     `test_a_concurrent_cast_for_the_same_briefing_is_refused` exactly."""
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1470,24 +1496,26 @@ async def test_a_concurrent_kept_cast_for_the_same_kept_briefing_is_refused(tmp_
                 chat=_slow_chat,
             )
         )
-        await entered.wait()
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
 
-        assert kept_id in active_kept_cast_claims()
-        with pytest.raises(GenerationInFlightError, match=str(kept_id)):
-            await generate_script_from_text(
-                chacha_db,
-                kept_id,
-                preset_id=preset_id,
-                subs_db=subs_db,
-                chat=_FakeChat(),
-            )
-
-        release.set()
-        row = await first
+            assert kept_id in active_kept_cast_claims()
+            with pytest.raises(GenerationInFlightError, match=str(kept_id)):
+                await generate_script_from_text(
+                    chacha_db,
+                    kept_id,
+                    preset_id=preset_id,
+                    subs_db=subs_db,
+                    chat=_FakeChat(),
+                )
+        finally:
+            release.set()
+            row = await asyncio.wait_for(first, timeout=5)
         assert row["kept_briefing_id"] == kept_id
         assert kept_id not in active_kept_cast_claims()
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 # --- TASK-21515: reasoning-aware completion budget (cast side) ---------------
@@ -1518,7 +1546,9 @@ async def test_a_reasoning_typed_deepseek_cast_gets_a_larger_completion_budget(
     )
 
     assert row["status"] == STATUS_COMPLETE
-    assert chat.calls[0]["max_tokens"] == briefing_cast.CAST_REASONING_MAX_TOKENS == 12000
+    assert (
+        chat.calls[0]["max_tokens"] == briefing_cast.CAST_REASONING_MAX_TOKENS == 12000
+    )
 
 
 @pytest.mark.asyncio

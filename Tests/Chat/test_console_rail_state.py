@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_rail_state import (
     console_rail_width_band,
     resolve_console_rail_priority,
     serialize_console_rail_preferences,
+    yield_console_rails_to_terminal,
 )
 
 
@@ -33,6 +34,12 @@ class Row:
     status: str = "ready"
     value: str = ""
     text: str = ""
+    #: TASK-33621.11: the structured identity the badge reads.
+    code: str = ""
+
+
+#: A blocked Provider row as the Inspector builds it (coded).
+BLOCKED_PROVIDER = Row("Provider", status="blocked", code="provider")
 
 
 def test_console_rail_state_uses_first_start_defaults():
@@ -286,24 +293,10 @@ def test_console_inspector_rail_badge_prioritizes_run_and_review_state():
     assert build_console_inspector_rail_badge(approval_count=1) == "1 approval"
     assert build_console_inspector_rail_badge(approval_count=2) == "2 approvals"
     assert (
-        build_console_inspector_rail_badge(
-            tool_count=3,
-            inspector_rows=(Row("Artifacts", value="Chatbook artifact available"),),
-        )
+        build_console_inspector_rail_badge(tool_count=3, can_save_chatbook=True)
         == "tools"
     )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Artifacts", value="Chatbook artifact available"),),
-        )
-        == "artifact"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="3 sources staged"),),
-        )
-        == "source"
-    )
+    assert build_console_inspector_rail_badge(can_save_chatbook=True) == "artifact"
     assert build_console_inspector_rail_badge() == ""
 
 
@@ -339,7 +332,7 @@ def test_console_inspector_rail_badge_shows_running_from_structured_status(
     assert (
         build_console_inspector_rail_badge(
             run_status=run_status,
-            inspector_rows=(Row("Provider", status="blocked"),),
+            inspector_rows=(BLOCKED_PROVIDER,),
         )
         == "setup"
     )
@@ -354,18 +347,20 @@ def test_console_inspector_rail_badge_is_not_running_when_no_run_is_active(
     assert build_console_inspector_rail_badge(run_status=run_status) != "running"
 
 
-def test_console_inspector_rail_badge_detects_blocked_from_row_fields():
+def test_console_inspector_rail_badge_detects_blocked_from_row_status_only():
+    """TASK-33621.11 AC#5: the row's status decides, never its words."""
     assert (
         build_console_inspector_rail_badge(
-            inspector_rows=(Row("Policy blocked"),),
+            inspector_rows=(Row("Policy", status="blocked"),),
         )
         == "blocked"
     )
+    assert build_console_inspector_rail_badge(inspector_rows=(Row("Policy blocked"),)) == ""
     assert (
         build_console_inspector_rail_badge(
             inspector_rows=(Row("Policy", value="BLOCKED by workspace"),),
         )
-        == "blocked"
+        == ""
     )
 
 
@@ -373,31 +368,36 @@ def test_console_inspector_rail_badge_names_provider_setup_blockers():
     assert (
         build_console_inspector_rail_badge(
             run_status="blocked",
-            inspector_rows=(Row("Provider", status="blocked"),),
+            inspector_rows=(BLOCKED_PROVIDER,),
         )
         == "setup"
     )
+    # Only the coded Provider row is a setup blocker; a label that merely
+    # says "Model" with "blocked" copy is not (TASK-33621.11 AC#5), and an
+    # uncoded "Provider" label is just another blocked row.
     assert (
         build_console_inspector_rail_badge(
             inspector_rows=(Row("Model", value="Missing", text="blocked"),),
         )
-        == "setup"
-    )
-
-
-def test_console_inspector_rail_badge_detects_failed_from_row_fields():
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Run", text="failed"),),
-        )
-        == "failed"
+        == ""
     )
     assert (
         build_console_inspector_rail_badge(
-            inspector_rows=(Row("FAILED run"),),
+            inspector_rows=(Row("Provider", status="blocked"),),
+        )
+        == "blocked"
+    )
+
+
+def test_console_inspector_rail_badge_detects_failed_from_row_status_only():
+    assert (
+        build_console_inspector_rail_badge(
+            inspector_rows=(Row("Run", status="failed"),),
         )
         == "failed"
     )
+    assert build_console_inspector_rail_badge(inspector_rows=(Row("Run", text="failed"),)) == ""
+    assert build_console_inspector_rail_badge(inspector_rows=(Row("FAILED run"),)) == ""
 
 
 def test_console_inspector_rail_badge_ignores_idle_inspector_rows():
@@ -420,44 +420,23 @@ def test_console_inspector_rail_badge_ignores_not_requested_source_rows():
     assert build_console_inspector_rail_badge(inspector_rows=state.rows) == ""
 
 
-def test_console_inspector_rail_badge_detects_positive_artifact_and_source_readiness():
+def test_console_inspector_rail_badge_reads_artifact_from_the_structured_flag():
+    """TASK-33621.11 AC#5: ``artifact`` comes from ``can_save_chatbook``.
+
+    The retired row-text fallbacks ("artifact"/"chatbook" or "source"/"rag"
+    labels with "available"/"staged" copy) never saw a production row -- the
+    badge rows are the coded Provider and Evidence rows -- and chose a badge
+    from display words.
+    """
     assert build_console_inspector_rail_badge(can_save_chatbook=True) == "artifact"
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Artifacts", value="available"),),
-        )
-        == "artifact"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Artifacts", value="Chatbook artifact available"),),
-        )
-        == "artifact"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="available"),),
-        )
-        == "source"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="staged from Library Search/RAG"),),
-        )
-        == "source"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="staged"),),
-        )
-        == "source"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", status="ready"),),
-        )
-        == "source"
-    )
+    for row in (
+        Row("Artifacts", value="available"),
+        Row("Artifacts", value="Chatbook artifact available"),
+        Row("RAG/source", value="available"),
+        Row("RAG/source", value="staged from Library Search/RAG"),
+        Row("RAG/source", status="ready"),
+    ):
+        assert build_console_inspector_rail_badge(inspector_rows=(row,)) == ""
 
 
 def test_console_inspector_rail_badge_does_not_treat_staged_as_source_category():
@@ -469,7 +448,7 @@ def test_console_inspector_rail_badge_does_not_treat_staged_as_source_category()
     )
 
 
-def test_console_inspector_rail_badge_requires_label_category_for_artifact_and_source():
+def test_console_inspector_rail_badge_ignores_artifact_and_source_words():
     assert (
         build_console_inspector_rail_badge(
             inspector_rows=(Row("Review", value="source available"),),
@@ -481,18 +460,6 @@ def test_console_inspector_rail_badge_requires_label_category_for_artifact_and_s
             inspector_rows=(Row("Review", value="artifact available"),),
         )
         == ""
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("Artifacts", value="available"),),
-        )
-        == "artifact"
-    )
-    assert (
-        build_console_inspector_rail_badge(
-            inspector_rows=(Row("RAG/source", value="available"),),
-        )
-        == "source"
     )
 
 
@@ -537,7 +504,7 @@ def test_console_rail_badges_do_not_mutate_open_booleans():
         stored_preferences={"left_open": False, "right_open": False},
         staged_source_count=2,
         run_status="blocked",
-        inspector_rows=(Row("Provider", status="blocked"),),
+        inspector_rows=(BLOCKED_PROVIDER,),
     )
 
     assert state.left_open is False
@@ -1321,3 +1288,107 @@ def test_reveal_derived_right_close_does_not_mark_explicit():
         explicit_right_toggle=True,
     )
     assert console_rail_right_open_explicit(direct)
+
+
+def test_seed_flush_writes_held_defaults_before_a_record_that_could_seed_them():
+    """TASK-36385: seeding stays one-time once defaults are no longer saved at mount."""
+    take = console_rail_state_module.take_console_rail_seed_flush
+    shared = build_console_rail_preference_key(layout_scope="global").value
+    ws_a = build_console_rail_preference_key(
+        workspace_id="A", layout_scope="workspace"
+    ).value
+    ws_b = build_console_rail_preference_key(
+        workspace_id="B", layout_scope="workspace"
+    ).value
+    defaults = console_rail_state_module.serialize_console_rail_stored_preferences(None)
+
+    # A workspace save with no shared layout anywhere writes the shared defaults.
+    records: dict = {}
+    unsaved: dict = {}
+    assert take(records, unsaved, ws_a) == [(shared, defaults)]
+    assert records == {shared: defaults} and unsaved == {}
+
+    # A shared save writes a workspace's held defaults, not its own record.
+    held_b = dict(defaults)
+    records = {shared: dict(defaults), ws_b: held_b}
+    unsaved = {shared: records[shared], ws_b: held_b}
+    assert take(records, unsaved, shared) == [(ws_b, held_b)]
+    assert unsaved == {}
+
+    # A record the user edited (a new object) is no longer held defaults.
+    records = {shared: {**defaults, "model_open": True}}
+    assert take(records, {shared: dict(defaults)}, ws_a) == []
+
+
+@pytest.mark.parametrize("columns", [80, 84, 99])
+def test_terminal_takes_both_rails_below_100_columns_without_touching_preference(
+    columns: int,
+) -> None:
+    """TASK-33625.3: rails the user opened yield to a narrow Terminal, render-only."""
+    key = build_console_rail_preference_key(workspace_id="w", session_id="s")
+    stored = {
+        "left_open": True,
+        CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY: True,
+        "right_open": True,
+    }
+    state = build_console_rail_state(
+        preference_key=key, stored_preferences=stored, available_columns=columns
+    )
+    assert state.left_open or state.right_open  # an explicit open is honored
+
+    yielded = yield_console_rails_to_terminal(state, columns)
+
+    assert (yielded.left_open, yielded.right_open) == (False, False)
+    assert yielded.compact_override is False
+    assert (yielded.preferred_left_open, yielded.preferred_right_open) == (True, True)
+
+
+@pytest.mark.parametrize("columns", [100, 160, None])
+def test_terminal_leaves_rails_alone_at_100_columns_and_up(columns: int | None) -> None:
+    key = build_console_rail_preference_key(workspace_id="w", session_id="s")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": True, "right_open": True},
+        available_columns=columns,
+    )
+    assert yield_console_rails_to_terminal(state, columns) is state
+
+
+@pytest.mark.parametrize(
+    ("reclaimed", "expected"),
+    [
+        (frozenset({"right"}), (False, True)),
+        (frozenset({"left"}), (True, False)),
+        (frozenset({"left", "right"}), (True, True)),
+    ],
+)
+def test_a_rail_the_user_asks_for_under_the_terminal_is_not_yielded(
+    reclaimed: frozenset[str], expected: tuple[bool, bool]
+) -> None:
+    """TASK-33625.3: Alt+I / Alt+C under a narrow Terminal must still work.
+
+    The yield is the Terminal's default, not a lock: a rail the user opens
+    while the Terminal owns the center shows, so the toggles stay the way
+    back (TASK-24604) instead of silently writing a preference nobody sees.
+    """
+    state = replace(
+        build_console_rail_state(
+            preference_key=build_console_rail_preference_key(
+                workspace_id="w", session_id="s"
+            ),
+            stored_preferences={"left_open": True, "right_open": True},
+            available_columns=80,
+        ),
+        left_open=True,
+        right_open=True,
+        left_compact_override=True,
+        right_compact_override=True,
+        compact_override=True,
+    )
+
+    yielded = yield_console_rails_to_terminal(state, 80, reclaimed=reclaimed)
+
+    assert (yielded.left_open, yielded.right_open) == expected
+    assert yielded.left_compact_override is expected[0]
+    assert yielded.right_compact_override is expected[1]
+    assert yielded.compact_override is True

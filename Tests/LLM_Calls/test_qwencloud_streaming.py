@@ -1976,11 +1976,13 @@ def test_stream_retries_only_before_first_consumed_byte(
         ]
     )
     session = _ByteStreamSession([retryable, malformed_after_body, replay_canary])
-    monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: session,
-    )
+    created: list[_ByteStreamSession] = []
+
+    def create_owned_session(**_kwargs: Any) -> _ByteStreamSession:
+        created.append(session)
+        return session
+
+    monkeypatch.setattr(qwencloud, "create_owned_default_session", create_owned_session)
     monkeypatch.setattr(
         qwencloud,
         "get_runtime_config_snapshot",
@@ -2003,7 +2005,13 @@ def test_stream_retries_only_before_first_consumed_byte(
     )
 
     assert not isinstance(stream, dict)
+    assert created == [session]
+    assert [prefix for prefix, _ in session.mounts] == ["https://", "http://"]
+    for _, adapter in session.mounts:
+        assert isinstance(adapter, requests.adapters.HTTPAdapter)
+        assert adapter.max_retries.total == 0
     assert len(session.posts) == 2
+    assert session.close_calls == 0
     assert retryable.close_calls == 1
     assert malformed_after_body.close_calls == 0
     assert next(stream)["choices"][0]["delta"]["content"] == "private"
@@ -2012,6 +2020,8 @@ def test_stream_retries_only_before_first_consumed_byte(
     assert exc_info.value.provider == "qwencloud"
     assert len(session.posts) == 2
     assert replay_canary.iter_content_calls == 0
+    stream.close()
+    assert retryable.close_calls == 1
     assert malformed_after_body.close_calls == 1
     assert session.close_calls == 1
 
@@ -2043,11 +2053,13 @@ def test_stream_body_read_failures_are_typed_closed_and_never_retried(
     )
     response = _FailingByteStreamResponse(chunks, error=error_type(canary))
     session = _ByteStreamSession([response])
-    monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: session,
-    )
+    created: list[_ByteStreamSession] = []
+
+    def create_owned_session(**_kwargs: Any) -> _ByteStreamSession:
+        created.append(session)
+        return session
+
+    monkeypatch.setattr(qwencloud, "create_owned_default_session", create_owned_session)
     monkeypatch.setattr(
         qwencloud,
         "get_runtime_config_snapshot",
@@ -2070,6 +2082,13 @@ def test_stream_body_read_failures_are_typed_closed_and_never_retried(
             api_base_url="https://qwen.example/v1",
             api_mode="chat_completions",
         )
+        assert not isinstance(stream, dict)
+        assert created == [session]
+        assert [prefix for prefix, _ in session.mounts] == ["https://", "http://"]
+        for _, adapter in session.mounts:
+            assert isinstance(adapter, requests.adapters.HTTPAdapter)
+            assert adapter.max_retries.total == 0
+        assert session.close_calls == 0
         if after_event:
             assert next(stream)["choices"][0]["delta"]["content"] == "safe"
         with pytest.raises(ChatProviderError) as exc_info:
@@ -2085,6 +2104,7 @@ def test_stream_body_read_failures_are_typed_closed_and_never_retried(
     assert "data:" not in disclosure
     assert len(session.posts) == 1
     assert response.iter_content_calls == 1
+    stream.close()
     assert response.close_calls == 1
     assert session.close_calls == 1
 

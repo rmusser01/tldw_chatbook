@@ -506,6 +506,7 @@ class ParakeetSourceService:
     ) -> ParakeetDispatch:
         if self._active_managed(key.model_id, key.precision) is None:
             raise ParakeetSourceError(ParakeetSourceErrorCode.MANAGED_UNAVAILABLE)
+        self._require_vad_ready()
         dispatch = self._dispatch_resolver(
             model_id=key.model_id,
             precision=key.precision,

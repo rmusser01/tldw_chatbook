@@ -1,0 +1,19 @@
+{
+  "baseline_ruff_count": 191,
+  "current_ruff_count": 191,
+  "signatures_equal": true,
+  "rider_lines": [
+    26566,
+    26625
+  ],
+  "formatter_pending_changed_blocks": [
+    [
+      26568,
+      26570
+    ],
+    [
+      26604,
+      26605
+    ]
+  ]
+}

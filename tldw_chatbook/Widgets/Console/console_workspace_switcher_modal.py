@@ -82,8 +82,9 @@ class ConsoleWorkspaceSwitcherModal(
         width: 64;
         height: auto;
         max-height: 28;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
@@ -329,8 +330,9 @@ class ConsoleWorkspaceRenameModal(SafeModalDismissMixin, ModalScreen[str | None]
     #console-workspace-rename-modal {
         width: 56;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 

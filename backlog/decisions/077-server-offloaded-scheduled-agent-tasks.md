@@ -5,8 +5,8 @@ Date: 2026-08-19
 Accepted: 2026-08-21 — owner ruling on the two judgment decisions: single-owner execution (decision 1, including the documented behavior change for server-scoped reminders) and phase-1 side-effect-free scope (decision 4)
 Renumbered: 072 → 076 → 077 (072–075 claimed by concurrent branches at the PR #1832 merge; 076 proven claimed earlier by `076-library-lifecycle-progressive-disclosure` — see TASK-19610 for the trace)
 Related Task: [TASK-18940](../tasks/task-18940%20-%20Server-offloaded-scheduled-agent-tasks-execution-seam.md)
-Amends: ADR-018 (its "execution remains `execution_unavailable` until server-side automation execution is integrated" clause)
-Related client work: ADR-018 (local/server hybrid storage + sync), TASK-18937 (missed-fire accounting), TASK-18938 (Run-now), TASK-18939 (execution timeouts)
+Amends: ADR-291 (its "execution remains `execution_unavailable` until server-side automation execution is integrated" clause)
+Related client work: ADR-291 (local/server hybrid storage + sync), TASK-18937 (missed-fire accounting), TASK-18938 (Run-now), TASK-18939 (execution timeouts)
 
 ## Decision
 
@@ -18,7 +18,7 @@ results back. The contract is:
 1. **Execution follows ownership.** A scheduled task executes on exactly one
    side: `owner_id="server:<user_id>"` definitions are executed by the
    server and are **never dispatched by the client's SchedulerLoop**;
-   `owner_id="local"` definitions execute locally (offline-first, ADR-018).
+   `owner_id="local"` definitions execute locally (offline-first, ADR-291).
    The client's local scheduler stops arming server-scoped rows — today it
    loads every enabled reminder regardless of owner, which for offloaded
    agent work would be double execution by construction.
@@ -67,7 +67,7 @@ results back. The contract is:
    previews, pauses, resumes, and archives definitions through the
    server's already-shipped automation API (preview-gated creates,
    payload-hash idempotency, audit history) and mirrors them locally
-   through the ADR-018 sync discipline (server-wins, pending mutations,
+   through the ADR-291 sync discipline (server-wins, pending mutations,
    tombstones). A server-side "run now" endpoint (mirroring TASK-18938's
    manual dispatch, with the same run-slot dedupe) is a required server
    addition so Run-now works on offloaded tasks; until it exists, Run-now
@@ -91,7 +91,7 @@ complete client-ready control-plane API for automation definitions, and an
 audit trail. Nothing on the server dispatches definitions; nothing on the
 client asks it to.
 
-Constraints that shaped the decision: the client is local-first (ADR-018) —
+Constraints that shaped the decision: the client is local-first (ADR-291) —
 offline users must keep local reminders working, which single-owner
 execution preserves; the client's approval philosophy admits no unattended
 auto-approved side effects; and the result channel must be one the client
@@ -103,7 +103,7 @@ subsystem.
 | Option | Why rejected |
 | --- | --- |
 | Client executes everything, server only stores | Defeats the offload goal: scheduled agent work would require the client app to be running, and burns the user's local tokens unattended. Hermes parity specifically means server-side execution. |
-| Server executes everything, client becomes a thin viewer | Breaks ADR-018's local-first guarantee for offline reminders; local watchlists/briefings already execute locally by design. |
+| Server executes everything, client becomes a thin viewer | Breaks ADR-291's local-first guarantee for offline reminders; local watchlists/briefings already execute locally by design. |
 | Both sides execute, dedupe at delivery | The current de-facto shape for reminders (the local loop arms every enabled row regardless of owner) — for agent work this is double execution with nondeterministic ordering, and dedupe after the fact cannot un-run side effects. Single-owner execution is simpler and honest. |
 | Client polls a new results endpoint | New polling surface for data the notifications feed already delivers; the client's `ServerNotificationsService` already observes that feed. |
 | Full agent_task (tools) execution in phase 1 | Tool use on the server implies unattended, unreviewed side effects — violates the approval stance until an escalation design exists (the server validates `approval_policy` but enforces nothing today). |
@@ -139,6 +139,6 @@ subsystem.
 ## Links
 
 - [TASK-18940 — Server-offloaded scheduled agent tasks](../tasks/task-18940%20-%20Server-offloaded-scheduled-agent-tasks-execution-seam.md) (implementation task; carries the server survey evidence)
-- [ADR-018 — Local/server hybrid scheduled-tasks storage and sync](018-local-server-hybrid-scheduled-tasks.md) (amended here on execution availability)
+- [ADR-291 — Local/server hybrid scheduled-tasks storage and sync](291-local-server-hybrid-scheduled-tasks.md) (amended here on execution availability)
 - [TASK-18937 / 18938 / 18939](../tasks/) — the client-side vocabulary this contract composes with (missed-fire, run-now, timeouts)
 - Server-side counterparts (tldw_server repo): `scheduled_tasks_control_plane.py`, `scheduled_task_automation_service.py`, `reminders_scheduler.py`, `core/Reminders/reminder_jobs.py` — the pattern this ADR mirrors.

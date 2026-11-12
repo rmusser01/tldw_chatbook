@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Backup_Recovery/test_eval_retained_definitions.py::test_complete_rebackup_retains_eval_after_source_and_candidate_removal",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "scope_probe",
+    "--timeout=180",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/observed-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-eval-01lvbrsg/observed.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "code": 0,
+  "elapsed": 45.68272599996999
+}

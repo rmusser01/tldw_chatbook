@@ -297,8 +297,5 @@ class TestCookieSecurity:
             mock_logger.info.assert_not_called()
 
 
-
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

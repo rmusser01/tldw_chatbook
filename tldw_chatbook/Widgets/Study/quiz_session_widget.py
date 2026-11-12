@@ -63,8 +63,11 @@ class QuizSessionWidget(Widget):
             yield Static(
                 "Global study", id="quiz-scope-summary", classes="quiz-session-meta"
             )
-            yield Static("Select a quiz to begin.", id="quiz-session-summary")
-            yield Static("", id="quiz-session-status")
+            # The quiz name and the attempt status print as typed.
+            yield Static(
+                "Select a quiz to begin.", id="quiz-session-summary", markup=False
+            )
+            yield Static("", id="quiz-session-status", markup=False)
             with Horizontal(classes="quiz-session-actions"):
                 yield Button(
                     "Start quiz",

@@ -73,6 +73,7 @@ async def _dialog(host, pilot):
     return host.screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -160,6 +161,7 @@ async def test_prompt_variables_cancel_authorize_apply_and_original_keyboard_jou
         assert db.fetch_prompt_details(prompt_id) == original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "source,expected",

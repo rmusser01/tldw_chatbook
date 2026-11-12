@@ -1,0 +1,4 @@
+{
+  "sha256": "f813db35a245afe8cf135da2e828e9dc64b3fa20f80fbb5fd2f58f77bd2da0b9",
+  "raw_text": "..                                                                       [100%]\n============================= slowest 25 durations =============================\n8.18s call     Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_n_in_the_reader_creates_a_note_naming_the_document_and_the_reader_keeps_its_place\n5.83s call     Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_row_restore_keeps_reader_until_user_keys\n\n(4 durations < 1s hidden.)\n2 passed in 17.79s\n"
+}

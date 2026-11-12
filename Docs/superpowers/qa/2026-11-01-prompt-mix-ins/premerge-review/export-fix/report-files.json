@@ -1,0 +1,86 @@
+{
+  "report": "/private/tmp/mixins-pr3346-export-fix/report.md",
+  "files": [
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/baseline-final.log",
+      "bytes": 258462,
+      "sha256": "51d9d2a748ac0fde1349848a0a470eab5eeef25ce704ccadb616db857c85c4dc"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/baseline-probe.py",
+      "bytes": 809,
+      "sha256": "6f9ee59b8a0684cf8fad7d5dbc86183aa9519cc6c94696b121b77dd496cfe4f4"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/commands.json",
+      "bytes": 3736,
+      "sha256": "07093752024fd0ffc29484f26f914bb804cc6c5b42c2fb46aae81d87532e18f6"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/contracts.log",
+      "bytes": 290,
+      "sha256": "fccbbe8da846ab964a6cc6337e28be45adb7864d97d243420c6cdb3f627d797a"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/final-exports.log",
+      "bytes": 356,
+      "sha256": "85abc1054204f054bc5c89ecec1f661382846123ed1d4afbd3adc8f88122f859"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/fix.patch",
+      "bytes": 7982,
+      "sha256": "7c3cfeedd91513039d9c01001b6c7c7fa46e81f800747d5cd9e479a6337cdc1f"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/format.log",
+      "bytes": 26,
+      "sha256": "3bc53bf3e981a98a34a852e175bf9b77af841edea74fca595d9aedcbaf9a4938"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/green.log",
+      "bytes": 224,
+      "sha256": "81d9d1cc4651896535d571783e412032271923c0c9eaa2034d1a6212cc94a500"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/lint-base.json",
+      "bytes": 1934,
+      "sha256": "869eab6f721976ebecc6a0ab6e0380193462d7dab19edf7a96cca477e1668b56"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/lint-current.json",
+      "bytes": 1934,
+      "sha256": "b83c860af883af7e62b18db831d37daad7dbd9c61b46e9415293105c4df4317f"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/lint-delta.json",
+      "bytes": 107,
+      "sha256": "ba4f5039119e7cd7896e3e1a45aeeb1734f96a4eda088715b7317beeb89aec22"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/red.log",
+      "bytes": 131562,
+      "sha256": "6f7d0e7783125a8ff7c23673e0e1d5ad45b1798e54fd2325bfa7fc3fd50ecfa3"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/report.md",
+      "bytes": 3987,
+      "sha256": "c7f51cd4ef19f93458a48fc265a8b558d622c262ed011764b14c0e37ebee919c"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/source-proof.json",
+      "bytes": 603,
+      "sha256": "aa773e3b91f1d269d4ab6dec393b9f26a30a978fd70a0126b3d91f3db14a0ac1"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/whitespace.json",
+      "bytes": 408,
+      "sha256": "b494c9f17d7c3704a866237d2b20bc65d5df36b099d7c499f10ca07361eae824"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-export-fix/whitespace.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "excluded": "Disposable pytest fixture directories; inventory does not hash itself."
+}

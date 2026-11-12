@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                       Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | first question                                                                                                                                     │
+                         Context ◂  │         Chat 1         ✕    first question     ✕    New tab     Temporary                                                                                         │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                                     ✕  │
+ Workspaces                    ▸    │  ▊                                                                                                                                                                │
+ ─────────────────────────────────  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ Conversations                 ▾    │   User                                                                                                                                                            │
+        Archive this chat           │   fifth question                                                                                                                                                  │
+          Archived chats            │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+        Search all chats…           │  ▊ Assistant                                                                                                                                                      │
+   first question                   │  ▊                                                                                                                                                                │
+                                    │  ▊                                                                                                                                                                │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊                                                                                                                                                                │
+  ▊  Filter visible     ▎           │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │   User                                                                                                                                                            │
+                                    │   sixth question                                                                                                                                                  │◂ Inspect
+   New conversation                 │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+  Chats                        ▾    │  ▊ Assistant                                                                                                                                                      │
+   Chat 1                     💬    │  ▊                                                                                                                                                                │
+   first question             💬    │  ▊  Stub reply #1 from the scratch stub.                                                                                                                       ▄  │
+                                    │  ▊                                                                                                                                                                │
+ ─────────────────────────────────  │  ▊                                                                                                                                                                │
+ Character · No chats          ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ ─────────────────────────────────  │   User                                                                                                                                                            │
+ Model                         ▸    │   seventh question                                                                                                                                                │
+ ─────────────────────────────────  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ Agent                         ▸    │  ▊ Assistant                                                                                                                                                      │
+ ─────────────────────────────────  │  ▊                                                                                                                                                                │
+ Details                       ▸    │  ▊  Stub reply #2 from the scratch stub.                                                                                                                          │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Context 0%
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                                     Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

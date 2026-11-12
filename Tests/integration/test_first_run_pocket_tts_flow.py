@@ -62,7 +62,13 @@ def _playable_wav() -> bytes:
 
 
 @pytest.fixture
-def fake_pocket_tts():
+def openai_compatible_speech_server():
+    """A generic OpenAI-compatible speech server (``POST /v1/audio/speech``,
+    JSON body). TASK-34100.8 review round 1 (F11): this used to be called
+    ``fake_pocket_tts``, but the real pocket-tts server answers 404 on that
+    route -- it speaks ``POST /tts`` with a form body, which
+    ``Tests/TTS/test_pocket_tts_native.py`` pins against a server shaped like
+    the real one."""
     requests: list[_CapturedRequest] = []
     body = _playable_wav()
 
@@ -155,11 +161,16 @@ async def run_quick_voice_setup(endpoint: str, config_path: Path):
             await pilot.pause()
 
             step.query_one("#setup-voice-test", Button).press()
+            # TASK-34100.8 (voice-speech-06): success reads "Played the sample".
             for _ in range(100):
-                if "Verified" in str(step.query_one("#setup-voice-status").renderable):
+                if "Played the sample" in str(
+                    step.query_one("#setup-voice-status").renderable
+                ):
                     break
                 await pilot.pause(0.02)
-            assert "Verified" in str(step.query_one("#setup-voice-status").renderable)
+            assert "Played the sample" in str(
+                step.query_one("#setup-voice-status").renderable
+            )
 
             ok, error = await step.commit()
             assert (ok, error) == (True, "")
@@ -213,12 +224,12 @@ def isolated_voice_config(
 
 
 @pytest.mark.asyncio
-async def test_real_pocket_tts_sample_uses_exact_request_and_playable_response(
-    fake_pocket_tts,
+async def test_an_openai_compatible_sample_uses_exact_request_and_playable_response(
+    openai_compatible_speech_server,
 ) -> None:
     result = await run_voice_sample(
         VoiceSetupDraft(
-            endpoint=fake_pocket_tts.url,
+            endpoint=openai_compatible_speech_server.url,
             authentication_mode="none",
             model_id="pocket-tts",
             voice_id="alba",
@@ -230,7 +241,7 @@ async def test_real_pocket_tts_sample_uses_exact_request_and_playable_response(
     )
 
     assert result.playable is True
-    request = fake_pocket_tts.requests[-1]
+    request = openai_compatible_speech_server.requests[-1]
     assert request.path == "/v1/audio/speech"
     assert request.json() == {
         "input": "Hello from Chatbook.",
@@ -244,23 +255,32 @@ async def test_real_pocket_tts_sample_uses_exact_request_and_playable_response(
 
 @pytest.mark.asyncio
 async def test_quick_voice_setup_sends_sample_and_activates_exact_defaults(
-    fake_pocket_tts,
+    openai_compatible_speech_server,
     isolated_voice_config: Path,
 ) -> None:
     result = await run_quick_voice_setup(
-        fake_pocket_tts.url,
+        openai_compatible_speech_server.url,
         isolated_voice_config,
     )
 
-    assert result.persisted_settings["OPENAI_BASE_URL"] == fake_pocket_tts.url
+    assert (
+        result.persisted_settings["OPENAI_BASE_URL"]
+        == openai_compatible_speech_server.url
+    )
     assert result.persisted_settings["OPENAI_AUTH_MODE"] == "none"
     assert result.saved_revision == result.applied_revision
     assert result.active_runtime_revision > 0
-    assert result.active_provider_settings["OPENAI_BASE_URL"] == fake_pocket_tts.url
+    assert (
+        result.active_provider_settings["OPENAI_BASE_URL"]
+        == openai_compatible_speech_server.url
+    )
     assert result.active_provider_settings["OPENAI_AUTH_MODE"] == "none"
     assert result.effective_defaults.provider_id == "openai"
     assert result.effective_defaults.model_id == "pocket-tts"
     assert result.effective_defaults.voice_id == "alba"
     assert result.effective_defaults == result.active_defaults
-    assert fake_pocket_tts.requests[-1].json()["input"] == "Hello from Chatbook."
-    assert "Authorization" not in fake_pocket_tts.requests[-1].headers
+    assert (
+        openai_compatible_speech_server.requests[-1].json()["input"]
+        == "Hello from Chatbook."
+    )
+    assert "Authorization" not in openai_compatible_speech_server.requests[-1].headers

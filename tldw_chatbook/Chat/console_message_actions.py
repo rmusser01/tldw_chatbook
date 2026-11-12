@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import TYPE_CHECKING, Literal
@@ -11,6 +11,7 @@ from markdown_it import MarkdownIt
 
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_DISPATCH_DISCARDED_COPY,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -20,6 +21,95 @@ from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 if TYPE_CHECKING:
     from tldw_chatbook.Canvas.compiler import CanvasCompileError
     from tldw_chatbook.Chat.console_message_delete import ConsoleDeleteScope
+
+
+def is_refused_echo(message: ConsoleChatMessage) -> bool:
+    """Whether ``message`` is a USER echo refused before the send was accepted.
+
+    Args:
+        message: A transcript row.
+
+    Returns:
+        True for a failed, never-persisted USER row (the optimistic echo a
+        refused send leaves behind), otherwise False.
+    """
+    return (
+        message.role is ConsoleMessageRole.USER
+        and message.status == "failed"
+        and message.persisted_message_id is None
+    )
+
+
+def _reply_text(message: ConsoleChatMessage) -> str:
+    """Read reply text while excluding the authored dispatch-discard marker.
+
+    Args:
+        message: Assistant reply on the active path.
+
+    Returns:
+        Stripped reply text, or empty for the authored discarded-reply marker.
+    """
+    text = message.content.strip()
+    if (
+        message.assistant_generation_state == "discarded"
+        and text == CONSOLE_DISPATCH_DISCARDED_COPY
+    ):
+        return ""
+    return text
+
+
+def resend_target_id(messages: Sequence[ConsoleChatMessage]) -> str | None:
+    """Return the last USER row's id when its turn is broken, else ``None``.
+
+    Args:
+        messages: The session's active-path rows, oldest first.
+
+    Returns:
+        The id of the user message Resend re-runs, or ``None`` when the last
+        turn is healthy, partial, still running, or has no user message. An
+        unpersisted user row with no reply is an in-flight send (validating,
+        or paused for preparation), never a broken one. Any tool output, text
+        from an earlier reply, or a restored (not live) failed reply with text
+        makes the turn partial: the clear would tombstone it. A live failed
+        reply keeps Resend even with partial text; it is retried in place.
+    """
+    index = next(
+        (
+            position
+            for position in range(len(messages) - 1, -1, -1)
+            if messages[position].role is ConsoleMessageRole.USER
+        ),
+        None,
+    )
+    if index is None:
+        return None
+    user = messages[index]
+    replies = [
+        row for row in messages[index + 1 :] if row.role is ConsoleMessageRole.ASSISTANT
+    ]
+    if is_refused_echo(user):
+        return None if replies else user.id
+    if user.status != "complete" or any(
+        row.role is ConsoleMessageRole.TOOL and row.content.strip()
+        for row in messages[index + 1 :]
+    ):
+        return None
+    if not replies:
+        return user.id if user.persisted_message_id is not None else None
+    last = replies[-1]
+    if last.status in {"pending", "streaming"}:
+        return None
+    if any(_reply_text(reply) for reply in replies[:-1]):
+        return None
+    if last.status == "failed":
+        return user.id
+    ended = last.status == "stopped" or last.assistant_generation_state in {
+        "failed",
+        "stopped",
+        "discarded",
+    }
+    return user.id if ended and not _reply_text(last) else None
+
 
 ConsoleActionStatus = Literal[
     "completed",
@@ -507,7 +597,7 @@ class ConsoleMessageActionService:
         self.available_save_destinations = set(available_save_destinations or ())
         self.unavailable_save_reasons = dict(unavailable_save_reasons or {})
         if canvas_enabled_reader is None:
-            from tldw_chatbook.config import get_canvas_execution_enabled
+            from tldw_chatbook.Canvas.config_policy import get_canvas_execution_enabled
 
             canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
@@ -598,7 +688,7 @@ class ConsoleMessageActionService:
                 this service never infers persisted lineage from message fields.
             resend_available: Whether this user row is the broken last turn
                 that Resend may re-run (TASK-33661). The caller derives it from
-                the active path (``console_turn_resend.resend_target_id``) and
+                the active path (``resend_target_id``) and
                 the live-run gate; this service never infers it from one row.
         """
         if not isinstance(fork_eligibility, ConsoleForkEligibility):
@@ -724,8 +814,28 @@ class ConsoleMessageActionService:
             # user re-sends from the composer instead). Speak and Continue are
             # also absent: a failed response is retried in place rather than
             # read aloud or extended as a new assistant turn.
+            count = message.mixin_usage_count
+            marked = message.metadata is not None and (
+                message.metadata.mixin_snapshot_schema_version is not None
+                or message.metadata.mixin_attempt_id is not None
+            )
+            missing = count is None and (
+                marked
+                or message.persisted_message_id is not None
+                or message.mixin_replay_status == "unavailable"
+            )
+            retry_action = (
+                ("regenerate", "Regenerate with current mix-ins")
+                if missing
+                else (
+                    "retry",
+                    "Retry with original mix-ins"
+                    if count is not None and count > 0
+                    else "Retry",
+                )
+            )
             completed_actions = [
-                ("retry", "Retry") if action_id == "regenerate" else (action_id, label)
+                retry_action if action_id == "regenerate" else (action_id, label)
                 for action_id, label in completed_actions
                 if action_id not in {"speak", "continue"}
             ]
@@ -819,6 +929,8 @@ class ConsoleMessageActionService:
                 media=(),
             )
         overflow = self._overflow_actions(actions)
+        if message.role == ConsoleMessageRole.ASSISTANT:
+            overflow = (ConsoleMessageAction("copy-all", "Copy all"), *overflow)
         primary_ids = self._PRIMARY_ACTION_IDS
         if generation_variant_count == 0:
             primary_ids = primary_ids | {

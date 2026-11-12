@@ -156,14 +156,6 @@ class FlashcardResponse(BaseModel):
         return data
 
 
-
-
-
-
-
-
-
-
 class FlashcardListResponse(BaseModel):
     items: list[FlashcardResponse]
     count: int
@@ -217,8 +209,6 @@ class FlashcardReviewSessionEndRequest(BaseModel):
     review_session_id: int
 
 
-
-
 class FlashcardTagsUpdateRequest(BaseModel):
     tags: list[str]
 
@@ -226,20 +216,6 @@ class FlashcardTagsUpdateRequest(BaseModel):
 class FlashcardTagsResponse(BaseModel):
     items: list[str] = Field(default_factory=list)
     count: int = 0
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 class FlashcardsImportItem(BaseModel):
@@ -262,20 +238,6 @@ class FlashcardsImportResponse(BaseModel):
 StudyAssistantAction = Literal[
     "explain", "mnemonic", "follow_up", "fact_check", "freeform"
 ]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 class FlashcardNextReviewResponse(BaseModel):

@@ -39,6 +39,10 @@ from Tests.UI.test_console_native_chat_flow import _configure_native_ready_conso
 from Tests.UI.test_console_workspace_context_rail import (
     _base_grouped_workspace_state,
 )
+from Tests.UI.test_console_workspace_files_integration import (
+    _ensure_rail_section_open,
+    _ensure_workspace_rail_open,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -147,6 +151,19 @@ async def _console_with_probe_tree(host, pilot):
     return console, rail, tree
 
 
+async def _console_with_visible_workspace_tree(host, pilot):
+    console, rail, tree = await _console_with_probe_tree(host, pilot)
+    await _ensure_workspace_rail_open(console, pilot)
+    await _ensure_rail_section_open(console, pilot, "workspace")
+    rail.activate_section("workspace", reveal_target=tree)
+    for _ in range(100):
+        if tree.region.height > 0:
+            await _settle(pilot, passes=4)
+            return console, rail, tree
+        await pilot.pause(0.02)
+    raise AssertionError("The Workspaces disclosure never laid out the tree")
+
+
 def _arm_counters(monkeypatch, screen, rail) -> dict[str, object]:
     """Count screen layout passes and every leg of the rail pipeline."""
 
@@ -205,6 +222,7 @@ def _arm_counters(monkeypatch, screen, rail) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_non_boundary_cursor_move_arms_zero_screen_layout_passes(
     monkeypatch: pytest.MonkeyPatch,
@@ -254,6 +272,7 @@ async def test_non_boundary_cursor_move_arms_zero_screen_layout_passes(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_boundary_crossing_reconciles_only_the_workspace_section(
     monkeypatch: pytest.MonkeyPatch,
@@ -314,9 +333,7 @@ async def test_boundary_crossing_reconciles_only_the_workspace_section(
 
 
 @pytest.mark.asyncio
-async def test_scoped_reconcile_swallows_a_demand_delta_plain_still_escalates() -> (
-    None
-):
+async def test_scoped_reconcile_swallows_a_demand_delta_plain_still_escalates() -> None:
     """The scoped/plain contract on ``_ContextBoundedSection`` itself.
 
     In BOTH mounted probes above, the workspaces tray sits at its 12-row cap
@@ -424,6 +441,7 @@ def _tray_harness():
     return TrayApp()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_tooltip_recomputes_only_when_node_or_width_changes(
     monkeypatch: pytest.MonkeyPatch,
@@ -466,6 +484,7 @@ async def test_tree_tooltip_recomputes_only_when_node_or_width_changes(
         assert len(measurements) == after_move, measurements
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_tooltip_stays_correct_across_width_changes() -> None:
     """The memo must not freeze truncation decisions across width changes."""
@@ -475,7 +494,7 @@ async def test_tree_tooltip_stays_correct_across_width_changes() -> None:
     host = ConsoleHarness(app)
 
     async with host.run_test(size=APP_SIZE) as pilot:
-        console, rail, tree = await _console_with_probe_tree(host, pilot)
+        console, rail, tree = await _console_with_visible_workspace_tree(host, pilot)
         long_state = replace(
             _probe_workspace_state(),
             workspace_tree=(
@@ -488,6 +507,7 @@ async def test_tree_tooltip_stays_correct_across_width_changes() -> None:
                 ),
             ),
         )
+        console._workspace._build_console_workspace_context_state = lambda: long_state
         rail.sync_workspace_context(long_state)
         await _settle(pilot, passes=6)
         tree.move_cursor(tree.workspace_nodes["ws-alpha"])
@@ -506,6 +526,7 @@ async def test_tree_tooltip_stays_correct_across_width_changes() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cursor_move_paths_are_safe_during_teardown() -> None:
     app = _build_test_app()
@@ -525,6 +546,7 @@ async def test_cursor_move_paths_are_safe_during_teardown() -> None:
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tooltip_target_removed_by_projection_push_is_not_served_stale() -> None:
     app = _build_test_app()
@@ -539,9 +561,7 @@ async def test_tooltip_target_removed_by_projection_push_is_not_served_stale() -
                 WorkspaceTreeWorkspace(
                     workspace_id="ws-alpha",
                     label="Workspace Alpha " + "研究🙂" * 12,
-                    conversations=(
-                        _conversation("conv-a0", "Alpha conversation 0"),
-                    ),
+                    conversations=(_conversation("conv-a0", "Alpha conversation 0"),),
                     next_cursor=None,
                     active=True,
                 ),
@@ -561,9 +581,7 @@ async def test_tooltip_target_removed_by_projection_push_is_not_served_stale() -
                 WorkspaceTreeWorkspace(
                     workspace_id="ws-gamma",
                     label="Short",
-                    conversations=(
-                        _conversation("conv-g0", "Gamma conversation 0"),
-                    ),
+                    conversations=(_conversation("conv-g0", "Gamma conversation 0"),),
                     next_cursor=None,
                     active=True,
                 ),
@@ -574,6 +592,7 @@ async def test_tooltip_target_removed_by_projection_push_is_not_served_stale() -
         assert tree.tooltip is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_boundary_flip_coexists_with_an_in_flight_allocation_pass(
     monkeypatch: pytest.MonkeyPatch,
@@ -612,6 +631,7 @@ async def test_boundary_flip_coexists_with_an_in_flight_allocation_pass(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_projection_content_changes_still_reach_the_allocator(
     monkeypatch: pytest.MonkeyPatch,

@@ -1,0 +1,34 @@
+{
+  "server": "together",
+  "base_url": "https://api.together.xyz/v1",
+  "probe_model": "probe-model",
+  "listing": {
+    "status": 401,
+    "body": "Missing API key"
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "id": "p3Jjihx-2kFHot-a4306e34c8d9ed39",
+      "error": {
+        "message": "Missing API key. You need to provide your API key in an Authorization header using Bearer auth (i.e. Authorization: Bearer YOUR_KEY) You can find your API key at https://api.together.ai/settings/api-keys.",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "missing_api_key"
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "id": "p3Jjik5-2kFHot-a4306e365bd9f555",
+      "error": {
+        "message": "Invalid API key provided. You can find your API key at https://api.together.ai/settings/api-keys.",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_api_key"
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:19:38+00:00"
+}

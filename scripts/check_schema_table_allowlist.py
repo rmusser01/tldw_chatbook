@@ -66,9 +66,9 @@ covers a creation style:
   this shape simply is not reported, like the rest of this bullet. Keep
   schema DDL a literal string.
 * **A ``.sql`` file whose name does not match a glob in ``SCHEMAS``.**
-  ``migrations/add_sync_fields_to_notes.sql`` is exactly that shape today (it
-  is unreferenced, and its two tables happen to be declared inline in
-  ``ChaChaNotes_DB.py`` as well, so nothing is currently missed).
+  ``migrations/add_sync_fields_to_notes.sql`` was exactly that shape until
+  task-19565 deleted it (it was unreferenced, and its two tables are
+  declared inline in ``ChaChaNotes_DB.py`` as well, so nothing was missed).
 * **A table created from a ``.py`` module not listed in ``SCHEMAS``**, or from
   DDL loaded from a file at runtime and ``executescript``-ed.
 * **``DROP TABLE`` and ``ALTER TABLE ... RENAME TO``.** The scan is
@@ -152,9 +152,7 @@ SCHEMAS: tuple[SchemaSources, ...] = (
     SchemaSources(
         key="chachanotes",
         sql_globs=("chachanotes_*.sql",),
-        python_files=(
-            REPO_ROOT / "tldw_chatbook" / "DB" / "ChaChaNotes_DB.py",
-        ),
+        python_files=(REPO_ROOT / "tldw_chatbook" / "DB" / "ChaChaNotes_DB.py",),
     ),
     # TASK-19867 owns adding "media" and "prompts" here; see the module
     # docstring for why they are not enabled yet.
@@ -298,13 +296,27 @@ def declared_tables(schema: SchemaSources) -> dict[str, list[str]]:
     found: dict[str, set[str]] = {}
     for path in files:
         for text, origin in _sql_fragments(path):
-            for match in CREATE_TABLE_RE.finditer(_strip_sql_comments(text)):
+            sql = _strip_sql_comments(text)
+            # A same-fragment rebuild is persisted under its RENAME destination.
+            # Missing/wrong renames still produce an independently scanned name.
+            renames = {
+                match.group(1): (match.group(2), match.start())
+                for match in re.finditer(
+                    r'\bALTER\s+TABLE\s+["`\[]?([A-Za-z_][A-Za-z_0-9]*)["`\]]?\s+RENAME\s+TO\s+["`\[]?([A-Za-z_][A-Za-z_0-9]*)',
+                    sql,
+                    re.IGNORECASE,
+                )
+            }
+            for match in CREATE_TABLE_RE.finditer(sql):
                 if match.group("modifier"):
                     # VIRTUAL (the FTS tables) and TEMP tables are not
                     # allowlist targets; _is_substantive drops the FTS names
                     # anyway, and a TEMP table has no persistent identity.
                     continue
                 name = match.group("name")
+                renamed = renames.get(name)
+                if renamed is not None and renamed[1] > match.end():
+                    name = renamed[0]
                 if _is_substantive(name):
                     found.setdefault(name, set()).add(origin)
     return {name: sorted(origins) for name, origins in found.items()}
@@ -332,7 +344,9 @@ def allowlisted_tables(key: str) -> set[str]:
         SystemExit: If the literal cannot be located or evaluated -- a silent
             empty set here would turn the guard off.
     """
-    tree = ast.parse(SQL_VALIDATION.read_text(encoding="utf-8"), filename=str(SQL_VALIDATION))
+    tree = ast.parse(
+        SQL_VALIDATION.read_text(encoding="utf-8"), filename=str(SQL_VALIDATION)
+    )
     for node in tree.body:
         # ``VALID_TABLES = {...}`` (ast.Assign, possibly multiple/chained
         # targets) and ``VALID_TABLES: dict[str, set[str]] = {...}``
@@ -368,10 +382,14 @@ def allowlisted_tables(key: str) -> set[str]:
                 f"::error::VALID_TABLES has no {key!r} entry in {SQL_VALIDATION}."
             )
         return set(table_map[key])
-    raise SystemExit(f"::error::no module-level VALID_TABLES assignment in {SQL_VALIDATION}.")
+    raise SystemExit(
+        f"::error::no module-level VALID_TABLES assignment in {SQL_VALIDATION}."
+    )
 
 
-def _report(schema: SchemaSources, declared: dict[str, list[str]], allowed: set[str]) -> bool:
+def _report(
+    schema: SchemaSources, declared: dict[str, list[str]], allowed: set[str]
+) -> bool:
     """Print the verdict for one schema. Returns True when it passes."""
     unlisted = sorted(set(declared) - allowed)
     phantom = sorted(allowed - set(declared))

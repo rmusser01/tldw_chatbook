@@ -114,9 +114,9 @@ def _spy_transaction(db: SubscriptionsDB) -> list[int]:
     real_transaction = db.transaction
 
     @contextmanager
-    def wrapper():
+    def wrapper(*args, **kwargs):
         threads.append(threading.get_ident())
-        with real_transaction() as conn:
+        with real_transaction(*args, **kwargs) as conn:
             yield conn
 
     db.transaction = wrapper
@@ -197,6 +197,7 @@ _SIMPLE_CASES = [
 ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("db_method_name", "call"), _SIMPLE_CASES)
 async def test_simple_db_calls_run_off_the_event_loop_thread(
@@ -217,21 +218,21 @@ async def test_simple_db_calls_run_off_the_event_loop_thread(
 
     assert threads, f"SubscriptionsDB.{db_method_name} must have been called"
     assert all(thread_id != loop_thread for thread_id in threads), (
-        f"SubscriptionsDB.{db_method_name} ran on the event-loop thread: "
-        f"{threads}"
+        f"SubscriptionsDB.{db_method_name} ran on the event-loop thread: {threads}"
     )
 
 
 # --- multi-call methods -------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_source_both_db_calls_run_off_the_event_loop_thread(tmp_path):
-    """`create_source` does an INSERT then a re-read; both must hop."""
+    """`create_source` inserts and materializes its result off the event loop."""
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     add_threads = _spy(db, "add_subscription")
-    get_threads = _spy(db, "get_subscription")
+    get_threads = _spy(db, "_materialize_watchlist_source_result")
     loop_thread = threading.get_ident()
 
     created = await service.create_source(
@@ -239,10 +240,12 @@ async def test_create_source_both_db_calls_run_off_the_event_loop_thread(tmp_pat
     )
 
     assert created["title"] == "New Feed"
+    assert created["creation_outcome"] == "created"
     assert add_threads and all(t != loop_thread for t in add_threads)
     assert get_threads and all(t != loop_thread for t in get_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_update_source_both_db_calls_run_off_the_event_loop_thread(tmp_path):
     """`update_source` does an UPDATE then a re-read; both must hop."""
@@ -258,6 +261,7 @@ async def test_update_source_both_db_calls_run_off_the_event_loop_thread(tmp_pat
     assert get_threads and all(t != loop_thread for t in get_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resume_source_both_db_calls_run_off_the_event_loop_thread(tmp_path):
     """`resume_source`'s reset-then-read pair must both hop, in order."""
@@ -275,6 +279,7 @@ async def test_resume_source_both_db_calls_run_off_the_event_loop_thread(tmp_pat
 # --- the four rewritten `db.transaction()` blocks ---------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancel_run_transaction_block_runs_off_the_event_loop_thread(tmp_path):
     """`cancel_run`'s whole transaction must hop as one unit."""
@@ -293,6 +298,7 @@ async def test_cancel_run_transaction_block_runs_off_the_event_loop_thread(tmp_p
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_alert_rule_transaction_block_runs_off_the_event_loop_thread(
     tmp_path,
@@ -314,6 +320,7 @@ async def test_create_alert_rule_transaction_block_runs_off_the_event_loop_threa
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_update_alert_rule_transaction_block_runs_off_the_event_loop_thread(
     tmp_path,
@@ -336,6 +343,7 @@ async def test_update_alert_rule_transaction_block_runs_off_the_event_loop_threa
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_alert_rule_transaction_block_runs_off_the_event_loop_thread(
     tmp_path,
@@ -358,6 +366,7 @@ async def test_delete_alert_rule_transaction_block_runs_off_the_event_loop_threa
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_get_alert_rule_reads_off_the_event_loop_thread(tmp_path):
     """`get_alert_rule` was added to the offload sweep (not on the original
@@ -387,11 +396,11 @@ async def test_get_alert_rule_reads_off_the_event_loop_thread(tmp_path):
 
     assert rule_again["rule_id"] == rule["rule_id"]
     assert not loop_statements, (
-        "get_alert_rule ran SQL on the event-loop thread: "
-        f"{loop_statements[:3]}"
+        f"get_alert_rule ran SQL on the event-loop thread: {loop_statements[:3]}"
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_list_runs_reads_off_the_event_loop_thread(tmp_path):
     """`list_runs` also reads via a bare `db.conn.cursor()` -- the trace probe."""
@@ -411,6 +420,7 @@ async def test_list_runs_reads_off_the_event_loop_thread(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_list_alert_rules_reads_off_the_event_loop_thread(tmp_path):
     """`list_alert_rules` also reads via a bare `db.conn.cursor()` -- the trace probe."""

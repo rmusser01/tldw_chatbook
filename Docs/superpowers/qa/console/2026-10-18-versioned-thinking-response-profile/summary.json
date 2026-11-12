@@ -1,0 +1,103 @@
+{
+  "tldw_chatbook/Chat/console_semantic_revision.py": {
+    "baseline": {
+      "lint_exit": 1,
+      "diagnostics": 4,
+      "format_exit": 0,
+      "sha256": "cfe8112dc29f1801c9c7b6120918e6bd0aafd58a4fc91f6c1f8be9be06fe1c54"
+    },
+    "current": {
+      "lint_exit": 1,
+      "diagnostics": 4,
+      "format_exit": 0,
+      "sha256": "5cfe202a5f14262148a7be71ec9b1b3b674d005a0e1815dcc8f99912eebd179f"
+    }
+  },
+  "tldw_chatbook/Chat/console_trace_service.py": {
+    "baseline": {
+      "lint_exit": 1,
+      "diagnostics": 33,
+      "format_exit": 0,
+      "sha256": "2e769ebbbb4e7b5917e4a8e84f47e3b0c38ce87033444c202eaeca298b6b213e"
+    },
+    "current": {
+      "lint_exit": 1,
+      "diagnostics": 33,
+      "format_exit": 0,
+      "sha256": "c768bdf29d1fb003ca5806b0423864b132eccd78c60693903dbe504f9e6afc2f"
+    }
+  },
+  "Tests/Chat/test_console_trace_settlement.py": {
+    "baseline": {
+      "lint_exit": 1,
+      "diagnostics": 2,
+      "format_exit": 0,
+      "sha256": "1cd4842a34ac46c20955b08ec7fdf69a7807232e91a114c6a2d7d830333a76d5"
+    },
+    "current": {
+      "lint_exit": 1,
+      "diagnostics": 2,
+      "format_exit": 0,
+      "sha256": "1a8cc8f385ef747b7f34c33b0a516b6aaf02ebf10553ab7bd879a23b650b1477"
+    }
+  },
+  "Tests/Chat/test_console_trace_thinking_settlement.py": {
+    "baseline": {
+      "lint_exit": 0,
+      "diagnostics": 0,
+      "format_exit": 0,
+      "sha256": "a263a0dfe7fa465ee9b5035ff83db5963ac1e52692cef6bcdeb5272d309bb6f5"
+    },
+    "current": {
+      "lint_exit": 0,
+      "diagnostics": 0,
+      "format_exit": 0,
+      "sha256": "fc1ce1f8f9f327d205715ea6b8181919b7e570f33b34845ae7091c6c833934ed"
+    }
+  },
+  "Tests/Chat/test_console_archive_recovery_followup.py": {
+    "baseline": {
+      "lint_exit": 0,
+      "diagnostics": 0,
+      "format_exit": 0,
+      "sha256": "540fcc5823293eb755e4dcd18585400c2e8970a9e9ac45ff9e5c5909f78813ef"
+    },
+    "current": {
+      "lint_exit": 0,
+      "diagnostics": 0,
+      "format_exit": 0,
+      "sha256": "37e869ae7f9283099e299063f115d0fcaddb76906abce18ddcea4d674d690808"
+    }
+  },
+  "tldw_chatbook/Chat/console_trace_settlement.py": {
+    "unchanged": true,
+    "sha256": "a53fc7ecdafa9b18a3d7b6039b778b7562d9827e723bb2dac9a6c92e62936f72"
+  },
+  "tldw_chatbook/Chat/console_provider_gateway.py": {
+    "unchanged": true,
+    "sha256": "f0069af99f83bdc03fcb75ac0bbb31490a509b756761a3d54af8e35dfa71ef96"
+  },
+  "tldw_chatbook/Chat/console_trace_runtime.py": {
+    "unchanged": true,
+    "sha256": "117ab373bd490cdea7de58b619767d64b0dac5d8f02cd7297e0b5817204a21d4"
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "unchanged": true,
+    "sha256": "128f9efc12e430ea085b08cc82475e85226da6e7a6eb491fd282f28f0c218b13"
+  },
+  "tldw_chatbook/Chat/console_trace_final_values.py": {
+    "unchanged": true,
+    "sha256": "b69cc1a7d539b62b0ad9ce220e4f4ea24cae51dd936eb178c8aa291f68e6069d"
+  },
+  "tldw_chatbook/Chat/console_trace_repository.py": {
+    "unchanged": true,
+    "sha256": "49e44aeb780dd76e48f7ff1e90d514b1df36f7755f9c7fc5fefd781b415856be"
+  },
+  "guards": {
+    "_validate_completed_tool_turn": "15e4b78758bc37c25f89a517cd14288bd77013c203b656e88a0c249a50f0d37c",
+    "_completed_tool_turn_parent": "7ff6524c907739733a9a7935b61c0b6580846a3c41180702b99570ccffd17f6d",
+    "prepare_current_surface_delta": "d712d5016d8fe78cd51b6eb584c540d4b5cae6ee2017087280bcf2ed87897457",
+    "persist_request": "7472ee0ad2c5d7edef65fbd99fd488bbdb6a7385f72a08f83b7382852836f2a3",
+    "_validate_replacement_projection": "5995d05a3b7bfa451cc3be88ec36ab5badd2e9aea6d8fcf24b885b0a36731a75"
+  }
+}

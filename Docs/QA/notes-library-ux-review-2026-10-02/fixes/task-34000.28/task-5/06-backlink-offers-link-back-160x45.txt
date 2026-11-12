@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                            │
+│   a  │ Library notes · Ready                                        │  o    ‹ Notes     ‹ Advisor meeting 2026-09-24   Thesis outline — retrieval-augmented  │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     Saved                                                                              │
+│      │                                                              │         Edit     Preview     Info                                                      │
+│      │ Filter                                                       │         Save     Use in Console                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                              │
+│      │ ▊ advisor                                                  ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Thesis outline — retrieval-augmented tutoring                                  ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     ○ Sort: Newest     Select                         │                                                                                        │
+│ ---> │    Add from files…     Export                                │     Keywords                                                                           │
+│      │ Folders & placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     Move note                │     ▊ thesis                                                                         ▎ │
+│      │    Remove placement                                          │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │ Sort unavailable — clear the filter                          │                                                                                        │
+│      │ filter: advisor · 3 results                                  │<--- Body                                                                               │
+│      │                                                              │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │   Clear filter                                               │     ┃ # Outline                                                                      ┃ │
+│      │  ▾ Meetings                                                  │     ┃                                                                                ┃ │
+│      │    Advisor meeting 2026-09-10 · Meetings · 2m                │     ┃ 1. Intro                                                                       ┃ │
+│ ---> │    Advisor meeting 2026-09-24 · Meetings · 2m                │     ┃ 2. Background                                                                  ┃ │
+│      │  ▾ Projects                                                  │     ┃                                                                                ┃ │
+│      │    ▾ Thesis                                                  │     ┃ See [[Advisor meeting                                                          ┃ │
+│      │      Thesis outline — retrieval-augmented tutoring · Proje…  │     ┃ 2026-09-24]](note://288e85b0-fb50-43e9-ab46-630eae804a26) for the cut list.    ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │                                                              │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                        14 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

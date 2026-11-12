@@ -72,6 +72,7 @@ async def _choose(picker, pilot, path):
     await pilot.press("enter")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size,theme", [((170, 48), "textual-dark"), ((80, 24), "textual-light")]
@@ -147,6 +148,7 @@ async def test_gguf_picker_result_preserves_import_context(
             configure.assert_called_once_with(chosen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("destination", ["author", "hub"])
 async def test_late_gguf_success_respects_newer_focus_and_navigation(
@@ -200,6 +202,7 @@ async def test_late_gguf_success_respects_newer_focus_and_navigation(
             release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size,theme", [((170, 48), "textual-dark"), ((80, 24), "textual-light")]

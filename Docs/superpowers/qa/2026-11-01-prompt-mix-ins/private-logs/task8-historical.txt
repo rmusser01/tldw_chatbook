@@ -1,0 +1,17 @@
+
+def build_mixin_snapshot_loader(controller, session_id: str, target_is_current):
+    """Read original operational instructions only for explicit turn inspection."""
+    service = controller.prompt_mixin_service()
+    session = controller.store._sessions.get(session_id)
+    incarnation = session.incarnation_id if session is not None else None
+
+    async def load(message_id: str):
+        if (not target_is_current() or controller.store._sessions.get(session_id) is not session
+                or session is None or session.incarnation_id != incarnation):
+            raise ValueError('mixin_inspection_stale')
+        snapshot = await service.retry_snapshot(session_id, assistant_message_id=message_id)
+        if not target_is_current() or controller.store._sessions.get(session_id) is not session:
+            raise ValueError('mixin_inspection_stale')
+        return snapshot
+
+    return load

@@ -1,0 +1,27 @@
+{
+  "time": 1791067384.7954829,
+  "argv": [
+    "git",
+    "for-each-ref",
+    "--format=%(objectname)"
+  ],
+  "unique_ref_trees": 464,
+  "worktrees": 93,
+  "head": "3c4c522b40091901514959061c29c092033bb874",
+  "origin_dev": "efea5e45cf2348dd0da50fedac215cd849143822",
+  "max_task_id_all_refs_worktrees": 34212,
+  "max_historical_task_id": 34212,
+  "provisional_block": [
+    34213,
+    34214,
+    34215
+  ],
+  "duplicates": {},
+  "selected_roots": [
+    34213,
+    34214,
+    34215
+  ],
+  "selected_expected_filenames": [],
+  "selected_foreign_filenames": []
+}

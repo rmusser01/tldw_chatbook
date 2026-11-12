@@ -1,0 +1,38 @@
+{
+  "exit_code": 0,
+  "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-411081859d3443a3b70f02d2e2443db9",
+  "reports": [
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\book3283-research-native2\\result.xml",
+      "sha256": "a0e57bc72e7c1eb6af645a89670d98157170e0d45c1551751766c47c8753d14a",
+      "cases": 3,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-411081859d3443a3b70f02d2e2443db9\\pytest\\test_native_runs_observations_0\\private-profile-process\\pytest.xml",
+      "sha256": "5e2acd1ba9c553e08a234f3634dca9e9d96edf00f737d405ee6b212c98b83faa",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-411081859d3443a3b70f02d2e2443db9\\pytest\\test_native_runs_observations_1\\private-profile-process\\pytest.xml",
+      "sha256": "5149ba9b6ab570ee7b0e3be289d1cb7f525ed6a0de0628fdda2d8cc9483b128a",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-411081859d3443a3b70f02d2e2443db9\\pytest\\test_native_runs_observations_2\\private-profile-process\\pytest.xml",
+      "sha256": "9d638729ad493fe194e21969874a623966129e0df886ac7dadd0e82844b1c4c6",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    }
+  ]
+}

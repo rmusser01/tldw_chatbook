@@ -1,13 +1,13 @@
-"""Tests for the Console system-prompt chip in the status-chips strip.
+"""Tests for the Console system-prompt segment in the status strip.
 
-The chip sits between the Model and Assistant (Character) chips and opens the
-existing system-prompt editor modal via ``ConsoleSystemPromptChip.OpenRequested``.
+TASK-35160: the strip is one clickable text line. The system-prompt segment
+sits between the Model and Assistant segments and opens the existing
+system-prompt editor modal via ``ConsoleSystemPromptChip.OpenRequested``.
 """
 
 import pytest
 from textual import on
 from textual.app import App, ComposeResult
-from textual.containers import HorizontalScroll
 
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_SYSTEM_PROMPT_LABEL_SET,
@@ -16,25 +16,18 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleStatusChips,
+    ConsoleStatusText,
     ConsoleSystemPromptChip,
 )
+
+# The strip mount imports real config getters (consolidated_css -> app
+# import chain); per-test env redirect trips the config-participant
+# admission. Same opt-in as the cost-chip screen tests.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class StatusChipsHarness(App):
     """Minimal app harness mounting only the ConsoleStatusChips strip."""
-
-    # Mirror the app stylesheet's chip sizing (tldw_cli_modular.tcss) so the
-    # whole chip strip fits on screen without the full app chrome.
-    CSS = """
-    .console-control-chip {
-        width: auto;
-        min-width: 7;
-        max-width: 22;
-        height: 1;
-        margin: 0 1 0 0;
-        padding: 0 1;
-    }
-    """
 
     def __init__(self, state: ConsoleControlState):
         super().__init__()
@@ -51,47 +44,72 @@ class StatusChipsHarness(App):
         self.open_requests += 1
 
 
+def _line(app: StatusChipsHarness) -> ConsoleStatusText:
+    return app.query_one("#console-status-text", ConsoleStatusText)
+
+
+def _line_text(app: StatusChipsHarness) -> str:
+    renderable = _line(app).renderable
+    return renderable.plain if hasattr(renderable, "plain") else str(_line(app).render())
+
+
+def _segment_start(app: StatusChipsHarness, name: str) -> int:
+    for segment_name, start, _end in _line(app).segment_spans:
+        if segment_name == name:
+            return start
+    raise AssertionError(f"segment {name!r} not on the line")
+
+
 @pytest.mark.asyncio
-async def test_system_prompt_chip_mounted_between_model_and_assistant_chips():
+async def test_system_prompt_segment_mounted_between_model_and_assistant():
     app = StatusChipsHarness(ConsoleControlState.from_values())
     async with app.run_test():
-        scroller = app.query_one("#console-status-chip-scroll", HorizontalScroll)
-        chip_ids = [child.id for child in scroller.children]
-
-        model_index = chip_ids.index("console-model-chip")
-        assistant_index = chip_ids.index("console-assistant-chip")
-        assert chip_ids.index("console-system-prompt-chip") == model_index + 1
+        names = [name for name, _s, _e in _line(app).segment_spans]
+        model_index = names.index("model")
+        assistant_index = names.index("assistant")
+        assert names.index("system-prompt") == model_index + 1
         assert assistant_index == model_index + 2
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_chip_click_posts_open_requested():
+async def test_system_prompt_segment_click_posts_open_requested():
     app = StatusChipsHarness(ConsoleControlState.from_values())
-    async with app.run_test(size=(160, 40)) as pilot:
-        await pilot.click("#console-system-prompt-chip")
-
+    async with app.run_test(size=(220, 40)) as pilot:
+        await pilot.pause()
+        await pilot.click(
+            "#console-status-text",
+            offset=(_segment_start(app, "system-prompt") + 2, 0),
+        )
+        await pilot.pause()
         assert app.open_requests == 1
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_chip_keyboard_activation_posts_open_requested():
+async def test_system_prompt_segment_keyboard_activation_posts_open_requested():
     app = StatusChipsHarness(ConsoleControlState.from_values())
     async with app.run_test() as pilot:
-        app.query_one("#console-system-prompt-chip").focus()
+        await pilot.pause()
+        # Keyboard parity: focus the line, walk the cursor right until it
+        # reaches the system-prompt segment, activate.
+        _line(app).focus()
+        await pilot.pause()
+        for _ in range(len(_line(app).segment_spans)):
+            if _line(app).segment_spans[_line(app)._cursor][0] == "system-prompt":
+                break
+            await pilot.press("right")
+        assert _line(app).segment_spans[_line(app)._cursor][0] == "system-prompt"
         await pilot.press("enter")
-
+        await pilot.pause()
         assert app.open_requests == 1
 
 
 @pytest.mark.asyncio
-async def test_sync_state_updates_system_prompt_chip_label():
+async def test_sync_state_updates_system_prompt_segment_label():
     app = StatusChipsHarness(ConsoleControlState.from_values())
     async with app.run_test():
         strip = app.query_one(ConsoleStatusChips)
-        chip = app.query_one("#console-system-prompt-chip")
-        assert str(chip.renderable) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
+        assert CONSOLE_SYSTEM_PROMPT_LABEL_UNSET in _line_text(app)
 
         strip.sync_state(ConsoleControlState.from_values(system_prompt_set=True))
 
-        assert str(chip.renderable) == CONSOLE_SYSTEM_PROMPT_LABEL_SET
-        assert str(chip.tooltip) == CONSOLE_SYSTEM_PROMPT_LABEL_SET
+        assert CONSOLE_SYSTEM_PROMPT_LABEL_SET in _line_text(app)

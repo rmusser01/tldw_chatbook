@@ -1,0 +1,4 @@
+{
+  "sha256": "125e0b37fb217e6a2b6f9b6ae08dc147e76ee0212da66168575d53060fb18985",
+  "raw_text": "Exact helper marker lifetime checks passed: success, noop, raises, foreign-raises, already-focused, missing, disabled, entry-channel, find-channel, none-identity\n"
+}

@@ -119,8 +119,11 @@ async def test_report_line_renders_the_payload_string_exactly():
 @pytest.mark.asyncio
 async def test_report_line_omitted_when_key_absent_from_payload():
     """A fully stamped library omits the key entirely -- nothing renders."""
-    payload = {key: value for key, value in _FULL_PAYLOAD.items()
-               if key != "legacy_chunk_report"}
+    payload = {
+        key: value
+        for key, value in _FULL_PAYLOAD.items()
+        if key != "legacy_chunk_report"
+    }
     service = _FakeDiagnosticsScopeService(payload)
     app = _ReportHost(_panel_state(), service)
     async with app.run_test() as pilot:
@@ -132,9 +135,7 @@ async def test_report_line_omitted_when_key_absent_from_payload():
 
 @pytest.mark.asyncio
 async def test_report_line_omitted_when_payload_reports_empty_string():
-    service = _FakeDiagnosticsScopeService(
-        {**_FULL_PAYLOAD, "legacy_chunk_report": ""}
-    )
+    service = _FakeDiagnosticsScopeService({**_FULL_PAYLOAD, "legacy_chunk_report": ""})
     app = _ReportHost(_panel_state(), service)
     async with app.run_test() as pilot:
         line = await _wait_for_report(pilot, shown=False)
@@ -161,15 +162,17 @@ async def test_hardcoded_diagnostics_keys_never_render():
     assert str(line.renderable) == REPORT_COPY
     for forbidden in ("native", "spoofed-method-name", "fallback"):
         assert forbidden not in visible_text, (
-            f"hardcoded diagnostics key leaked into the rendered surface: "
-            f"{forbidden!r}"
+            f"hardcoded diagnostics key leaked into the rendered surface: {forbidden!r}"
         )
 
     # And the omission direction: no report key at all means NOTHING from
     # this payload renders, including the siblings.
     empty_service = _FakeDiagnosticsScopeService(
-        {key: value for key, value in _FULL_PAYLOAD.items()
-         if key != "legacy_chunk_report"}
+        {
+            key: value
+            for key, value in _FULL_PAYLOAD.items()
+            if key != "legacy_chunk_report"
+        }
     )
     app = _ReportHost(_panel_state(), empty_service)
     async with app.run_test() as pilot:

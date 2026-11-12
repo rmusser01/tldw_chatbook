@@ -175,6 +175,7 @@ class TestUIComponents:
         assert app.TITLE is not None
         assert "tldw chatbook" in app.TITLE
 
+
 class TestConfiguration:
     """Smoke tests for configuration."""
 

@@ -52,6 +52,14 @@ def _patch_deps(monkeypatch, available: bool):
     )
 
 
+@pytest.fixture
+def owned_profile_manager_directory(tmp_path, monkeypatch):
+    """Keep the real default profile manager inside this selection test."""
+    from tldw_chatbook.RAG_Search import config_profiles
+
+    monkeypatch.setattr(config_profiles, "get_user_data_dir", lambda: tmp_path)
+
+
 # === Default selection: deps installed ===
 
 
@@ -86,6 +94,8 @@ class TestDefaultWithEmbeddingsDeps:
         assert config.vector_store.persist_directory is not None
         assert config.validate() == []
 
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.usefixtures("owned_profile_manager_directory")
     def test_from_settings_defaults_to_chroma(self, monkeypatch):
         _patch_environment(monkeypatch)
         _patch_deps(monkeypatch, True)
@@ -98,6 +108,8 @@ class TestDefaultWithEmbeddingsDeps:
             == Path("/tmp/tldw-rag-selection-test") / "chromadb"
         )
 
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.usefixtures("owned_profile_manager_directory")
     def test_hybrid_basic_profile_inherits_persistent_default(self, monkeypatch):
         """The runtime profile used by chat RAG must pick up the persistent default."""
         _patch_environment(monkeypatch)
@@ -138,6 +150,8 @@ class TestDefaultWithoutEmbeddingsDeps:
         assert config.vector_store.type == "memory"
         assert config.validate() == []
 
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.usefixtures("owned_profile_manager_directory")
     def test_from_settings_defaults_to_memory(self, monkeypatch):
         _patch_environment(monkeypatch)
         _patch_deps(monkeypatch, False)
@@ -194,6 +208,8 @@ class TestExplicitOverrides:
         assert config.vector_store.type == "memory"
         assert config.vector_store.persist_directory is None
 
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.usefixtures("owned_profile_manager_directory")
     def test_explicit_memory_in_user_config_wins_in_from_settings(self, monkeypatch):
         _patch_environment(
             monkeypatch, rag_settings={"vector_store": {"type": "memory"}}
@@ -204,6 +220,8 @@ class TestExplicitOverrides:
 
         assert config.vector_store.type == "memory"
 
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.usefixtures("owned_profile_manager_directory")
     def test_explicit_memory_applies_to_runtime_profiles(self, monkeypatch):
         """User `type = \"memory\"` must also govern profile-built configs."""
         _patch_environment(
@@ -395,6 +413,8 @@ class TestLegacyChromaSection:
 
         assert config.persist_directory == Path("/tmp/legacy-chroma-home")
 
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.usefixtures("owned_profile_manager_directory")
     def test_legacy_key_matches_from_settings_resolution(self, monkeypatch):
         """Plain RAGConfig() and from_settings() must persist to the same place."""
         _patch_environment(

@@ -207,6 +207,45 @@ async def test_reasoning_history_remembers_normalized_target_and_clears_override
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("has_target", [False, True], ids=["no-model", "local-model"])
+@private_profile_test
+async def test_override_controls_show_only_beside_the_model_they_remember(
+    request, has_target: bool
+) -> None:
+    """#3057 capture finding 14 (06a): with no local model in Console the
+    override said "Select a local model in Console..." above two dimmed
+    controls whose help read "Remembered for this normalized endpoint and
+    model", naming none. Without a model only that sentence shows; with one,
+    the controls and their help sit under the line that names it."""
+    app = _app_with_local_console_target() if has_target else _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        override = screen.query_one("#settings-console-reasoning-override", Select)
+        native = screen.query_one("#settings-console-reasoning-native-tools", Checkbox)
+        collapsible = override.query_ancestor(Collapsible)
+        collapsible.collapsed = False
+        await pilot.pause()
+        rows = [
+            str(row.content)
+            for row in collapsible.query(".settings-detail-row").results(Static)
+            if row.display
+        ]
+        shown = [override.parent.display, native.display]
+        if has_target:
+            assert shown == [True, True]
+            label = f"{provider_display_name('local_vllm')} / alias"
+            assert rows[0].startswith(label), rows
+            assert any(row.startswith("Remembered for this") for row in rows), rows
+        else:
+            assert shown == [False, False]
+            assert rows == [
+                "Select a local model in Console to set a remembered override."
+            ]
+
+
+@pytest.mark.asyncio
 @private_profile_test
 async def test_gemma_status_explains_fenced_tool_round_limit(request) -> None:
     app = _app_with_local_console_target(

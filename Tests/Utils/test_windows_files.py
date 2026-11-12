@@ -52,8 +52,9 @@ native = pytest.mark.skipif(
 @native
 def test_private_relative_file_and_exclusive_rename(tmp_path):
     win = WindowsOS()
-    win.chmod(tmp_path, 0o700)
-    parent = win.open(tmp_path, win.O_RDONLY | win.O_DIRECTORY)
+    namespace = tmp_path / "namespace"
+    win.mkdir(namespace, 0o700)
+    parent = win.open(namespace, win.O_RDONLY | win.O_DIRECTORY)
     try:
         descriptor = win.open(
             "source", win.O_RDWR | win.O_CREAT | win.O_EXCL, 0o600, dir_fd=parent
@@ -223,7 +224,9 @@ def test_inherit_only_public_acl_hardened_before_ordinary_children(tmp_path):
 @native
 def test_directory_namespace_barriers_after_empty_create_rename_and_remove(tmp_path):
     win = WindowsOS()
-    parent = win.open(tmp_path, win.O_RDONLY | win.O_DIRECTORY)
+    namespace = tmp_path / "namespace"
+    namespace.mkdir(mode=0o700)
+    parent = win.open(namespace, win.O_RDONLY | win.O_DIRECTORY)
     try:
         win.mkdir("empty", 0o700, dir_fd=parent)
         child = win.open("empty", win.O_RDONLY | win.O_DIRECTORY, dir_fd=parent)

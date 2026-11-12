@@ -1,0 +1,43 @@
+Selected exact app-log lines; full startup/config body omitted.
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage app_version=0.2.1 attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=0 phase=ui_action python_version=3.12.11 sqlite_version=3.49.1 status=entered
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=8 phase=ui_dispatch status=entered
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=10 phase=ui_submit status=entered
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=51 phase=controller_submit status=entered
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=54 phase=provider_resolution status=entered
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=60 phase=ui_submit status=accepted
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=88 phase=ui_dispatch status=sent
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=88 phase=ui_action status=dispatched
+2026-10-18 08:43:20 [ERROR   ] tldw_chatbook.Chat.console_chat_controller:463 - Console RAG capture unavailable; reason=capture_provider_failure; draft_length=51
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 capture_enabled=true component=console duration_ms=112 phase=capture_policy status=entered
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=117 phase=durable_commit status=entered
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=185 phase=durable_commit status=succeeded
+2026-10-18 08:43:20 [INFO    ] tldw_chatbook.Chat.console_chat_controller:463 - console agent reply start
+2026-10-18 08:43:21 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=832 phase=trace_reservation status=entered
+2026-10-18 08:43:21 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=904 phase=trace_reservation status=succeeded
+2026-10-18 08:43:21 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=952 phase=trace_dispatch_commit status=entered
+2026-10-18 08:43:21 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=1023 phase=provider_entry status=entered
+2026-10-18 08:43:43 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=22560 phase=trace_reservation status=entered
+2026-10-18 08:43:43 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=23166 phase=trace_reservation status=succeeded
+2026-10-18 08:43:43 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=23241 phase=trace_dispatch_commit status=entered
+2026-10-18 08:43:44 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=23365 phase=provider_entry status=entered
+2026-10-18 08:43:59 [INFO    ] tldw_chatbook.Chat.console_agent_bridge:463 - console agent bridge run_reply end
+2026-10-18 08:43:59 [INFO    ] tldw_chatbook.Chat.console_chat_controller:463 - console agent reply end
+2026-10-18 08:43:59 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=e1660c62eb7b480bb10acc48f91928b8 component=console duration_ms=38792 phase=controller_submit status=completed
+2026-10-18 08:49:08 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:463 - Screen settings unmounted
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage app_version=0.2.1 attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=0 phase=ui_action python_version=3.12.11 sqlite_version=3.49.1 status=entered
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=2 phase=ui_dispatch status=entered
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=4 phase=ui_submit status=entered
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=18 phase=ui_submit status=accepted
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=29 phase=ui_dispatch status=sent
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=29 phase=ui_action status=dispatched
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=36 phase=controller_submit status=entered
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=37 phase=provider_resolution status=entered
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf capture_enabled=true component=console duration_ms=40 phase=capture_policy status=entered
+2026-10-18 08:50:37 [ERROR   ] tldw_chatbook.Chat.console_chat_controller:463 - Console RAG capture unavailable; reason=capture_provider_failure; draft_length=23
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=42 phase=durable_commit status=entered
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=93 phase=durable_commit status=succeeded
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.Chat.console_chat_controller:463 - console agent reply start
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=684 phase=trace_reservation status=entered
+2026-10-18 08:50:37 [ERROR   ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage app_version=0.2.1 attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf capture_enabled=true component=console duration_ms=760 error_category=validation exception_type=ValueError phase=trace_reservation python_version=3.12.11 sqlite_version=3.49.1 status=failed
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.Chat.console_chat_controller:463 - console agent reply end
+2026-10-18 08:50:37 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=2f3a1a7678554f2d9ad7b4d24e518dcf component=console duration_ms=764 phase=controller_submit status=blocked

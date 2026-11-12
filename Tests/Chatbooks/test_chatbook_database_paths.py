@@ -77,7 +77,6 @@ def test_chatbook_directory_helper_hardens_export_directory(tmp_path: Path) -> N
         "tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py",
         "tldw_chatbook/UI/Wizards/ChatbookImportWizard.py",
         "tldw_chatbook/UI/ChatbookExportManagementWindow.py",
-        "tldw_chatbook/UI/ChatbookCreationWindow.py",
     ],
 )
 def test_chatbook_surfaces_do_not_embed_database_defaults(
@@ -97,7 +96,6 @@ def test_chatbook_surfaces_do_not_embed_database_defaults(
         "tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py",
         "tldw_chatbook/UI/ChatbookExportManagementWindow.py",
         "tldw_chatbook/UI/Chatbooks_Window_Improved.py",
-        "tldw_chatbook/UI/ChatbookCreationWindow.py",
     ],
 )
 def test_chatbook_export_directory_surfaces_use_private_chatbooks_dir_accessor(

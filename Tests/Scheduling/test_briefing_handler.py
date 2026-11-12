@@ -361,6 +361,7 @@ async def test_an_unexpected_exception_inside_the_spawned_task_does_not_propagat
     assert handler._pending_generations == set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_real_provider_failure_writes_a_failed_row_end_to_end(tmp_path):
     """The actual failed-row claim `_run_generation`'s docstring makes ("the
@@ -502,7 +503,9 @@ def _chacha_db(tmp_path) -> CharactersRAGDB:
     Mirrors `Tests/Subscriptions/test_briefing_keep.py`'s own `_chacha_db`
     helper.
     """
-    return CharactersRAGDB(tmp_path / "chacha.sqlite", client_id="briefing-handler-test")
+    return CharactersRAGDB(
+        tmp_path / "chacha.sqlite", client_id="briefing-handler-test"
+    )
 
 
 def _seed_complete_briefing(
@@ -528,6 +531,7 @@ def _canned_chat(**kwargs) -> str:
     return "# Weekly Digest\n\nAcme shipped a new thing this week.\n"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_complete_scheduled_generation_is_auto_kept_with_scheduled_origin(
     tmp_path,
@@ -706,7 +710,9 @@ async def test_a_keep_refused_race_is_treated_as_benign_not_an_error(tmp_path):
         debug_lines: list[str] = []
         warning_or_louder: list[str] = []
         debug_sink = logger.add(debug_lines.append, level="DEBUG", catch=False)
-        warning_sink = logger.add(warning_or_louder.append, level="WARNING", catch=False)
+        warning_sink = logger.add(
+            warning_or_louder.append, level="WARNING", catch=False
+        )
         try:
             with patch(
                 "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.keep_briefing",
@@ -896,6 +902,7 @@ async def test_a_second_scheduled_run_auto_keeps_the_new_briefing_too(tmp_path):
         chacha_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_real_app_wiring_getter_reads_chachanotes_db_live_not_frozen_at_boot():
     """Review round 1's production-liveness proof, through `app.py`'s
@@ -935,9 +942,8 @@ async def test_the_real_app_wiring_getter_reads_chachanotes_db_live_not_frozen_a
         assert getter() is None  # agrees with app.chachanotes_db right now
 
         sentinel = object()
-        app.chachanotes_db = sentinel  # the real, later __init__ assignment, simulated
-
-        assert getter() is sentinel  # the SAME getter now reads the new value
+        with patch.object(app, "chachanotes_db", sentinel):
+            assert getter() is sentinel  # the SAME getter now reads the new value
 
 
 # --- Task 3 (daily reports): completion notifications -------------------------
@@ -1006,6 +1012,7 @@ def _notify_handler(db, spy, *, generate=None, app_marker=object()):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_complete_scheduled_generation_dispatches_briefing_notification(tmp_path):
     db = SubscriptionsDB(tmp_path / "subs.db", "test")
@@ -1026,6 +1033,7 @@ async def test_complete_scheduled_generation_dispatches_briefing_notification(tm
     assert call["app"] is app_marker
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_generation_dispatches_warning_with_error(tmp_path):
     db = SubscriptionsDB(tmp_path / "subs.db", "test")
@@ -1047,6 +1055,7 @@ async def test_failed_generation_dispatches_warning_with_error(tmp_path):
     assert "401 unauthorized" in call["message"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_dispatch_service_configured_stays_silent_and_safe(tmp_path):
     db = SubscriptionsDB(tmp_path / "subs.db", "test")

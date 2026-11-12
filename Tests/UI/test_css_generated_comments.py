@@ -89,6 +89,28 @@ Sample /* descendant boundary */ .child {
     assert block.css == source
 
 
+def test_widget_streams_drop_the_class_body_indentation():
+    """TASK-36386: generated sheets do not copy the Python class-body indent.
+
+    Those sheets are parsed before first paint, and the copied indent was
+    about 19.9 KB of the two widget-defaults sheets. The CSS keeps its own
+    relative indentation, and the parsed tokens do not change.
+    """
+    source = """
+        Sample { height: auto; }
+        .child {
+            width: 1;
+        }
+        """
+    block = widget_css.BundledBlock("sample.py", "Sample", 1, source)
+    own, scoped = widget_css.render_stylesheets([block], "test", scope_every_selector=True)
+    assert "\nSample { height: auto; }\n" in own
+    assert "\nSample .child {\n    width: 1;\n}\n" in scoped
+    expected = widget_css.split_scoped_css(source, "Sample", scope_every_selector=True)
+    for before, after in zip(expected, (own, scoped), strict=True):
+        assert normalized_tokens(before) == normalized_tokens(after)
+
+
 @pytest.mark.parametrize("relative_path", build_css.CSS_MODULES)
 def test_real_source_css_keeps_token_and_selector_whitespace(relative_path):
     source = (Path(build_css.__file__).parent / relative_path).read_text()

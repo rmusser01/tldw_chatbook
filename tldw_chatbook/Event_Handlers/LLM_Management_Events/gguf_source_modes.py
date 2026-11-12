@@ -22,7 +22,7 @@ from tldw_chatbook.Model_Artifacts import (
     ProvenanceClass,
 )
 from tldw_chatbook.Model_Artifacts.gguf_admission import GGUFError
-from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+from tldw_chatbook.Model_Artifacts.model_browser_state import format_mib
 
 
 _SOURCE_ERROR_CODES = frozenset(

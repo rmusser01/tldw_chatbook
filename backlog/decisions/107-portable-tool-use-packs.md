@@ -4,10 +4,10 @@
 - **Date:** 2026-08-31
 - **Task:** [TASK-29232](../tasks/task-29232%20-%20Design-portable-Tool-use-Pack-export-and-import.md)
 - **Design:** [Portable Tool-use Packs design](../../Docs/superpowers/specs/2026-08-31-tool-use-pack-design.md)
-- **Related:** [ADR-032](032-local-agent-tool-permission-boundary.md),
-  [ADR-069](069-console-project-instruction-local-state-and-preflight.md),
+- **Related:** [ADR-300](300-local-agent-tool-permission-boundary.md),
+  [ADR-317](317-console-project-instruction-local-state-and-preflight.md),
   [ADR-074](074-portable-actor-packs-and-local-persona-visual-runtime.md), and
-  [ADR-079](079-workspace-assistant-defaults.md)
+  [ADR-325](325-workspace-assistant-defaults.md)
 
 ## Context
 
@@ -20,8 +20,8 @@ connection configuration.
 
 An imported profile is security-sensitive even when it carries no executable code:
 an exact Allow can authorize a later tool call. Import also crosses two existing
-boundaries. ADR-079 makes workspaces reference named profiles that inherit from
-`default`; ADR-032 places builtin, local, and external MCP tools under permission
+boundaries. ADR-325 makes workspaces reference named profiles that inherit from
+`default`; ADR-300 places builtin, local, and external MCP tools under permission
 identities with different fallback behavior. The design must not make import a
 workspace bind, weaken existing runtime floors, or turn profile removal into a
 fallback grant.
@@ -153,7 +153,7 @@ profile inheritance; MCP-global and explicit
 is not reusable and counts toward storage caps.
 
 This prevents a stale or not-yet-resolved workspace reference from falling through
-to `default`, which ADR-079 specifies for an unknown profile. Already dispatched
+to `default`, which ADR-325 specifies for an unknown profile. Already dispatched
 invocations are not claimed to be revocable; their runtime lease blocks removal.
 `default`, `ws-` profiles, and tombstones are non-removable. Bind, lease, and removal
 share one lifecycle coordinator so none can pass a stale reference/use check while
@@ -222,7 +222,7 @@ surfaces are not extended.
 
 - [Portable Tool-use Packs design](../../Docs/superpowers/specs/2026-08-31-tool-use-pack-design.md)
 - [TASK-29232](../tasks/task-29232%20-%20Design-portable-Tool-use-Pack-export-and-import.md)
-- [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)
-- [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300: Local Agent Tool Permission Boundary](300-local-agent-tool-permission-boundary.md)
+- [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
 - [ADR-074: Portable Actor Packs and local Persona Visual runtime](074-portable-actor-packs-and-local-persona-visual-runtime.md)
-- [ADR-079: Workspace assistant defaults](079-workspace-assistant-defaults.md)
+- [ADR-325: Workspace assistant defaults](325-workspace-assistant-defaults.md)

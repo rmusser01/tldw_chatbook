@@ -133,9 +133,7 @@ def install_verified_parakeet_v2(
             f"Not enough free space to install {total_bytes:,} bytes at {parent}"
         )
 
-    staging = Path(
-        tempfile.mkdtemp(prefix=".parakeet-v2-install-", dir=str(parent))
-    )
+    staging = Path(tempfile.mkdtemp(prefix=".parakeet-v2-install-", dir=str(parent)))
     downloaded = 0
     try:
         for descriptor in PARAKEET_V2_FILES:
@@ -148,9 +146,10 @@ def install_verified_parakeet_v2(
                 _source_url(descriptor.filename),
                 headers={"User-Agent": "tldw-chatbook-parakeet-installer/1"},
             )
-            with _open_url(request, timeout=30) as response, output_path.open(
-                "xb"
-            ) as output:
+            with (
+                _open_url(request, timeout=30) as response,
+                output_path.open("xb") as output,
+            ):
                 while chunk := response.read(_DOWNLOAD_CHUNK_BYTES):
                     file_bytes += len(chunk)
                     if file_bytes > descriptor.size_bytes:

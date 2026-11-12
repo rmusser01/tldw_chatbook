@@ -151,10 +151,7 @@ class LocalRAGAdminService:
         }
         result = self._validate_template_body(validated)
         decorated["template_valid"] = bool(result["valid"])
-        issues = [
-            f"{issue['field']}: {issue['message']}"
-            for issue in result["errors"]
-        ]
+        issues = [f"{issue['field']}: {issue['message']}" for issue in result["errors"]]
         if issues:
             decorated["template_validation_errors"] = issues
         return decorated
@@ -372,9 +369,7 @@ class LocalRAGAdminService:
         """
         if self.media_db is None:
             return ""
-        legacy = self.count_chunks_by_engine_version(self.media_db).get(
-            "legacy", 0
-        )
+        legacy = self.count_chunks_by_engine_version(self.media_db).get("legacy", 0)
         if legacy <= 0:
             return ""
         return f"Chunked by an older engine: {legacy} items"

@@ -87,6 +87,7 @@ async def _models_screen(pilot_app, *, populate_all: bool = True):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (140, 45)])
 async def test_snapshot_extension_keeps_launcher_primary_controls_above_fold(size):
@@ -370,6 +371,7 @@ def test_machine_memory_worker_returns_bounded_result_on_event_thread(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose() -> (
     None
@@ -813,6 +815,7 @@ def test_detached_audio_cpp_failure_releases_request_and_settles_lifecycle():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_all_provider_and_model_rows_live_in_the_rail():
     app = _app()
@@ -836,6 +839,7 @@ async def test_all_provider_and_model_rows_live_in_the_rail():
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_models_recovery_routes_hold_at_80_columns(
     tmp_path,
@@ -974,6 +978,7 @@ async def test_empty_models_recovery_routes_hold_at_80_columns(
     assert str(tmp_path) not in str(recovery.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_remote_drill_down_install_action_stays_inside_real_models_body_at_80_columns():
     """The production body uses one complete pane at its measured width."""
@@ -1064,6 +1069,7 @@ async def test_remote_drill_down_install_action_stays_inside_real_models_body_at
         _assert_painted_inside(app, install, parent)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
     """Production rails, drill-down, refresh, and remount retain memory facts."""
@@ -1629,6 +1635,7 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_remote_completion_and_runtime_choice_fit_real_models_at_80_columns():
     """The complete adoption path must remain painted and keyboard-operable."""
@@ -1722,6 +1729,7 @@ async def test_remote_completion_and_runtime_choice_fit_real_models_at_80_column
         assert app.screen is screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_window_no_longer_carries_nav_buttons():
     app = _app()
@@ -1733,6 +1741,7 @@ async def test_the_window_no_longer_carries_nav_buttons():
         assert not window.query(".llm-nav-button")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_rail_is_highlighted_on_arrival_before_any_press():
     """LLMManagementWindow.on_mount sets active_view itself, so a
@@ -1747,6 +1756,7 @@ async def test_the_rail_is_highlighted_on_arrival_before_any_press():
         assert active[0].lab_view_key == "llama-cpp"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_a_rail_row_moves_both_the_body_and_the_highlight():
     """The highlight half fails SILENTLY -- query() returns empty rather than
@@ -1770,6 +1780,7 @@ async def test_pressing_a_rail_row_moves_both_the_body_and_the_highlight():
         assert active[0].lab_view_key == "ollama"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_status_row_reports_running_servers():
     app = _app()
@@ -1791,6 +1802,7 @@ async def test_the_status_row_reports_running_servers():
         assert "Servers: 1 running" in str(chip.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_install_progress_survives_switch_to_installed():
     """Curated progress remains visible in Installed and in the Lab status row.
@@ -1858,6 +1870,7 @@ async def test_model_install_progress_survives_switch_to_installed():
         assert "Model install: idle" in str(chip.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_curated_install_progress_survives_a_screen_level_recompose(monkeypatch):
     """TASK-596 delta port / TASK-1803: a curated install must not go blank/stale.
@@ -2039,6 +2052,7 @@ async def test_curated_install_progress_survives_a_screen_level_recompose(monkey
         assert "decoder.onnx" in _progress_text(fresh_curated)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_curated_install_progress_after_recompose_still_mirrors_into_installed_view(
     monkeypatch,
@@ -2176,6 +2190,7 @@ async def test_curated_install_progress_after_recompose_still_mirrors_into_insta
         assert fresh_installed._install_active is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deliver_curated_falls_back_to_the_screen_when_llm_window_is_stale_and_closed():
     """TASK-1803 review round 1 (Critical): ``self.llm_window`` is a plain
@@ -2249,6 +2264,7 @@ async def test_deliver_curated_falls_back_to_the_screen_when_llm_window_is_stale
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hydration_mirrors_a_tick_delivered_during_the_recompose_gap_into_installed_view():
     """TASK-1803 review round 2 (Important): the fallback in
@@ -2346,6 +2362,7 @@ async def test_hydration_mirrors_a_tick_delivered_during_the_recompose_gap_into_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_curated_install_progress_renders_exactly_once_per_tick(monkeypatch):
     """TASK-596 delta port, fix round 1 (Review Important #1); TASK-1803.
@@ -2444,6 +2461,7 @@ async def test_curated_install_progress_renders_exactly_once_per_tick(monkeypatc
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_curated_install_click_reaches_the_shared_consent_modal(monkeypatch):
     """A real Install click -- not a direct call to an internal method --
@@ -2749,6 +2767,7 @@ def test_declining_insufficient_space_persists_exact_required_and_free_bytes():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_models_lab_insufficient_space_cancel_is_inline_and_never_provisions(
     tmp_path,
@@ -2881,7 +2900,7 @@ def test_audio_cpp_transfer_failures_map_to_bounded_inline_recovery(
 ):
     """Typed transfer failures select recovery without leaking collaborator text."""
     from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
-    from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+    from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 
     code_type = getattr(acquisition_module, "TransferFailureCode", None)
     assert code_type is not None
@@ -2908,7 +2927,7 @@ def test_audio_cpp_transfer_failures_map_to_bounded_inline_recovery(
 def test_ambiguous_transfer_text_cannot_promote_a_typed_recovery_claim() -> None:
     """Unknown code stays generic even when private text contains size/offline words."""
     from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
-    from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+    from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 
     code_type = getattr(acquisition_module, "TransferFailureCode", None)
     assert code_type is not None
@@ -3294,6 +3313,7 @@ def test_failed_curated_provision_notifies_mirrors_and_resets_state(monkeypatch)
     source_service.prefer_managed.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("preference_write_fails", (False, True))
 @pytest.mark.asyncio
 async def test_successful_curated_install_persists_managed_preference_off_loop(
@@ -3356,6 +3376,7 @@ async def test_successful_curated_install_persists_managed_preference_off_loop(
         assert bool(service.preferred) is not preference_write_fails
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_successful_curated_preference_survives_immediate_screen_unmount():
     import threading
@@ -3422,6 +3443,7 @@ async def test_successful_curated_preference_survives_immediate_screen_unmount()
         screen._deliver_curated.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_inspector_rows_refresh_alongside_the_status_chip():
     """Regression test: `refresh_lab_status` used to update only the chip.
@@ -3455,6 +3477,7 @@ async def test_the_inspector_rows_refresh_alongside_the_status_chip():
         assert "stopped" not in str(row.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_initial_view_is_marked_active_on_arrival_with_no_press():
     """Regression test for the blank-body-on-arrival bug.
@@ -3485,6 +3508,7 @@ async def test_the_initial_view_is_marked_active_on_arrival_with_no_press():
         assert active_views[0].id == "llm-view-llama-cpp"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_surviving_model_rails_trigger_no_unprompted_http_or_search(monkeypatch):
     """Traversing the mounted Models rail stays idle until an explicit action."""
@@ -3624,6 +3648,7 @@ def _remote_report_for(catalog, destination):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_remote_install_progress_survives_a_screen_level_recompose(monkeypatch):
     """TASK-1914 mirror of ``test_curated_install_progress_survives_a_screen_
@@ -3772,6 +3797,7 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
         assert "model-part-2.gguf" in _progress_text(fresh_remote)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("lifecycle_phase", "expected_status"),
@@ -3862,6 +3888,7 @@ async def test_remote_context_survives_recompose_before_the_first_progress_tick(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_restored_remote_context_updates_phase_copy_without_another_recompose(
     monkeypatch,
@@ -3900,6 +3927,7 @@ async def test_restored_remote_context_updates_phase_copy_without_another_recomp
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_remote_install_progress_after_recompose_still_mirrors_into_installed_view(
     monkeypatch,
@@ -3987,6 +4015,7 @@ async def test_remote_install_progress_after_recompose_still_mirrors_into_instal
         assert fresh_installed._install_active is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_remote_install_progress_renders_exactly_once_per_tick_and_never_reaches_curated_view(
     monkeypatch,
@@ -4049,6 +4078,7 @@ async def test_remote_install_progress_renders_exactly_once_per_tick_and_never_r
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_remote_install_click_reaches_the_shared_consent_modal(monkeypatch):
     """Real candidate selection plus the contextual install action
@@ -4887,6 +4917,7 @@ def test_open_installed_switches_and_reveals_exact_reference_without_activation(
     assert not any(call[0] == "activate" for call in installed.method_calls)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_installed_preserves_reference_until_first_lazy_mount(
     monkeypatch,
@@ -4925,13 +4956,14 @@ async def test_open_installed_preserves_reference_until_first_lazy_mount(
         assert window.query_one("#installed-models-view", InstalledView).is_mounted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_installed_exact_row_focus_wins_real_window_switch(
     tmp_path,
 ):
     """The handoff focus must run after Installed's standard focus restore."""
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
-    from tldw_chatbook.UI.Screens.model_browser_state import InventoryRow
+    from tldw_chatbook.Model_Artifacts.model_browser_state import InventoryRow
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
     from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
 
@@ -5042,6 +5074,7 @@ def test_runtime_refresh_rejection_clears_screen_owned_handoff():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_runtime_handoff_replays_into_recomposed_models_window(
     monkeypatch,
@@ -5542,6 +5575,7 @@ async def _wait_for(condition, pilot, *, attempts: int = 120) -> bool:
     return condition()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_external_rail_mounts_through_the_existing_deferred_view_pattern():
     from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
@@ -5568,6 +5602,7 @@ async def test_external_rail_mounts_through_the_existing_deferred_view_pattern()
         assert "-active" in window.query_one("#llm-view-external").classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_success(
     tmp_path, monkeypatch
@@ -5661,6 +5696,7 @@ async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_suc
         assert str(status.renderable) == "Runtime required"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_picker_result_and_cancel_leave_the_prior_source_unchanged(
     tmp_path, monkeypatch
@@ -5703,6 +5739,7 @@ async def test_stale_picker_result_and_cancel_leave_the_prior_source_unchanged(
         assert window.active_view == "curated"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_replacing_external_verification_releases_its_path_free_scope(
     tmp_path,
@@ -5735,6 +5772,7 @@ async def test_replacing_external_verification_releases_its_path_free_scope(
         assert service.released_scopes == [owner[1]]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_action_becomes_physical_cancel_during_external_work_at_80_columns(
     tmp_path,
@@ -5808,6 +5846,7 @@ async def test_stop_action_becomes_physical_cancel_during_external_work_at_80_co
         assert screen.query_one(ExternalModelView).is_mounted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_use_shows_one_physical_cancel_and_returns_to_empty_idle(
     tmp_path,
@@ -5859,6 +5898,7 @@ async def test_first_use_shows_one_physical_cancel_and_returns_to_empty_idle(
         assert len(screen.query("#external-model-cancel-operation")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_external_commit_releases_scope_and_preserves_prior_state(
     tmp_path,
@@ -5897,6 +5937,7 @@ async def test_failed_external_commit_releases_scope_and_preserves_prior_state(
         assert "prior source is unchanged" in screen._external_operation_status
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_replacement_keeps_commit_scope_until_point_of_no_return_finishes(
     tmp_path,
@@ -5953,6 +5994,7 @@ async def test_replacement_keeps_commit_scope_until_point_of_no_return_finishes(
         assert screen._external_operation_status == "Verifying newer model files…"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_replaced_commit_releases_scope_even_when_worker_never_enters_service():
     from types import SimpleNamespace
@@ -5980,6 +6022,7 @@ async def test_replaced_commit_releases_scope_even_when_worker_never_enters_serv
         assert service.commit_attempts == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_external_workers_keep_paths_out_of_descriptions_and_logs(
     tmp_path, monkeypatch
@@ -6073,6 +6116,7 @@ async def test_external_workers_keep_paths_out_of_descriptions_and_logs(
             loguru_logger.remove(sink_id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unmount_cancels_vad_provision_before_it_can_continue(
     monkeypatch,
@@ -6124,6 +6168,7 @@ async def test_unmount_cancels_vad_provision_before_it_can_continue(
         assert continued.is_set() is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_replacing_external_copy_cooperatively_stops_its_side_effect():
     from types import SimpleNamespace
@@ -6156,6 +6201,7 @@ async def test_replacing_external_copy_cooperatively_stops_its_side_effect():
         assert service.copied == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_external_copy_planning_keeps_cancel_responsive_off_loop(tmp_path):
     import asyncio
@@ -6228,6 +6274,7 @@ async def test_external_copy_planning_keeps_cancel_responsive_off_loop(tmp_path)
         assert service.copied == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provision(
     tmp_path, monkeypatch
@@ -6406,6 +6453,7 @@ async def test_missing_vad_shows_vad_only_consent_and_commits_only_after_provisi
     assert calls[-1] == ("provision", report)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_external_copy_uses_task6_plan_and_stop_uses_the_shared_service(
     tmp_path,
@@ -6513,7 +6561,7 @@ def _task6_stub_preflights(screen):
 def _task6_show_unmanaged_row(installed, source):
     """Render one real external-GGUF row without starting inventory I/O."""
     from tldw_chatbook.Model_Artifacts.service import ArtifactDiskUsage
-    from tldw_chatbook.UI.Screens.model_browser_state import (
+    from tldw_chatbook.Model_Artifacts.model_browser_state import (
         UnmanagedRow,
         inventory_rows,
     )
@@ -6527,6 +6575,7 @@ def _task6_show_unmanaged_row(installed, source):
     installed.refresh(recompose=True)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("kind", "button_selector"),
@@ -6592,6 +6641,7 @@ async def test_local_selection_lane_refuses_host_installs_until_declined(
         assert str(source) not in str(fake_logger.mock_calls)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("kind", "phase"),
@@ -6669,6 +6719,7 @@ class _Task6HostImportService:
 
 
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.bootstrap_profile
 @pytest.mark.allow_network
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail", (False, True), ids=("success", "failure"))
@@ -6699,6 +6750,7 @@ async def test_local_import_terminal_releases_host_ownership(tmp_path, fail):
         screen._run_curated_preflight.assert_called_once_with()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_library_view_switch_restores_keyboard_focus_at_80x24(
     monkeypatch,
@@ -6738,6 +6790,7 @@ async def test_model_library_view_switch_restores_keyboard_focus_at_80x24(
         assert app.focused is window.query_one("#installed-models-repair", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_model_library_projects_exact_settings_and_running_evidence(
     tmp_path,
@@ -6911,6 +6964,7 @@ async def test_real_model_library_projects_exact_settings_and_running_evidence(
 
 
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.bootstrap_profile
 @pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_selection_unmount_releases_host_ownership(tmp_path):
@@ -6933,6 +6987,7 @@ async def test_selection_unmount_releases_host_ownership(tmp_path):
 
 
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.bootstrap_profile
 @pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_active_import_unmount_keeps_host_owned_until_worker_stops(tmp_path):
@@ -6979,6 +7034,7 @@ async def test_active_import_unmount_keeps_host_owned_until_worker_stops(tmp_pat
 
 
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
+@pytest.mark.bootstrap_profile
 @pytest.mark.allow_network
 @pytest.mark.asyncio
 async def test_queued_import_unmount_releases_host_before_thread_body(

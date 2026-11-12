@@ -1,0 +1,17 @@
+# Appended to a FRESH run config by launch.sh (EXTRA_TOML default): route chat + character
+# defaults to the local mock LLM (mock_llm.py, port 18765).
+# The api_key is a deliberate non-secret placeholder. It is not in config.py's
+# PROVIDER_API_KEY_PLACEHOLDERS, so resolve_provider_api_key() accepts it and readiness reads
+# "Ready"; the mock never checks it. Never put a real key in a harness fragment.
+# Another port: copy this file into $HARNESS_STATE, edit api_base_url, pass EXTRA_TOML=<copy>.
+[chat_defaults]
+provider = "OpenAI"
+model = "gpt-4.1-mini"
+
+[character_defaults]
+provider = "OpenAI"
+model = "gpt-4.1-mini"
+
+[api_settings.openai]
+api_key = "rp-harness-mock-placeholder-not-a-secret"
+api_base_url = "http://127.0.0.1:18765/v1"

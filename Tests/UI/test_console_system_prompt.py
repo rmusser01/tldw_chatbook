@@ -9,9 +9,15 @@ of inserting its ``user_prompt``.
 
 from __future__ import annotations
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
+
 from pathlib import Path
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_console_native_chat_flow import (
@@ -34,6 +40,10 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
 from tldw_chatbook.Widgets.Console.console_prompt_picker_modal import (
     FILTER_INPUT_ID,
     ROW_ID_PREFIX,
@@ -174,7 +184,10 @@ async def test_console_rail_system_line_click_opens_editor_modal():
 
 
 def _system_prompt_chip_text(console) -> str:
-    return _static_plain_text(console.query_one("#console-system-prompt-chip", Static))
+    """TASK-35160: the chip is the status line's "system-prompt" segment."""
+    return console.query_one(
+        "#console-status-chips", ConsoleStatusChips
+    ).segment_text("system-prompt")
 
 
 @pytest.mark.asyncio
@@ -186,11 +199,20 @@ async def test_console_system_prompt_chip_activation_opens_editor_modal():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         baseline_depth = len(host.screen_stack)
-        await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
 
         # Activate via keyboard: the test harness loads no stylesheet, so the
-        # chip strip overflows the screen and a mouse click lands out of bounds.
-        console.query_one("#console-system-prompt-chip").focus()
+        # status line overflows the screen and a mouse click lands out of
+        # bounds. TASK-35160: focus the line and walk its segment cursor to
+        # the system-prompt segment (the chips' focus+Enter, segment edition).
+        line = console.query_one("#console-status-text", ConsoleStatusText)
+        line.focus()
+        await pilot.pause()
+        for _ in range(len(line.segment_spans)):
+            if line.segment_spans[line._cursor][0] == "system-prompt":
+                break
+            await pilot.press("right")
+        assert line.segment_spans[line._cursor][0] == "system-prompt"
         await pilot.press("enter")
         await pilot.pause(0.2)
 
@@ -207,7 +229,7 @@ async def test_console_system_prompt_chip_label_reflects_applied_prompt():
 
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-system-prompt-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         assert _system_prompt_chip_text(console) == CONSOLE_SYSTEM_PROMPT_LABEL_UNSET
 
         console._session._apply_console_session_system_prompt("Be concise.")
@@ -719,6 +741,62 @@ async def test_console_system_prompt_modal_save_to_library_missing_name_shows_in
         )
 
 
+@pytest.mark.asyncio
+async def test_second_save_to_library_press_cannot_cancel_an_in_flight_save():
+    """A second Save to Library press while the first save runs is ignored.
+
+    The scope service runs a local write in a thread (TASK-38686), so the
+    save worker suspends mid-write. Its exclusive restart used to cancel it
+    after the write landed, dropping its outcome copy and saving again. Both
+    presses show "Saving…", and when the name field changed meanwhile, the
+    outcome names the prompt that was saved.
+    """
+    import asyncio
+
+    from textual.app import App
+
+    from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
+        ConsoleSystemPromptModal,
+    )
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def held_save(name, text):
+        calls.append(name)
+        entered.set()
+        await release.wait()
+        return "Saved."
+
+    modal = ConsoleSystemPromptModal(
+        system_prompt="Be formal.", save_to_library=held_save
+    )
+
+    class Host(App):
+        def on_mount(self):
+            self.push_screen(modal)
+
+    async with Host().run_test() as pilot:
+        await pilot.pause()
+        name = modal.query_one(f"#{NAME_INPUT_ID}", Input)
+        name.value = "Formal Tone"
+        button = modal.query_one(f"#{SAVE_LIBRARY_BUTTON_ID}", Button)
+        status = modal.query_one(f"#{SAVE_STATUS_ID}", Static)
+        button.press()
+        await asyncio.wait_for(entered.wait(), 5)
+        assert _static_plain_text(status) == "Saving…"
+        name.value = "Formal Tone v2"
+        button.press()
+        await pilot.pause()
+        assert _static_plain_text(status) == "Saving…"
+        release.set()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls == ["Formal Tone"]
+        # The field now names another prompt, so the outcome names what saved.
+        assert _static_plain_text(status) == 'Prompt "Formal Tone": Saved.'
+
+
 # ---------------------------------------------------------------------------
 # Persistence: applying to an already-saved conversation persists it.
 # ---------------------------------------------------------------------------
@@ -802,7 +880,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        baseline = console._active_console_settings_context_estimate()
+        baseline = context_spend_for_test(console)._active_console_settings_context_estimate()
         assert baseline.used_tokens is not None
 
         console._session._apply_console_session_system_prompt(
@@ -810,7 +888,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
         )
         await pilot.pause(0.1)
 
-        after = console._active_console_settings_context_estimate()
+        after = context_spend_for_test(console)._active_console_settings_context_estimate()
         assert after.used_tokens is not None
         assert after.used_tokens > baseline.used_tokens
 

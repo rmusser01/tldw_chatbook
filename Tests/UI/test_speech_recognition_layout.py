@@ -58,7 +58,8 @@ async def _open(app, pilot):
     await app.push_screen(screen)
     await pilot.pause()
     row = next(
-        b for b in screen.query(Button)
+        b
+        for b in screen.query(Button)
         if getattr(b, "lab_view_key", None) == "dictation"
     )
     row.press()
@@ -67,6 +68,7 @@ async def _open(app, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_control_is_lost_in_the_rewrite():
     """The behaviour queries all 25 by id; a missing one is a dead handler
@@ -80,6 +82,7 @@ async def test_no_control_is_lost_in_the_rewrite():
     assert not missing, f"lost in the rewrite: {missing}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_transcript_is_the_primary_region():
     """The view exists to show what was said. Before, the transcript shared
@@ -95,6 +98,7 @@ async def test_the_transcript_is_the_primary_region():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_primary_action_is_above_the_fold():
     """Start/stop dictation is why the user opened this view."""

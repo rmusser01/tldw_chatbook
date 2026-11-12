@@ -38,6 +38,7 @@ from dataclasses import replace
 import pytest
 from textual.widgets import Button, Input
 
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -46,6 +47,8 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceStatusPair,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 APP_SIZE = (160, 48)
 
@@ -89,7 +92,9 @@ async def _seed_rows(console, pilot) -> tuple:
     """Type a query so the tray renders grouped browser rows, and return them."""
     search = console.query_one(SEARCH_SELECTOR, Input)
     console.on_console_workspace_conversation_search_changed(
-        type("E", (), {"value": "a", "input": search, "stop": staticmethod(lambda: None)})()
+        type(
+            "E", (), {"value": "a", "input": search, "stop": staticmethod(lambda: None)}
+        )()
     )
     await pilot.pause(0.4)
     for _ in range(3):
@@ -135,7 +140,9 @@ async def test_a_structural_change_still_recomposes():
         assert browser is not None
 
         # Drop every section: a maximal structural change.
-        changed = replace(tray.state, conversation_browser=replace(browser, sections=()))
+        changed = replace(
+            tray.state, conversation_browser=replace(browser, sections=())
+        )
         with _RecomposeCounter() as counter:
             tray.sync_state(changed)
             assert counter.calls == 1

@@ -70,7 +70,7 @@ prevent per-note polling. `tldw_server` must record these server-side decisions
 in its own separately allocated, cross-linked ADR before implementation.
 
 File Notes remains a separate disk-authoritative feature under ADR-021 and
-ADR-029. Database Notes sync does not reuse File Notes tables, recovery store,
+ADR-296. Database Notes sync does not reuse File Notes tables, recovery store,
 editor authority, or write paths.
 
 ## Context
@@ -200,6 +200,6 @@ binding different filesystems to one server note.
 - [Approved design](../../Docs/superpowers/specs/2026-08-12-notes-folder-import-sync-design.md)
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
 - [ADR-021: File-Backed Notes Disk Authority and Recovery](021-file-backed-notes-disk-authority-and-recovery.md)
-- [ADR-027: Portable Database Note Session Coordinator](027-portable-database-note-session-coordinator.md)
+- [ADR-293: Portable Database Note Session Coordinator](293-portable-database-note-session-coordinator.md)
 - [ADR-029: Local Private Data Boundary](029-local-private-data-boundary.md)
 - [ADR-055: Library Destructive Action Reversibility](055-library-destructive-action-reversibility-rule.md)

@@ -166,9 +166,7 @@ class ServerResearchWorkspaceAdapter:
     ) -> tuple[ResearchWorkspaceSummary, ...]:
         context, profile_id, principal_id = self._active_identity()
         require_capability(self._capabilities_for_context(context), "list")
-        rows = await self._server_call(
-            self._service.list_workspaces(), context=context
-        )
+        rows = await self._server_call(self._service.list_workspaces(), context=context)
         summaries = tuple(
             self._summary(row, profile_id=profile_id, principal_id=principal_id)
             for row in rows
@@ -183,9 +181,7 @@ class ServerResearchWorkspaceAdapter:
         self._require_server_ref(ref)
         context = self._context_for_ref(ref)
         require_capability(self._capabilities_for_context(context), "get")
-        rows = await self._server_call(
-            self._service.list_workspaces(), context=context
-        )
+        rows = await self._server_call(self._service.list_workspaces(), context=context)
         for row in rows:
             if str(row.get("id") or "").strip() == ref.workspace_id:
                 return self._matching_summary(ref, row)
@@ -209,9 +205,7 @@ class ServerResearchWorkspaceAdapter:
             )
             raise CapabilityUnavailableError(capability)
         row = await self._server_call(
-            self._service.save_workspace(
-                workspace_id=self._id_factory(), name=name
-            ),
+            self._service.save_workspace(workspace_id=self._id_factory(), name=name),
             context=context,
         )
         return self._summary(row, profile_id=profile_id, principal_id=principal_id)
@@ -240,9 +234,7 @@ class ServerResearchWorkspaceAdapter:
         context = self._context_for_ref(ref)
         require_capability(self._capabilities_for_context(context), "duplicate")
         row = await self._server_call(
-            self._service.save_workspace(
-                workspace_id=self._id_factory(), name=name
-            ),
+            self._service.save_workspace(workspace_id=self._id_factory(), name=name),
             context=context,
         )
         return self._summary(
@@ -442,10 +434,7 @@ class ServerResearchWorkspaceAdapter:
         rows = await self._server_call(
             self._service.list_workspace_sources(ref.workspace_id), context=context
         )
-        if (
-            not isinstance(rows, list)
-            or len(rows) > MAX_WORKSPACE_SOURCE_OWNER_ROWS
-        ):
+        if not isinstance(rows, list) or len(rows) > MAX_WORKSPACE_SOURCE_OWNER_ROWS:
             raise ValueError("Server source list is not a bounded page")
         normalized = tuple(self._source_summary(ref, row) for row in rows)
         page = normalized[page_offset : page_offset + page_limit]
@@ -506,9 +495,7 @@ class ServerResearchWorkspaceAdapter:
             ),
             context=context,
         )
-        raw_items, total = _catalog_backing_page(
-            result, expected_page=server_page
-        )
+        raw_items, total = _catalog_backing_page(result, expected_page=server_page)
         combined = list(raw_items[page_inner_offset:])
         if len(combined) < page_limit and page_offset + len(combined) < total:
             next_result = await self._server_call(
@@ -580,9 +567,7 @@ class ServerResearchWorkspaceAdapter:
             updated_at=now,
         )
         try:
-            operation = await asyncio.to_thread(
-                self._operation_store.create, operation
-            )
+            operation = await asyncio.to_thread(self._operation_store.create, operation)
         except SourceOperationConflictError:
             existing = await asyncio.to_thread(
                 self._operation_store.get_by_idempotency_key, idempotency_key
@@ -681,9 +666,10 @@ class ServerResearchWorkspaceAdapter:
             ),
             context=context,
         )
-        if str(row.get("workspace_id") or "") != ref.workspace_id or str(
-            row.get("source_id") or ""
-        ) != source_id:
+        if (
+            str(row.get("workspace_id") or "") != ref.workspace_id
+            or str(row.get("source_id") or "") != source_id
+        ):
             raise ValueError("Server preview returned mismatched source identity")
         snippets = row.get("snippets") or []
         if not isinstance(snippets, list):
@@ -738,7 +724,9 @@ class ServerResearchWorkspaceAdapter:
                     "Server readiness returned a mismatched workspace"
                 )
         requested = set(source_ids)
-        normalized = tuple(normalize_server_readiness(ref=ref, status=row) for row in rows)
+        normalized = tuple(
+            normalize_server_readiness(ref=ref, status=row) for row in rows
+        )
         if requested and not requested.issubset({row.source_id for row in normalized}):
             raise ValueError("source_ids contains an unattached source")
         return tuple(
@@ -1095,9 +1083,7 @@ class ServerResearchWorkspaceAdapter:
             catalog_item_version=None,
             selected=bool(row.get("selected", True)),
             position=int(row.get("position") or 0),
-            updated_at=str(
-                row.get("updated_at") or row.get("last_modified") or ""
-            ),
+            updated_at=str(row.get("updated_at") or row.get("last_modified") or ""),
         )
 
     async def _set_archived(

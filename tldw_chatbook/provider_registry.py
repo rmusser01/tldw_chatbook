@@ -72,8 +72,10 @@ class ProviderRecord:
             list the record feeds.
         api_key_env_var: Conventional credential environment variable, or
             ``None`` when the provider has none.
-        api_key_env_candidates: Full env-candidate chain (configured name
-            first, then canonical) the engine's credential resolution walks.
+        api_key_env_candidates: Env-candidate chain (configured name first,
+            then canonical). The cloud-live capture harness walks it; the
+            engine resolves keys through readiness (ADR-012, TASK-36941.3),
+            which reads ``api_key_env_var``.
         default_base_url: Shipped base URL fallback, or ``None`` when the
             host is per-account (Databricks) or per-entry (custom family).
         native_tools: Whether the provider's chat path advertises native
@@ -101,6 +103,12 @@ class ProviderRecord:
             flag-off field with a caller-supplied value is a bad request.
         reasoning_effort_key: Payload key for ``reasoning_effort`` when the
             provider spells it differently; ``None`` keeps the standard key.
+        reasoning_effort_values: For a preset that sends ``reasoning_effort``,
+            the levels it accepts; any other level is refused locally (and
+            left out of Settings). ``None`` forwards any level unchanged.
+        reasoning_effort_map: Console levels the provider spells differently,
+            mapped to the level actually sent (Fireworks has no ``minimal``, so
+            it sends ``low``); applied before ``reasoning_effort_values``.
         thinking_toggle_models: For a preset that refuses
             ``reasoning_effort``, model globs (``fnmatch``, case-sensitive)
             whose chat template switches thinking with one boolean
@@ -124,6 +132,8 @@ class ProviderRecord:
             null, scalar, or shape-safe mapping).
         message_allowances: Tolerated extra message/delta-level keys
             (same value rule).
+        tool_call_allowances: Tolerated extra keys on a non-streamed tool
+            call object (same value rule).
         stream_include_usage: Send ``stream_options.include_usage`` on
             streaming requests (providers that only stream usage on request).
         stream_usage_optional: Accept a stream that ends without usage
@@ -147,7 +157,7 @@ class ProviderRecord:
             ``"proprietary"`` (private to the terminal turn).
         auth_scheme: Credential contract of engine resolution and
             transport: ``"bearer"`` hard-requires a key;
-            ``"bearer_optional"`` lets keyless endpoints (ADR-146) execute
+            ``"bearer_optional"`` lets keyless endpoints (ADR-343) execute
             with no Authorization header; ``"api_key_header"`` (Phase 3)
             hard-requires a key and sends it as an ``api-key`` header.
         continuation_protocol: Protocol for provider continuation
@@ -193,6 +203,8 @@ class ProviderRecord:
         }
     )
     reasoning_effort_key: str | None = None
+    reasoning_effort_values: frozenset[str] | None = None
+    reasoning_effort_map: Mapping[str, str] = field(default_factory=dict)
     thinking_toggle_models: Mapping[str, str] = field(default_factory=dict)
     max_tokens_key: str | None = None
     stream_annotation_key: str | None = None
@@ -209,6 +221,9 @@ class ProviderRecord:
     response_allowances: frozenset[str] = frozenset()
     choice_allowances: frozenset[str] = frozenset()
     message_allowances: frozenset[str] = frozenset()
+    # Extra keys on a non-streamed ``tool_calls[]`` object beyond id/type/
+    # function, under the same value rule (TASK-34364).
+    tool_call_allowances: frozenset[str] = frozenset()
     # Streamed-usage contract (TASK-33201). Strict records fail a stream that
     # ends without usage, and OpenAI-semantics providers only send streamed
     # usage when asked: ``stream_include_usage`` adds
@@ -216,7 +231,9 @@ class ProviderRecord:
     # ``stream_usage_optional`` is for providers whose documented chunk schema
     # carries no usage at all -- the stream then ends as a usage-None turn
     # (finish reason still required). Both default off so existing presets
-    # send byte-identical payloads.
+    # send byte-identical payloads; CUSTOM_HOSTED opts in (TASK-35582) and,
+    # like every record whose stream may end without usage, the transport
+    # retries once without ``stream_options`` when a server rejects it.
     stream_include_usage: bool = False
     stream_usage_optional: bool = False
     # Provider status envelope (TASK-33201): the top-level object some
@@ -241,7 +258,7 @@ class ProviderRecord:
     # Auth contract of the engine's credential resolution and transport:
     # "bearer" hard-requires a key (a missing key is an actionable
     # configuration error); "bearer_optional" (Phase 2) lets keyless
-    # endpoints (ADR-146 custom endpoints) execute with no Authorization
+    # endpoints (ADR-343 custom endpoints) execute with no Authorization
     # header while still using a resolved key when one exists;
     # "api_key_header" (Phase 3, TASK-33350) requires a key and sends it as
     # an ``api-key`` header instead of Authorization. See ADR-179 spec §3.
@@ -256,6 +273,13 @@ class ProviderRecord:
     # under the legacy handler's exact key spellings. Explicit request
     # kwargs still win; ``settings_defaults`` is the last resort.
     defaults_settings_section: str | None = None
+    # ADR-179: the host is per-account (no default URL can ship), so a resolved
+    # key alone does not make the provider ready -- a base URL must be set.
+    base_url_required: bool = False
+    # Hand-written (non-engine) providers that nonetheless checkpoint tool
+    # continuations (moonshot, zai, deepseek); engine records qualify by
+    # ``continuation_protocol`` alone.
+    checkpoints_continuations: bool = False
 
 
 # --- Databricks (first engine-driven preset; AI Gateway external models) ---
@@ -267,6 +291,7 @@ DATABRICKS = ProviderRecord(
     api_key_env_var="DATABRICKS_TOKEN",
     api_key_env_candidates=("DATABRICKS_TOKEN",),
     default_base_url=None,  # workspace host is per-account; user-configured
+    base_url_required=True,
     native_tools=True,      # confirmed (or honestly disabled) at live gate (Task 14)
     reasoning_effort=False, # gateway model support varies; enable per-model later
     auto_refresh=True,
@@ -291,16 +316,18 @@ DATABRICKS = ProviderRecord(
 # implementation is this record plus one dispatch entry (no per-provider
 # LLM_Calls module).
 #
-# ALLOWANCES ARE PROVISIONAL PENDING FIRST LIVE CAPTURE: this environment
-# holds no provider keys, so Task 2 captured NO cloud fixtures, and all
-# three records ship EMPTY response/choice/message allowance sets -- the
-# strict parser unchanged. Task 7's live probes capture real envelopes and
-# reconcile these sets (amend, never silent).
-#
-# Memory of expected extras (recorded here as memory, NOT as live
-# allowances -- fixture-unproven): Together -- a top-level ``prompt``
-# string (the prompt tokens actually shown) and choice-level ``logprobs``;
-# Cerebras -- a top-level ``time_info`` object on some responses.
+# TASK-34367.3-.5: scoped allowances reconciled with current official schemas
+# (2026-10-04) and actual-adapter complete/SSE replays. These are offline
+# contracts; live qualification remains TASK-33640. Sources:
+# docs.together.ai/reference/chat-completions -- choice logprobs/seed/text/
+# top_logprobs, message reasoning, envelope prompt (array)/warnings.
+# docs.fireworks.ai/api-reference/post-chatcompletions -- choice logprobs/
+# raw_output, envelope perf_metrics (terminal-only in SSE)/prompt_token_ids.
+# inference-docs.cerebras.ai/api-reference/chat-completions -- choice
+# logprobs/reasoning_logprobs, message reasoning, envelope time_info and
+# service_tier/service_tier_used. No allowance applies to another provider.
+# Opt-in nonempty choice token_ids and structured reasoning_details are not
+# permitted by the existing level-value contract; do not silently drop them.
 #
 # Fireworks returns reasoning in ``message.reasoning_content`` (and stream
 # deltas) and requires it replayed on interleaved tool turns
@@ -322,6 +349,12 @@ DATABRICKS = ProviderRecord(
 # 2026-07-22) rejects schemas lacking ``additionalProperties: false`` or
 # using pattern/format/minLength/oneOf -- most of Chatbook's tool schemas --
 # so opting in would break tool turns (TASK-33500).
+#
+# Together, captured live 2026-10-04 (Tests/fixtures/cloud_live/together.json,
+# TASK-33640): stream choices carry ``logprobs`` (null), and a stream sends
+# usage only when ``stream_options.include_usage`` asks (a final chunk with no
+# choices). Without both, every streamed reply failed (TASK-34362). /models
+# answers with a bare array, which discovery accepts (TASK-34361).
 TOGETHER = ProviderRecord(
     key="together",
     config_key="Together",
@@ -343,10 +376,18 @@ TOGETHER = ProviderRecord(
     },
     pricing_seeds={},       # per-model pricing lands with the catalog
     engine_driven=True,
+    response_allowances=frozenset({"prompt", "warnings"}),
+    choice_allowances=frozenset({"logprobs", "seed", "top_logprobs", "text"}),
+    message_allowances=frozenset({"reasoning"}),
     base_url_suffix=None,   # the default URL is already complete
     reasoning_disposition="ignored",
     auth_scheme="bearer",
+    stream_include_usage=True,
 )
+# Fireworks, captured live 2026-10-04 (Tests/fixtures/cloud_live/fireworks.json,
+# TASK-33640): a non-streamed tool call carries ``index`` and ``name: null``
+# beside id/type/function, which failed every non-streamed tool reply
+# (TASK-34364). Streamed usage arrives without asking.
 FIREWORKS = ProviderRecord(
     key="fireworks",
     config_key="Fireworks",
@@ -356,7 +397,15 @@ FIREWORKS = ProviderRecord(
     api_key_env_candidates=("FIREWORKS_API_KEY",),
     default_base_url="https://api.fireworks.ai/inference/v1",
     native_tools=True,
-    reasoning_effort=False,
+    # docs.fireworks.ai/api-reference/post-chatcompletions (read 2026-09-29):
+    # reasoning_effort takes none/low/medium/high/xhigh (plus max/adaptive,
+    # which Console does not offer); there is no "minimal". Support varies by
+    # model (some always think; DeepSeek V3.1 is off by default) -- not yet
+    # live-verified (TASK-33640). Console's "minimal" is sent as the smallest
+    # non-zero level, "low", so every level Console offers is really sent.
+    reasoning_effort=True,
+    reasoning_effort_values=frozenset({"none", "low", "medium", "high", "xhigh"}),
+    reasoning_effort_map={"minimal": "low"},
     auto_refresh=True,
     settings_defaults={
         "api_key_env_var": "FIREWORKS_API_KEY",
@@ -366,9 +415,12 @@ FIREWORKS = ProviderRecord(
     },
     pricing_seeds={},
     engine_driven=True,
+    response_allowances=frozenset({"perf_metrics", "prompt_token_ids"}),
+    choice_allowances=frozenset({"logprobs", "raw_output"}),
     base_url_suffix=None,
     reasoning_disposition="proprietary",  # reasoning_content, replayed on tool turns
     auth_scheme="bearer",
+    tool_call_allowances=frozenset({"index", "name"}),
 )
 CEREBRAS = ProviderRecord(
     key="cerebras",
@@ -389,6 +441,9 @@ CEREBRAS = ProviderRecord(
     },
     pricing_seeds={},
     engine_driven=True,
+    response_allowances=frozenset({"time_info", "service_tier", "service_tier_used"}),
+    choice_allowances=frozenset({"logprobs", "reasoning_logprobs"}),
+    message_allowances=frozenset({"reasoning"}),
     base_url_suffix=None,
     reasoning_disposition="ignored",
     auth_scheme="bearer",
@@ -448,7 +503,11 @@ SAMBANOVA = ProviderRecord(
 # Qwen3.5 thinks by default; its schema (build.nvidia.com/qwen/qwen3.5-397b-
 # a17b, read 2026-09-29) takes no ``reasoning_effort``, only
 # ``chat_template_kwargs: {"enable_thinking": bool}`` -- so effort "none"
-# turns thinking off and any other level leaves it on (TASK-33502).
+# turns thinking off and any other level leaves it on (TASK-33502). Note:
+# the public /v1/models listing (no key, 2026-09-30) names 81 models and no
+# Qwen at all, so whether Qwen3.5 is served at this endpoint needs a keyed
+# capture (TASK-33640); the older qwen3-235b "thinking" kwarg is not added
+# for the same reason.
 NVIDIA = ProviderRecord(
     key="nvidia",
     config_key="NVIDIA",
@@ -1251,6 +1310,7 @@ AZURE = ProviderRecord(
     api_key_env_var="AZURE_OPENAI_API_KEY",
     api_key_env_candidates=("AZURE_OPENAI_API_KEY",),
     default_base_url=None,  # resource host is per-account; user-configured
+    base_url_required=True,
     native_tools=True,
     reasoning_effort=False,
     auto_refresh=False,
@@ -1331,6 +1391,7 @@ CLOUDFLARE = ProviderRecord(
     api_key_env_var="CLOUDFLARE_API_TOKEN",
     api_key_env_candidates=("CLOUDFLARE_API_TOKEN",),
     default_base_url=None,  # the account id is in the path; user-configured
+    base_url_required=True,
     native_tools=True,
     reasoning_effort=False,
     auto_refresh=False,
@@ -1425,7 +1486,7 @@ COMMANDCODE = ProviderRecord(
 )
 
 # --- Custom hosted family (ADR-179 Phase 2 Task 6) ---
-# The engine-driven execution surface for the ADR-146 custom-endpoint
+# The engine-driven execution surface for the ADR-343 custom-endpoint
 # ``openai_compatible`` family, swapped in at the Console gateway identity
 # site when ``[console] custom_endpoints_use_engine`` is on. Identity,
 # readiness, and saved sessions keep the ``custom``/``custom-ep:<slug>``
@@ -1438,7 +1499,7 @@ COMMANDCODE = ProviderRecord(
 # ``[api_settings.custom]`` table via ``defaults_settings_section`` under
 # ``chat_with_custom_openai``'s exact key spellings (``api_timeout`` et al;
 # the shipped table's ``timeout`` spellings were never read by the legacy
-# handler and stay unread). ADR-066 custom row: ``reasoning_effort`` is
+# handler and stay unread). ADR-311 custom row: ``reasoning_effort`` is
 # consumed verbatim; a thinking budget is accepted and dropped (strict
 # OpenAI proxies may reject llama.cpp-specific fields).
 CUSTOM_HOSTED = ProviderRecord(
@@ -1491,6 +1552,7 @@ CUSTOM_HOSTED = ProviderRecord(
     auth_scheme="bearer_optional",
     continuation_protocol="chat_completions",
     defaults_settings_section="custom",
+    stream_include_usage=True,
 )
 
 # --- existing cloud providers (opaque identity records) ---
@@ -1539,7 +1601,9 @@ DEEPSEEK = ProviderRecord(
     api_key_env_var="DEEPSEEK_API_KEY",
     api_key_env_candidates=("DEEPSEEK_API_KEY",),
     default_base_url="https://api.deepseek.com",
-    native_tools=True, reasoning_effort=False, auto_refresh=False,
+    native_tools=True, reasoning_effort=True, auto_refresh=False,
+    reasoning_effort_values=frozenset({"none", "low", "high", "max"}),
+    checkpoints_continuations=True,
 )
 MISTRAL = ProviderRecord(
     key="mistral", config_key="MistralAI", display_name="Mistral", classification=_CLOUD,
@@ -1568,6 +1632,7 @@ MOONSHOT = ProviderRecord(
     api_key_env_candidates=("MOONSHOT_API_KEY",),
     default_base_url="https://api.moonshot.ai/v1",  # [api_settings.moonshot].api_base_url
     native_tools=True, reasoning_effort=True, auto_refresh=True,
+    checkpoints_continuations=True,
 )
 ZAI = ProviderRecord(
     key="zai", config_key="ZAI", display_name="Z.ai", classification=_CLOUD,
@@ -1575,6 +1640,7 @@ ZAI = ProviderRecord(
     api_key_env_candidates=("ZAI_API_KEY",),
     default_base_url="https://api.z.ai/api/paas/v4",  # [api_settings.zai].api_base_url
     native_tools=True, reasoning_effort=True, auto_refresh=True,
+    checkpoints_continuations=True,
 )
 QWENCLOUD = ProviderRecord(
     key="qwencloud", config_key="QwenCloud", display_name="QwenCloud", classification=_CLOUD,
@@ -1595,6 +1661,14 @@ LLAMA_CPP = ProviderRecord(
     key="llama_cpp", config_key="Llama_cpp", display_name="llama.cpp", classification=_LOCAL,
     api_key_env_var="LLAMA_CPP_API_KEY",
     api_key_env_candidates=("LLAMA_CPP_API_KEY",),
+)
+STRATA = ProviderRecord(
+    key="strata", config_key="Strata", display_name="Strata", classification=_LOCAL,
+    api_key_env_var="STRATA_API_KEY", api_key_env_candidates=("STRATA_API_KEY",),
+)
+POLYSTRATA = ProviderRecord(
+    key="polystrata", config_key="PolyStrata", display_name="PolyStrata", classification=_LOCAL,
+    api_key_env_var="STRATA_API_KEY", api_key_env_candidates=("STRATA_API_KEY",),
 )
 KOBOLDCPP = ProviderRecord(
     key="koboldcpp", config_key="koboldcpp", display_name="Koboldcpp", classification=_LOCAL,
@@ -1657,7 +1731,7 @@ ALL_RECORDS: tuple[ProviderRecord, ...] = (
     VERCEL, ZENMUX, KILO, SILICONFLOW, BASETEN, GMI, OLLAMA_CLOUD,
     UPSTAGE, ARCEE, QIANFAN, NOUS, VENICE, META,
     AZURE, WANDB, CLOUDFLARE, OPENCODE_ZEN, COMMANDCODE,
-    LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
+    LLAMA_CPP, STRATA, POLYSTRATA, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
     LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,
 )
 
@@ -1714,3 +1788,94 @@ NATIVE_TOOLS_KEYS: frozenset[str] = frozenset(
 )
 #: Every dispatch key (canonical + aliases) — the sensitive-audit universe.
 AUDITED_ENDPOINT_KEYS: frozenset[str] = frozenset(RECORDS_BY_KEY) | frozenset(ALIASES)
+
+
+# --- Lookup tables derived from the records (TASK-36946.1) -------------------
+#: Engine presets whose config-table spelling is not their registry key
+#: ("OllamaCloud" lowers to "ollamacloud", not "ollama_cloud", TASK-33511).
+_ENGINE_CONFIG_KEY_ALIASES: dict[str, str] = {
+    record.config_key.lower(): record.key
+    for record in ALL_RECORDS
+    if record.engine_driven and record.key != "custom-hosted"
+}
+
+
+def normalize_provider_config_key(provider: object) -> str:
+    """Return the canonical lookup form used for provider config tables.
+
+    Args:
+        provider: Provider label or key to normalize.
+
+    Returns:
+        A stripped, lowercase provider key with spaces and hyphens replaced by
+        underscores.
+    """
+    normalized = str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if normalized == "z.ai":
+        return "zai"
+    return _ENGINE_CONFIG_KEY_ALIASES.get(normalized, normalized)
+
+
+def _readiness_keys(local: bool) -> frozenset[str]:
+    """Readiness spellings (normalized key, config table, alias) of a classification.
+
+    ``custom-hosted`` is execution-only (never a readiness identity), so it is
+    left out of the local set.
+    """
+    wanted = _LOCAL if local else _CLOUD
+    keys: set[str] = set()
+    for record in ALL_RECORDS:
+        if record.classification == wanted and record.key != "custom-hosted":
+            keys.add(normalize_provider_config_key(record.key))
+            keys.add(normalize_provider_config_key(record.config_key))
+    for alias, canonical in ALIASES.items():
+        if RECORDS_BY_KEY[canonical].classification == wanted:
+            keys.add(normalize_provider_config_key(alias))
+    return frozenset(keys)
+
+
+#: Providers that dispatch without a credential, in readiness spelling.
+#: ``local_onnx`` / ``local_transformers`` have config tables but no dispatch
+#: handler and no record (see the local-records note above), so they are the
+#: one explicit exception to the derivation.
+KEYLESS_PROVIDER_KEYS: frozenset[str] = _readiness_keys(local=True) | {
+    "local_onnx",
+    "local_transformers",
+}
+#: Providers that need an API key, in readiness spelling.
+PROVIDERS_REQUIRING_API_KEY_KEYS: frozenset[str] = _readiness_keys(local=False)
+#: Per-account hosts: no default URL ships, so readiness needs one configured.
+PROVIDERS_REQUIRING_BASE_URL_KEYS: frozenset[str] = frozenset(
+    normalize_provider_config_key(record.key)
+    for record in ALL_RECORDS
+    if record.base_url_required
+)
+#: Providers that checkpoint tool continuations: engine presets that speak a
+#: continuation protocol, plus records flagged ``checkpoints_continuations``.
+CONTINUATION_PROVIDER_KEYS: frozenset[str] = frozenset(
+    record.key
+    for record in ALL_RECORDS
+    if record.checkpoints_continuations
+    or (record.engine_driven and record.continuation_protocol is not None)
+)
+#: Console-settings identities: every dispatch key and alias except the
+#: execution-only ``custom-hosted`` (it is never a user-selectable identity).
+CONSOLE_EXECUTION_PROVIDER_KEYS: frozenset[str] = frozenset(RECORDS_BY_KEY) - {
+    "custom-hosted"
+}
+
+
+def default_api_key_env_var(provider_key: str) -> str | None:
+    """Return the conventional credential env var of a keyed provider.
+
+    Args:
+        provider_key: A readiness key (``"openai"``, ``"mistralai"``).
+
+    Returns:
+        The record's ``api_key_env_var``, or ``None`` for a keyless or
+        unknown provider.
+    """
+    if provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
+        return None
+    record = RECORDS_BY_KEY.get(provider_key)
+    return record.api_key_env_var if record is not None else None

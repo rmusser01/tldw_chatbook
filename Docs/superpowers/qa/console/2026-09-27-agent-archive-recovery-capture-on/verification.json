@@ -1,0 +1,195 @@
+{
+  "baseline_head": "0f5e537fe33553daf9d947834f90d14315a77772",
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "795b8ebccff0360d62ac69bf2426dd23ef6f7bec07c21f26a30f63015cf9273d",
+    "Tests/Chat/test_console_archive_recovery_followup.py": "68ffa85f831cd95829379905903561dae696a7c252d8ac0f6e5ee693f64fe52a",
+    "tldw_chatbook/Chat/console_agent_bridge.py": "e957c9d4e2a07d5d49908dfbe46e116fc3f8a37823f8b3dbe25b9736f9f3a329",
+    "tldw_chatbook/Chat/console_trace_runtime.py": "117ab373bd490cdea7de58b619767d64b0dac5d8f02cd7297e0b5817204a21d4",
+    "tldw_chatbook/Chat/console_trace_service.py": "de7b0d87d388e0fca41c31f7d2272251a446d94bb8313f3dc1682ba7fbb245c9"
+  },
+  "ruff": {
+    "baseline_count": 191,
+    "current_count": 191,
+    "code_message_multiset_equal": true
+  },
+  "captured_flows": [
+    {
+      "store_name": "test_captured_native_turn_rest0",
+      "call_pins": [
+        {
+          "call_id": "bb01287e-6860-4b3b-8e3a-e0731b1d6038",
+          "turn_id": "60372232-8e76-463b-b9f5-eedeefe3d5e8",
+          "run_id": "c4cee85d-3b45-4d98-b5fa-61b8ac95b147:1405465a-76c3-47c5-af3e-cacf3f6b02ae",
+          "call_sequence": 0,
+          "state": "complete",
+          "policy_id": "28d46cce-487a-46bc-99f5-b0e477ca45c4",
+          "semantic_revision_id": "6b805319-6fa9-49fc-829b-39fc7db4553d",
+          "source_conversation_id": "e8885966-d975-4876-a0ad-7a96ae7d88e2",
+          "source_message_id": "60372232-8e76-463b-b9f5-eedeefe3d5e8",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "15df4c96-3cd7-498f-bb57-51814d29a135",
+          "turn_id": "60372232-8e76-463b-b9f5-eedeefe3d5e8",
+          "run_id": "c4cee85d-3b45-4d98-b5fa-61b8ac95b147:1405465a-76c3-47c5-af3e-cacf3f6b02ae",
+          "call_sequence": 1,
+          "state": "complete",
+          "policy_id": "28d46cce-487a-46bc-99f5-b0e477ca45c4",
+          "semantic_revision_id": "6b805319-6fa9-49fc-829b-39fc7db4553d",
+          "source_conversation_id": "e8885966-d975-4876-a0ad-7a96ae7d88e2",
+          "source_message_id": "60372232-8e76-463b-b9f5-eedeefe3d5e8",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "b8a44e07-5d7c-47a5-928a-600d218d71a4",
+          "turn_id": "60372232-8e76-463b-b9f5-eedeefe3d5e8",
+          "run_id": "c4cee85d-3b45-4d98-b5fa-61b8ac95b147:1405465a-76c3-47c5-af3e-cacf3f6b02ae",
+          "call_sequence": 2,
+          "state": "complete",
+          "policy_id": "28d46cce-487a-46bc-99f5-b0e477ca45c4",
+          "semantic_revision_id": "6b805319-6fa9-49fc-829b-39fc7db4553d",
+          "source_conversation_id": "e8885966-d975-4876-a0ad-7a96ae7d88e2",
+          "source_message_id": "60372232-8e76-463b-b9f5-eedeefe3d5e8",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "250277ee-88b0-4bae-91f6-23bc8e38d5f5",
+          "turn_id": "45d0f27a-c9bf-443d-8e7d-80da441ce12b",
+          "run_id": "ffe6d283-be4f-4305-bc14-ab5db2fdb2fa:4cb92563-edb2-4b3e-8cc9-bf5cddbc0367",
+          "call_sequence": 0,
+          "state": "complete",
+          "policy_id": "e64440b4-5405-419f-bdb2-7d2ccaf92070",
+          "semantic_revision_id": "ee11ae1a-9515-4e55-8ca7-c8db89c5bad8",
+          "source_conversation_id": "e8885966-d975-4876-a0ad-7a96ae7d88e2",
+          "source_message_id": "45d0f27a-c9bf-443d-8e7d-80da441ce12b",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "b39ec383-becc-4015-ab0a-254af6224c7d",
+          "turn_id": "45d0f27a-c9bf-443d-8e7d-80da441ce12b",
+          "run_id": "ffe6d283-be4f-4305-bc14-ab5db2fdb2fa:4cb92563-edb2-4b3e-8cc9-bf5cddbc0367",
+          "call_sequence": 1,
+          "state": "complete",
+          "policy_id": "e64440b4-5405-419f-bdb2-7d2ccaf92070",
+          "semantic_revision_id": "ee11ae1a-9515-4e55-8ca7-c8db89c5bad8",
+          "source_conversation_id": "e8885966-d975-4876-a0ad-7a96ae7d88e2",
+          "source_message_id": "45d0f27a-c9bf-443d-8e7d-80da441ce12b",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "be959ed3-92ad-4f19-b906-af1b639cffb6",
+          "turn_id": "45d0f27a-c9bf-443d-8e7d-80da441ce12b",
+          "run_id": "ffe6d283-be4f-4305-bc14-ab5db2fdb2fa:4cb92563-edb2-4b3e-8cc9-bf5cddbc0367",
+          "call_sequence": 2,
+          "state": "complete",
+          "policy_id": "e64440b4-5405-419f-bdb2-7d2ccaf92070",
+          "semantic_revision_id": "ee11ae1a-9515-4e55-8ca7-c8db89c5bad8",
+          "source_conversation_id": "e8885966-d975-4876-a0ad-7a96ae7d88e2",
+          "source_message_id": "45d0f27a-c9bf-443d-8e7d-80da441ce12b",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "139bf99a-a5a0-4ab6-b7dc-334e35a23c51",
+          "turn_id": "2bad6a7c-cf2d-4440-8bd8-72bdd71bbbae",
+          "run_id": "5c73907c-cc80-4a8e-b17e-e14d1c53043c:ca756d79-8c5b-45ea-a14a-f0cb1a8e190a",
+          "call_sequence": 0,
+          "state": "complete",
+          "policy_id": "2bb9d5fc-b9db-4e77-a2d8-81501d66a012",
+          "semantic_revision_id": "e79446a8-a1c4-47fd-8e41-f99a4684a1be",
+          "source_conversation_id": "e8885966-d975-4876-a0ad-7a96ae7d88e2",
+          "source_message_id": "2bad6a7c-cf2d-4440-8bd8-72bdd71bbbae",
+          "normalized_role": "user"
+        }
+      ]
+    },
+    {
+      "store_name": "test_captured_native_turn_rest1",
+      "call_pins": [
+        {
+          "call_id": "6ee097c8-1f0c-4ae9-b487-2f422612b6bb",
+          "turn_id": "6f077069-bde7-43e5-a8de-20545a0b8e16",
+          "run_id": "03eb4b59-92d8-4763-adcb-9dcf8582fdf9:a1d2ec80-3fd0-4eb6-951a-ca331c69d905",
+          "call_sequence": 0,
+          "state": "complete",
+          "policy_id": "dd1ef9d8-1ed8-4197-ae42-548bf976e340",
+          "semantic_revision_id": "b59a42af-9ac3-41b1-8164-f8ed70dfe073",
+          "source_conversation_id": "3b3285f9-67c9-4931-9edf-8703504c3353",
+          "source_message_id": "6f077069-bde7-43e5-a8de-20545a0b8e16",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "4a7ea9f2-1e93-4a6f-9339-6454b79319f3",
+          "turn_id": "6f077069-bde7-43e5-a8de-20545a0b8e16",
+          "run_id": "03eb4b59-92d8-4763-adcb-9dcf8582fdf9:a1d2ec80-3fd0-4eb6-951a-ca331c69d905",
+          "call_sequence": 1,
+          "state": "complete",
+          "policy_id": "dd1ef9d8-1ed8-4197-ae42-548bf976e340",
+          "semantic_revision_id": "b59a42af-9ac3-41b1-8164-f8ed70dfe073",
+          "source_conversation_id": "3b3285f9-67c9-4931-9edf-8703504c3353",
+          "source_message_id": "6f077069-bde7-43e5-a8de-20545a0b8e16",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "8c29e34d-5a82-4559-be2b-8c3bfa751a4e",
+          "turn_id": "b5b2a91a-e55b-4eef-9860-9f77fb39b7ab",
+          "run_id": "06e5b4d7-b79b-40e1-bf4f-d8e5c70d6d32:f502415b-5681-4462-bd8e-a9f5b3995456",
+          "call_sequence": 0,
+          "state": "complete",
+          "policy_id": "2550ed50-3293-4ce0-83ac-89226a73ae4b",
+          "semantic_revision_id": "59738d58-8346-4636-8a0f-58aa90daa567",
+          "source_conversation_id": "3b3285f9-67c9-4931-9edf-8703504c3353",
+          "source_message_id": "b5b2a91a-e55b-4eef-9860-9f77fb39b7ab",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "005d2778-a140-43f3-948c-c93dcf105eb9",
+          "turn_id": "6f077069-bde7-43e5-a8de-20545a0b8e16",
+          "run_id": "03eb4b59-92d8-4763-adcb-9dcf8582fdf9:a1d2ec80-3fd0-4eb6-951a-ca331c69d905",
+          "call_sequence": 2,
+          "state": "complete",
+          "policy_id": "dd1ef9d8-1ed8-4197-ae42-548bf976e340",
+          "semantic_revision_id": "b59a42af-9ac3-41b1-8164-f8ed70dfe073",
+          "source_conversation_id": "3b3285f9-67c9-4931-9edf-8703504c3353",
+          "source_message_id": "6f077069-bde7-43e5-a8de-20545a0b8e16",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "9c22d513-8fa1-4ed8-9d9c-c64a3b5d976c",
+          "turn_id": "b5b2a91a-e55b-4eef-9860-9f77fb39b7ab",
+          "run_id": "06e5b4d7-b79b-40e1-bf4f-d8e5c70d6d32:f502415b-5681-4462-bd8e-a9f5b3995456",
+          "call_sequence": 1,
+          "state": "complete",
+          "policy_id": "2550ed50-3293-4ce0-83ac-89226a73ae4b",
+          "semantic_revision_id": "59738d58-8346-4636-8a0f-58aa90daa567",
+          "source_conversation_id": "3b3285f9-67c9-4931-9edf-8703504c3353",
+          "source_message_id": "b5b2a91a-e55b-4eef-9860-9f77fb39b7ab",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "46b0b981-fb4d-4d42-97e9-372cf48a9c39",
+          "turn_id": "b5b2a91a-e55b-4eef-9860-9f77fb39b7ab",
+          "run_id": "06e5b4d7-b79b-40e1-bf4f-d8e5c70d6d32:f502415b-5681-4462-bd8e-a9f5b3995456",
+          "call_sequence": 2,
+          "state": "complete",
+          "policy_id": "2550ed50-3293-4ce0-83ac-89226a73ae4b",
+          "semantic_revision_id": "59738d58-8346-4636-8a0f-58aa90daa567",
+          "source_conversation_id": "3b3285f9-67c9-4931-9edf-8703504c3353",
+          "source_message_id": "b5b2a91a-e55b-4eef-9860-9f77fb39b7ab",
+          "normalized_role": "user"
+        },
+        {
+          "call_id": "9961b76e-1ee8-4825-aeb4-bbaf65d8dfe0",
+          "turn_id": "b1f98d0e-b872-4f82-b399-67b991102534",
+          "run_id": "88d30a35-5ee8-4aba-9b75-be9c513d9a0d:7aa1e01a-e7e1-4b02-8d7c-6b986b64446e",
+          "call_sequence": 0,
+          "state": "complete",
+          "policy_id": "9f1c8a41-2c20-4374-bb48-8d3770596712",
+          "semantic_revision_id": "1292f197-0fb7-4fc6-a5b8-e647e586b07d",
+          "source_conversation_id": "3b3285f9-67c9-4931-9edf-8703504c3353",
+          "source_message_id": "b1f98d0e-b872-4f82-b399-67b991102534",
+          "normalized_role": "user"
+        }
+      ]
+    }
+  ]
+}

@@ -1059,11 +1059,15 @@ def test_folder_link_restore_uses_repository_lineage_and_source_version_allocato
         **_scope(),
     )
 
-    restored = notes.get_connection().execute(
-        "SELECT source_version, routing_metadata_json "
-        "FROM notes_organization_sync_intents "
-        "WHERE domain = 'notes.folder_link' ORDER BY intent_sequence DESC LIMIT 1"
-    ).fetchone()
+    restored = (
+        notes.get_connection()
+        .execute(
+            "SELECT source_version, routing_metadata_json "
+            "FROM notes_organization_sync_intents "
+            "WHERE domain = 'notes.folder_link' ORDER BY intent_sequence DESC LIMIT 1"
+        )
+        .fetchone()
+    )
     assert tuple(restored) == (41, '{"restore_intent":true}')
 
 
@@ -1329,3 +1333,95 @@ def test_pending_agent_lesson_hook_is_content_only_default_closed_and_write_free
         .fetchone()[0]
         == 0
     )
+
+
+def _sync_create_case(service, folders, notes):
+    root = service.create_folder(
+        folder_repository=folders, name="Root", parent_id=None, **_scope()
+    )
+    return (
+        lambda: service.create_folder(
+            folder_repository=folders,
+            name="Child",
+            parent_id=root.folder_id,
+            **_scope(),
+        ),
+        lambda: folders.get_folder_by_path(("Root", "Child")) is not None,
+    )
+
+
+def _sync_attach_case(service, folders, notes):
+    folder = service.create_folder(
+        folder_repository=folders, name="Root", parent_id=None, **_scope()
+    )
+    note_id = notes.add_note("Note", "Body", note_id=_id(31))
+    return (
+        lambda: service.attach_folder_link(
+            folder_repository=folders,
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            **_scope(),
+        ),
+        lambda: folders.get_exact_manual_membership(
+            folder_id=folder.folder_id, note_id=note_id
+        )
+        is not None,
+    )
+
+
+def _sync_detach_case(service, folders, notes):
+    folder = service.create_folder(
+        folder_repository=folders, name="Root", parent_id=None, **_scope()
+    )
+    note_id = notes.add_note("Note", "Body", note_id=_id(32))
+    attached = service.attach_folder_link(
+        folder_repository=folders,
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        **_scope(),
+    )
+    return (
+        lambda: service.detach_folder_link(
+            folder_repository=folders,
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_version=attached.version,
+            **_scope(),
+        ),
+        lambda: folders.get_exact_manual_membership(
+            folder_id=folder.folder_id, note_id=note_id
+        )
+        is None,
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [_sync_create_case, _sync_attach_case, _sync_detach_case],
+    ids=["create", "attach", "detach"],
+)
+def test_a_wal_restart_after_the_first_read_cannot_fail_a_local_first_move(
+    tmp_path, case
+) -> None:
+    """TASK-34000.28 (N-24) under a local-first Sync v2 profile: Move note and
+    Add to folder reach the repository through these service transactions,
+    which read (``_require_ready``, the effective-link check) before they
+    write and pass their cursor down -- so the repository's own
+    ``BEGIN IMMEDIATE`` never runs. Each outer transaction takes the write
+    lock first, so a WAL restart (any finite worker closing its connection)
+    after its first read can no longer fail it with SQLITE_BUSY_SNAPSHOT."""
+    from Tests.Notes.test_note_folder_repository import (
+        _wal_restarted_after_the_first_read,
+    )
+
+    _, _, notes, state = _stores(tmp_path)
+    service = _service(notes, state)
+    folders = LocalNoteFolderRepository(notes)
+    mutate, landed = case(service, folders, notes)
+
+    with _wal_restarted_after_the_first_read(folders) as restarts:
+        mutate()
+
+    assert len(restarts) == 1, "the WAL restart never ran"
+    assert restarts[0][0] == 1, f"the checkpoint was not held off: {restarts}"
+    assert landed()

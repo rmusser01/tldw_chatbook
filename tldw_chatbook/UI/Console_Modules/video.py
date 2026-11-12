@@ -23,6 +23,8 @@ from ...Chat.console_generate_video import (
     is_paid_backend,
     parse_generate_video_args,
     run_video_generation,
+    video_generating_text,
+    video_stopped_text,
 )
 from ...config import get_cli_setting
 from ...Video_Generation.config import get_video_generation_config
@@ -33,8 +35,6 @@ from ...Video_Generation.video_store import (
     VideoStore,
     VideoStoreSaveError,
 )
-from ...Widgets.confirmation_dialog import ConfirmationDialog
-from ...Widgets.Console.console_video_capacity_modal import ConsoleVideoCapacityModal
 from ...Widgets.Console.console_video_card import ConsoleVideoCardSpec
 
 
@@ -122,7 +122,9 @@ class ConsoleVideoController:
         message = store.append_video_message(session_id, persist=True, **kwargs)
         app_instance = getattr(self, "app_instance", None)
         runtime = getattr(app_instance, "console_runtime", None)
-        recompute = getattr(runtime, "recompute_console_attention", None)
+        recompute = getattr(runtime, "request_console_attention_refresh", None)
+        if not callable(recompute):
+            recompute = getattr(runtime, "recompute_console_attention", None)
         if callable(recompute):
             try:
                 recompute()
@@ -788,18 +790,31 @@ class ConsoleVideoController:
     async def _save_pending_console_video_external(
         self, artifact: PendingVideoArtifact
     ) -> Path | Literal[False] | None:
-        """Choose and atomically write an external path, retaining on failure."""
-        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
+        """Choose and atomically write an external path, retaining on failure.
+
+        Returns:
+            The saved path; False to go back to the storage choice with the
+            video kept (a failed save, or the picker cancelled -- TASK-33622.17:
+            only an explicit discard may throw a generated video away); None
+            once this screen no longer owns the video.
+        """
+        # TASK-33622.15: these screens ask before Ctrl+Q discards the video.
+        from tldw_chatbook.Widgets.Console.console_video_save_screens import (
+            GeneratedVideoConfirmation,
+            GeneratedVideoFileSave,
+        )
 
         while self._owns_pending_console_video(artifact):
             selected = await self._wait_for_console_screen_result(
-                EnhancedFileSave(
+                GeneratedVideoFileSave(
                     title="Save generated video",
                     default_filename=f"{artifact.slug}.{artifact.extension}",
                 )
             )
-            if not self._owns_pending_console_video(artifact) or not selected:
+            if not self._owns_pending_console_video(artifact):
                 return None
+            if not selected:
+                return False
             try:
                 target = ConsoleVideoController._normalize_pending_video_target(
                     Path(selected).expanduser(), artifact.extension
@@ -837,7 +852,7 @@ class ConsoleVideoController:
 
                 if identity is None and reconfirmation_required:
                     confirmed = await self._wait_for_console_screen_result(
-                        ConfirmationDialog(
+                        GeneratedVideoConfirmation(
                             title="Destination changed",
                             message=(
                                 "The file previously confirmed at "
@@ -856,7 +871,7 @@ class ConsoleVideoController:
                     confirmed_identity = None
                 elif identity is not None and identity != confirmed_identity:
                     confirmed = await self._wait_for_console_screen_result(
-                        ConfirmationDialog(
+                        GeneratedVideoConfirmation(
                             title="Replace existing file?",
                             message=(
                                 "A file already exists at "
@@ -956,6 +971,10 @@ class ConsoleVideoController:
         artifacts[message_id] = artifact
         try:
             while self._owns_pending_console_video(artifact):
+                from ...Widgets.Console.console_video_capacity_modal import (
+                    ConsoleVideoCapacityModal,
+                )
+
                 choice = await self._wait_for_console_screen_result(
                     ConsoleVideoCapacityModal(
                         reason=artifact.reason,
@@ -1123,9 +1142,12 @@ class ConsoleVideoController:
         always cleared in a ``finally`` so a crashed/cancelled run never
         wedges the session. Cancellation is cooperative: the composer's Stop
         button (visible while a video generation is in flight) sets the
-        event the MiniMax adapter polls.
+        event the MiniMax adapter polls; the stop reads as a stop, with what
+        the backend did with the remote task (TASK-33621.45/.50).
         """
         from uuid import uuid4
+
+        from ...Video_Generation.exceptions import VideoGenerationCancelled
 
         args = parse_generate_video_args(parse.args)
         store = self._ensure_console_chat_store()
@@ -1208,10 +1230,16 @@ class ConsoleVideoController:
             )
             return
         inflight.add(session.id)
-        # Capture draft before clearing so we can restore it on failure.
-        composer = self._console_composer_or_none()
-        saved_draft = composer.draft_text() if composer is not None else ""
-        self._clear_console_composer_draft()
+        # Lazy: keeps command_draft off the boot path (ADR-097).
+        from .command_draft import (
+            restore_command_draft,
+            take_command_draft,
+            with_resend_hint,
+        )
+
+        taken = take_command_draft(
+            self._console_composer_or_none(), self._clear_console_composer_draft
+        )
         cancel_event = threading.Event()
         self._console_videogen_cancel_events()[session.id] = cancel_event
         message_id = str(uuid4())
@@ -1222,7 +1250,7 @@ class ConsoleVideoController:
         )
         try:
             await self._append_native_console_system_message(
-                f"⏳ Generating video on {backend}… (Stop cancels)",
+                video_generating_text(backend),
                 session_id=session.id,
             )
             await ConsoleVideoController._run_console_video_generation_operation(
@@ -1241,17 +1269,28 @@ class ConsoleVideoController:
                 publication_gate=publication_gate,
                 video_store=self._ensure_console_video_store(),
             )
+        except VideoGenerationCancelled as stop:
+            hint = restore_command_draft(self._console_composer_or_none(), taken)
+            logger.info(
+                "Console video operation={} stopped remote_cancel={}",
+                "generation",
+                stop.remote_cancel,
+            )
+            await self._append_native_console_system_message(
+                with_resend_hint(video_stopped_text(stop, backend=backend), hint),
+                session_id=session.id,
+            )
         except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare crash
-            if composer is not None and saved_draft:
-                composer.clear_draft()
-                composer.insert_text_as_paste(saved_draft)
+            hint = restore_command_draft(self._console_composer_or_none(), taken)
             logger.error(
                 "Console video operation={} failed error_type={}",
                 "generation",
                 type(exc).__name__,
             )
             await self._append_native_console_system_message(
-                f"Video generation failed ({type(exc).__name__}).",
+                with_resend_hint(
+                    f"Video generation failed ({type(exc).__name__}).", hint
+                ),
                 session_id=session.id,
             )
         finally:
@@ -1395,6 +1434,8 @@ class ConsoleVideoController:
         """
         from uuid import uuid4
 
+        from ...Video_Generation.exceptions import VideoGenerationCancelled
+
         store = self._ensure_console_chat_store()
         try:
             message = store.get_message(message_id)
@@ -1445,6 +1486,18 @@ class ConsoleVideoController:
                 publication_gate=publication_gate,
                 video_store=self._ensure_console_video_store(),
             )
+        except VideoGenerationCancelled as stop:
+            logger.info(
+                "Console video operation={} stopped remote_cancel={}",
+                "regeneration",
+                stop.remote_cancel,
+            )
+            await self._append_native_console_system_message(
+                video_stopped_text(
+                    stop, backend=meta.backend, noun="Video regeneration"
+                ),
+                session_id=session_id,
+            )
         except Exception as exc:  # noqa: BLE001 - reported, never a bare crash
             logger.error(
                 "Console video operation={} failed error_type={}",
@@ -1483,19 +1536,26 @@ class ConsoleVideoController:
             resolve_stream_url,
         )
 
+        # Lazy: keeps command_handoff off the boot path (ADR-097). Resolution
+        # is network I/O; a failure answers in the chat the command came
+        # from, not whichever chat shows by then (TASK-33622.16).
+        from .command_handoff import append_command_output
+
         try:
             resolution = await asyncio.to_thread(resolve_stream_url, url)
         except StreamResolutionError as exc:
-            await self._append_native_console_system_message(
-                f"Cannot stream that URL: {exc}"
+            await append_command_output(
+                self._append_native_console_system_message,
+                f"Cannot stream that URL: {exc}",
             )
             return
         except Exception as exc:  # egress refusal or unexpected resolution failure
             logger.warning(
                 "stream resolution failed (error_type={})", type(exc).__name__
             )
-            await self._append_native_console_system_message(
-                f"Cannot stream that URL: {exc}"
+            await append_command_output(
+                self._append_native_console_system_message,
+                f"Cannot stream that URL: {exc}",
             )
             return
         from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen

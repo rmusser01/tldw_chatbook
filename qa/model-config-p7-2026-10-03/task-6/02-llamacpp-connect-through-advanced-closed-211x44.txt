@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Provider                │ llama.cpp                          new-chat default configured: llama.cpp · 59 more             │  │  │  Save (s) — no changes                  │
+│ █  > Providers & Models      │  │  │  API key                 │ No credential required     Clear   not required     this provider needs no key                  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │  Env var                 │ LLAMA_CPP_API_KEY                  not set          safer: keeps keys out of config.toml        │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Endpoint                │ http://127.0.0.1:18769             config           required: the server's base URL             │  │  │ file.                                   │
+│  Interface                   │  │  │  Key check                Ready · not tested                                                                  Test (t)     │  │  │ Applies to                              │
+│      Appearance              │  │  │   Provider settings have not been saved this session.                                                                      │  │  │  New chats: yes                         │
+│      Theme                   │  │  │                                                                                                                            │  │  │  Unused open chats: follow the saved    │
+│      Splash Screen           │  │  │   Default model for new chats                                                                                              │  │  │  default                                │
+│      Console Behavior        │  │  │  Model                   │ qwen3-8b-q4                        new-chat default type to search · Custom ID for others       │  │  │  Chats with work: keep their own;       │
+│  Data & Privacy              │  │  │  Applies to               new chats (Ctrl+T, temporary, workspace). Open chat “Chat 1” is unused and will use llama.cpp    │  │  │  switch there with Alt+M                │
+│      Storage                 │  │  │                           · qwen3-8b-q4.                                                                                   │  │  │  Model defaults: chats that switch to   │
+│      Workspaces              │  │  │   ▼ Model defaults · llama.cpp · qwen3-8b-q4                                                                               │  │  │  this model pick them up                │
+│      Tool Profiles           │  │  │  Temperature             │ 0.6            model default    How varied replies are: lower is focused, higher is more var…   │  │  │ Next new chat will use                ▁ │
+│      Privacy & Security      │  │  │  Max tokens              │ tokens         provider         inherits 4096 · provider                                        │  │  │  llama.cpp · qwen3-8b-q4                │
+│      Network                 │  │  │  Streaming               │ Inherit     ▼  provider         inherits On · provider                                          │  │  │  T 0.6 · max 4096 · stream On           │
+│      My Profile              │  │  │  Reasoning effort        │ Inherit     ▼  provider         blank = provider default                                        │  │  │ Focused field guide                     │
+│  Troubleshooting             │  │  │  Thinking budget         │ >= 1024        provider         blank = provider default                                        │  │  │  Focused setting: None — Tab to a       │
+│      Diagnostics (view)      │  │  │   ▶ Sampling · all inherit · llama.cpp does not accept 3 fields (open to list them)                                        │  │  │  setting                                │
+│      About (view)            │  │  │                                                                                                                            │  │  │  Purpose: Configure the default         │
+│      Agents                  │  │  │   Advanced                                                                                                                 │  │  │  provider, model, endpoint, and         │
+│  Expert                      │  │  │   ▶ Context window · unknown · enter the model's documented limit                                                          │  │  │  credential source.                     │
+│      Hooks                   │  │  │   ▶ Saved model list · 0 saved in config · none discovered                                                                 │  │  │  Save: staged - press s to save, r to   │
+│      Internal Prompts        │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │  revert                                 │
+│      Advanced Config         │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  Validation: test provider readiness    │
+│   Domain Defaults ▸ (11)     │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  before saving these defaults           │
+│                              │  │  │                                                                                                                            │  │  │  ▶ config key                           │
+│                              │  │  │                                                                                                                            │  │  │ Key                                     │
+│                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

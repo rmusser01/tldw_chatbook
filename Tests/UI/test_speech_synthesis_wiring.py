@@ -38,11 +38,12 @@ def test_synthesis_comes_from_the_shared_mixin():
     mixin is what let the pane adopt it whole rather than reimplementing it,
     and is what the remaining Speech surfaces will inherit in turn."""
     assert issubclass(SpeechPlaygroundPane, SpeechSynthesisMixin)
-    assert (
-        SpeechPlaygroundPane._generate_tts is SpeechSynthesisMixin._generate_tts
-    ), "the pane redefined generate instead of inheriting it"
+    assert SpeechPlaygroundPane._generate_tts is SpeechSynthesisMixin._generate_tts, (
+        "the pane redefined generate instead of inheriting it"
+    )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_generate_invokes_the_synthesis_path(monkeypatch):
     """The wiring this whole phase turns on.
@@ -73,6 +74,7 @@ async def test_pressing_generate_invokes_the_synthesis_path(monkeypatch):
     assert called == [True], "Generate did not reach the synthesis path"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_synthesis_state_exists_before_any_press():
     """`_generate_tts` reads these four with no guard; a host that forgets

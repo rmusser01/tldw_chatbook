@@ -1,0 +1,11 @@
+{
+  "native_tmux_exit_status": 1,
+  "native_tmux_error": "no server running on /private/tmp/archive-budget-live-764p7lar/tmux.sock",
+  "slot_state": [
+    {
+      "id": 0,
+      "is_processing": false,
+      "n_ctx": 64000
+    }
+  ]
+}

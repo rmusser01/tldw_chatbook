@@ -14,7 +14,11 @@ from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skill_trust_scanner import scan_skill_directory
 
 SKILL_DIR = (
-    Path(__file__).resolve().parents[2] / "Docs" / "Examples" / "skills" / "web-research"
+    Path(__file__).resolve().parents[2]
+    / "Docs"
+    / "Examples"
+    / "skills"
+    / "web-research"
 )
 SKILL_PATH = SKILL_DIR / "SKILL.md"
 
@@ -52,6 +56,7 @@ async def test_web_research_skill_imports_and_executes_with_expected_metadata(tm
     assert "test question" in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_web_research_allowed_tools_are_registered_local_tools(tmp_path):
     service = _compat_service(tmp_path)

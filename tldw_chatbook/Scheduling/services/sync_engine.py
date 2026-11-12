@@ -9,6 +9,7 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+
 # ADR-097: schedule_vocabulary is imported function-level in
 # _server_vocab_definition_payload (boot-resident module; census).
 from tldw_chatbook.Scheduling.services.server_client import (
@@ -170,9 +171,7 @@ class SyncEngine:
         self.server_client = server_client
         self.owner_id = owner_id
 
-    def _settle_orphaned_transfer_mutations(
-        self, target_owner: str | None
-    ) -> None:
+    def _settle_orphaned_transfer_mutations(self, target_owner: str | None) -> None:
         """Settle a `transfer_to_server` mutation whose scope no longer
         matches the active server (task-3, root-causes.md #5 / ruling 4).
 
@@ -216,8 +215,7 @@ class SyncEngine:
                 )
             except Exception:  # noqa: BLE001
                 logger.exception(
-                    f"Orphaned-transfer sweep failed to list mutations "
-                    f"for {primitive}"
+                    f"Orphaned-transfer sweep failed to list mutations for {primitive}"
                 )
                 continue
             for mutation in mutations:
@@ -560,7 +558,9 @@ class SyncEngine:
                         self.db._delete_sync_mapping_conn(
                             conn, local_id, _REMINDER_PRIMITIVE, target_owner
                         )
-                mutation_ids = [o["mutation_id"] for o in staged_outcomes if o.get("mutation_id")]
+                mutation_ids = [
+                    o["mutation_id"] for o in staged_outcomes if o.get("mutation_id")
+                ]
                 self.db._purge_pending_mutations(conn, target_owner, mutation_ids)
                 for local_id in tombstone_ids:
                     self.db._delete_tombstone_conn(
@@ -592,7 +592,9 @@ class SyncEngine:
                     conn,
                     target_owner,
                     last_pull_at=now_utc_iso(),
-                    last_push_at=now_utc_iso() if staged_outcomes or tombstone_ids else None,
+                    last_push_at=now_utc_iso()
+                    if staged_outcomes or tombstone_ids
+                    else None,
                 )
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"Sync transaction failed for {target_owner}: {exc}")
@@ -611,7 +613,11 @@ class SyncEngine:
         )
 
     async def _run_phase(
-        self, owner_id: str, label: str, phase: Any, **phase_kwargs: Any,
+        self,
+        owner_id: str,
+        label: str,
+        phase: Any,
+        **phase_kwargs: Any,
     ) -> tuple[str | None, Any | None]:
         """Run one self-contained sync phase, containing its own failure.
 
@@ -1452,8 +1458,7 @@ class SyncEngine:
                 )
             except ServerClientNotFoundError as exc:
                 raise ServerClientNotFoundError(
-                    "This server does not provide the results inbox "
-                    "(server too old)."
+                    "This server does not provide the results inbox (server too old)."
                 ) from exc
             if not isinstance(response, dict):
                 response = {}
@@ -1493,7 +1498,9 @@ class SyncEngine:
             response = {}
         pulled_items = response.get("items", [])
 
-        mutations = self.db.get_pending_mutations(owner_id, primitive=_REMINDER_PRIMITIVE)
+        mutations = self.db.get_pending_mutations(
+            owner_id, primitive=_REMINDER_PRIMITIVE
+        )
         # `_apply_pulled_reminders`' rule is "a local EDIT is pending, so
         # the server's version must not silently win" -- a transfer action
         # is not an edit of the pulled row's content, and a
@@ -1518,10 +1525,12 @@ class SyncEngine:
             if outcome.get("conflict"):
                 conflicts.append(outcome["conflict"])
                 # The mutation that caused a 404 is staged for deletion.
-                staged_outcomes.append({
-                    "local_id": outcome["conflict"]["local_id"],
-                    "mutation_id": mutation["id"],
-                })
+                staged_outcomes.append(
+                    {
+                        "local_id": outcome["conflict"]["local_id"],
+                        "mutation_id": mutation["id"],
+                    }
+                )
             else:
                 staged_outcomes.append(outcome)
 
@@ -1542,9 +1551,7 @@ class SyncEngine:
             mutations,
         )
 
-    async def _push_mutation(
-        self, mutation: dict, owner_id: str
-    ) -> dict[str, Any]:
+    async def _push_mutation(self, mutation: dict, owner_id: str) -> dict[str, Any]:
         local_id = mutation["local_id"]
         payload = mutation.get("payload") or {}
         action = payload.get("action", "update")
@@ -1954,9 +1961,7 @@ class SyncEngine:
         )
         return mapping.get("server_id") if mapping else None
 
-    def _record_sync_error(
-        self, message: str, owner_id: str | None = None
-    ) -> None:
+    def _record_sync_error(self, message: str, owner_id: str | None = None) -> None:
         target_owner = owner_id if owner_id is not None else self.owner_id
         self.db._append_sync_error(target_owner, message)
 

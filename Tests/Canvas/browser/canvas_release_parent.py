@@ -18,6 +18,7 @@ from Tests.Canvas.browser.canvas_release_policy import release_snapshot
 from tldw_chatbook.Canvas.profiles import runtime_snapshot_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 async def test_owned_parent_driver(tmp_path, monkeypatch):
     control = Path(os.environ["TLDW_CANVAS_RELEASE_CONTROL"])

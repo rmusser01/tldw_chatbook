@@ -55,6 +55,7 @@ async def _open_notes_list(screen, pilot) -> None:
 # --- task-32356: ctrl+n creates, the chooser is the template path ----------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_n_opens_a_blank_note_straight_away():
     host = _notes_host()
@@ -74,6 +75,7 @@ async def test_ctrl_n_opens_a_blank_note_straight_away():
         assert getattr(screen.focused, "id", "") == "library-note-title"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bare_n_opens_a_blank_note_straight_away():
     """`n` and `ctrl+n` share ``library_notes_new`` (task-32138) -- one key
@@ -87,6 +89,7 @@ async def test_bare_n_opens_a_blank_note_straight_away():
         assert not screen.query("#library-notes-create-blank")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_templates_are_one_row_on_the_create_canvas():
     host = _notes_host()
@@ -112,6 +115,7 @@ async def test_templates_are_one_row_on_the_create_canvas():
 # --- task-32358: the chip agrees with the list -----------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_draft_chip_and_the_list_agree_at_every_moment():
     host = _notes_host(notes=0)
@@ -190,6 +194,7 @@ def test_the_handoff_row_names_the_task_not_the_arithmetic():
     assert unblocked == "2 eligible, 0 blocked", unblocked
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_details_panel_says_where_the_content_lives():
     host = _notes_host()
@@ -217,6 +222,7 @@ async def test_the_details_panel_says_where_the_content_lives():
 # --- task-32357 AC#2: DB sizes behind a diagnostics disclosure -------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_db_sizes_live_behind_a_closed_diagnostics_disclosure():
     from tldw_chatbook.Widgets.destination_rail import DestinationRailSectionHeader
@@ -252,6 +258,7 @@ async def test_db_sizes_live_behind_a_closed_diagnostics_disclosure():
         assert header.open is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_first_reading_mounts_the_disclosure_it_belongs_in():
     """Recompose discipline: the rail composes the Diagnostics disclosure
@@ -298,6 +305,7 @@ async def test_a_first_reading_mounts_the_disclosure_it_belongs_in():
 # --- task-32360 AC#2: the compact Notes copy is never cut mid-word -------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notes_copy_is_not_clipped_mid_word_below_64_columns():
     """task-32360 AC#2 (handed over from the layout branch, reproduced live
@@ -349,6 +357,7 @@ async def test_notes_copy_is_not_clipped_mid_word_below_64_columns():
         assert "Select" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("size", "keeps_prefix"), [((100, 30), True), ((60, 24), False)]
 )
@@ -404,6 +413,7 @@ def test_the_split_browse_row_cannot_oscillate():
 # --- review F4/F7 round 2: copy names what is on the surface it paints on ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_each_next_step_names_a_control_that_is_on_that_surface():
     """Review F4: the create canvas said "Next: Start typing" while its only
@@ -441,6 +451,7 @@ async def test_each_next_step_names_a_control_that_is_on_that_surface():
         assert editor_line.endswith("Next: Start typing."), editor_line
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_details_actions_carry_no_bare_acronym():
     """Review F7: AC#1 retired "WIP" from this panel and left "ACP handoff"
@@ -467,6 +478,7 @@ async def test_the_details_actions_carry_no_bare_acronym():
         assert not bare, (bare, tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_diagnostics_refreshes_the_reading_it_reveals():
     """Qodo #2: task-4023 AC#3 made opening a disclosure the refresh trigger

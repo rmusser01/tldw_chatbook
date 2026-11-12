@@ -1,0 +1,177 @@
+[
+  {
+    "file": "tldw_chatbook/UI/Console_Modules/console_spend_projection.py",
+    "arms": {
+      "before": {
+        "command": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "-X",
+          "utf8",
+          "-m",
+          "ruff",
+          "check",
+          "--no-cache",
+          "--output-format",
+          "json",
+          "--stdin-filename",
+          "tldw_chatbook/UI/Console_Modules/console_spend_projection.py",
+          "-"
+        ],
+        "exit_code": 1,
+        "issues": [
+          {
+            "cell": null,
+            "code": "E721",
+            "end_location": {
+              "column": 62,
+              "row": 794
+            },
+            "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\console_spend_projection.py",
+            "fix": null,
+            "location": {
+              "column": 37,
+              "row": 794
+            },
+            "message": "Do not compare types, use `isinstance()`",
+            "noqa_row": 794,
+            "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+          }
+        ],
+        "format_exit_code": 1,
+        "format_output": ""
+      },
+      "after": {
+        "command": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "-X",
+          "utf8",
+          "-m",
+          "ruff",
+          "check",
+          "--no-cache",
+          "--output-format",
+          "json",
+          "--stdin-filename",
+          "tldw_chatbook/UI/Console_Modules/console_spend_projection.py",
+          "-"
+        ],
+        "exit_code": 1,
+        "issues": [
+          {
+            "cell": null,
+            "code": "E721",
+            "end_location": {
+              "column": 62,
+              "row": 796
+            },
+            "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\console_spend_projection.py",
+            "fix": null,
+            "location": {
+              "column": 37,
+              "row": 796
+            },
+            "message": "Do not compare types, use `isinstance()`",
+            "noqa_row": 796,
+            "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+          }
+        ],
+        "format_exit_code": 1,
+        "format_output": ""
+      }
+    },
+    "added": []
+  },
+  {
+    "file": "Tests/UI/test_console_checked_display_scope.py",
+    "arms": {
+      "before": {
+        "command": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "-X",
+          "utf8",
+          "-m",
+          "ruff",
+          "check",
+          "--no-cache",
+          "--output-format",
+          "json",
+          "--stdin-filename",
+          "Tests/UI/test_console_checked_display_scope.py",
+          "-"
+        ],
+        "exit_code": 0,
+        "issues": [],
+        "format_exit_code": 0,
+        "format_output": ""
+      },
+      "after": {
+        "command": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "-X",
+          "utf8",
+          "-m",
+          "ruff",
+          "check",
+          "--no-cache",
+          "--output-format",
+          "json",
+          "--stdin-filename",
+          "Tests/UI/test_console_checked_display_scope.py",
+          "-"
+        ],
+        "exit_code": 0,
+        "issues": [],
+        "format_exit_code": 0,
+        "format_output": ""
+      }
+    },
+    "added": [],
+    "format_note": "Formatted only new regression lines after the 48-case pass; no behavior changed."
+  },
+  {
+    "file": "Tests/UI/test_console_config_sync_cadence_inputs.py",
+    "arms": {
+      "before": {
+        "command": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "-X",
+          "utf8",
+          "-m",
+          "ruff",
+          "check",
+          "--no-cache",
+          "--output-format",
+          "json",
+          "--stdin-filename",
+          "Tests/UI/test_console_config_sync_cadence_inputs.py",
+          "-"
+        ],
+        "exit_code": 0,
+        "issues": [],
+        "format_exit_code": 0,
+        "format_output": ""
+      },
+      "after": {
+        "command": [
+          "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+          "-X",
+          "utf8",
+          "-m",
+          "ruff",
+          "check",
+          "--no-cache",
+          "--output-format",
+          "json",
+          "--stdin-filename",
+          "Tests/UI/test_console_config_sync_cadence_inputs.py",
+          "-"
+        ],
+        "exit_code": 0,
+        "issues": [],
+        "format_exit_code": 0,
+        "format_output": ""
+      }
+    },
+    "added": []
+  }
+]

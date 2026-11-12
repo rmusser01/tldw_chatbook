@@ -6,6 +6,8 @@ import time
 
 import pytest
 
+from Tests.subprocess_pipes import pipe_ready, popen_with_captured_stderr
+
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
 from tldw_chatbook.Feedback_Interop.local_feedback_service import LocalFeedbackService
 from tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service import (
@@ -141,7 +143,6 @@ def test_emoji_best_effort_refusal_has_no_directory_side_effect(
 
 import asyncio
 import os
-import select
 import threading
 from contextlib import contextmanager
 
@@ -197,7 +198,7 @@ def test_actual_service_worker_finishes_publication_across_pause(
     try:
         assert not participant.drain(time.monotonic() + 0.03)
         assert not pause.drain(time.monotonic() + 0.03)
-        assert not select.select([observer.stdout], [], [], 0.05)[0]
+        assert not pipe_ready(observer.stdout, 0.05)
         finish.set()
         thread.join(5)
         assert not thread.is_alive() and not errors
@@ -300,17 +301,17 @@ def test_raw_token_copy_foreign_thread_and_sibling_cannot_write(tmp_path, local_
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
     service = LocalFeedbackService(store_path=tmp_path / "feedback.json")
-    with raw._scope(service, "service", writing=True) as operation:
+    with raw.scope(service, "service", writing=True) as operation:
         with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-            raw._selected(copy.copy(operation))
+            raw.selected_target(copy.copy(operation))
         with pytest.raises(bootstrap.RecoveryRequired, match="outside_scope"):
-            with raw._file(operation, tmp_path / "sibling.json", "w"):
+            with raw.file(operation, tmp_path / "sibling.json", "w"):
                 pytest.fail("sibling admitted")
         errors = []
 
         def foreign():
             try:
-                raw._selected(operation)
+                raw.selected_target(operation)
             except BaseException as exc:
                 errors.append(exc)
 
@@ -319,7 +320,7 @@ def test_raw_token_copy_foreign_thread_and_sibling_cannot_write(tmp_path, local_
         thread.join(3)
         assert len(errors) == 1 and isinstance(errors[0], bootstrap.RecoveryRequired)
     with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-        raw._selected(operation)
+        raw.selected_target(operation)
 
 
 @pytest.mark.asyncio
@@ -327,11 +328,11 @@ async def test_raw_child_task_does_not_inherit_authority(tmp_path, local_root):
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
     service = LocalFeedbackService(store_path=tmp_path / "feedback.json")
-    with raw._scope(service, "service", writing=True) as operation:
+    with raw.scope(service, "service", writing=True) as operation:
 
         async def child():
             with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-                raw._selected(operation)
+                raw.selected_target(operation)
 
         await asyncio.create_task(child())
 
@@ -401,7 +402,7 @@ async def test_actual_emoji_app_worker_cancellation_does_not_retire_native_write
         observer = launch(hold.authority.control_root, "maintenance", hold.names)
         try:
             assert not pause.drain(time.monotonic() + 0.03)
-            assert not select.select([observer.stdout], [], [], 0.03)[0]
+            assert not pipe_ready(observer.stdout, 0.03)
             finish.set()
             # Future cancellation may precede native thread completion.
             for _ in range(100):
@@ -409,7 +410,7 @@ async def test_actual_emoji_app_worker_cancellation_does_not_retire_native_write
                     break
                 await asyncio.sleep(0.01)
             assert pause.drain(time.monotonic() + 0.1)
-            assert json.loads(selected.read_text()) == {"recent": ["😀"]}
+            assert json.loads(selected.read_text(encoding="utf-8")) == {"recent": ["😀"]}
             assert line(observer) == "entered"
             release(observer)
         finally:
@@ -494,10 +495,10 @@ def test_generic_decorated_callback_cannot_borrow_installed_source_authority(
 
     service = LocalFeedbackService(store_path=tmp_path / "feedback.json")
 
-    @raw._service_mutation
+    @raw.service_mutation
     def callback(source):
-        operation = raw._service_file(source, "w")
-        with raw._file(operation, source.store_path, "w") as stream:
+        operation = raw.service_file(source, "w")
+        with raw.file(operation, source.store_path, "w") as stream:
             stream.write("forged")
 
     with pytest.raises(bootstrap.RecoveryRequired, match="raw_source_not_supported"):
@@ -521,7 +522,12 @@ portable = failure.startswith('portable-')
 # Resolve real source imports before this fixture changes host native capabilities.
 raw._types()
 if portable:
-    raw.os.supports_dir_fd = set()
+    native_os = raw.os
+    class PortableOS:
+        supports_dir_fd = set()
+        def __getattr__(self, name):
+            return getattr(native_os, name)
+    raw.os = PortableOS()
     failure = failure.removeprefix('portable-')
 service = LocalFeedbackService(store_path=selected)
 original_dump = json.dump
@@ -585,7 +591,7 @@ def test_native_uncertainty_retains_resources_and_excludes_independent_maintenan
     )
 
     authority = admission_authority(local_root)
-    child = subprocess.Popen(
+    child = popen_with_captured_stderr(
         [
             sys.executable,
             "-u",
@@ -595,9 +601,9 @@ def test_native_uncertainty_retains_resources_and_excludes_independent_maintenan
             str(tmp_path / "store.json"),
             failure,
         ],
+        tmp_path / "uncertain-child.stderr",
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
     )
@@ -608,7 +614,7 @@ def test_native_uncertainty_retains_resources_and_excludes_independent_maintenan
             child.wait(timeout=5)
             pytest.fail(child.stderr.read())
         observer = launch(authority.control_root, "maintenance", (UNBOUND_NAMESPACE,))
-        assert not select.select([observer.stdout], [], [], 0.05)[0]
+        assert not pipe_ready(observer.stdout, 0.05)
         child.stdin.write("exit\n")
         child.stdin.flush()
         child.wait(timeout=5)
@@ -634,13 +640,13 @@ def test_parent_replaced_after_pin_refuses_file_and_preserves_both_directories(
     parent = tmp_path / "parent"
     parent.mkdir()
     service = LocalFeedbackService(store_path=parent / "store.json")
-    with raw._scope(service, "service", writing=True) as operation:
+    with raw.scope(service, "service", writing=True) as operation:
         parent.rename(tmp_path / "moved")
         parent.mkdir()
         with pytest.raises(
             bootstrap.RecoveryRequired, match="raw_parent_identity_changed"
         ):
-            with raw._file(operation, service.store_path, "w"):
+            with raw.file(operation, service.store_path, "w"):
                 pytest.fail("replacement received write")
     assert list(parent.iterdir()) == []
     assert list((tmp_path / "moved").iterdir()) == []
@@ -654,30 +660,30 @@ from tldw_chatbook.Feedback_Interop.local_feedback_service import LocalFeedbackS
 root, selected, failure = sys.argv[1:]
 bootstrap.default_bootstrap_root = lambda: Path(root)
 service = LocalFeedbackService(store_path=selected)
-original = os.replace
+original = raw.os.replace
 def ambiguous(*args, **kwargs):
     if failure == 'after':
         original(*args, **kwargs)
     raise OSError('injected publication uncertainty')
-os.replace = ambiguous
-original_dump, original_unlink = json.dump, os.unlink
+raw.os.replace = ambiguous
+original_dump, original_unlink = json.dump, raw.os.unlink
 if failure == 'cleanup':
-    os.replace = original
+    raw.os.replace = original
     def partial(value, stream, *args, **kwargs):
         stream.write('partial')
         raise OSError('injected body write failure')
     def failed_unlink(*args, **kwargs):
         raise OSError('injected cleanup failure')
     json.dump = partial
-    os.unlink = failed_unlink
+    raw.os.unlink = failed_unlink
 try:
     asyncio.run(service.submit_feedback(feedback_type='helpful', helpful=True, query='uncertain'))
 except Exception:
     pass
 else:
     raise AssertionError('missing failure')
-os.replace = original
-json.dump, os.unlink = original_dump, original_unlink
+raw.os.replace = original
+json.dump, raw.os.unlink = original_dump, original_unlink
 assert service._records == [] and service._next_id == 1
 pause = storage._begin_local_pause()
 assert not pause.drain(time.monotonic() + .03), 'publication uncertainty falsely drained'
@@ -708,7 +714,7 @@ def test_ambiguous_publication_keeps_evidence_and_native_exclusion(
     )
 
     authority = admission_authority(local_root)
-    child = subprocess.Popen(
+    child = popen_with_captured_stderr(
         [
             sys.executable,
             "-u",
@@ -718,9 +724,9 @@ def test_ambiguous_publication_keeps_evidence_and_native_exclusion(
             str(tmp_path / "store.json"),
             failure,
         ],
+        tmp_path / "publication-child.stderr",
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
     )
@@ -731,7 +737,7 @@ def test_ambiguous_publication_keeps_evidence_and_native_exclusion(
             child.wait(timeout=5)
             pytest.fail(child.stderr.read())
         observer = launch(authority.control_root, "maintenance", (UNBOUND_NAMESPACE,))
-        assert not select.select([observer.stdout], [], [], 0.05)[0]
+        assert not pipe_ready(observer.stdout, 0.05)
         child.stdin.write("exit\n")
         child.stdin.flush()
         child.wait(timeout=5)
@@ -882,15 +888,15 @@ def test_spoofed_source_function_metadata_cannot_grant_callback_authority(
     service = LocalFeedbackService(store_path=tmp_path / "store.json")
 
     def forged(source):
-        operation = raw._service_file(source, "w")
-        with raw._file(operation, source.store_path, "w") as stream:
+        operation = raw.service_file(source, "w")
+        with raw.file(operation, source.store_path, "w") as stream:
             stream.write("forged")
 
     forged.__name__ = "_persist"
     forged.__qualname__ = "LocalFeedbackService._persist"
     forged.__module__ = LocalFeedbackService.__module__
     with pytest.raises(bootstrap.RecoveryRequired, match="raw_source_not_supported"):
-        raw._service_mutation(forged)(service)
+        raw.service_mutation(forged)(service)
     assert not service.store_path.exists()
 
 
@@ -1089,7 +1095,7 @@ def test_portable_raw_retains_real_normal_lease_without_pause_authority(
     service = LocalFeedbackService(store_path=tmp_path / "store.json")
     pause = None
     try:
-        with raw._scope(service, "service", writing=True) as operation:
+        with raw.scope(service, "service", writing=True) as operation:
             state = raw._states[operation]
             assert state.participant is None
             assert all(lease._key is not None for lease in state.leases)
@@ -1098,7 +1104,7 @@ def test_portable_raw_retains_real_normal_lease_without_pause_authority(
             with pytest.raises(
                 bootstrap.RecoveryRequired, match="storage_locally_paused"
             ):
-                with raw._file(operation, service.store_path, "w"):
+                with raw.file(operation, service.store_path, "w"):
                     pytest.fail("portable descendant entered during pause")
         assert pause.drain(time.monotonic() + 1)
         with pytest.raises(

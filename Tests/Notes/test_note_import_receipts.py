@@ -498,13 +498,13 @@ def test_notes_sync_state_path_is_profile_local_and_not_a_generic_database_path(
     assert config.get_notes_sync_state_db_path() == (
         tmp_path / "tldw_chatbook_notes_sync_state.db"
     )
-    generic_paths = (
-        Path(__file__).parents[2] / "tldw_chatbook/Chatbooks/database_paths.py"
-    ).read_text(encoding="utf-8")
-    settings_backup = (
-        Path(__file__).parents[2] / "tldw_chatbook/UI/Tools_Settings_Window.py"
-    ).read_text(encoding="utf-8")
-    for source in (generic_paths, settings_backup):
+    package = Path(__file__).parents[2] / "tldw_chatbook"
+    for path in (
+        "Chatbooks/database_paths.py",
+        "Backup_Recovery/settings_backup_helpers.py",
+        "UI/Screens/settings_screen.py",
+    ):
+        source = (package / path).read_text(encoding="utf-8")
         assert "get_notes_sync_state_db_path" not in source
         assert "tldw_chatbook_notes_sync_state.db" not in source
 
@@ -844,9 +844,12 @@ def test_read_only_prior_observation_lookup_never_migrates_or_repairs_v1(
     assert database.read_bytes() == before
     with sqlite3.connect(database) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (1,)
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_schema WHERE name = 'idx_import_items_target'"
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name = 'idx_import_items_target'"
+            ).fetchone()
+            is None
+        )
 
 
 def test_read_only_prior_observation_lookup_uses_sqlite_enforced_read_only_mode(
@@ -1106,12 +1109,13 @@ def test_begin_enforces_absolute_ledger_row_ceiling_before_database_creation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = tmp_path / "notes-sync.sqlite3"
-    monkeypatch.setattr(receipt_module, "MAX_RECEIPT_LEDGER_ROWS", 5)
+    with monkeypatch.context() as fault:
+        fault.setattr(receipt_module, "MAX_RECEIPT_LEDGER_ROWS", 5)
 
-    with pytest.raises(ImportReceiptError, match="ledger"):
-        NoteImportReceiptRepository(database).begin(_approved(), batch_size=25)
+        with pytest.raises(ImportReceiptError, match="ledger"):
+            NoteImportReceiptRepository(database).begin(_approved(), batch_size=25)
 
-    assert not database.exists()
+        assert not database.exists()
 
 
 def test_begin_seeds_only_approved_effects_and_skip_has_no_mutation_effects(

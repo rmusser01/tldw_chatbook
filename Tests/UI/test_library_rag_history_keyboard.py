@@ -98,6 +98,7 @@ async def _open(screen, pilot):
     await _wait_for_selector(screen, pilot, "#library-rag-query-input")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -152,6 +153,7 @@ async def test_keyboard_replay_uses_current_mode_scope_and_visible_focus(
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -192,6 +194,7 @@ async def test_keyboard_clear_retains_results_and_visible_history_focus(
         _assert_painted(screen, screen.query_one("#library-rag-history-empty"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outside_panel", [False, True])
 async def test_answer_reveal_respects_newer_focus(monkeypatch, outside_panel):

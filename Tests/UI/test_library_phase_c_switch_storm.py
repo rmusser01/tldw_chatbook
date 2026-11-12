@@ -151,6 +151,7 @@ def test_the_two_residency_guards_agree_on_which_canvases_are_resident() -> None
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_route_marker_classes_have_no_stylesheet_rules() -> None:
     """The marker classes are query markers, so nothing may style them.
@@ -190,6 +191,7 @@ async def test_route_marker_classes_have_no_stylesheet_rules() -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_route_switch_does_not_restyle_the_whole_shell_subtree(
     monkeypatch: pytest.MonkeyPatch,
@@ -238,6 +240,7 @@ async def test_route_switch_does_not_restyle_the_whole_shell_subtree(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_entry_into_a_route_does_not_collapse_then_reopen_its_panes(
     monkeypatch: pytest.MonkeyPatch,
@@ -287,6 +290,7 @@ async def test_first_entry_into_a_route_does_not_collapse_then_reopen_its_panes(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switching_away_does_not_rebuild_the_canvas_being_left() -> None:
     """The outgoing canvas keeps its children -- nobody would ever see them.
@@ -329,6 +333,7 @@ async def test_switching_away_does_not_rebuild_the_canvas_being_left() -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_destination_canvas_is_not_rebuilt_while_it_is_still_hidden(
     monkeypatch: pytest.MonkeyPatch,

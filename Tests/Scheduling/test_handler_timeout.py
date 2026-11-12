@@ -28,7 +28,9 @@ def db(tmp_path):
         database.close()
 
 
-def _make_hourly(db, *, next_run_at=NOW, timeout_seconds=None, enabled=True, title="hourly"):
+def _make_hourly(
+    db, *, next_run_at=NOW, timeout_seconds=None, enabled=True, title="hourly"
+):
     kwargs = {}
     if timeout_seconds is not None:
         kwargs["timeout_seconds"] = timeout_seconds
@@ -51,6 +53,7 @@ def _make_loop(db, handler, *, timeout_default=0.05):
         clock=lambda: NOW,
         missed_fire_grace_seconds=60.0,
         handler_timeout_seconds=timeout_default,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
 
 
@@ -152,6 +155,7 @@ def test_timeout_does_not_wedge_subsequent_tasks(db):
         clock=lambda: clock["now"],
         missed_fire_grace_seconds=60.0,
         handler_timeout_seconds=0.05,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     loop2.queue.load()
     _run(loop2.tick())
@@ -241,6 +245,7 @@ def test_timed_out_is_distinct_from_raised(db):
         clock=lambda: NOW + timedelta(hours=1, minutes=45),
         missed_fire_grace_seconds=60.0,
         handler_timeout_seconds=300,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     loop2.queue.load()
     # Clock at 13:45: t2 is due; t1's next occurrence (13:00) was already

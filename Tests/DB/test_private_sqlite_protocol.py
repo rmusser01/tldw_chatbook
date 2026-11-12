@@ -218,6 +218,54 @@ def run_child(payload, cwd):
     return codec.decode_frame(result.stdout)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX isolated helper contract")
+@pytest.mark.parametrize("operation", ["prepare", "pin_source"])
+@pytest.mark.parametrize("blocked_import", ["secrets", "tempfile"])
+def test_read_helper_does_not_load_atomic_write_dependencies(
+    tmp_path, operation, blocked_import
+):
+    codec = protocol()
+    target = tmp_path / "read-only-source"
+    target.write_bytes(b"source stays intact")
+    target.chmod(0o600)
+    before = codec.FileIdentity.from_stat(target.stat())
+    script = """
+import runpy
+import sys
+
+entry, blocked = sys.argv[1:]
+assert blocked not in sys.modules
+
+class RefuseWriteDependency:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == blocked:
+            sys.stderr.write("read helper loaded an atomic-write dependency\\n")
+            raise ImportError("read helper loaded an atomic-write dependency")
+
+sys.meta_path.insert(0, RefuseWriteDependency())
+sys.argv = [entry]
+runpy.run_path(entry, run_name="__main__")
+"""
+    result = subprocess.run(
+        [*child_command()[:3], "-c", script, child_command()[-1], blocked_import],
+        env=child_environment(),
+        input=codec.encode_frame({**request(target), "operation": operation}),
+        capture_output=True,
+        cwd=tmp_path,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == b""
+    response = codec.decode_frame(result.stdout)
+    assert response["operation"] == operation
+    assert response["status"] == "ok"
+    identity = codec.FileIdentity.from_payload(response["result"]["main_identity"])
+    assert identity.same_inode(before)
+    assert target.read_bytes() == b"source stays intact"
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
 @pytest.mark.parametrize(
     "metadata", [None, "", "0", "-1", "01", "unknown-parent", "9" * 100]
 )

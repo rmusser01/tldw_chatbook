@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -40,6 +41,7 @@ def test_persona_import_fences_mounted_buddy_state() -> None:
 
     invalidated: list[str] = []
     app = object.__new__(TldwCli)
+    app._persona_buddy_controller_lock = threading.Lock()
     app.persona_buddy_controller = SimpleNamespace(
         invalidate_profile=lambda: invalidated.append("persona")
     )
@@ -94,11 +96,14 @@ async def test_export_shutdown_finishes_before_later_app_owners() -> None:
     app._actor_pack_import_shutdown_task = None
     app.actor_pack_export_controller = ExportController()
     app._actor_pack_export_shutdown_task = None
+    app.raw_cli_runtime = SimpleNamespace(shutdown=lambda: None)
+    app._raw_cli_runtime_shutdown_task = None
     app._shutdown_notes_sync_runtime = lambda: record("notes")
     app._shutdown_console_runtime = lambda: record("console")
     app._shutdown_persona_buddy = lambda: record("buddy")
     app._audio_cpp_artifact_lease_coordinator = None
     app.audio_cpp_model_install_owner = AsyncOwner()
+    app._meeting_session_owner = None
     app._shutdown_console_image_edits = lambda: record("image")
     app._shutdown_file_notes_session_owner = lambda: record("file-notes")
 

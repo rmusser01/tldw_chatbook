@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────┐  N  paper-retrieval-practice                                         │
+│   a  │  ‹ Items  Retrieval pra… ·  cites 2 ▾  │  o  file:///Users/you/Papers/paper-retrieval-practice.pdf            │
+│   v  │ Saved 20:12 · ctrl+s save              │  t    Find  Read later  Use in Console  Note  More                   │
+│      │                                        │  e    Read (selected)  Analysis  Highlights  Info                    │
+│      │   ✓ Edit  Preview  Info         Save   │      Rendered (selected) |      Raw                ¶12 of 31  Quote  │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │ ▊ - Spacing the reviews over         ▎ │     ┃   Discussion. Effects held across subject areas.             ┃ │
+│      │ ▊ several days adds to the           ▎ │     ┃                                                              ┃ │
+│      │ ▊ effect.                            ▎ │     ┃   Abstract. We compare rereading with retrieval practice     ┃ │
+│      │ ▊                                 ▁▁ ▎ │     ┃   in 120 undergraduates.                                     ┃ │
+│ ---> │ ▊ > Results. Retrieval practice      ▎ │     ┃                                                           ▄▄ ┃ │
+│      │ ▊ improved 7-day retention by 21     ▎ │     ┃   Results. Retrieval practice improved 7-day retention       ┃ │
+│      │ ▊ percentage points.                 ▎ │     ┃   by 21 percentage points.                                   ┃ │
+│      │ ▊ > — paper-retrieval-practice,      ▎ │     ┃                                                              ┃ │
+│      │ ▊ ¶12 ↗                              ▎ │<--- ┃   Discussion. Effects held across subject areas.             ┃ │
+│      │ ▊                                    ▎ │     ┃                                                           ▂▂ ┃ │
+│      │ ▊ > Spacing the same study time      ▎ │     ┃   Abstract. We compare rereading with retrieval practice     ┃ │
+│      │ ▊ across several days produced       ▎ │     ┃   in 120 undergraduates.                                     ┃ │
+│ ---> │ ▊ better recall at one month         ▎ │     ┃                                                              ┃ │
+│      │ ▊ than massing it into one           ▎ │     ┃ █ Results. Retrieval practice improved 7-day retention       ┃ │
+│      │ ▊ session.                           ▎ │     ┃ █ by 21 percentage points.                                   ┃ │
+│      │ ▊ > — Spaced repetition,             ▎ │     ┃                                                              ┃ │
+│      │ ▊ explained, ¶3 ↗                    ▎ │     ┃   Discussion. Effects held across subject areas.             ┃ │
+│      │ ▊                                    ▎ │     ┃                                                              ┃ │
+│      │ ▊                                    ▎ │     ┃   Abstract. We compare rereading with retrieval practice     ┃ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ┃   in 120 undergraduates.                                     ┃ │
+│      │                                        │     ┃                                                              ┃ │
+│      │                       58 words · 12:1  │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      └────────────────────────────────────────┘                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  n note beside | q quote | j/k paragraph | ]/[ next item | esc close desk | F1 · F6 · Ctrl+P · Ctrl+Q

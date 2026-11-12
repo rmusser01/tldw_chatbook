@@ -1,0 +1,37 @@
+{
+  "base": "dbc3819f33eb92ff386513ea63da437f07eb91b6",
+  "product_changes": "3-line generation count fix; source hashes in product-source-sha256.json",
+  "private_profile": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live",
+  "launcher": "existing roleplay-library harness mkprofile.sh/env.sh rp_app_env, canonical platform mktemp root",
+  "normal_command": [
+    "tmux",
+    "-f",
+    "/dev/null",
+    "-L",
+    "mixins-task9",
+    "new-session",
+    "-d",
+    "-x",
+    "160",
+    "-y",
+    "45",
+    "-c",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/cwd",
+    "<rp_app_env child-only allowlist>",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/tldw-cli",
+    "--focus"
+  ],
+  "failed_command": [
+    "python",
+    "-m",
+    "tldw_chatbook.app",
+    "--serve",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18879"
+  ],
+  "responder": "existing harness/mock_llm.py 18765 --bodies; deterministic local response, not a model",
+  "isolation": "HOME/XDG/TLDW_CONFIG_PATH child-only; null keyring; no inherited provider keys; no user config/keychain credential inspection",
+  "capture": "existing shot.sh records actual Textual PTY cells; shot_png.py renders ANSI capture with Rich/browser fonts. These are not Pilot SVG or OS terminal-paint screenshots."
+}

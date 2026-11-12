@@ -307,6 +307,7 @@ async def test_export_selected_tooltip_follows_its_disabled_state():
         assert "export" in str(export_btn.tooltip).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversations_toolbar_count_static_stays_bounded_width_with_real_css():
     """task-2853 review round 2: the SAME unbounded-width defect proved
@@ -355,6 +356,7 @@ async def test_conversations_toolbar_count_static_stays_bounded_width_with_real_
         assert select_all_btn.region.width > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_zero_checked_select_mode_keeps_reader_read_only_until_done() -> None:
     app = _build_test_app()
@@ -442,6 +444,7 @@ async def test_zero_checked_select_mode_keeps_reader_read_only_until_done() -> N
         assert not open_console.disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_selection_clears_on_page_exit_and_cannot_export():
     app = _build_test_app()
@@ -498,6 +501,7 @@ async def test_library_conversation_selection_clears_on_page_exit_and_cannot_exp
         assert opened == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_stale_state_disables_actions_but_allows_recovery():
     app = _build_test_app()
@@ -561,6 +565,7 @@ def _painted_word_column(host, button, word: str) -> int:
     return button.region.x + painted.index(word)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversations_export_label_holds_its_column_across_the_first_selection():
     """The painted "Export" word holds its column across the first selection.
@@ -613,6 +618,7 @@ async def test_conversations_export_label_holds_its_column_across_the_first_sele
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)])
 async def test_conversations_select_labels_paint_in_full_like_media(size):
@@ -662,6 +668,7 @@ async def test_conversations_select_labels_paint_in_full_like_media(size):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_every_click_on_a_conversation_row_toggles_it_in_select_mode():
     """task-31945: marker cell and title cells are the same target."""

@@ -44,6 +44,7 @@ class _CssTrueConsoleHarness(ConsoleHarness):
 
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
+
 # PURE-FUNCTION width parameter only -- pass it to `_wrap_draft_line_slices`/
 # `_cell_wrap_line`/etc. below, where an explicit width argument is exactly
 # what's under test. Do NOT assume it equals the mounted widget's real
@@ -108,10 +109,35 @@ _ZWJ_EMOJI_STRING = "".join(
 _ZWJ_JOIN_BOUNDARY_TEXT = "".join(
     chr(c)
     for c in (
-        0x23, 0x5A, 0x58, 0x59, 0x20, 0x62, 0x39, 0x200D, 0x20,
-        0xFE0F, 0x1F600, 0x62, 0x63, 0x63, 0x33, 0x59, 0x59,
-        0x1F600, 0x33, 0x58, 0x5A, 0x58, 0x59, 0x23, 0x39, 0x30,
-        0x30, 0x59, 0x63,
+        0x23,
+        0x5A,
+        0x58,
+        0x59,
+        0x20,
+        0x62,
+        0x39,
+        0x200D,
+        0x20,
+        0xFE0F,
+        0x1F600,
+        0x62,
+        0x63,
+        0x63,
+        0x33,
+        0x59,
+        0x59,
+        0x1F600,
+        0x33,
+        0x58,
+        0x5A,
+        0x58,
+        0x59,
+        0x23,
+        0x39,
+        0x30,
+        0x30,
+        0x59,
+        0x63,
     )
 )
 
@@ -187,9 +213,7 @@ def test_prefixed_row_offsets_still_map_into_the_source_text():
     assert prefixed.text.startswith("... ")
     assert 0 <= prefixed.start <= prefixed.end <= len(_WINDOWED_BOUNDARY_TEXT)
     displayed_tail = prefixed.text[prefixed.synthetic_prefix_columns :]
-    assert (
-        _WINDOWED_BOUNDARY_TEXT[prefixed.start : prefixed.end] == displayed_tail
-    )
+    assert _WINDOWED_BOUNDARY_TEXT[prefixed.start : prefixed.end] == displayed_tail
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +462,7 @@ def test_cell_wrap_line_does_not_hang_at_width_one_with_double_width_text():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bug1_unfocused_insert_keeps_the_sentinel_row_painted():
     """Mounted reproduction of the `cursor_index=None` (unfocused/dictation)
@@ -466,6 +491,7 @@ async def test_bug1_unfocused_insert_keeps_the_sentinel_row_painted():
         assert any(_SENTINEL in row for row in painted_rows), painted_rows
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_expanded_row_grows_with_the_draft_so_the_screen_shows_all_rows():
     """Live-gate RED reproduction: the parent row crops the grown draft.
@@ -511,6 +537,7 @@ async def test_the_expanded_row_grows_with_the_draft_so_the_screen_shows_all_row
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_home_on_a_long_draft_keeps_the_caret_and_leading_text_painted():
     """MEDIUM RED reproduction, mounted: caret at the draft's true start
@@ -542,6 +569,7 @@ async def test_home_on_a_long_draft_keeps_the_caret_and_leading_text_painted():
         ), row0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bug2_cjk_insert_keeps_the_tail_painted():
     """Mounted reproduction of the char-vs-cell wrap bug: 40 double-width CJK

@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_models import (
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
@@ -28,10 +31,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
 from tldw_chatbook.Personal_Context.key_protector import (
     InMemoryProfileKeyProtector,
 )
-from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
 from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
 from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
 from tldw_chatbook.Personal_Context.service import PersonalContextService
@@ -272,7 +275,10 @@ def test_controller_omits_direct_update_without_exact_user_evidence(tmp_path) ->
     assert "profile_update" not in {entry.name for entry in provider.list_catalog()}
 
 
+@pytest.mark.asyncio
+@private_profile_test
 def test_preview_reserves_direct_update_schema_without_granting_evidence(
+    request,
     tmp_path,
 ) -> None:
     service = _profile_service(tmp_path)

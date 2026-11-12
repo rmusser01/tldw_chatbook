@@ -1,12 +1,23 @@
 """Shared saved search settings, proven through HTTP dispatch rather than provider mocks."""
 
 import importlib
+import json
 from unittest.mock import Mock
 
 import pytest
+import requests
 
 from tldw_chatbook import config
 from tldw_chatbook.Web_Scraping import WebSearch_APIs as api
+
+
+def _json_response(payload):
+    response = requests.Response()
+    response.status_code = 200
+    response.headers["Content-Type"] = "application/json"
+    response._content = json.dumps(payload).encode()
+    response._content_consumed = True
+    return response
 
 
 def test_field_catalog_and_legacy_resolution(monkeypatch):
@@ -36,6 +47,7 @@ def test_field_catalog_and_legacy_resolution(monkeypatch):
     assert raw["SearchEngines"]["bing_search_api_key"] == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_saved_brave_web_key_reaches_next_dispatch(monkeypatch):
     raw = {
         "SearchEngines": {
@@ -45,14 +57,15 @@ def test_saved_brave_web_key_reaches_next_dispatch(monkeypatch):
     }
     monkeypatch.setattr(config, "load_cli_config_and_ensure_existence", lambda: raw)
     monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
-    response = Mock()
-    response.json.return_value = {
-        "web": {
-            "results": [
-                {"title": "Found", "url": "https://example.org", "description": "Text"}
-            ]
+    response = _json_response(
+        {
+            "web": {
+                "results": [
+                    {"title": "Found", "url": "https://example.org", "description": "Text"}
+                ]
+            }
         }
-    }
+    )
     get = Mock(return_value=response)
     monkeypatch.setattr(api.requests, "get", get)
     first = api.perform_websearch("brave", "query", "DE", "de", "de-DE", 1)
@@ -64,14 +77,16 @@ def test_saved_brave_web_key_reaches_next_dispatch(monkeypatch):
     assert get.call_args.kwargs["params"]["country"] == "DE"
 
 
+@pytest.mark.bootstrap_profile
 def test_kagi_dispatch_uses_documented_endpoint_and_numeric_limit(monkeypatch):
     monkeypatch.setenv("KAGI_API_KEY", "test-kagi")
-    response = Mock()
-    response.json.return_value = {
-        "data": [
-            {"t": 0, "title": "Found", "url": "https://example.org", "snippet": "Text"}
-        ]
-    }
+    response = _json_response(
+        {
+            "data": [
+                {"t": 0, "title": "Found", "url": "https://example.org", "snippet": "Text"}
+            ]
+        }
+    )
     get = Mock(return_value=response)
     monkeypatch.setattr(api.requests, "get", get)
     result = api.perform_websearch("kagi", "query", "US", "en", "en", 1)
@@ -80,17 +95,18 @@ def test_kagi_dispatch_uses_documented_endpoint_and_numeric_limit(monkeypatch):
     assert get.call_args.kwargs["params"] == {"q": "query", "limit": 1}
 
 
+@pytest.mark.bootstrap_profile
 def test_searx_dispatch_preserves_endpoint_options_and_parses_json_object(monkeypatch):
     from urllib.parse import parse_qs, urlsplit
 
     monkeypatch.setenv(
         "SEARX_URL", "http://localhost:8080/search?format=json&engines=google"
     )
-    response = Mock()
-    response.headers = {"Content-Type": "application/json"}
-    response.json.return_value = {
-        "results": [{"title": "Found", "url": "https://example.org", "content": "Text"}]
-    }
+    response = _json_response(
+        {
+            "results": [{"title": "Found", "url": "https://example.org", "content": "Text"}]
+        }
+    )
     get = Mock(return_value=response)
     monkeypatch.setattr(api.requests.Session, "get", get)
     monkeypatch.setattr(api.time, "sleep", lambda _: None)
@@ -152,6 +168,7 @@ def test_setup_allows_configured_local_or_public_searx(monkeypatch, value):
         (500, "http", "failed"),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_probe_classifies_http_failures_without_secret_text(
     monkeypatch, status, kind, expected
 ):
@@ -200,62 +217,94 @@ def test_probe_classifies_http_failures_without_secret_text(
     ],
 )
 def test_real_settings_save_and_environment_override_reach_http(
-    monkeypatch, backend, field, env_var, header
+    tmp_path, monkeypatch, backend, field, env_var, header
 ):
-    """Only outgoing HTTP is replaced; Settings persistence, resolution and dispatch run."""
+    """Exercise real Settings persistence and dispatch with a mocked HTTP transport."""
     import json
+    from base64 import b64encode
 
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.UI.Settings_Modules import settings_config_adapter
+    from tldw_chatbook.Utils import tls_trust
 
-    adapter = SettingsConfigAdapter()
-    adapter.load(force_reload=True)
-    monkeypatch.delenv(env_var, raising=False)
-    monkeypatch.delenv("GOOGLE_SEARCH_ENGINE_ID", raising=False)
-    monkeypatch.delenv("YANDEX_FOLDER_ID", raising=False)
-    response = Mock()
-    response.headers = {}
-    response.json.return_value = {
-        "results": [],
-        "data": [],
-        "items": [],
-        "organic": [],
-        "webPages": {"value": []},
-    }
-    send = Mock(return_value=response)
-    monkeypatch.setattr(api.requests, "get", send)
-    monkeypatch.setattr(api.requests, "post", send)
-    monkeypatch.setattr(api.requests.Session, "get", send)
-    values = {
-        field: "first-saved",
-        "google_search_engine_id": "cx-saved",
-        "yandex_search_folder_id": "folder-saved",
-    }
-    assert adapter.save_values("SearchEngines", values)
+    with monkeypatch.context() as selected:
+        selected.delenv(env_var, raising=False)
+        selected.delenv("GOOGLE_SEARCH_ENGINE_ID", raising=False)
+        selected.delenv("YANDEX_FOLDER_ID", raising=False)
+        source = select_config_source(selected, tmp_path / "config.toml")
+        selected.setattr(
+            settings_config_adapter,
+            "load_cli_config_and_ensure_existence",
+            source.load_cli_config_and_ensure_existence,
+        )
+        selected.setattr(
+            settings_config_adapter,
+            "save_setting_to_cli_config",
+            source.save_setting_to_cli_config,
+        )
+        selected.setattr(api, "load_settings", source.load_settings)
+        selected.setattr(tls_trust, "get_cli_setting", source.get_cli_setting)
 
-    def check(expected):
-        api.perform_websearch(backend, "query", "US", "en", "en", 1)
-        kwargs = send.call_args.kwargs
-        if header:
-            prefix = {"kagi": "Bot ", "yandex": "Api-Key ", "tavily": "Bearer "}.get(
-                backend, ""
-            )
-            assert kwargs["headers"][header] == prefix + expected
-        elif backend == "google":
-            assert kwargs["params"]["key"] == expected
-            assert kwargs["params"]["cx"] == "cx-saved"
-        else:
-            assert json.loads(kwargs["data"])["api_key"] == expected
-        assert 0 < kwargs["timeout"] <= 30
+        adapter = settings_config_adapter.SettingsConfigAdapter()
+        adapter.load(force_reload=True)
+        response = api.requests.Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = "application/json"
+        response._content = json.dumps(
+            {
+                "results": [],
+                "data": [],
+                "items": [],
+                "organic": [],
+                "webPages": {"value": []},
+                "rawData": b64encode(b"<yandexsearch><response /></yandexsearch>").decode(
+                    "ascii"
+                ),
+            }
+        ).encode("utf-8")
+        response._content_consumed = True
+        send = Mock(return_value=response)
+        selected.setattr(api.requests, "get", send)
+        selected.setattr(api.requests, "post", send)
+        session = Mock(spec=api.requests.Session)
+        session.get = send
+        selected.setattr(api.requests, "Session", Mock(return_value=session))
+        values = {
+            field: "first-saved",
+            "google_search_engine_id": "cx-saved",
+            "yandex_search_folder_id": "folder-saved",
+        }
+        assert adapter.save_values("SearchEngines", values)
 
-    check("first-saved")
-    assert adapter.save_values("SearchEngines", {field: "second-saved"})
-    check("second-saved")
-    monkeypatch.setenv(env_var, "environment")
-    check("environment")
-    assert (
-        config.load_cli_config_and_ensure_existence()["SearchEngines"][field]
-        == "second-saved"
-    )
+        def check(expected):
+            send.reset_mock()
+            result = api.perform_websearch(backend, "query", "US", "en", "en", 1)
+            send.assert_called_once()
+            assert result["processing_error"] is None
+            kwargs = send.call_args.kwargs
+            if header:
+                prefix = {"kagi": "Bot ", "yandex": "Api-Key ", "tavily": "Bearer "}.get(
+                    backend, ""
+                )
+                assert kwargs["headers"][header] == prefix + expected
+            elif backend == "google":
+                assert kwargs["params"]["key"] == expected
+                assert kwargs["params"]["cx"] == "cx-saved"
+            else:
+                assert json.loads(kwargs["data"])["api_key"] == expected
+            assert 0 < kwargs["timeout"] <= 30
+
+        check("first-saved")
+        assert adapter.save_values("SearchEngines", {field: "second-saved"})
+        check("second-saved")
+        selected.setenv(env_var, "environment")
+        check("environment")
+        assert (
+            source.load_cli_config_and_ensure_existence(force_reload=True)["SearchEngines"][
+                field
+            ]
+            == "second-saved"
+        )
 
 
 @pytest.mark.parametrize(
@@ -270,20 +319,24 @@ def test_real_settings_save_and_environment_override_reach_http(
     ],
 )
 def test_loader_preserves_shipped_keys_and_legacy_aliases(
-    monkeypatch, canonical, legacy, value
+    monkeypatch, tmp_path, canonical, legacy, value
 ):
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+
     settings = importlib.import_module(
         "tldw_chatbook.Web_Scraping.search_backend_settings"
     )
     for backend in settings.BACKENDS.values():
         for field in backend.fields:
             monkeypatch.delenv(field.env_var, raising=False)
+    source = select_config_source(monkeypatch, tmp_path / "search-config.toml", vars(api))
     for saved in ({canonical: value}, {canonical: "", legacy: value}):
-        assert config.save_settings_to_cli_config({"SearchEngines": saved})
-        assert config.load_settings()["search_engines_keys"][canonical] == value
+        assert source.save_settings_to_cli_config({"SearchEngines": saved})
+        assert source.load_settings()["search_engines_keys"][canonical] == value
         assert api.initialize_config()["search_engines"][canonical] == value
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "backend", ["brave", "serper", "exa", "kagi", "google", "tavily", "searx"]
 )
@@ -329,6 +382,7 @@ def test_setup_rejects_empty_userinfo_and_backslash(monkeypatch, value):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_probe_does_not_log_untrusted_provider_payload(monkeypatch):
     from loguru import logger
 
@@ -337,11 +391,11 @@ def test_probe_does_not_log_untrusted_provider_payload(monkeypatch):
     )
     monkeypatch.setenv("GOOGLE_SEARCH_API_KEY", "sentinel-secret")
     monkeypatch.setenv("GOOGLE_SEARCH_ENGINE_ID", "engine")
-    response = Mock()
-    response.json.return_value = {
-        "items": [],
-        "unexpected": "sentinel-secret untrusted-body",
-    }
+    response = api.requests.Response()
+    response.status_code = 200
+    response.headers["Content-Type"] = "application/json"
+    response._content = b'{"items":[],"unexpected":"sentinel-secret untrusted-body"}'
+    response._content_consumed = True
     monkeypatch.setattr(api.requests, "get", Mock(return_value=response))
     messages = []
     sink = logger.add(lambda message: messages.append(str(message)))
@@ -363,13 +417,13 @@ def test_probe_does_not_log_untrusted_provider_payload(monkeypatch):
         ("countryUS|countryCA", "countryUS|countryCA"),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_google_dispatch_uses_country_restriction_values(
     monkeypatch, country, expected
 ):
     monkeypatch.setenv("GOOGLE_SEARCH_API_KEY", "test-key")
     monkeypatch.setenv("GOOGLE_SEARCH_ENGINE_ID", "test-engine")
-    response = Mock()
-    response.json.return_value = {"items": []}
+    response = _json_response({"items": []})
     get = Mock(return_value=response)
     monkeypatch.setattr(api.requests, "get", get)
     result = api.perform_websearch("google", "query", country, "en", "en", 1)
@@ -381,14 +435,13 @@ def test_google_dispatch_uses_country_restriction_values(
     "backend",
     ["google", "brave", "bing", "kagi", "serper", "exa", "tavily", "searx", "yandex"],
 )
+@pytest.mark.bootstrap_profile
 def test_malformed_http_payload_never_leaks_through_parser_diagnostics(
     monkeypatch, backend
 ):
     """Real response JSON reaches real parsers; failures discard partial payloads."""
     import base64
-    import json
 
-    import requests
     from loguru import logger
 
     settings = importlib.import_module(
@@ -424,10 +477,7 @@ def test_malformed_http_payload_never_leaks_through_parser_diagnostics(
             field.env_var,
             "http://localhost:8080/search" if backend == "searx" else "test-key",
         )
-    response = requests.Response()
-    response.status_code = 200
-    response.headers["Content-Type"] = "application/json"
-    response._content = json.dumps(payloads[backend]).encode()
+    response = _json_response(payloads[backend])
     # Session.request is the external boundary for top-level requests and SearX/Bing sessions.
     monkeypatch.setattr(requests.Session, "request", Mock(return_value=response))
     messages = []
@@ -443,6 +493,7 @@ def test_malformed_http_payload_never_leaks_through_parser_diagnostics(
 
 
 @pytest.mark.parametrize("status,kind", [(429, "rate_limit"), (503, "http")])
+@pytest.mark.bootstrap_profile
 def test_duckduckgo_http_error_is_a_failed_search_and_probe(monkeypatch, status, kind):
     import requests
 

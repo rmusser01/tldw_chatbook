@@ -17,36 +17,36 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-009](009-local-skill-trust-boundary.md) | Accepted | Use a passphrase-rooted authenticated trust boundary with logical quarantine for Chatbook-managed local skills. |
 | [ADR-010](010-console-conversation-local-marks.md) | Accepted | Keep Console conversation stars as durable local-only marks outside conversation metadata, sync, server payloads, and chat metadata mirror reports. |
 | [ADR-011](011-chatbook-workbench-ui-system.md) | Accepted | Adopt a shared Textual-native Workbench UI System with stable composition, explicit state, visible workflow controls, responsiveness gates, and route-owner migration policy. |
-| [ADR-013](013-media-search-plain-text-fts-boundary.md) | Accepted | Keep raw media search text separate from optional preformatted FTS MATCH expressions across the local media-reading boundary. |
+| [ADR-289](289-media-search-plain-text-fts-boundary.md) | Accepted | Keep raw media search text separate from optional preformatted FTS MATCH expressions across the local media-reading boundary. |
 | [ADR-016](016-palette-liveness-and-hotkey-layer.md) | Accepted | Palette commands must be live (notify-only commands deleted or wired); Ctrl+N destination hotkey layer zipped from `SHELL_DESTINATION_ORDER`; generic BINDINGS-driven F1 help. |
 | [ADR-018](018-watchlists-tui-screen.md) | Proposed | Replace the placeholder Watchlists destination shell with a full three-pane TUI screen reusing the local/server scope service and mirroring `tldw_server` Watchlists IA. |
 | [ADR-022](022-textual-8-runtime-floor.md) | Accepted | Support Textual 8.x, test MCP against exactly 8.0.0, and fail closed on unreviewed future major versions. |
 | [ADR-025](025-shared-stt-artifacts-and-runtime-routing.md) | Accepted | Use Parakeet ONNX for explicit supported languages, faster-whisper for automatic/broad routing, transcribe.cpp for curated optional breadth, and a shared verified model-artifact core. |
 | [ADR-021](021-file-backed-notes-disk-authority-and-recovery.md) | Proposed | Keep linked note files disk-authoritative, project them locally, and store journaled safety plus opt-in recovery replicas in an independent recovery database. |
-| [ADR-026](026-brand-asset-source-and-export-boundary.md) | Accepted | Keep validated Chatbook brand masters authoritative, commit reviewed exports, isolate the optional export toolchain from runtime/default CI, and keep asset-bearing work off the public remote until release clearance. |
-| [ADR-027](027-portable-database-note-session-coordinator.md) | Accepted | Keep the active Database Note draft, revisioned save queue, editor-conflict gating, and flush outcomes in a portable coordinator outside Textual presentation and separate from File Notes authority. |
-| [ADR-028](028-structured-prompts-and-auxiliary-improvement-calls.md) | Superseded by ADR-029 | Original structured Prompt and auxiliary improvement decision; replaced after discovering the existing server schema-v1 collision and composer segment boundary. |
-| [ADR-029](029-local-private-data-boundary.md) | Accepted | Enforce owner-only POSIX storage for local private artifacts, make config persistence single-owner, keep persistent logs payload-free, and contain legacy Notes sync paths. |
-| [ADR-029](029-versioned-prompt-artifacts-and-safe-improvement-transactions.md) | Accepted | Use schema v2 plus a first-class Prompt/Recipe discriminator, segment-safe composer transactions, recipe-fill responses, and sensitive auxiliary provider calls. |
+| [ADR-292](292-brand-asset-source-and-export-boundary.md) | Accepted | Keep validated Chatbook brand masters authoritative, commit reviewed exports, isolate the optional export toolchain from runtime/default CI, and keep asset-bearing work off the public remote until release clearance. |
+| [ADR-293](293-portable-database-note-session-coordinator.md) | Accepted | Keep the active Database Note draft, revisioned save queue, editor-conflict gating, and flush outcomes in a portable coordinator outside Textual presentation and separate from File Notes authority. |
+| [ADR-295](295-structured-prompts-and-auxiliary-improvement-calls.md) | Superseded by ADR-297 | Original structured Prompt and auxiliary improvement decision; replaced after discovering the existing server schema-v1 collision and composer segment boundary. |
+| [ADR-029](029-local-private-data-boundary.md) | Accepted; amended 2026-10-03 (ADR-217, OS keychain opt-in) | Enforce owner-only POSIX storage for local private artifacts, make config persistence single-owner, keep persistent logs payload-free, and contain legacy Notes sync paths. |
+| [ADR-297](297-versioned-prompt-artifacts-and-safe-improvement-transactions.md) | Accepted | Use schema v2 plus a first-class Prompt/Recipe discriminator, segment-safe composer transactions, recipe-fill responses, and sensitive auxiliary provider calls. |
 | [ADR-030](030-derived-index-lifecycle-and-atomic-media-migrations.md) | Accepted | Keep media SQLite authoritative, reconcile derived semantic-index deletion asynchronously, and make versioned media migrations genuinely atomic. |
-| [ADR-030](030-local-library-agent-tool-boundary.md) | Accepted | Share one byte-bounded lexical-only local Library read contract across Console and MCP while keeping Console mode selection and MCP policy boundaries distinct. |
+| [ADR-298](298-local-library-agent-tool-boundary.md) | Accepted | Share one byte-bounded lexical-only local Library read contract across Console and MCP while keeping Console mode selection and MCP policy boundaries distinct. |
 | [ADR-031](031-bounded-evaluation-and-tool-worker-execution.md) | Accepted | Adapt synchronous eval providers off-loop, make eval failure and cancellation terminal states truthful, and record the retired ToolExecutor contract as superseded. |
 | [ADR-032](032-immutable-installed-distribution-assets.md) | Accepted | Treat installed distributions as immutable, package explicit runtime assets and vendored notices, and verify built artifacts outside the source checkout. |
-| [ADR-032](032-local-agent-tool-permission-boundary.md) | Accepted | Register workspace-local agent tools as a first-class provider reusing the MCP permission store under a synthetic server key, with fail-closed approval and workspace-root path confinement. |
-| [ADR-033](033-local-agent-process-execution-boundary.md) | Accepted | Bound model-invocable process execution to fixed-argv read-only git tools without the `process` risk tag (with a binding tripwire), and reject a raw shell tool in favor of tldw_server's governed virtual-CLI design. |
-| [ADR-033](033-application-session-state-ownership.md) | Accepted | Keep runtime authority, screen snapshots, and revisioned single-slot handoffs behind explicit application-scoped owners. |
+| [ADR-300](300-local-agent-tool-permission-boundary.md) | Accepted | Register workspace-local agent tools as a first-class provider reusing the MCP permission store under a synthetic server key, with fail-closed approval and workspace-root path confinement. |
+| [ADR-302](302-local-agent-process-execution-boundary.md) | Accepted | Bound model-invocable process execution to fixed-argv read-only git tools without the `process` risk tag (with a binding tripwire), and reject a raw shell tool in favor of tldw_server's governed virtual-CLI design. |
+| [ADR-033](033-application-session-state-ownership.md) | Accepted; amended 2026-10-03 (ADR-217, one binding coordinator) | Keep runtime authority, screen snapshots, and revisioned single-slot handoffs behind explicit application-scoped owners. |
 | [ADR-034](034-shared-rail-disclosure-glyphs.md) | Accepted | Give the rail disclosure glyphs a single owner in `Widgets/destination_rail.py`, re-exported by `Chat/console_glyphs.py`, replacing a two-file duplication held together by a test in a third. |
 | [ADR-035](035-file-notes-session-git-index-controls.md) | Accepted | Let File Notes report and reversibly stage current-session paths without taking ownership of pre-existing Git index state. |
-| [ADR-036](036-application-service-composition-lifecycle.md) | Accepted | Compose application service graphs once at dependency-ready boundaries and bind them to the existing provider and Sync owners without adding a service container. |
+| [ADR-036](036-application-service-composition-lifecycle.md) | Accepted; amended by ADR-250 (deferral clause) | Compose application service graphs once at dependency-ready boundaries and bind them to the existing provider and Sync owners without adding a service container. |
 | [ADR-037](037-roleplay-assistant-identity-and-persona-user-profile-separation.md) | Accepted | Separate assistant Personas from human User Profiles and persist authority-scoped character identity for trustworthy TTS authorship. |
 | [ADR-038](038-file-notes-guarded-session-commit.md) | Accepted | Let File Notes create one reviewed local commit only when the complete staged delta exactly matches current Chatbook session ownership. |
-| [ADR-039](039-global-and-studio-tts-settings-ownership.md) | Accepted | Keep application-wide TTS configuration in Settings, separately persist sparse Studio preferences, preserve character profile authority, and keep runtime operations in Lab. |
-| [ADR-040](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md) | Accepted | Store Console block Prompts and Recipes as schema-v2 artifacts with a first-class discriminator, compiled compatibility text, sensitive provider calls, and segment-safe composer transactions. |
+| [ADR-304](304-global-and-studio-tts-settings-ownership.md) | Accepted | Keep application-wide TTS configuration in Settings, separately persist sparse Studio preferences, preserve character profile authority, and keep runtime operations in Lab. |
+| [ADR-305](305-versioned-prompt-artifacts-and-safe-improvement-transactions.md) | Accepted | Store Console block Prompts and Recipes as schema-v2 artifacts with a first-class discriminator, compiled compatibility text, sensitive provider calls, and segment-safe composer transactions. |
 | [ADR-043](043-console-rail-compact-collapse-yields-to-explicit-toggle.md) | Accepted | Console rail compact-collapse rules are the responsive default rendering, not a hard block: explicit rail toggles are honored at any width with the main-column min-width waived, so manual toggles never silently no-op. |
 | [ADR-045](045-qwencloud-dual-api-provider-boundary.md) | Accepted | Treat QwenCloud Responses and Chat Completions as two wire modes of one first-class provider while reusing the shared Console, native-tool, readiness, and model-catalog boundaries. |
 | [ADR-046](046-roleplay-chat-display-identity-and-template-provenance.md) | Accepted | Keep human chat display identity separate from User Profiles and Personas, with safe resolved projections and explicit character-template provenance. |
 | [ADR-049](049-local-prompt-retained-version-history.md) | Accepted | Expose local Prompt and Recipe sync snapshots as bounded retained history with indexed paging, atomic keyword capture, and conditional restore as a new current version. |
-| [ADR-050](050-audio-cpp-generated-model-setup-ownership.md) | Accepted | Generate immutable audio.cpp launch artifacts from structured global settings and a built-in exact-package recipe registry while retaining the manual server.json path. |
+| [ADR-308](308-audio-cpp-generated-model-setup-ownership.md) | Accepted | Generate immutable audio.cpp launch artifacts from structured global settings and a built-in exact-package recipe registry while retaining the manual server.json path. |
 | [ADR-051](051-private-tts-clone-reference-assets.md) | Accepted | Store canonical TTS clone references as private profile-owned assets with typed admission and separate explicit portability. |
 | [ADR-052](052-console-conversation-memory-and-compaction-policy.md) | Proposed | Separate model capacity, mandatory request safety, conversation budgets, and branch-valid generated memory across their durable owners. |
 | [ADR-053](053-mcp-unified-standalone-runtime-boundary.md) | Accepted | Replace FastMCP with the public `mcp-unified` strict stdio runtime while preserving Chatbook's standalone catalog, in-app Library boundary, permission policy, and bounded canonical mappings. |
@@ -63,29 +63,30 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-064](064-deepseek-dual-api-provider-boundary.md) | Accepted | Treat DeepSeek Chat Completions and Responses as two strict modes of one provider with stateless explicit history and durable reasoning/tool continuation. |
 | [ADR-065](065-active-ingest-source-admission-and-override.md) | Accepted | Refuse same-backend active-source ingest duplicates by default, with lexical identity, atomic folder admission, and an inline one-shot override. |
 | [ADR-067](067-library-top-level-pagination-contracts.md) | Accepted | Keep top-level Library paging source-owned while standardizing exact bounded pages, stable-ID owning-page reads, complete facets/trust aggregates, and truthful recovery. |
-| [ADR-068](068-console-project-instruction-context-boundary.md) | Superseded | Original Console project-instruction context boundary, replaced by ADR-069 after local-state and preflight ownership review. |
-| [ADR-069](069-console-project-instruction-local-state-and-preflight.md) | Accepted | Keep project-instruction control state local-only, detect binding retargets, and prepare ephemeral tool context before unchanged security review. |
+| [ADR-316](316-console-project-instruction-context-boundary.md) | Superseded | Original Console project-instruction context boundary, replaced by ADR-317 after local-state and preflight ownership review. |
+| [ADR-317](317-console-project-instruction-local-state-and-preflight.md) | Accepted | Keep project-instruction control state local-only, detect binding retargets, and prepare ephemeral tool context before unchanged security review. |
 | [ADR-069](069-project-skills-folder-convention.md) | Accepted | Discover project-local `.SKILLS/` folders at startup and workspace creation, offering prompt-driven, fingerprint-gated import that copies content into the ADR-009 trust boundary quarantined rather than live-loading it. |
 | [ADR-072](072-checkpoint-harness-process-ownership.md) | Accepted | Bound the suite-health checkpoint harness to retained cooperative process signals with PID-version-safe Darwin cleanup. |
 | [ADR-074](074-portable-actor-packs-and-local-persona-visual-runtime.md) | Proposed | Keep Shared Visual Identity and Persona Visual as separate local runtimes inside one self-contained portable Actor Pack envelope. |
 | [ADR-075](075-durable-character-emote-metadata.md) | Proposed | Match the pinned server emote grammar while persisting bounded final-expression metadata and immutable visual references. |
-| [ADR-076](076-library-lifecycle-progressive-disclosure.md) | Accepted | Library uses destination-local, profile-persisted lifecycle composition rather than a global Beginner/Expert mode or a second onboarding wizard. |
-| [ADR-077](077-server-offloaded-scheduled-agent-tasks.md) | Accepted | tldw_server is the execution authority for server-scoped scheduled agent work (single-owner execution, notifications pass-back, phase-1 side-effect-free runs), amending ADR-018's execution-unavailable clause. |
-| [ADR-078](078-structured-agent-tool-outcome-provenance.md) | Accepted | Carry optional structured tool outcome provenance across the internal provider/runtime step boundary, with safe legacy fallback and no SQLite or external provider-wire migration. |
+| [ADR-076](076-library-lifecycle-progressive-disclosure.md) | Accepted; amended 2026-10-03 (ADR-217 setup owner) | Library uses destination-local, profile-persisted lifecycle composition rather than a global Beginner/Expert mode or a second onboarding wizard. |
+| [ADR-077](077-server-offloaded-scheduled-agent-tasks.md) | Accepted | tldw_server is the execution authority for server-scoped scheduled agent work (single-owner execution, notifications pass-back, phase-1 side-effect-free runs), amending ADR-291's execution-unavailable clause. |
+| [ADR-321](321-structured-agent-tool-outcome-provenance.md) | Accepted | Carry optional structured tool outcome provenance across the internal provider/runtime step boundary, with safe legacy fallback and no SQLite or external provider-wire migration. |
 | [ADR-079](079-console-library-conversation-authority.md) | Accepted | Separate manual search, automatic retrieval, and assistant Library tools with local per-conversation authority, fail-closed runtime composition, and minimized turn activity. |
 | [ADR-081](081-mcp-prompt-reduction-recommendations.md) | Accepted | Keep MCP prompt-reduction recommendations local-only, MCP-only, telemetry-free, and routed through the existing permission-store APIs. |
 | [ADR-082](082-console-per-chat-private-scratch-space.md) | Accepted | Give each live Console chat private temporary scratch, remove implicit cwd/config authority, preserve explicit Workspace bindings, and defer cleanup safely around late tool threads. |
 | [ADR-083](083-console-edge-rails-and-workspace-tree-ownership.md) | Accepted; superseded in part by ADR-210 | Make Console rails application-edge owners, use per-section Context ceilings with ordinary outer scrolling, and partition named-workspace conversations into a native Tree. |
 | [ADR-084](084-change-review-consent-and-asynchronous-finalization.md) | Accepted | Make Change Review explicit per workspace, asynchronous after Console completion, durably published, and conservatively bounded before tool dispatch. |
-| [ADR-084](084-mcp-profile-driven-rag-search-contract.md) | Accepted | Keep MCP RAG search media-only while default requests follow the active profile through the shared runtime with truthful score and reranking provenance. |
-| [ADR-086](086-library-adaptive-reader-shell.md) | Accepted | Share one structural adaptive reader shell inside Library while keeping Media, Conversations, Notes, Prompts, and Skills behavior destination-owned. |
+| [ADR-330](330-mcp-profile-driven-rag-search-contract.md) | Accepted | Keep MCP RAG search media-only while default requests follow the active profile through the shared runtime with truthful score and reranking provenance. |
+| [ADR-329](329-library-media-reader-ia.md) | Accepted; amended by ADR-212 | Make Library Media an adaptive reader with a permanent Reader: an independently collapsible Library rail and Items list, five-column grips, and preferred-versus-responsive pane state. |
+| [ADR-086](086-library-adaptive-reader-shell.md) | Accepted; amended by ADR-212 | Share one structural adaptive reader shell inside Library while keeping Media, Conversations, Notes, Prompts, and Skills behavior destination-owned. |
 | [ADR-087](087-console-read-only-next-send-estimate-projection.md) | Superseded by ADR-088 | Original read-only projection decision; replaced after review found it still passed historical media through provider base64 serialization on the composer sync path. |
 | [ADR-088](088-console-lightweight-next-send-history-projection.md) | Accepted | Share a lightweight pre-serialization Console history projection so next-send pricing observes admitted text/media without database writes or base64 encoding. |
 | [ADR-089](089-console-per-turn-change-review-ownership.md) | Accepted | Make agent-turn cards and Change Review the Console file-change owners, add guarded per-turn Undo All, and retire the redundant Inspector projection. |
 | [ADR-090](090-console-thinking-block-ownership-and-replay.md) | Accepted | Store actual displayable model thinking separately from private continuation, with variant-correct ownership, optional provider-resolved replay, honest proprietary evidence, and answer-only human-readable surfaces. |
 | [ADR-091](091-bounded-epub-archive-admission.md) | Accepted | Isolate ebook parsing in one-worker pool generations and reject EPUB ZIP structures whose expanded resource cost exceeds fixed safety bounds. |
 | [ADR-092](092-console-full-semantic-capture-policy.md) | Accepted | Keep Safe as the default while allowing scoped Full semantic exchange capture with frozen run policy, invariant credential/binary protections, distinct export profiles, and conversation-scoped erasure. |
-| [ADR-093](093-offline-tiktoken-runtime-assets.md) | Accepted | Ship a closed immutable tiktoken table inventory for offline estimates and chunking while preserving explicit cache authority. |
+| [ADR-335](335-offline-tiktoken-runtime-assets.md) | Accepted | Ship a closed immutable tiktoken table inventory for offline estimates and chunking while preserving explicit cache authority. |
 | [ADR-094](094-raw-and-virtual-cli-execution-boundaries.md) | Accepted | Keep virtual CLI read-only and independently gated while raw user and model shell execution remains explicitly dangerous, one-shot, scrubbed, bounded, and re-armed per launch. |
 | [ADR-096](096-console-safe-capture-retention.md) | Accepted | Bound default Safe exchange capture to the first system row, latest user row, and newest eight rows; compact readable legacy Safe blobs transactionally while leaving Full semantics unchanged. |
 | [ADR-098](098-visible-bounded-console-prompt-queue.md) | Accepted | Keep a visible, bounded, process-local prompt queue per Console session with FIFO turns, explicit pause/recovery, and immutable owning-session execution context. |
@@ -114,7 +115,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-146](146-independent-buddy-petdex-publication-and-character-creation.md) | Accepted | Publish reviewed Petdex artwork to an independent Buddy and create durable characters through guarded management entry points. |
 | [ADR-147](147-conversation-archive-and-exact-resume.md) | Accepted | Preserve saved chat identity through reversible archive, scoped search, transcript review and exact Console resume. |
 | [ADR-148](148-mcp-hub-rail-ia-and-responsive-triad.md) | Accepted | Split the agent tool catalog out of the built-in server rail row into its own Agent tools section, and stack the inspector as a bounded band below 120 columns. |
-| [ADR-150](150-mcp-hub-bulk-permission-actions.md) | Accepted | Add filter-scoped shift+space/C bulk permission actions executed as N ordinary profile-scoped set_tool_state writes. |
+| [ADR-347](347-mcp-hub-bulk-permission-actions.md) | Accepted | Add filter-scoped shift+space/C bulk permission actions executed as N ordinary profile-scoped set_tool_state writes. |
 | [ADR-149](149-offer-first-canvas-guide-and-inline-skill.md) | Accepted | Offer Canvas before proactive authoring; load bounded packaged guidance in the owning Console run and provide an optional trusted inline skill. |
 | [ADR-153](153-bounded-run-webhook-delivery.md) | Accepted | Reuse one lazy webhook delivery worker with finite admission, explicit best-effort drops and idle retirement. |
 | [ADR-154](154-agent-denial-streak-boundary.md) | Accepted | Count authoritative tool denials per run and stop at a coherent completed-batch boundary. |
@@ -127,17 +128,37 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-167](167-tool-profile-write-lifetime.md) | Accepted | Keep admitted Tool Profile writes and bounded outcomes application-owned across Settings recreation and shutdown. |
 
 | [ADR-172](172-library-artifacts-browse-and-navigation.md) | Accepted; implementation pending | Browse reports and registered Chatbooks in Library while retaining kept-copy identity, source ownership, app-owned sharing, and the linked ZIP-pack manager. |
-| [ADR-184](184-local-console-prompt-draft-shelf.md) | Accepted | Store explicitly managed unsent Console drafts in a capped, local-only shelf inside the Prompts database and promote them through existing Prompt and collection contracts. |
+| [ADR-350](350-local-console-prompt-draft-shelf.md) | Accepted | Store explicitly managed unsent Console drafts in a capped, local-only shelf inside the Prompts database and promote them through existing Prompt and collection contracts. |
 | [ADR-185](185-network-chat-ircv3-and-tldw-pydle-boundary.md) | Accepted; ADR-186 amendments proposed | Preserve the approved Network Chat ownership and separately maintained Codeberg pydle fork boundary. |
 | [ADR-186](186-network-chat-handoff-reliability-amendments.md) | Proposed | Clarify bounded callback/transport delivery, late-reply isolation, current screen lifecycle and truthful release completion for the PTO handoff. |
 
 | [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Accepted | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
 | [ADR-197](197-console-hook-configuration-review.md) | Accepted | Review standalone user hook definitions before execution, with persistent local consent, next-Send admission, and native Console/Settings access. |
-| [ADR-198](198-gc-policy-freeze-boot-heap.md) | Accepted | Freeze the long-lived heap at `_ui_ready` and after each screen pre-import pass (young collect first); keep CPython's default GC thresholds; never disable the collector. Partial win: shortens gen-2 pauses, does not remove them (TASK-33545). |
+| [ADR-198](198-gc-policy-freeze-boot-heap.md) | Accepted | Freeze the long-lived heap at `_ui_ready` and after each screen pre-import pass (young collect first); keep CPython's default GC thresholds; never disable the collector. Partial win: shortens gen-2 pauses, does not remove them (TASK-33545). Amended 2026-10-10 (TASK-33620.15.3): the Console re-freezes at idle (full collect of the unfrozen heap first), and a compaction at 25% frozen growth bounds frozen garbage. Owner decision 2026-10-22 (TASK-33620.15.9): kept as built, accepting an idle compaction of about 235-490 ms CPU after a conversation switch. |
 | [ADR-162](162-managed-agent-plugins.md) | Accepted | Manage immutable agent-capability packages with Git marketplaces, reviewed adapters, workspace activation and authenticated lifecycle recovery. |
 | [ADR-163](163-expanded-console-hook-runtime.md) | Accepted | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
 | [ADR-166](166-agent-assisted-archive-recovery.md) | Accepted | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
 | [ADR-210](210-console-region-ownership.md) | Accepted | Give each Console region one job — authority header, identity tab strip, one Chats browser, three-group Inspect, four-slot status strip, run-owning composer — and re-home every duplicated control. |
+| [ADR-212](212-shared-adaptive-pane-shell.md) | Accepted | Share the adaptive pane shell (grips, messages, rail rows, compact search input) between the Library and Roleplay through destination classes, neutral resolver aliases and an opt-in Tab region. |
+| [ADR-217](217-first-run-setup-shape-and-surfaces.md) | Accepted | One setup owner on a Textual-free setup core serves the first-run corridor (Quick 4 steps, Full 11), a re-run dashboard, single-step sheets and `tldw-cli setup --plain`; a stable step total; a Console probe-turn test message; provider keys stay in config.toml by default with the OS keychain optional. |
+| [ADR-219](219-console-chat-destinations-and-bounded-starts.md) | Accepted | Let Console agents create workspace or casual drafts and start background work with destination defaults, scoped approvals, shared finite budgets, and durable recovery. |
+| [ADR-351](351-file-notes-replica-retention.md) | Proposed | Bound the ADR-296 File Notes replica's recovery data: 50 most-recent checkpoints per unprotected note, 30-day tombstone/revision expiry on root change and session end, with protected paths and the most-recent tombstone never evicted. |
+| [ADR-221](221-prompt-injection-cold-start-caches.md) | Accepted | Pay prompt-injection cold starts (book fetch, entry processing, pattern compilation) once per store generation: a monotonic WorldBookManager generation counter, a lock-guarded 8-conversation LRU of built processors keyed (conversation, character, generation), precompiled entry keys, and id-set recursion dedup; chat dictionaries adopt the same contract. |
+
+| [ADR-211](211-ephemeral-provider-failure-presentation.md) | Accepted | Keep sanitized provider failure presentation transient across the gateway, agent outcome and Console while preserving typed fallback semantics and diagnostic persistence. |
+| [ADR-224](224-conversation-timestamp-normalization.md) | Accepted | Migrate `conversations.last_modified` and `flashcards.next_review` to the ADR-173 canonical UTC shape (schema v78→v79) so the keyset, due-card, and character-list queries compare and order on raw indexed columns; a partial expression index serves the character visibility predicate and NOCASE order. |
+
+| [ADR-182](182-personal-context-memory-evolution.md) | Accepted | Evolve memory through existing owners, starting with an offline baseline, truthful provenance and selection inspection, and measured local retrieval. |
+| [ADR-201](201-versioned-profile-evidence-and-temporal-claims.md) | Accepted (design only) | Bind future V2 Personal Context evidence to exact source authority/version/span and distinguish support, approval and temporal claim changes. |
+| [ADR-202](202-dependency-aware-personal-context-forgetting.md) | Accepted (design only) | Fence future forgetting across existing owners with source suppression, durable recovery and honest peer acknowledgements. |
+| [ADR-203](203-personal-context-provider-disclosure-authority.md) | Accepted (design only) | Separate restrictive model audiences from Sync and agent authority using qualified destination/purpose-bound local grants. |
+| [ADR-188](188-opt-in-proposal-only-memory-consolidation.md) | Accepted (design only) | Bound opt-in new-source consolidation to canonical proposals, exact foreground review and native disclosure/budget/recovery owners. |
+| [ADR-189](189-reviewed-memory-feedback-and-repair-ownership.md) | Accepted (design only) | Route explicit corrections and repair through canonical profiles and foreground Notes/lessons, with bounded non-authorizing guidance. |
+| [ADR-192](192-personal-context-v2-canonical-data-contract.md) | Accepted (design only) | Freeze inactive V2 aggregates, complete digest/attribution rules and restrictive disclosure without enabling native consumers. |
+| [ADR-193](193-native-v2-profile-compatibility-and-admission.md) | Accepted (design only) | Require current profile-wide consumer qualification and exact native atomic admission before V2 use. |
+
+| [ADR-232](232-console-learned-response-rules.md) | Accepted | Learn native Chat-scoped response rules, assess permitted execution evidence, and admit bounded correction through current Console custody; preserves source ADR-219 provenance. |
+| [ADR-242](242-console-radio-portrait-performance.md) | Accepted (design only) | Add reviewed local six-pose character performances and output-timed TTS presentation within the existing Console rail; preserve moods, motion preferences and portable artwork formats. |
 
 ## Historical Decision Material
 
@@ -171,6 +192,25 @@ Do not require an ADR for routine bug fixes, small UI polish, copy-only changes,
 
 Accepted ADRs are immutable except for typo fixes, link repairs, or metadata that does not alter the decision. If a decision changes, create a new ADR and mark the old one as `Superseded by ADR-NNN`.
 
+## Numbering rule
+
+One number per decision. A new ADR takes the next free number, which is the
+highest number in use plus 1 -- gaps are never backfilled.
+
+If two files end up with the same number, the oldest file (by its `Date:`
+field, else its add-commit time) keeps it. Each younger file takes the next
+free number and gains a renumbering-provenance note naming its old number.
+
+`scripts/check_adr_numbers.py` (run by `./scripts/preflight.sh` and the
+required `derived-artifacts.yml` job) fails on any collision and names the next
+free number. The 50 numbers that were shared before TASK-36943.3 were
+renumbered on 2026-11-03; [renumbered-adr-index.md](renumbered-adr-index.md)
+maps each old number to the files that held it and the number each holds now.
+[renumbered-adr-references.tsv](renumbered-adr-references.tsv) lists every
+reference in living material that was rewritten to a new number, with the file it
+was attributed to. Done tasks, `Docs/QA/` reports and superpowers specs, plans and
+reviews keep their original numbers; resolve those through the index.
+
 ## Naming
 
 Use numeric filenames:
@@ -182,3 +222,16 @@ Use numeric filenames:
 Do not reuse numbers.
 
 | [ADR-187](187-server-sharing-release-contracts.md) | Accepted | Consume durable clone receipts, paginated shared sources, and observed Notes link deletion versions without weakening server contracts. |
+| [ADR-206](206-shared-ssrf-address-classification.md) | Accepted | One shared `Utils.egress.address_is_fetchable` predicate classifies resolved addresses for every fetch-side SSRF guard (egress pipeline and skill remote fetch); NAT64 `64:ff9b::/96` reconciled to rejected on both layers. |
+| [ADR-208: DB migration .sql files are the executed source of truth](208-migration-sql-files-are-the-executed-source.md) | Migration .sql files execute; decorative twins deleted; packaging pins the file-backed set. |
+
+| [ADR-227: Native Console goal runs](227-native-console-goal-runs.md) | Accepted | Bounded native goal iterations, evidence, storage and current-dev runtime integration; preserves source ADR-141 provenance. |
+| [ADR-240: Retire the MCP destination; Settings hosts the Tools & MCP hub](240-mcp-destination-retirement-tools-hub-in-settings.md) | Accepted | Re-home the four-mode MCP workbench intact as a Settings category (ADR-172 retirement template); `mcp`/`tools_settings` alias Settings and ctrl+9 survives as a compatibility deep-link; amends ADR-015 (14 -> 13 destinations). |
+
+| [ADR-243: Source-bound portrait compositing](243-source-bound-portrait-compositing.md) | Accepted for planning | Reusable manual expression regions, three component edits, exact local six-pose assembly and profile-local provenance; amends ADR-242 generation/authoring. |
+| [ADR-250: Application services bundle](250-application-services-bundle.md) | Accepted | A frozen, typed, per-feature `ApplicationServices` bundle published once from `app_service_wiring`, with today's app attributes as shrink-only aliases and one shared `open_profile_storage` factory for the MCP server, mobile service and CLI tools; amends ADR-036's deferral clause. |
+
+| [ADR-253](253-compact-discovery-before-plain-chat.md) | Accepted | Try budgeted compact discovery before plain chat and retain its ceiling during schema loading. |
+
+| [ADR-282: Opt-in Console OS notification dispatch](282-console-os-notification-dispatch.md) | Accepted | Separate default-off desktop channel with fixed argv, bounded literal identity, content-free diagnostics, and timeout ownership through orderly process exit. |
+| [ADR-286](286-console-prompt-mix-ins.md) | Accepted | Add literal Before/After Mix-in library artifacts through the existing composer Prompts button, with chat-owned selections, exact retry snapshots and current-send-only caching semantics. |

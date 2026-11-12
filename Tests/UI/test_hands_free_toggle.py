@@ -9,9 +9,11 @@ import pytest
 from textual.widgets import Switch
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 from tldw_chatbook.Chat.console_hands_free import HandsFreeController
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switch_renders_and_toggles_hands_free(
     monkeypatch: pytest.MonkeyPatch,
@@ -40,6 +42,8 @@ async def test_switch_renders_and_toggles_hands_free(
 
         sw.focus()
         await pilot.press("enter")
+        # TASK-33626.1: turning Hands-free on asks the Speak replies consent.
+        await accept_hands_free_consent(app, pilot)
         await pilot.pause(0.4)
         # hands-free session should now be active (or at minimum the switch
         # reflects the requested state)

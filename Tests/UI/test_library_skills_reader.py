@@ -9,6 +9,10 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -28,6 +32,9 @@ from tldw_chatbook.Library.library_skills_state import (
 )
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
+from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
+    InertLastingSyncRuntime,
+)
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
     LIBRARY_SKILLS_READER_PROFILE,
 )
@@ -64,6 +71,7 @@ async def _open_skills_reader(screen, pilot) -> None:
     await _wait_for_selector(screen, pilot, "#library-skills-reader-shell")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_mount_three_retained_roles_and_default_to_overview(
     tmp_path,
@@ -109,13 +117,12 @@ async def test_skills_mount_three_retained_roles_and_default_to_overview(
         assert screen.query_one("#library-skill-overview-region").display is True
         assert work.is_mounted and work.display
 
-        selected_row = screen.query_one(
-            "#library-skill-row-release-notes", Button
-        )
+        selected_row = screen.query_one("#library-skill-row-release-notes", Button)
         assert selected_row.has_class("is-selected")
         assert str(selected_row.label).startswith("› ")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_modes_preserve_list_work_and_one_live_draft(
     tmp_path,
@@ -157,13 +164,16 @@ async def test_skill_modes_preserve_list_work_and_one_live_draft(
         assert screen.query_one("#library-skill-edit-region").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_skill_older_detail_result_cannot_replace_newer_generation(
     tmp_path,
 ) -> None:
     """A cancelled thread may settle late even when the selected name is unchanged."""
     app = _build_test_app()
-    _wire_skills(app, tmp_path)
+    app.local_skills_service = _wire_skills(app, tmp_path)
+    app.notes_sync_runtime_owner = InertLastingSyncRuntime()
+    app.collections_capture_scope_service = SimpleNamespace(active_authority=None)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -172,13 +182,20 @@ async def test_same_skill_older_detail_result_cannot_replace_newer_generation(
         screen._skills_state.selected_skill_name = "release-notes"
         screen._skills_state.view = "editor"
         screen._skills_state.reader_mode = "overview"
-        app.skills_scope_service = SimpleNamespace(get_skill=lambda *_: None)
+
+        def get_skill(*_args):
+            return None
+
+        app.skills_scope_service = SimpleNamespace(get_skill=get_skill)
+        run_service = screen._run_library_service_call
         first_started = asyncio.Event()
         release_first = asyncio.Event()
         calls = 0
 
-        async def delayed_call(*_args, **_kwargs):
+        async def delayed_call(method, *args, **kwargs):
             nonlocal calls
+            if method is not get_skill:
+                return await run_service(method, *args, **kwargs)
             calls += 1
             if calls == 1:
                 first_started.set()
@@ -200,24 +217,31 @@ async def test_same_skill_older_detail_result_cannot_replace_newer_generation(
         older = asyncio.create_task(
             screen._refresh_library_skill_detail("release-notes")
         )
-        await first_started.wait()
-        newer = asyncio.create_task(
-            screen._refresh_library_skill_detail("release-notes")
-        )
-        await newer
-        release_first.set()
-        await older
+        try:
+            await wait_for_background_signal(
+                first_started, older, what="older skill detail"
+            )
+            newer = asyncio.create_task(
+                screen._refresh_library_skill_detail("release-notes")
+            )
+            await await_background_task(newer, what="newer skill detail")
+        finally:
+            release_first.set()
+            await await_background_task(older, what="older skill detail")
 
         assert screen._skills_state.editor_state is not None
         assert screen._skills_state.editor_state.version == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_skill_older_delete_cannot_reset_a_newer_work_generation(
     tmp_path,
 ) -> None:
     app = _build_test_app()
-    _wire_skills(app, tmp_path)
+    app.local_skills_service = _wire_skills(app, tmp_path)
+    app.notes_sync_runtime_owner = InertLastingSyncRuntime()
+    app.collections_capture_scope_service = SimpleNamespace(active_authority=None)
     host = LibraryHarness(app)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -237,7 +261,12 @@ async def test_same_skill_older_delete_cannot_reset_a_newer_work_generation(
         delete_started = asyncio.Event()
         release_delete = asyncio.Event()
 
-        async def delayed_delete(*_args, **_kwargs):
+        run_service = screen._run_library_service_call
+        delete_skill = app.skills_scope_service.delete_skill
+
+        async def delayed_delete(method, *args, **kwargs):
+            if method != delete_skill:
+                return await run_service(method, *args, **kwargs)
             delete_started.set()
             await release_delete.wait()
             return {"deleted": True}
@@ -246,15 +275,20 @@ async def test_same_skill_older_delete_cannot_reset_a_newer_work_generation(
         older = asyncio.create_task(
             screen._delete_library_skill("release-notes", request_generation=3)
         )
-        await delete_started.wait()
-        screen._skills_state.detail_generation = 4
-        release_delete.set()
-        await older
+        try:
+            await wait_for_background_signal(
+                delete_started, older, what="older skill deletion"
+            )
+            screen._skills_state.detail_generation = 4
+        finally:
+            release_delete.set()
+            await await_background_task(older, what="older skill deletion")
 
         assert screen._skills_state.selected_skill_name == "release-notes"
         assert screen._skills_state.view == "editor"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_skill_older_trust_review_cannot_patch_newer_generation(
     tmp_path,
@@ -262,6 +296,9 @@ async def test_same_skill_older_trust_review_cannot_patch_newer_generation(
     """A same-name reopen must reject the preceding Work session's review."""
     app = _build_test_app()
     local = _wire_skills(app, tmp_path)
+    app.local_skills_service = local
+    app.notes_sync_runtime_owner = InertLastingSyncRuntime()
+    app.collections_capture_scope_service = SimpleNamespace(active_authority=None)
     await local.create_skill(
         name="release-notes",
         content="---\nname: release-notes\ndescription: Release notes\n---\nBe exact.",
@@ -277,25 +314,30 @@ async def test_same_skill_older_trust_review_cannot_patch_newer_generation(
         review_started = asyncio.Event()
         release_review = asyncio.Event()
 
-        async def delayed_review(*_args, **_kwargs):
+        async def delayed_review(_skill_name):
             review_started.set()
             await release_review.wait()
             return {
                 "review_id": "stale-review",
                 "manifest_generation": 1,
                 "current_digest": "a" * 64,
-            }, True
+            }
 
-        screen._call_library_skill_trust_service = delayed_review
+        app.local_skill_trust_service = SimpleNamespace(capture_review=delayed_review)
         older = asyncio.create_task(screen._review_library_skill_trust())
-        await review_started.wait()
-        screen._skills_state.detail_generation += 1
-        release_review.set()
-        await older
+        try:
+            await wait_for_background_signal(
+                review_started, older, what="older skill trust review"
+            )
+            screen._skills_state.detail_generation += 1
+        finally:
+            release_review.set()
+            await await_background_task(older, what="older skill trust review")
 
         assert screen._skills_state.active_review is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_detail_failure_stays_scoped_and_retries_in_work_pane(
     tmp_path,
@@ -354,6 +396,7 @@ async def test_skill_detail_failure_stays_scoped_and_retries_in_work_pane(
         assert screen._skills_state.editor_state.version == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_reader_f6_reaches_items_and_work_regions(tmp_path) -> None:
     app = _build_test_app()
@@ -384,6 +427,7 @@ async def test_skills_reader_f6_reaches_items_and_work_regions(tmp_path) -> None
         assert screen.focused is screen.query_one("#library-skill-mode-overview")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "terminal_size",
@@ -424,6 +468,7 @@ async def test_skills_reader_live_matrix_preserves_modes_work_floor_and_grips(
         assert screen.query_one("#library-skill-overview-region").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_files_mode_is_read_only_and_labels_binary_files(
     tmp_path,
@@ -472,6 +517,7 @@ async def test_skills_files_mode_is_read_only_and_labels_binary_files(
         assert not region.query(TextArea)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_trust_mode_identifies_exact_review_snapshot(tmp_path) -> None:
     app = _build_test_app()
@@ -510,6 +556,7 @@ async def test_skills_trust_mode_identifies_exact_review_snapshot(tmp_path) -> N
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_successful_skill_save_discards_the_reviewed_snapshot(tmp_path) -> None:
     app = _build_test_app()
@@ -546,6 +593,7 @@ async def test_successful_skill_save_discards_the_reviewed_snapshot(tmp_path) ->
         assert screen._skills_state.active_review is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_projection_cannot_consume_work_scroll_receipt(tmp_path) -> None:
     app = _build_test_app()
@@ -568,6 +616,7 @@ async def test_items_projection_cannot_consume_work_scroll_receipt(tmp_path) -> 
         assert screen._skills_state.scroll_pending is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_manual_pane_collapses_are_independent_and_expand_the_sibling(
     tmp_path,
@@ -610,6 +659,7 @@ async def test_skills_manual_pane_collapses_are_independent_and_expand_the_sibli
         assert shell.work.region.width > library_collapsed_width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_trust_posture_sync_keeps_interactive_rows_mounted(
     tmp_path,

@@ -1,0 +1,17 @@
+{
+  "checked_utc": "2026-10-27T18:07:10.601796+00:00",
+  "dev": "416feb50ee667fdc95cb269bf50f8b1d5b3ff8ff",
+  "audited_source_equivalent": true,
+  "candidate_ids": [
+    "37031",
+    "37032",
+    "37033",
+    "37034"
+  ],
+  "branch_refs": 349,
+  "tree_sources": 338,
+  "registered_worktrees": 52,
+  "conflicting_claims": [],
+  "historical_path_max_id": 37030,
+  "note": "Only this audit owns these task IDs at this snapshot; recheck at integration. Registered worktrees and fetched refs cannot reveal unregistered private directories."
+}

@@ -1,0 +1,8 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+2.60s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size0]
+2.10s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size1]
+1.98s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size2]
+
+(6 durations < 1s hidden.)
+3 passed, 14 deselected in 8.62s

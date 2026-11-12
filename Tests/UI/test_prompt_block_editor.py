@@ -5,7 +5,15 @@ from __future__ import annotations
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    Select,
+    Static,
+    TextArea,
+)
 
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
     BlockArtifactDefinition,
@@ -830,12 +838,12 @@ async def test_footer_still_repaints_when_the_copy_actually_changes() -> None:
         assert before.startswith("Valid ·"), before
 
         log = _count_footer_writes(app, editor)
-        await editor.replace_block_state(
-            "goal", delete_block(editor.state, "goal")
-        )
+        await editor.replace_block_state("goal", delete_block(editor.state, "goal"))
         await pilot.pause()
 
-        written = [entry for entry in log["statics"] if entry[0] == "prompt-editor-validation"]
+        written = [
+            entry for entry in log["statics"] if entry[0] == "prompt-editor-validation"
+        ]
         assert written, log["statics"]
         assert str(validation.renderable) != before
         assert str(validation.renderable) == written[-1][1]

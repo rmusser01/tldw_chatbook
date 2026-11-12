@@ -1,0 +1,151 @@
+{
+  "pid": 76652,
+  "cells": [
+    {
+      "size": [
+        235,
+        52
+      ],
+      "kind": "approval",
+      "named_dialog_painted": true,
+      "default_stay": true,
+      "zero_consequences_absent": true,
+      "terminal_mouse_close": true,
+      "worker_result": {
+        "close-call": "deny"
+      },
+      "owning_task_cancelled": true,
+      "target_fleet_and_wake_fences_released": true,
+      "target_rounds_removed": true,
+      "viewed_sibling_question_pending": true
+    },
+    {
+      "size": [
+        235,
+        52
+      ],
+      "kind": "question",
+      "named_dialog_painted": true,
+      "default_stay": true,
+      "zero_consequences_absent": true,
+      "terminal_mouse_close": true,
+      "worker_result": {
+        "answered": false,
+        "reason": "cancelled"
+      },
+      "owning_task_cancelled": true,
+      "target_fleet_and_wake_fences_released": true,
+      "target_rounds_removed": true,
+      "viewed_sibling_question_pending": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "kind": "approval",
+      "named_dialog_painted": true,
+      "default_stay": true,
+      "zero_consequences_absent": true,
+      "terminal_mouse_close": true,
+      "worker_result": {
+        "close-call": "deny"
+      },
+      "owning_task_cancelled": true,
+      "target_fleet_and_wake_fences_released": true,
+      "target_rounds_removed": true,
+      "viewed_sibling_question_pending": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "kind": "question",
+      "named_dialog_painted": true,
+      "default_stay": true,
+      "zero_consequences_absent": true,
+      "terminal_mouse_close": true,
+      "worker_result": {
+        "answered": false,
+        "reason": "cancelled"
+      },
+      "owning_task_cancelled": true,
+      "target_fleet_and_wake_fences_released": true,
+      "target_rounds_removed": true,
+      "viewed_sibling_question_pending": true
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/__init__.py",
+    "tldw_chatbook.app": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/app.py",
+    "tldw_chatbook.Chat.console_chat_controller": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
+    "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
+    "tldw_chatbook/Widgets/confirmation_dialog.py": "b9e67df05e3777b791d8134e2fbee39817c097945dd98a5027dbb35aea64fed4",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "e1731b135a3c70e61dab56a6727cdb15a78bb883cee228099d953f6ed70a09e8",
+    "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e",
+    "tldw_chatbook/css/components/_dialogs.tcss": "2ffc3df81ea999d523e46322896007618aa08b06a2c6ec73a03306878c3acaf2",
+    "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007",
+    "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
+    "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67"
+  },
+  "runner_sha256": "9b7d9c79f3f88cef317fa6623b1bc6e9e5172a6c04d10fc8b74f9ecef818f4d4",
+  "fixture_scope": "Actual TldwCli and LinuxDriver. Real request_user_questions and request_mcp_approvals worker rounds; deterministic registered owning asyncio task, no provider, tool dispatch or external server. Actual ConsoleRuntime closes the requested background session. Terminal SGR mouse input presses both tab close and confirmation buttons.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "restore terminal size",
+  "max_risk_dialog": {
+    "size": [
+      80,
+      24
+    ],
+    "title_characters": 60,
+    "all_six_nonzero_counts": true,
+    "all_five_pending_kinds": true,
+    "title_and_actions_fully_painted": true,
+    "default_stay": true,
+    "fixture_scope": "Synthetic impact snapshot exercises only real confirmation geometry; not real work in these six categories.",
+    "short_height": {
+      "size": [
+        80,
+        18
+      ],
+      "title_characters": 60,
+      "all_six_nonzero_counts": true,
+      "all_five_pending_kinds": true,
+      "original_dialog_width": 60,
+      "title_fully_painted_at_top": true,
+      "actions_fully_painted_and_hit_testable_before_and_after_scroll": true,
+      "default_stay": true,
+      "native_keyboard_scroll": true,
+      "scroll_y_before": 0.0,
+      "scroll_y_after": 6,
+      "last_consequence_readable_after_scroll": true,
+      "native_home_and_tab_restored_stay": true
+    }
+  },
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null,
+  "source_hashes_after": {
+    "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
+    "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
+    "tldw_chatbook/Widgets/confirmation_dialog.py": "b9e67df05e3777b791d8134e2fbee39817c097945dd98a5027dbb35aea64fed4",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "e1731b135a3c70e61dab56a6727cdb15a78bb883cee228099d953f6ed70a09e8",
+    "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e",
+    "tldw_chatbook/css/components/_dialogs.tcss": "2ffc3df81ea999d523e46322896007618aa08b06a2c6ec73a03306878c3acaf2",
+    "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007",
+    "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
+    "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67"
+  }
+}

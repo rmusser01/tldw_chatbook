@@ -88,6 +88,10 @@ def _create_v2_fixture(path: Path) -> None:
                     "            extraction_lease_expires_at TEXT,\n",
                     "",
                 )
+            statement = statement.replace(
+                "            url_provenance TEXT NOT NULL DEFAULT 'unknown'\n"
+                "                CHECK(url_provenance IN ('unknown', 'user_entered')),\n", ""
+            )
             connection.execute(statement)
         connection.execute("INSERT INTO schema_version (version) VALUES (2)")
         connection.execute(
@@ -140,7 +144,6 @@ def test_fresh_database_creates_v1_compatibility_and_capture_v3(tmp_path: Path) 
 
     database = LibraryCollectionsDB(path)
 
-    assert database.get_schema_version() == 4
     assert database.has_compatible_legacy_schema() is True
     database.require_capture_schema()
     objects = _schema_objects(path)
@@ -148,6 +151,9 @@ def test_fresh_database_creates_v1_compatibility_and_capture_v3(tmp_path: Path) 
     assert {"library_collections", "library_collection_items"} <= {
         name for kind, name in objects if kind == "table"
     }
+    # Trailing on purpose (task-19866): a version assertion before the
+    # substantive ones switches this body off on the next schema bump.
+    assert database.get_schema_version() == 5
     database.close()
 
 
@@ -158,10 +164,11 @@ def test_real_v1_fixture_migrates_without_changing_legacy_values(tmp_path: Path)
 
     database = LibraryCollectionsDB(path)
 
-    assert database.get_schema_version() == 4
     assert _legacy_rows(path) == before
     assert database.has_compatible_legacy_schema() is True
     database.require_capture_schema()
+    # Trailing on purpose (task-19866).
+    assert database.get_schema_version() == 5
     database.close()
 
 
@@ -220,7 +227,7 @@ def test_two_concurrent_openers_publish_one_complete_v3_schema(tmp_path: Path) -
             for row in connection.execute(
                 "SELECT version FROM schema_version ORDER BY version"
             )
-        ] == [1, 4]
+        ] == [1, 5]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     assert CAPTURE_TABLES <= {
         name for kind, name in _schema_objects(path) if kind == "table"
@@ -235,8 +242,9 @@ def test_v3_reopen_is_idempotent(tmp_path: Path) -> None:
 
     second = LibraryCollectionsDB(path)
 
-    assert second.get_schema_version() == 4
     assert _schema_objects(path) == before
+    # Trailing on purpose (task-19866).
+    assert second.get_schema_version() == 5
     second.close()
 
 
@@ -244,7 +252,7 @@ def test_future_schema_is_refused_without_writing(tmp_path: Path) -> None:
     path = tmp_path / "collections.db"
     _create_v1_fixture(path)
     with _open(path) as connection:
-        connection.execute("INSERT INTO schema_version (version) VALUES (5)")
+        connection.execute("INSERT INTO schema_version (version) VALUES (6)")
     before_objects = _schema_objects(path)
     before_rows = _legacy_rows(path)
 
@@ -260,7 +268,7 @@ def test_future_schema_is_refused_without_writing(tmp_path: Path) -> None:
             for row in connection.execute(
                 "SELECT version FROM schema_version ORDER BY version"
             )
-        ] == [1, 5]
+        ] == [1, 6]
 
 
 def test_v2_processing_row_migrates_with_unowned_expired_lease(
@@ -271,7 +279,6 @@ def test_v2_processing_row_migrates_with_unowned_expired_lease(
 
     database = LibraryCollectionsDB(path)
 
-    assert database.get_schema_version() == 4
     database.require_capture_schema()
     with database.connection() as connection:
         columns = {
@@ -296,7 +303,9 @@ def test_v2_processing_row_migrates_with_unowned_expired_lease(
         "extraction_lease_expires_at",
     } <= columns
     assert tuple(row) == ("processing", None, None)
-    assert versions == [1, 2, 4]
+    assert versions == [1, 2, 5]
+    # Trailing on purpose (task-19866).
+    assert database.get_schema_version() == 5
     database.close()
 
 
@@ -348,6 +357,7 @@ def test_v2_lease_migration_failure_rolls_back_columns_and_version(
                 "WHERE authority_key = 'local:profile-a' AND capture_id = 'capture-v2'"
             ).fetchone()[0]
         )
+    assert "url_provenance" not in columns
     assert "extraction_owner_token" not in columns
     assert "extraction_lease_expires_at" not in columns
     assert version == 2

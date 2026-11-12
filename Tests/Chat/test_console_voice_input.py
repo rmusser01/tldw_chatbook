@@ -18,6 +18,37 @@ from tldw_chatbook.Chat import console_voice_input as cvi
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("provider", ["lightning-whisper-mlx", "lightning-whisper"])
+def test_deferred_saved_selection_refuses_probe_and_resolution_before_effects(monkeypatch, provider):
+    monkeypatch.setattr(
+        cvi, "get_cli_setting",
+        lambda section, key=None, default=None: provider
+        if (section, key) == ("transcription", "default_provider") else default,
+    )
+    monkeypatch.setattr(cvi, "capture_available", lambda: pytest.fail("capture probed"))
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: pytest.fail("providers probed"))
+    availability = cvi.probe()
+    assert availability.ok is False
+    assert availability.kind == "deferred-provider"
+    assert "Your saved settings have not been changed." in availability.reason
+    assert cvi.resolve() is None
+
+
+@pytest.mark.parametrize("installed", [("parakeet-mlx", "faster-whisper"), ("faster-whisper",)])
+def test_explicit_supported_override_uses_only_that_provider_with_deferred_global(monkeypatch, installed):
+    monkeypatch.setattr(
+        cvi, "get_cli_setting",
+        lambda section, key=None, default=None: "lightning-whisper"
+        if (section, key) == ("transcription", "default_provider") else default,
+    )
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: installed)
+    result = cvi.resolve(provider_override="parakeet-mlx")
+    if "parakeet-mlx" in installed:
+        assert result.provider == "parakeet-mlx"
+    else:
+        assert result is None
+
+
 # The in-process `test_probe_does_not_import_transcription_service` below only
 # proves `console_voice_input.probe()` stays cheap, and it runs inside a test
 # session that has already imported an unpredictable pile of other modules --
@@ -86,6 +117,7 @@ def test_screen_import_does_not_load_transcription_stack():
 
 def test_probe_reports_missing_capture(monkeypatch):
     """No pyaudio and no sounddevice means no microphone backend."""
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi, "capture_available", lambda: False)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
 
@@ -98,6 +130,7 @@ def test_probe_reports_missing_capture(monkeypatch):
 
 def test_probe_reports_missing_provider(monkeypatch):
     """Capture present but no transcription provider is a different remedy."""
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi, "capture_available", lambda: True)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ())
 
@@ -110,6 +143,7 @@ def test_probe_reports_missing_provider(monkeypatch):
 
 
 def test_probe_ok_when_both_present(monkeypatch):
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi, "capture_available", lambda: True)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
 
@@ -119,8 +153,9 @@ def test_probe_ok_when_both_present(monkeypatch):
     assert availability.kind == "ok"
 
 
-def test_probe_does_not_import_transcription_service():
+def test_probe_does_not_import_transcription_service(monkeypatch):
     """Probing must stay cheap: no faster-whisper, no NeMo, no torch."""
+    _stub_settings(monkeypatch, {})
     heavy = "tldw_chatbook.Local_Ingestion.transcription_service"
     original_module = sys.modules.pop(heavy, None)
 
@@ -205,6 +240,7 @@ def test_probe_reports_missing_capture_when_numpy_missing(monkeypatch):
     def fake_find_spec(name, *args, **kwargs):
         return object() if name == "sounddevice" else None  # numpy stays unresolved
 
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
 
     availability = cvi.probe()
@@ -216,16 +252,14 @@ def test_probe_reports_missing_capture_when_numpy_missing(monkeypatch):
 def test_installed_local_providers_returns_subset_in_declared_order(monkeypatch):
     """Only installed providers are returned, in LOCAL_PROVIDER_MODULES order.
 
-    `faster_whisper` is deliberately excluded from `installed` so the result
-    is a proper subset. The two that remain (`parakeet-mlx`,
-    `lightning-whisper-mlx`) are alphabetically out of order relative to each
-    other, so a stray `sorted()` in the implementation would also fail this
+    The supported subset (`parakeet-mlx`, `faster-whisper`) is out of
+    alphabetical order, so a stray `sorted()` would also fail this
     test. Patches `find_spec` directly so a real, potentially
     machine-installed `parakeet_mlx` cannot leak into the result. Both
-    remaining providers are Apple-Silicon only, so `sys.platform` is pinned
+    MLX provider requires Apple Silicon, so `sys.platform` is pinned
     to darwin rather than trusting whatever this machine happens to be.
     """
-    installed = {"parakeet_mlx", "lightning_whisper_mlx"}
+    installed = {"parakeet_mlx", "faster_whisper", "lightning_whisper_mlx"}
 
     def fake_find_spec(name, *args, **kwargs):
         return object() if name in installed else None
@@ -233,7 +267,7 @@ def test_installed_local_providers_returns_subset_in_declared_order(monkeypatch)
     monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
     monkeypatch.setattr(cvi.sys, "platform", "darwin")
 
-    assert cvi.installed_local_providers() == ("parakeet-mlx", "lightning-whisper-mlx")
+    assert cvi.installed_local_providers() == ("parakeet-mlx", "faster-whisper")
 
 
 def test_installed_local_providers_includes_parakeet_onnx_when_present(monkeypatch):
@@ -343,7 +377,7 @@ def test_mlx_providers_require_darwin_even_if_module_resolves(
         ("lightning-whisper-mlx", "lightning_whisper_mlx"),
     ],
 )
-def test_mlx_providers_available_on_darwin_when_module_resolves(
+def test_mlx_providers_available_on_darwin_only_when_release_eligible(
     monkeypatch, provider, module_name
 ):
     monkeypatch.setattr(
@@ -353,7 +387,10 @@ def test_mlx_providers_available_on_darwin_when_module_resolves(
     )
     monkeypatch.setattr(cvi.sys, "platform", "darwin")
 
-    assert provider in cvi.installed_local_providers()
+    if provider == "lightning-whisper-mlx":
+        assert provider not in cvi.installed_local_providers()
+    else:
+        assert provider in cvi.installed_local_providers()
 
 
 def test_remote_whisper_is_never_returned(monkeypatch):
@@ -445,7 +482,7 @@ def test_resolve_never_returns_an_uninstalled_provider(monkeypatch):
     """This is the guard against the service's parakeet-mlx rewrite."""
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
     _stub_settings(
-        monkeypatch, {"transcription.default_provider": "lightning-whisper-mlx"}
+        monkeypatch, {"transcription.default_provider": "qwen2audio"}
     )
 
     effective = cvi.resolve()
@@ -1100,6 +1137,7 @@ def test_probe_failure_does_not_cascade_into_a_second_voicefailed(monkeypatch):
     raises partway through `_fail()`'s two calls -- one level up, at the
     call site that wraps `probe()`/`resolve()`.
     """
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi, "capture_available", lambda: False)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
 
@@ -1985,11 +2023,24 @@ def test_the_first_run_message_differs_from_later_presses(monkeypatch):
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
+    first_work = controller._model_preparation
+    first_state = controller.state
     controller.stop()
+    assert first_work is not None
+    assert first_work.done.wait(2), "first warmup did not retire"
+    assert first_state == cvi.STATE_LISTENING
+    assert controller.state == cvi.STATE_IDLE
     first = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
 
     events.clear()
     controller.start()
+    retry_work = controller._model_preparation
+    retry_state = controller.state
+    controller.stop()
+    assert retry_work is not None and retry_work is not first_work
+    assert retry_work.done.wait(2), "retry warmup did not retire"
+    assert retry_state == cvi.STATE_LISTENING
+    assert controller.state == cvi.STATE_IDLE
     second = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
 
     assert first.first_run is True
@@ -2021,31 +2072,735 @@ def test_the_first_run_detail_says_what_the_chip_cannot(monkeypatch):
     assert len(cvi.WARMUP_DETAIL_FIRST_RUN) > cvi.WARMUP_MESSAGE_MAX_CELLS
 
 
-def test_a_failed_warm_up_degrades_instead_of_disabling_dictation(monkeypatch):
-    """A warm-up that fails after the service was built must not be fatal.
+#: What a real first-run failure looked like (TASK-33621.21): parakeet-mlx
+#: swallowed the fetch error and retried the repo id as a local path.
+_RAW_LOAD_ERROR = (
+    "Failed to load model: [Errno 2] No such file or directory: "
+    "'mlx-community/parakeet-tdt-0.6b-v2/config.json'"
+)
 
-    The Console warms on *every* press, so a fatal warm-up would turn one
-    transient error -- a provider that dislikes digital silence, a blip with
-    the weights already on disk -- into permanently unusable dictation. The
-    capture goes ahead; that is safe now only because an empty result can no
-    longer be misreported as a dead microphone.
+
+def _failure_text(events) -> str:
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1, failures
+    return f"{failures[0].reason} {failures[0].remedy}"
+
+
+def _assert_plain_model_failure(text: str) -> None:
+    """One plain sentence about the model, a next step, nothing from the log."""
+    lowered = text.lower()
+    assert "speech model" in lowered
+    assert "try again" in lowered
+    assert "nothing was recorded" in lowered
+    # Raw diagnostics belong in the log, never in the toast.
+    assert "errno" not in lowered
+    assert "/" not in text, text
+    assert "config.json" not in lowered
+    # The capture is not going ahead, so nothing may say it is.
+    assert "may be slow" not in lowered
+    assert "microphone" not in lowered
+    # Hands-free reaches this same failure, so the retry names no one button,
+    # and a cause the network does not explain (a bad model name, a corrupt
+    # cache) gets the settings pointer AC#1 names.
+    assert "press dictate" not in lowered
+    assert "settings ▸ speech & tts" in lowered
+
+
+def test_a_failed_model_load_is_fatal_and_never_opens_the_microphone(monkeypatch):
+    """TASK-33621.21: a warm-up that cannot load the model ends the attempt.
+
+    The warm-up transcribes silence through the transcriber the capture will
+    use. When that load fails, recording anyway records into a transcriber
+    that already failed -- the live defect: a "may be slow" warning, then a
+    streaming load that hung forever. Every press re-warms on a fresh service,
+    so this costs one press, not dictation.
     """
-    transcriber = _Transcriber(error=RuntimeError("could not download model weights"))
+    transcriber = _Transcriber(error=RuntimeError(_RAW_LOAD_ERROR))
     service = _WarmableService(transcriber=transcriber)
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
 
-    assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == []
-    warnings = [e for e in events if isinstance(e, cvi.VoiceModelWarmupFailed)]
-    assert len(warnings) == 1
-    text = f"{warnings[0].reason} {warnings[0].remedy}".lower()
-    assert "model" in text
-    assert "could not download model weights" in text
-    assert "microphone" not in text
-    # The capture still opened, and the machine is live.
+    _assert_plain_model_failure(_failure_text(events))
+    assert service.started is False, "capture started after a failed model load"
+    assert controller.state == cvi.STATE_IDLE
+    kinds = [
+        type(e).__name__
+        for e in events
+        if isinstance(e, (cvi.VoiceFailed, cvi.VoiceStateChanged))
+    ]
+    assert kinds[-2:] == ["VoiceFailed", "VoiceStateChanged"]
+
+
+def test_a_second_press_after_a_failed_load_fails_the_same_way(monkeypatch):
+    """A fresh press after actual disposal can retry (TASK-33621.21 AC#3)."""
+    transcriber = _Transcriber(error=RuntimeError(_RAW_LOAD_ERROR))
+    service = _WarmableService(transcriber=transcriber)
+    controller, events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+    first = _failure_text(events)
+    assert controller._model_preparation.done.wait(2), "native disposal did not finish"
+    events.clear()
+    controller.start()
+    second = _failure_text(events)
+    assert controller._model_preparation.done.wait(2)
+
+    assert first == second
+    assert len(transcriber.buffer_calls) == 2, "the second press never re-warmed"
+    assert service.started is False
+
+
+class _ScriptedProgress:
+    """Stands in for an attributed active HTTP artifact's byte counter."""
+
+    def __init__(self, values, then=None):
+        self.active = True
+        self._values = list(values)
+        self._then = then
+        self.reads = 0
+
+    def downloaded_bytes(self) -> int:
+        self.reads += 1
+        if self._values:
+            return self._values.pop(0)
+        return self._then if self._then is not None else 0
+
+
+def _threaded_controller(monkeypatch, service, *, stall_seconds, progress):
+    monkeypatch.setattr(
+        cvi, "model_prepare_stall_seconds", lambda: stall_seconds, raising=False
+    )
+    monkeypatch.setattr(cvi, "download_progress_probe", lambda: progress, raising=False)
+    monkeypatch.setattr(
+        cvi.ConsoleVoiceInputController,
+        "WARMUP_PROGRESS_POLL_SECONDS",
+        0.05,
+        raising=False,
+    )
+    return _controller(
+        monkeypatch,
+        service=service,
+        spawn=lambda thunk: threading.Thread(target=thunk, daemon=True).start(),
+    )
+
+
+@pytest.mark.bootstrap_profile
+def test_opaque_loading_is_not_a_download_stall(monkeypatch):
+    gate, entered = threading.Event(), threading.Event()
+    service = _WarmableService(transcriber=_Transcriber(gate=gate, entered=entered))
+    progress = _ScriptedProgress([0])
+    progress.active = False
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.05, progress=progress
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        time.sleep(0.2)
+        assert controller.state == cvi.STATE_PREPARING
+        assert not any(isinstance(e, cvi.VoiceFailed) for e in events)
+    finally:
+        controller.abandon()
+        gate.set()
+        time.sleep(0.1)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("late_error", [None, RuntimeError("late private failure")])
+@pytest.mark.parametrize("ending", ["cancel", "timeout"])
+def test_cancel_retains_physical_work_across_controller_replacement(
+    monkeypatch, late_error, ending
+):
+    gate, entered = threading.Event(), threading.Event()
+    first = _WarmableService(
+        transcriber=_Transcriber(gate=gate, entered=entered, error=late_error)
+    )
+    controller, events, _ = _threaded_controller(
+        monkeypatch,
+        first,
+        stall_seconds=0.1,
+        progress=_ScriptedProgress([0]) if ending == "timeout" else None,
+    )
+    second = _WarmableService()
+    try:
+        controller.start()
+        assert entered.wait(5)
+        if ending == "cancel":
+            controller.abandon()
+        else:
+            assert _wait_for_state(controller, cvi.STATE_IDLE, 3) == cvi.STATE_IDLE
+        assert not controller.maintenance_ready
+        replacement, newer_events, _ = _controller(monkeypatch, service=second)
+        replacement.start()
+        assert (
+            second._transcriber.buffer_calls == []
+        ), "retry overlapped retained native work"
+        assert second.started is False
+        assert "still finishing" in _failure_text(newer_events)
+        frozen = list(events)
+    finally:
+        gate.set()
+        time.sleep(0.2)
+    assert events == frozen
+    assert first.started is False
+    retry, _, _ = _controller(monkeypatch, service=_WarmableService())
+    retry.start()
+    assert retry.state == cvi.STATE_LISTENING
+    retry.abandon()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_abandoned_cleanup_retains_admission_until_disposal(monkeypatch, cleanup_fails):
+    # A failed cleanup intentionally holds this process's admission until exit;
+    # give this terminal control its own admission owner.
+    monkeypatch.setattr(cvi, "_MODEL_PREPARATION_ADMISSION", threading.Lock())
+    monkeypatch.setattr(cvi, "_ACTIVE_MODEL_PREPARATION", None)
+    gate, entered = threading.Event(), threading.Event()
+    cleaning, dispose, disposed = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    cleanup_threads = []
+
+    class ResourceTranscriber(_Transcriber):
+        def cleanup(self):
+            cleanup_threads.append(threading.current_thread())
+            cleaning.set()
+            assert dispose.wait(5)
+            if cleanup_fails:
+                raise RuntimeError("private cleanup detail")
+            disposed.set()
+
+    service = _WarmableService(
+        transcriber=ResourceTranscriber(gate=gate, entered=entered)
+    )
+    controller, _, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=1, progress=None
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        controller.abandon()
+        gate.set()
+        assert cleaning.wait(5)
+        assert cleanup_threads == [
+            controller._model_preparation.thread
+        ], "cleanup escaped the retained daemon"
+        assert not controller.maintenance_ready
+        replacement_service = _WarmableService()
+        replacement, _, _ = _controller(monkeypatch, service=replacement_service)
+        replacement.start()
+        assert replacement_service._transcriber.buffer_calls == []
+        dispose.set()
+        work = controller._model_preparation
+        work.thread.join(3)
+        assert not work.thread.is_alive()
+        assert controller.maintenance_ready is not cleanup_fails
+        retry_service = _WarmableService()
+        retry, notices, _ = _controller(monkeypatch, service=retry_service)
+        retry.start()
+        if cleanup_fails:
+            assert retry_service._transcriber.buffer_calls == []
+            assert "restart" in _failure_text(notices)
+            assert not disposed.is_set()
+        else:
+            assert disposed.is_set()
+            assert work.released and work.transcriber is None
+            assert retry.state == cvi.STATE_LISTENING
+            retry.abandon()
+    finally:
+        gate.set()
+        dispose.set()
+
+
+@pytest.mark.bootstrap_profile
+def test_completed_artifact_does_not_time_out_native_loading(monkeypatch, tmp_path):
+    from tldw_chatbook.Utils.model_download_guard import HubDownloadProgress
+
+    target = tmp_path / "speech.incomplete"
+    target.write_bytes(b"")
+    progress = HubDownloadProgress(artifacts=(target,))
+    gate, entered = threading.Event(), threading.Event()
+    service = _WarmableService(transcriber=_Transcriber(gate=gate, entered=entered))
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.15, progress=progress
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        target.write_bytes(b"downloaded")
+        target.rename(target.with_suffix(""))
+        time.sleep(0.35)
+        assert controller.state == cvi.STATE_PREPARING
+        assert any(
+            isinstance(e, cvi.VoiceModelPreparing) and e.message == cvi.WARMUP_MESSAGE
+            for e in events
+        )
+    finally:
+        controller.abandon()
+        gate.set()
+        assert controller._model_preparation.done.wait(3)
+
+
+@pytest.mark.bootstrap_profile
+def test_cancel_after_native_return_retires_without_waiting_for_handoff(monkeypatch):
+    returned, handoff = threading.Event(), threading.Event()
+    original = cvi.ConsoleVoiceInputController._run_warmup_off_the_executor
+    cleanup, releases = [], []
+
+    class ResourceTranscriber(_Transcriber):
+        def cleanup(self):
+            cleanup.append(threading.current_thread())
+
+    def delayed_result(self, *args):
+        result = original(self, *args)
+        returned.set()
+        assert handoff.wait(5)
+        return result
+
+    monkeypatch.setattr(
+        cvi.ConsoleVoiceInputController, "_run_warmup_off_the_executor", delayed_result
+    )
+    service = _WarmableService(transcriber=ResourceTranscriber())
+    service.abandon = lambda: releases.append("released")
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=1, progress=None
+    )
+    try:
+        controller.start()
+        assert returned.wait(5)
+        work = controller._model_preparation
+        controller.abandon()
+        frozen = list(events)
+        assert work.done.wait(3), "Cancel left the daemon waiting for the caller"
+        assert cleanup == [work.thread]
+        assert releases == ["released"]
+        handoff.set()
+        time.sleep(0.1)
+        assert service.started is False
+        assert events == frozen
+        assert releases == ["released"], "late logical return disposed twice"
+    finally:
+        handoff.set()
+
+
+@pytest.mark.bootstrap_profile
+def test_cancel_after_preparation_acceptance_never_enters_capture(monkeypatch):
+    prepared, resume, caller_done = (threading.Event() for _ in range(3))
+    cleanup = []
+    original = cvi.ConsoleVoiceInputController._prepare_speech_model
+
+    class ResourceTranscriber(_Transcriber):
+        def cleanup(self):
+            cleanup.append(threading.current_thread())
+
+    def paused(self, *args):
+        result = original(self, *args)
+        prepared.set()
+        assert resume.wait(5)
+        return result
+
+    def spawn(thunk):
+        def run():
+            try:
+                thunk()
+            finally:
+                caller_done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    monkeypatch.setattr(
+        cvi.ConsoleVoiceInputController, "_prepare_speech_model", paused
+    )
+    service = _WarmableService(transcriber=ResourceTranscriber())
+    controller, events, _ = _controller(monkeypatch, service=service, spawn=spawn)
+    try:
+        controller.start()
+        assert prepared.wait(5)
+        controller.abandon()
+        frozen = list(events)
+        assert not caller_done.is_set(), "Cancel waited for the paused caller"
+    finally:
+        resume.set()
+        assert caller_done.wait(3)
+    assert not service.started, "retired prepared service entered capture"
+    work = controller._model_preparation
+    assert work.done.wait(3)
+    assert cleanup == [work.thread]
+    assert events == frozen
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("boundary", ["audio", "streaming"])
+def test_real_service_rechecks_retirement_after_blocking_initialization(
+    monkeypatch, boundary
+):
+    from Tests.Audio.test_dictation_lazy_transcription import (
+        _build_service,
+        _FakeRecorder,
+        _FakeTranscriptionService,
+    )
+
+    entered, resume, caller_done = (threading.Event() for _ in range(3))
+    mic_entries, cleanup = [], []
+
+    class Transcriber(_FakeTranscriptionService):
+        def create_streaming_transcriber(self, **kwargs):
+            if boundary == "streaming":
+                entered.set()
+                assert resume.wait(5)
+            return super().create_streaming_transcriber(**kwargs)
+
+        def cleanup(self):
+            cleanup.append(threading.current_thread())
+
+    class Recorder(_FakeRecorder):
+        def start_recording(self, callback):
+            mic_entries.append("entered")
+            return super().start_recording(callback)
+
+    recorder = Recorder()
+    service = _build_service(monkeypatch, Transcriber(), recorder=recorder)
+    if boundary == "audio":
+
+        def build_recorder(**kwargs):
+            entered.set()
+            assert resume.wait(5)
+            return recorder
+
+        service._audio_service = None
+        service._recorder_factory = build_recorder
+
+    def spawn(thunk):
+        def run():
+            try:
+                thunk()
+            finally:
+                caller_done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    controller, events, _ = _controller(monkeypatch, service=service, spawn=spawn)
+    try:
+        controller.start()
+        assert entered.wait(5)
+        controller.abandon()
+        frozen = list(events)
+        assert caller_done.wait(1), "logical retirement joined service initialization"
+    finally:
+        resume.set()
+        assert caller_done.wait(3)
+    work = controller._model_preparation
+    assert work.done.wait(3)
+    assert mic_entries == []
+    assert cleanup == [work.thread]
+    assert events == frozen
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_warmup_opt_out_cannot_bypass_retained_preparation(monkeypatch, cleanup_fails):
+    monkeypatch.setattr(cvi, "_MODEL_PREPARATION_ADMISSION", threading.Lock())
+    monkeypatch.setattr(cvi, "_ACTIVE_MODEL_PREPARATION", None)
+    monkeypatch.setattr(cvi, "warm_before_capture_enabled", lambda: True)
+    gate, entered = threading.Event(), threading.Event()
+
+    class ResourceTranscriber(_Transcriber):
+        def cleanup(self):
+            if cleanup_fails:
+                raise RuntimeError("private cleanup detail")
+
+    service = _WarmableService(
+        transcriber=ResourceTranscriber(gate=gate, entered=entered)
+    )
+    controller, _, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=1, progress=None
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        controller.abandon()
+        work = controller._model_preparation
+        if cleanup_fails:
+            gate.set()
+            work.thread.join(3)
+            assert work.cleanup_failed
+        monkeypatch.setattr(cvi, "warm_before_capture_enabled", lambda: False)
+        retry_service = _WarmableService()
+        retry, events, _ = _controller(monkeypatch, service=retry_service)
+        retry.start()
+        assert not retry_service.started, "opt-out bypassed retained physical ownership"
+        assert retry_service._transcriber.buffer_calls == []
+        assert ("restart" if cleanup_fails else "still finishing") in _failure_text(
+            events
+        )
+    finally:
+        gate.set()
+        work.thread.join(3)
+    if not cleanup_fails:
+        assert work.done.is_set()
+        available_service = _WarmableService()
+        available, _, _ = _controller(monkeypatch, service=available_service)
+        available.start()
+        assert available_service.started
+        available.abandon()
+
+
+@pytest.mark.bootstrap_profile
+def test_unrelated_download_cannot_keep_an_owned_artifact_alive(monkeypatch, tmp_path):
+    from tldw_chatbook.Utils.model_download_guard import HubDownloadProgress
+
+    target, other = tmp_path / "target.incomplete", tmp_path / "other.incomplete"
+    target.write_bytes(b"")
+    progress = HubDownloadProgress(artifacts=(target,))
+    gate, entered = threading.Event(), threading.Event()
+    service = _WarmableService(transcriber=_Transcriber(gate=gate, entered=entered))
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.15, progress=progress
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        for count in range(30):
+            other.write_bytes(b"x" * (count + 1))
+            if controller.state == cvi.STATE_IDLE:
+                break
+            time.sleep(0.02)
+        assert controller.state == cvi.STATE_IDLE
+        assert "no download progress" in _failure_text(events)
+        assert progress.downloaded_bytes() == 0
+    finally:
+        gate.set()
+        assert controller._model_preparation.done.wait(3)
+
+
+def _wait_for_state(controller, state, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and controller.state != state:
+        time.sleep(0.02)
+    return controller.state
+
+
+@pytest.mark.bootstrap_profile
+def test_retired_admitted_capture_keeps_model_until_processor_finishes(monkeypatch):
+    from Tests.Audio.test_dictation_lazy_transcription import (
+        _build_service,
+        _FakeRecorder,
+        _FakeTranscriptionService,
+    )
+
+    admitted, finish_start, stopped = (threading.Event() for _ in range(3))
+    processing, finish_processor, processor_done = (threading.Event() for _ in range(3))
+    disposed, caller_done = threading.Event(), threading.Event()
+    cleanup_threads = []
+
+    class Transcriber(_FakeTranscriptionService):
+        def cleanup(self):
+            cleanup_threads.append(threading.current_thread())
+            disposed.set()
+
+    class Recorder(_FakeRecorder):
+        def start_recording(self, callback):
+            admitted.set()
+            assert finish_start.wait(5)
+            return super().start_recording(callback)
+
+        def stop_recording(self):
+            result = super().stop_recording()
+            stopped.set()
+            return result
+
+    service = _build_service(monkeypatch, Transcriber(), recorder=Recorder())
+
+    def process():
+        processing.set()
+        assert finish_processor.wait(5)
+        processor_done.set()
+
+    monkeypatch.setattr(service, "_processing_loop", process)
+
+    def spawn(thunk):
+        def run():
+            try:
+                thunk()
+            finally:
+                caller_done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    controller, events, _ = _controller(monkeypatch, service=service, spawn=spawn)
+    try:
+        controller.start()
+        assert admitted.wait(3) and processing.wait(3)
+        controller.abandon()
+        frozen = list(events)
+        assert caller_done.wait(1), "Cancel joined the admitted device call"
+        work = controller._model_preparation
+        finish_start.set()
+        assert stopped.wait(3)
+        assert not disposed.is_set(), "model disposed while capture processor was live"
+        assert not controller.maintenance_ready
+        replacement = _WarmableService()
+        retry, _, _ = _controller(monkeypatch, service=replacement)
+        retry.start()
+        assert not replacement.started
+    finally:
+        finish_start.set()
+        finish_processor.set()
+    assert processor_done.wait(3)
+    assert work.done.wait(3)
+    assert disposed.is_set() and cleanup_threads == [work.thread]
+    assert events == frozen
+
+
+def test_a_load_that_stops_making_progress_fails_within_the_bound(monkeypatch):
+    """An attributed active HTTP download has an inactivity bound.
+
+    The live hang was a load blocked on a lock forever, with a 0-byte
+    `.incomplete` beside it. This scripted observer attests that the artifact
+    belongs to this attempt. Its inactivity ends with a plain error and the
+    microphone stays closed even if the stuck call finishes later. Opaque
+    provider/native loading is deliberately outside this deadline.
+    """
+    gate = threading.Event()
+    entered = threading.Event()
+    transcriber = _Transcriber(gate=gate, entered=entered)
+    service = _WarmableService(transcriber=transcriber)
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.3, progress=_ScriptedProgress([0])
+    )
+
+    try:
+        controller.start()
+        assert entered.wait(timeout=5), "the warm-up never ran"
+        state = _wait_for_state(controller, cvi.STATE_IDLE, timeout=3.0)
+
+        assert state == cvi.STATE_IDLE, "preparing outlived the stall bound"
+        text = _failure_text(events)
+        _assert_plain_model_failure(text)
+        # Say what the attributed observer measured; unknown caches and
+        # post-download loading cannot earn this download-stall outcome.
+        assert "no download progress" in text.lower()
+        assert "background preparation may still be finishing" in text.lower()
+        assert service.started is False
+    finally:
+        gate.set()
+    # The stuck load finishing afterwards must not resurrect the capture.
+    time.sleep(0.2)
+    assert service.started is False
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_a_download_that_keeps_growing_is_shown_and_never_cut_off(monkeypatch):
+    """A real download outlasts the stall bound as long as bytes keep landing.
+
+    Each growth resets the stall clock and repaints the chip with the bytes
+    downloaded so far; the capture starts once the load completes.
+    """
+    gate = threading.Event()
+    entered = threading.Event()
+    transcriber = _Transcriber(gate=gate, entered=entered)
+    service = _WarmableService(transcriber=transcriber)
+    growth = [0] + [n * 40_000_000 for n in range(1, 30)]
+    controller, events, _ = _threaded_controller(
+        monkeypatch,
+        service,
+        stall_seconds=0.3,
+        progress=_ScriptedProgress(growth, then=growth[-1]),
+    )
+
+    try:
+        controller.start()
+        assert entered.wait(timeout=5), "the warm-up never ran"
+        # Well past the 0.3 s bound, but the download is still growing.
+        time.sleep(0.9)
+        assert controller.state == cvi.STATE_PREPARING
+        assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == []
+    finally:
+        gate.set()
+    state = _wait_for_state(controller, cvi.STATE_LISTENING, timeout=3.0)
+
+    assert state == cvi.STATE_LISTENING
     assert service.started is True
-    assert controller.state == cvi.STATE_LISTENING
+    progress = [
+        e.message
+        for e in events
+        if isinstance(e, cvi.VoiceModelPreparing) and "MB" in e.message
+    ]
+    assert progress, "the running download was never shown"
+    assert progress[0].startswith("Downloading speech model")
+    assert all(
+        len(f"◐ {message}") <= cvi.WARMUP_MESSAGE_MAX_CELLS for message in progress
+    )
+    # Repainted only when the shown size changes, not on every poll.
+    assert len(progress) == len(set(progress))
+
+
+def test_a_pause_inside_a_download_restarts_the_stall_clock(monkeypatch):
+    """Growth resets the clock: a pause is measured from the last growth.
+
+    A real download stalls briefly (a slow mirror, a reconnect). Here the
+    first burst alone outlasts the bound and the pause after it does not, so
+    a clock that kept counting from the start of the load would end a
+    healthy download in that pause. The previous test cannot tell: every one
+    of its polls grows.
+    """
+    gate = threading.Event()
+    entered = threading.Event()
+    transcriber = _Transcriber(gate=gate, entered=entered)
+    service = _WarmableService(transcriber=transcriber)
+    step = 40_000_000
+    # One baseline read, a burst of at least 0.6 s (twelve 0.05 s polls),
+    # a three-poll pause, then a second burst that outlives the test.
+    first_burst = [n * step for n in range(1, 13)]
+    pause = [first_burst[-1]] * 3
+    second_burst = [first_burst[-1] + n * step for n in range(1, 200)]
+    script = [0, *first_burst, *pause, *second_burst]
+    progress = _ScriptedProgress(script, then=second_burst[-1])
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.6, progress=progress
+    )
+    past_the_pause = 1 + len(first_burst) + len(pause) + 4
+
+    try:
+        controller.start()
+        assert entered.wait(timeout=5), "the warm-up never ran"
+        deadline = time.monotonic() + 5
+        while progress.reads < past_the_pause and time.monotonic() < deadline:
+            if controller.state != cvi.STATE_PREPARING:
+                break
+            time.sleep(0.02)
+
+        assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == [], (
+            "a pause shorter than the bound ended a download that was growing"
+        )
+        assert controller.state == cvi.STATE_PREPARING
+        assert progress.reads >= past_the_pause
+    finally:
+        gate.set()
+    assert _wait_for_state(controller, cvi.STATE_LISTENING, timeout=3.0) == (
+        cvi.STATE_LISTENING
+    )
+    assert service.started is True
+
+
+@pytest.mark.parametrize("raw", [0, -5, "soon", float("nan"), float("inf"), None])
+def test_an_invalid_stall_bound_falls_back_to_the_default(monkeypatch, raw):
+    settings = {}
+    if raw is not None:
+        settings["dictation.model_prepare_stall_seconds"] = raw
+    _stub_settings(monkeypatch, settings)
+
+    assert cvi.model_prepare_stall_seconds() == cvi.DEFAULT_MODEL_PREPARE_STALL_SECONDS
+
+
+def test_a_configured_stall_bound_is_used(monkeypatch):
+    _stub_settings(monkeypatch, {"dictation.model_prepare_stall_seconds": "300"})
+
+    assert cvi.model_prepare_stall_seconds() == 300.0
 
 
 def test_a_transcriber_that_cannot_be_built_is_a_fatal_model_problem(monkeypatch):
@@ -2060,11 +2815,9 @@ def test_a_transcriber_that_cannot_be_built_is_a_fatal_model_problem(monkeypatch
 
     controller.start()
 
-    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
-    assert len(failures) == 1
-    text = f"{failures[0].reason} {failures[0].remedy}".lower()
-    assert "model" in text
-    assert "microphone" not in text
+    text = _failure_text(events)
+    _assert_plain_model_failure(text)
+    assert "models are not installed" not in text
     assert service.started is False
     assert controller.state == cvi.STATE_IDLE
 
@@ -2178,9 +2931,26 @@ def test_a_failed_warm_up_is_still_a_first_run_next_time(monkeypatch):
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
+    first_work = controller._model_preparation
+    first_state = controller.state
     controller.stop()
+    assert first_work is not None
+    assert first_work.done.wait(2), "failed warmup did not retire"
+    assert first_state == cvi.STATE_IDLE
+    assert service.started is False
+    _assert_plain_model_failure(_failure_text(events))
+
     events.clear()
     controller.start()
+    retry_work = controller._model_preparation
+    retry_state = controller.state
+    controller.stop()
+    assert retry_work is not None and retry_work is not first_work
+    assert retry_work.done.wait(2), "failed retry did not retire"
+    assert retry_state == cvi.STATE_IDLE
+    assert service.started is False
+    assert len(transcriber.buffer_calls) == 2
+    _assert_plain_model_failure(_failure_text(events))
 
     preparing = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)]
     assert preparing and preparing[0].first_run is True

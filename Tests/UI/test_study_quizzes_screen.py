@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, ListView, Select, Static, TextArea
+from textual.widgets import Button, Input, Label, ListView, Select, Static, TextArea
 
 from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
@@ -634,6 +634,7 @@ async def _wait_for_quiz_status(
         await pilot.pause(0.1)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_loads_scope_backed_quizzes():
     scope = FakeQuizScopeService()
@@ -660,6 +661,7 @@ async def test_quizzes_view_loads_scope_backed_quizzes():
         assert "Ready to manage selected quiz" in _text(status)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history():
     scope = WorkspaceFilteredQuizScopeService()
@@ -727,6 +729,7 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_creates_workspace_quiz_with_active_scope():
     scope = WorkspaceFilteredQuizScopeService()
@@ -775,6 +778,7 @@ async def test_quizzes_view_creates_workspace_quiz_with_active_scope():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavailable_message():
     scope = FakeQuizScopeService()
@@ -840,6 +844,7 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
             assert "Workspace Study requires server mode" in str(button.tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_through_scope_application_path():
     scope = WorkspaceFilteredQuizScopeService()
@@ -907,6 +912,7 @@ async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_throug
         assert "server mode" in _text(status).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_creates_quiz_and_question_through_scope_service():
     scope = FakeQuizScopeService()
@@ -963,6 +969,7 @@ async def test_quizzes_view_creates_quiz_and_question_through_scope_service():
         assert question_list.children
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_attempt_flow_submits_answer_and_shows_summary():
     scope = FakeQuizScopeService()
@@ -1010,6 +1017,7 @@ async def test_quizzes_attempt_flow_submits_answer_and_shows_summary():
         assert "Score: 2 / 2" in _text(status)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_attempt_disables_quiz_mutations_and_blocks_second_start():
     scope = FakeQuizScopeService()
@@ -1089,6 +1097,7 @@ async def test_active_attempt_disables_quiz_mutations_and_blocks_second_start():
         assert controller.current_attempt_questions == first_questions
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_attempt_blocks_create_and_delete_quiz_without_refreshing_selection():
     scope = FakeQuizScopeService()
@@ -1129,6 +1138,7 @@ async def test_active_attempt_blocks_create_and_delete_quiz_without_refreshing_s
         assert controller.current_attempt_questions
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_attempt_blocks_loading_attempt_history_directly():
     scope = FakeQuizScopeService()
@@ -1163,6 +1173,7 @@ async def test_active_attempt_blocks_loading_attempt_history_directly():
         assert controller.current_attempt_questions
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_shows_explicit_empty_state_when_no_quizzes_exist():
     app_instance = SimpleNamespace(
@@ -1189,6 +1200,7 @@ async def test_quizzes_view_shows_explicit_empty_state_when_no_quizzes_exist():
         assert "start an attempt" in status_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_quizzes_empty_state_explains_workspace_recovery_path():
     scope = WorkspaceFilteredQuizScopeService()
@@ -1224,6 +1236,7 @@ async def test_workspace_quizzes_empty_state_explains_workspace_recovery_path():
         assert create_button.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_deletes_selected_quiz_and_resets_selection():
     scope = FakeQuizScopeService()
@@ -1256,6 +1269,7 @@ async def test_quizzes_view_deletes_selected_quiz_and_resets_selection():
         assert "No quizzes yet." in _text(status)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_deletes_selected_question_and_refreshes_question_list():
     scope = FakeQuizScopeService()
@@ -1293,6 +1307,7 @@ async def test_quizzes_view_deletes_selected_question_and_refreshes_question_lis
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_loads_attempt_history_into_summary_panel():
     scope = FakeQuizScopeService()
@@ -1332,3 +1347,78 @@ async def test_quizzes_view_loads_attempt_history_into_summary_panel():
         ) in scope.calls
         assert "Score: 2 / 2" in _text(status)
         assert "The capital of France is ____." in _text(history_summary)
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_quiz_names_and_question_text_are_shown_as_typed():
+    """Quiz names and question text are literal (#3057 review, fix round 4,
+    finding 3).
+
+    A quiz name was a Select prompt, and the question list and the attempt
+    panel read markup: creating "Arr [/] x" raised `MarkupError` out of
+    `create_quiz` (its worker ends the app), and "[new]" was dropped as a
+    style tag. Fix round 5, finding 1: the Study dashboard's Resume button
+    and its recent deck and quiz lists print the same names.
+    """
+    scope = FakeQuizScopeService()
+    app_instance = SimpleNamespace(
+        study_scope_service=None,
+        study_quiz_scope_service=scope,
+        current_runtime_backend="local",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-quizzes-btn")
+        await pilot.pause(0.3)
+        controller = app.screen.query_one(StudyWindow).quizzes_controller
+
+        app.screen.query_one("#new-quiz-name-input", Input).value = "Arr [/] x"
+        await controller.create_quiz()  # MarkupError before the fix
+        quiz_select = app.screen.query_one("#quiz-select", Select)
+        label = quiz_select.query_one("SelectCurrent #label", Static)
+        assert _text(label) == "Arr [/] x"
+        status = app.screen.query_one("#quiz-attempt-status", Static)
+        assert _text(status) == "Quiz 'Arr [/] x' created."
+        # The new selection's own question refresh (Select.Changed) first.
+        await pilot.pause(0.1)
+
+        typed = "Week [new] vs arr[/] ____."
+        app.screen.query_one("#quiz-question-text", TextArea).text = typed
+        app.screen.query_one("#quiz-correct-answer-input", Input).value = "Paris"
+        await controller.create_question()  # MarkupError before the fix
+        question_list = app.screen.query_one("#quiz-question-list", ListView)
+        rows = [_text(item.query_one(Label)) for item in question_list.children]
+        assert rows == [typed]
+
+        controller._set_attempt_question(typed)
+        controller._set_attempt_history_summary(f"1. {typed}")
+        shown = [
+            _text(app.screen.query_one(selector, Static))
+            for selector in ("#quiz-attempt-question", "#quiz-attempt-history-summary")
+        ]
+        assert shown == [typed, f"1. {typed}"]
+
+        # Fix round 5, finding 1: Start quiz hands the same name to the Study
+        # dashboard's Resume button, and the recents print deck and quiz names.
+        await pilot.click("#quiz-start")  # MarkupError before the fix
+        resume = app.screen.query_one("#study-resume-last", Button)
+        for _ in range(40):
+            if not resume.disabled:
+                break
+            await pilot.pause(0.05)
+        assert str(resume.label) == "Resume quizzes: Arr [/] x"
+
+        app.screen._recent_deck_titles = ["Deck [/] y"]
+        app.screen._recent_quiz_titles = ["Week [new]"]
+        app.screen.sync_shell_from_window()  # MarkupError before the fix
+        recents = [
+            _text(app.screen.query_one(selector, Static))
+            for selector in ("#study-recent-decks", "#study-recent-quizzes")
+        ]
+        assert recents == ["Deck [/] y", "Week [new]"]

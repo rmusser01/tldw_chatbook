@@ -89,6 +89,7 @@ def _row_styles(table: DataTable, index: int) -> set[str]:
     return {str(getattr(cell, "style", "")) for cell in table.get_row_at(index)}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_second_arrow_key_immediately_after_selecting_still_moves_the_selection():
     """The AC's concrete symptom, end-to-end: down, then down again.
@@ -127,6 +128,7 @@ async def test_a_second_arrow_key_immediately_after_selecting_still_moves_the_se
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_briefing_keeps_the_table_widget_and_its_focus():
     """The mechanism behind the symptom: the widget must survive."""
@@ -154,6 +156,7 @@ async def test_selecting_a_briefing_keeps_the_table_widget_and_its_focus():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_briefing_preserves_the_tables_scroll_position():
     """Deep in a long list, a selection must not throw the viewport away."""
@@ -195,6 +198,7 @@ async def test_selecting_a_briefing_preserves_the_tables_scroll_position():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_row_highlight_moves_in_place_as_the_selection_moves():
     """The selected row's `reverse bold` must arrive -- and LEAVE -- without
@@ -232,6 +236,7 @@ async def test_the_row_highlight_moves_in_place_as_the_selection_moves():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_detail_updates_while_the_tables_content_stands_still():
     """The other half of the bargain: the detail region must still follow

@@ -96,6 +96,7 @@ def _painted(host, region) -> str:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_type_chooser_paints_every_option():
     """Every option's TEXT is painted in the opened chooser (task-31221).
@@ -120,6 +121,7 @@ async def test_type_chooser_paints_every_option():
         assert "audio" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sort_chooser_paints_every_option():
     """task-31235: all four sort options render, as a vertical OptionList.
@@ -159,6 +161,7 @@ async def _open_first_reader_row(screen, pilot):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_content_fills_the_remaining_pane():
     """task-31237 (evolves task-31222's scaled cap into a true fill):
@@ -186,6 +189,7 @@ async def test_reader_content_fills_the_remaining_pane():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_find_bar_collapsed_until_find_and_escape_recollapses():
     """task-31237: the content Find bar mounts only on the Find action.
@@ -282,6 +286,7 @@ async def _switch_to_analysis(screen, pilot) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analysis_mode_walk_never_moves_focus_into_the_search_field():
     """task-31269 (critique #4 P0): ] in Analysis mode walks, it never types.
@@ -309,6 +314,7 @@ async def test_analysis_mode_walk_never_moves_focus_into_the_search_field():
         assert not isinstance(screen.focused, Input), screen.focused
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_find_on_the_analysis_tab_opens_the_bar_there_and_escape_closes_it():
     """Find searches what you are reading: on Analysis it opens the analysis
@@ -337,6 +343,7 @@ async def test_find_on_the_analysis_tab_opens_the_bar_there_and_escape_closes_it
         assert screen._media_state.find_open is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_mode_walk_with_an_empty_find_bar_never_steals_focus():
     """task-31269 AC2: an open, still-empty bar survives an item change, but
@@ -373,6 +380,7 @@ async def test_read_mode_walk_with_an_empty_find_bar_never_steals_focus():
         assert not isinstance(screen.focused, Input), screen.focused
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_find_toggles_the_bar_closed_when_it_is_open():
     """task-31269 AC4: a second Find press closes the bar (live: it did nothing)."""
@@ -398,6 +406,7 @@ def _items_pane_width(screen) -> int:
     return screen.query_one("#library-media-canvas").region.width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_receipt_paints_undo_and_dismiss_at_the_items_pane_width():
     """task-31270 (critique #4 P1): the receipt's Undo was clipped to `Und`
@@ -420,6 +429,7 @@ async def test_delete_receipt_paints_undo_and_dismiss_at_the_items_pane_width():
         assert "Dismiss" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 async def test_delete_receipt_paints_a_live_undo_on_a_stale_page(size):
@@ -455,6 +465,7 @@ async def test_delete_receipt_paints_a_live_undo_on_a_stale_page(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 async def test_failed_undo_receipt_paints_its_reason_and_retry(size):
@@ -492,6 +503,7 @@ async def test_failed_undo_receipt_paints_its_reason_and_retry(size):
         assert "\u25cb" not in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
     """task-31270: the set-dismiss receipt clipped to `… Un` (live cap_83)."""
@@ -512,6 +524,7 @@ async def test_dismiss_receipt_paints_undo_at_the_items_pane_width():
         assert "Dismiss" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_receipt_paints_its_counts_retry_and_dismiss():
     """task-28007 AC#4: the bulk-Analyze receipt is PR A's two-row grammar --
@@ -535,6 +548,7 @@ async def test_analyze_receipt_paints_its_counts_retry_and_dismiss():
         assert "Dismiss" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_receipt_paints_the_running_copy():
     """Review round 1 (I6): the frozen running copy had no test at all."""
@@ -559,6 +573,7 @@ async def test_analyze_receipt_paints_the_running_copy():
         assert "Dismiss" not in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_receipt_omits_the_failed_segment_and_retry_at_zero():
     """Review round 1 (I6): the clean-run form -- no "· 0 failed", no Retry."""
@@ -580,6 +595,7 @@ async def test_analyze_receipt_omits_the_failed_segment_and_retry_at_zero():
         assert "Dismiss" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_receipt_never_ticks_a_run_where_nothing_succeeded():
     """Review round 1 (I5): "\u2713 analyzed \u00b7 0 of 3" was a checkmark over a
@@ -602,6 +618,7 @@ async def test_analyze_receipt_never_ticks_a_run_where_nothing_succeeded():
         assert "Retry failed" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_overwrite_choice_paints_both_options():
     """task-28007 AC#3: the already-analysed choice is armed IN the receipt row."""
@@ -632,6 +649,7 @@ async def test_analyze_overwrite_choice_paints_both_options():
         assert not screen.query("#library-media-analyze-receipt-dismiss")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_scope_change_clears_the_armed_analyze_choice():
     """(final review, I-1/M-3) The choice is a PENDING action over a
@@ -658,6 +676,7 @@ async def test_a_scope_change_clears_the_armed_analyze_choice():
         assert not screen.query("#library-media-analyze-receipt")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_import_origin_run_paints_no_receipt_on_the_media_canvas():
     """(final review, I-2) An "Analyze N skipped" run drives the SAME
@@ -688,6 +707,7 @@ async def test_an_import_origin_run_paints_no_receipt_on_the_media_canvas():
         assert not screen.query("#library-media-analyze-retry")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_mode_bulk_rows_paint_analyze_export_and_review():
     """task-28007 AC#4: Analyze is readable beside (below) Export and Review.
@@ -716,6 +736,7 @@ async def test_select_mode_bulk_rows_paint_analyze_export_and_review():
         assert "Analyze" in analyze_painted, analyze_painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
     """Review round 1 (I4 + the missing end-to-end pin): the REAL button
@@ -764,6 +785,7 @@ async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
         assert "Dismiss" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_run_that_dies_with_the_screen_says_where_it_stopped():
     """Review round 1 (I2): the worker is owned by this screen, so Textual
@@ -823,6 +845,7 @@ async def test_analyze_run_that_dies_with_the_screen_says_where_it_stopped():
         assert notices[0][1].get("severity") == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_run_cancelled_before_a_total_is_known_says_so_honestly():
     """task-28007 Task 3 (N1): an unmount that lands DURING the AC#3
@@ -873,6 +896,7 @@ async def test_analyze_run_cancelled_before_a_total_is_known_says_so_honestly():
         assert notices[0][1].get("severity") == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_bulk_action_follows_the_selection_in_place():
     """task-28007 AC#4, learning task-28242's Qodo #2335 lesson: the
@@ -932,6 +956,7 @@ def _painted_footer(host, screen) -> str:
     return _painted(host, screen.query_one(AppFooterStatus).region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_footer_drops_close_find_after_escape_closes_the_bar():
     """Seam (a): Escape closes Find, so the esc chip must stop saying so.
@@ -969,6 +994,7 @@ async def test_footer_drops_close_find_after_escape_closes_the_bar():
         assert "close" not in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_s_focuses_a_media_row_so_space_toggles_immediately():
     """Seam (b): "s" must land focus on a row, or the Space chip is a lie.
@@ -997,6 +1023,7 @@ async def test_pressing_s_focuses_a_media_row_so_space_toggles_immediately():
         assert screen._media_state.row_selection.count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_in_select_mode_never_reaches_the_pane_grip():
     """Seam (b), second half: Space in select mode belongs to the selection.
@@ -1031,6 +1058,7 @@ async def test_space_in_select_mode_never_reaches_the_pane_grip():
         assert screen._media_state.row_selection.count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_footer_advertises_l_c_t():
     """Seam (d): l / c / t are real Reader keys and t ARMS DELETE (B cap_97).
@@ -1058,6 +1086,7 @@ async def test_reader_footer_advertises_l_c_t():
         assert "t trash" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_in_select_mode_is_claimed_from_rows_and_grips_only():
     """Seam (b), third half: Space is taken from the GRIP, not from every
@@ -1130,6 +1159,7 @@ def _media_layout(screen):
     ).effective_layout
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_from_the_reader_lands_on_the_loaded_row_then_the_rail_row():
     """Escape walks Reader -> loaded row -> rail row, never into an Input.
@@ -1162,6 +1192,7 @@ async def test_escape_from_the_reader_lands_on_the_loaded_row_then_the_rail_row(
         assert screen.focused.id == "library-row-browse-media", screen.focused
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_closes_the_more_menu_from_any_reader_focus():
     """Escape closes More wherever focus sits inside the Reader region.
@@ -1199,6 +1230,7 @@ async def test_escape_closes_the_more_menu_from_any_reader_focus():
         assert not screen.query("#library-media-reader-more-actions")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f6_content_stop_is_visible_and_content_still_paints():
     """The F6 Reader stop tints the content box's own border (task-31221).
@@ -1244,6 +1276,7 @@ async def test_f6_content_stop_is_visible_and_content_still_paints():
         assert "product demo video walks through" in painted.lower(), painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_back_button_is_not_composed_in_the_side_by_side_layout():
     """"‹ Back" only renders where a "back to list" exit is real.
@@ -1269,6 +1302,7 @@ async def test_back_button_is_not_composed_in_the_side_by_side_layout():
         assert screen.query("#library-media-back")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_labels_are_one_of_four():
     """Every Reader state's ``esc`` chip comes from one four-word set."""
@@ -1331,6 +1365,7 @@ async def test_escape_labels_are_one_of_four():
         assert seen["rail focus"] == "", seen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_to_the_row_restores_the_list_keys_beside_the_reader():
     """The Items pane keeps its own keys while the three-pane Reader is open.
@@ -1395,6 +1430,7 @@ async def test_escape_to_the_row_restores_the_list_keys_beside_the_reader():
         assert "toggle selection" not in labels, labels
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_cancels_an_items_choice_strip_over_the_reader():
     """A type/sort strip opened beside the Reader owns Escape, as advertised."""
@@ -1416,6 +1452,7 @@ async def test_escape_cancels_an_items_choice_strip_over_the_reader():
         assert screen._media_state.view == "viewer"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_cancels_a_strip_that_is_open_while_the_reader_has_focus():
     """Qodo on #2386: strip VISIBILITY is not the same question as key ownership.
@@ -1443,6 +1480,7 @@ async def test_escape_cancels_a_strip_that_is_open_while_the_reader_has_focus():
         assert not screen.query("#library-media-sort-choices")
         assert screen._media_state.view == "viewer"
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_find_is_disabled_with_a_reason_when_the_analysis_tab_has_nothing_to_search():
     """Qodo on #2378: with Find now opening the bar for the tab being read,
@@ -1488,6 +1526,7 @@ def _painted_row(host, y: int) -> str:
     return strips[y].text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_find_bar_keeps_its_place_through_submit_and_next():
     """task-31276 (critique #4 P2): submitting must not relocate the bar.
@@ -1539,6 +1578,7 @@ async def test_find_bar_keeps_its_place_through_submit_and_next():
         ).region.y == opened_y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_join_artifact_after_find_closes():
     """task-31276 (critique #4 P2): no `┐─────` run at the pane join.
@@ -1652,6 +1692,7 @@ def _plain_local_host() -> LibraryProductionCSSHarness:
     return LibraryProductionCSSHarness(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_reader_chrome_stops_before_the_sixth_row():
     """task-31277 (critique #4 P2): nine rows of chrome before the first
@@ -1678,6 +1719,7 @@ async def test_local_reader_chrome_stops_before_the_sixth_row():
         assert "Line 1 of recording 1." in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_bodies_do_not_repeat_the_selected_mode_tab():
     """task-31277 AC#3: the mode row is the label; a `Read`/`Analysis`
@@ -1708,6 +1750,7 @@ async def test_reader_bodies_do_not_repeat_the_selected_mode_tab():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_body_wraps_at_a_reading_measure():
     """task-31277 AC#4: prose ran ~150 cells at 235 columns, against
@@ -1754,6 +1797,7 @@ def _transcript_host() -> LibraryProductionCSSHarness:
     return LibraryProductionCSSHarness(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_video_transcript_headings_render_instead_of_painting_hashes():
     """task-31277 AC#5: `_is_markdown_media` gated the content sniff on a
@@ -1797,6 +1841,7 @@ def _keyword_media_items() -> list[dict[str, object]]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reprojection_skips_rows_the_page_does_not_retain():
     """task-31961: a bulk Analyze over a multi-page selection reads ONE page.
@@ -1854,6 +1899,7 @@ async def _apply_media_filter(screen, pilot, query: str) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_filter_matches_a_keyword_absent_from_title_and_body():
     """task-31274: a keyword-tagged row is found by its keyword alone.
@@ -1875,6 +1921,7 @@ async def test_media_filter_matches_a_keyword_absent_from_title_and_body():
         assert "Closing remarks" not in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_filter_miss_names_the_fields_it_searched():
     """task-31274 AC#3: the empty state says what the filter searched."""
@@ -1894,6 +1941,7 @@ async def test_media_filter_miss_names_the_fields_it_searched():
         ).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_filter_placeholder_names_the_fields_it_searches():
     """task-31274 AC#2: the input says keywords are matched too."""
@@ -1930,6 +1978,7 @@ def _analysed_host() -> LibraryProductionCSSHarness:
     return LibraryProductionCSSHarness(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("host_factory", "expected_label"),
     [(_host, "○ Generate"), (_analysed_host, "○ Regenerate")],
@@ -1965,6 +2014,7 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
         assert screen._media_state.generating_analysis is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_reader_generate_reason_is_painted_inline_not_hover_only(size):
@@ -1991,6 +2041,7 @@ async def test_reader_generate_reason_is_painted_inline_not_hover_only(size):
         assert "Providers & Models" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_generate_reason_line_is_absent_when_a_provider_is_ready():
     """task-31981: with a ready provider the inline reason line is gone and
@@ -2011,6 +2062,7 @@ async def test_reader_generate_reason_line_is_absent_when_a_provider_is_ready():
             assert generate.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_select_mode_analyze_reason_is_painted_inline_not_hover_only(size):
@@ -2037,6 +2089,7 @@ async def test_select_mode_analyze_reason_is_painted_inline_not_hover_only(size)
         assert "Providers & Models" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_select_mode_bulk_reason_is_painted_with_nothing_selected(size):
@@ -2092,6 +2145,7 @@ async def test_select_mode_bulk_reason_is_painted_with_nothing_selected(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_mode_empty_refresh_does_not_ask_to_select_nothing():
     """task-32085 AC#1 (Qodo #7): the zero-selection reason must not paint on a
@@ -2146,6 +2200,7 @@ async def test_select_mode_empty_refresh_does_not_ask_to_select_nothing():
         ).replace("\n", " ")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_mode_analyze_reason_refreshes_on_resume():
     """task-32039 AC#2: a provider configured mid-session clears the gate on return.
@@ -2192,6 +2247,7 @@ async def test_select_mode_analyze_reason_refreshes_on_resume():
             assert not screen.query("#library-media-analyze-selected-reason")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
     monkeypatch,
@@ -2246,6 +2302,7 @@ async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
         assert generate.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_is_live_when_the_configured_provider_is_ready(monkeypatch):
     """The counterpart: a ready resolution leaves the action untouched --
@@ -2301,6 +2358,7 @@ async def _enter_media_select_mode(screen, pilot):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)])
 @pytest.mark.asyncio
 async def test_select_mode_entry_focuses_a_row_so_down_and_space_work(size):
@@ -2361,6 +2419,7 @@ _BROWSE_TOOLBAR_SLOTS = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)])
 @pytest.mark.asyncio
 async def test_done_does_not_take_the_sort_slot(size):
@@ -2409,6 +2468,7 @@ async def test_done_does_not_take_the_sort_slot(size):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_focus_changes_border_glyphs_not_only_colour():
     """task-31634 AC#1/AC#2: the focused Reader box paints a HEAVY border.
@@ -2508,6 +2568,7 @@ def _reader_row_tops(screen) -> tuple[int, int]:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_more_opens_one_row_and_moves_the_reader_body_by_one():
     """At 235x52 More costs exactly one row, and all four actions paint on it."""
@@ -2529,6 +2590,7 @@ async def test_more_opens_one_row_and_moves_the_reader_body_by_one():
             assert label in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_more_reads_as_an_open_disclosure_while_it_is_open():
     """The primary row paints "More ▴" while open and "More" when closed."""
@@ -2553,6 +2615,7 @@ async def test_more_reads_as_an_open_disclosure_while_it_is_open():
         assert "More ▴" not in _painted(host, primary.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_more_toggle_leaves_focus_on_the_more_button():
     """Toggling the disclosure never hands focus to the row it opened.
@@ -2588,6 +2651,7 @@ async def test_more_toggle_leaves_focus_on_the_more_button():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_more_stays_compact_at_the_narrow_reader_width():
     """At 100x30 the four actions fit or wrap once; the body moves <= 2 rows."""
@@ -2643,6 +2707,7 @@ async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
     return calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 async def test_media_load_failure_paints_one_callout_with_retry_inside(size):
@@ -2684,6 +2749,7 @@ async def test_media_load_failure_paints_one_callout_with_retry_inside(size):
         assert len(screen.query(".library-media-row")) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_load_failure_callout_retry_issues_a_new_request():
     """task-31632 AC#1: the Retry inside the callout is the live one."""
@@ -2717,6 +2783,7 @@ async def test_media_load_failure_callout_retry_issues_a_new_request():
         assert controller.failure is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_facet_failure_paints_the_same_callout():
     """task-31632 AC#1 (Task 2 review carry-over): the type-list failure was
@@ -2750,6 +2817,7 @@ async def test_media_facet_failure_paints_the_same_callout():
         assert len(screen.query("#library-media-retry")) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_repeated_media_load_failure_names_the_reopen_recovery():
     """task-31982 AC#2: a second consecutive failed Retry stops repeating.
@@ -2794,6 +2862,7 @@ async def test_repeated_media_load_failure_names_the_reopen_recovery():
         assert "reopen Chatbook to reconnect to the media database" in second, second
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_changed_page_context_failure_is_not_a_repeated_retry():
     """task-32039 AC#1: a same-reason failure in a NEW context is not a Retry.
@@ -2836,6 +2905,7 @@ async def test_changed_page_context_failure_is_not_a_repeated_retry():
         assert "reopen Chatbook to reconnect to the media database" not in second, second
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resume_refresh_failure_is_not_a_repeated_retry():
     """task-32039 AC#1: a Library resume auto-refresh is a new visit, not a Retry.
@@ -2878,6 +2948,7 @@ async def test_resume_refresh_failure_is_not_a_repeated_retry():
         assert "reopen Chatbook to reconnect to the media database" not in second, second
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_facet_only_failure_leaves_the_row_supported_actions_live():
     """task-31982 AC#1/#4: the facet read and the row read are independent.
@@ -2926,6 +2997,7 @@ async def test_facet_only_failure_leaves_the_row_supported_actions_live():
             assert str(button.label) == label, widget_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_failure_callout_tint_follows_the_severity():
     """task-31632 AC#1: a timeout and a hard failure do not paint alike."""
@@ -2992,6 +3064,7 @@ def _painted_item_lines(host, screen) -> list[str]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_items_paint_two_rows_each_with_no_blank_row_between():
     """Fifteen seeded items all paint in a 52-row terminal, two rows each."""
@@ -3066,6 +3139,7 @@ def _painted_media_rows(host, screen) -> tuple[list[str], list[str]]:
     return titles, secondaries
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("size", "items_width"),
     [((235, 52), 132), ((100, 30), 44)],
@@ -3116,6 +3190,7 @@ async def test_media_rows_paint_analysed_only_for_analysed_items(size, items_wid
         assert _items_pane_width(screen) == items_width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_media_rows_paint_the_active_sets_review_state(size):
@@ -3144,6 +3219,7 @@ async def test_media_rows_paint_the_active_sets_review_state(size):
         assert [line[1] for line in titles] == ["✓", "·", " ", " "], titles
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_select_mode_checkbox_replaces_the_review_state_slot(size):
@@ -3181,6 +3257,7 @@ def _painted_slots(host, screen) -> list[str]:
     return [line[1] for line in titles]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_marking_reviewed_in_the_reader_repaints_the_row_slot():
     """task-28009: `m` and the final `]` change the MARK, not the loaded item.
@@ -3293,6 +3370,7 @@ async def _settle_focus_on(screen, pilot, control_id: str, what: str) -> None:
     assert screen.focused.is_attached
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_closing_more_lands_on_the_live_more_button():
     """Escape closes the disclosure and leaves focus on the NEW More button.
@@ -3350,6 +3428,7 @@ async def test_escape_closing_more_lands_on_the_live_more_button():
         await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_closing_find_lands_on_the_live_find_button():
     """Both Escape-closes-Find branches land on the mounted Find button.
@@ -3450,6 +3529,7 @@ def test_no_viewer_recompose_follow_up_rides_the_screen_pump():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_save_mounts_already_gated_while_a_media_write_is_in_flight():
     """task-31950: the mutation gate has to see the RECOMPOSED Save button.
@@ -3486,6 +3566,7 @@ async def test_edit_save_mounts_already_gated_while_a_media_write_is_in_flight()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_returning_to_read_restores_the_reading_position_once():
     """task-31954 AC#2: ONE owner schedules the restore for a mode change.
@@ -3538,6 +3619,7 @@ async def test_returning_to_read_restores_the_reading_position_once():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("items_width", "expected"),
     [(36, "document · updated 5m · a…"), (44, _ANALYSED_SECONDARY)],
@@ -3627,6 +3709,7 @@ def _match_reason_items() -> list[dict]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("size", "expected"),
     [
@@ -3684,6 +3767,7 @@ async def test_keyword_only_rows_paint_the_keyword_that_matched(size, expected):
 
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyword_reason_clips_at_the_36_cell_items_floor():
     """Fix round 1 (1): what the floor actually does, pinned honestly.
@@ -3747,6 +3831,7 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
         assert "article · updated 2m" in secondaries, secondaries
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flag_keyword_reason_paints_no_half_flag():
     """task-32044 (crit #7 P2): a flag keyword never paints a lone indicator.
@@ -3785,6 +3870,7 @@ async def test_flag_keyword_reason_paints_no_half_flag():
         assert ri % 2 == 0, (ri, reason)  # no lone half-flag
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone():
     """PR F's restore is CHAINED behind the follow-up, never evicted.
@@ -3865,6 +3951,7 @@ async def _open_media_with_a_failed_first_page(host, pilot, exc: BaseException):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_reader_placeholder_names_a_failed_list():
     """task-31635 (critique #5 item 12): "Select a media item" was a lie.
@@ -3886,6 +3973,7 @@ async def test_empty_reader_placeholder_names_a_failed_list():
         assert "Nothing loaded" in _painted(host, empty.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_page_failure_that_retains_rows_keeps_the_select_invitation():
     """task-31635 fix round 1: retained rows ARE selectable, so say so.
@@ -3934,6 +4022,7 @@ def _h1_markdown_host() -> LibraryProductionCSSHarness:
     return LibraryProductionCSSHarness(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rendered_markdown_h1_starts_in_the_body_column():
     """task-31635 (critique #5 item 14): the H1 aligns with the prose.
@@ -3983,6 +4072,7 @@ async def test_rendered_markdown_h1_starts_in_the_body_column():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 async def test_failed_first_page_gates_export_with_its_reason(size):
@@ -4017,6 +4107,7 @@ async def test_failed_first_page_gates_export_with_its_reason(size):
         assert "Trash" in _painted(host, trash.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_page_failure_that_retains_rows_leaves_export_live():
     """Fix round 1's negative control: retained rows export fine."""
@@ -4041,6 +4132,7 @@ async def test_page_failure_that_retains_rows_leaves_export_live():
         assert str(review.label) == "Review these"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_healthy_list_leaves_export_and_trash_live():
     """The other negative control: no failure, no gate (task-31635 item 6)."""
@@ -4061,6 +4153,7 @@ async def test_a_healthy_list_leaves_export_and_trash_live():
 # --- task-31635 Task 3 (critique #5 items 7/8/11/19 + Qodo 18) ----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_raising_follow_up_still_runs_the_queued_focus_restore():
     """Qodo on #2473 (item 18): the chained restore rides a ``finally``.
@@ -4102,6 +4195,7 @@ async def test_raising_follow_up_still_runs_the_queued_focus_restore():
         assert focused is viewer or viewer in focused.ancestors, focused
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saving_an_analysis_marks_its_row_analysed_without_a_refetch():
     """Qodo on #2475 (item 19): the row follows the analysis it just gained.
@@ -4181,6 +4275,7 @@ async def _apply_media_filter(screen, pilot, query: str) -> None:
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_zero_result_filter_keeps_the_sets_entry(size):
@@ -4205,6 +4300,7 @@ async def test_zero_result_filter_keeps_the_sets_entry(size):
         assert "Sets" in _painted(host, sets.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_single_result_filter_announces_that_enter_opens_it():
     """Item 8 (declined, announced): the filter's first hit auto-loads.
@@ -4233,6 +4329,7 @@ async def test_a_single_result_filter_announces_that_enter_opens_it():
         assert screen.query_one("#library-media-status", Static).display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_the_reader_says_its_item_is_not_in_the_open_trash_list(size):
@@ -4262,6 +4359,7 @@ async def test_the_reader_says_its_item_is_not_in_the_open_trash_list(size):
         assert "not in Trash" in _painted(host, identity.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 @pytest.mark.asyncio
 async def test_more_row_actions_share_one_grid_column_grammar(size):
@@ -4367,6 +4465,7 @@ def _reviewed(rows) -> list[bool | None]:
     return [row["reviewed"] for row in rows]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_decorating_a_page_loads_the_active_set_once_not_per_build():
     """task-31956 AC#1: an unchanged set is read once, not per canvas build.
@@ -4393,6 +4492,7 @@ async def test_decorating_a_page_loads_the_active_set_once_not_per_build():
         assert _reviewed(first) == [False, False, None, None], first
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_marking_an_item_done_invalidates_the_decoration_cache():
     """task-31956 AC#2: the mark seam is a write, so the next page is right.
@@ -4421,6 +4521,7 @@ async def test_marking_an_item_done_invalidates_the_decoration_cache():
         assert len(loads) == 2, loads
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_leaving_and_re_entering_review_invalidates_the_decoration_cache():
     """task-31956 AC#2: activation is a write too -- the markers follow it."""
@@ -4447,6 +4548,7 @@ async def test_leaving_and_re_entering_review_invalidates_the_decoration_cache()
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_write_landing_during_the_load_is_not_stamped_as_included():
     """Fix round 1: the stamp is the revision read BEFORE the load.
@@ -4484,6 +4586,7 @@ async def test_a_write_landing_during_the_load_is_not_stamped_as_included():
         assert _reviewed(fresh) == [True, False, None, None], fresh
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_storage_error_is_never_cached_as_no_active_set():
     """task-30042 doctrine survives the cache: it fails OPEN, and forgets.
@@ -4537,6 +4640,7 @@ async def test_a_storage_error_is_never_cached_as_no_active_set():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("row_index", "expected", "other"),
     [(0, "Analysed: yes", "Analysed: no"), (2, "Analysed: no", "Analysed: yes")],

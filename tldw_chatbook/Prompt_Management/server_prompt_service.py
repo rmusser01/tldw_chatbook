@@ -149,6 +149,13 @@ class ServerPromptService:
 
         self._enforce(self._action_id("update"))
         request_data = kwargs.get("request_data")
+        if kwargs.get("expected_version") is not None or (
+            isinstance(request_data, dict)
+            and request_data.get("expected_version") is not None
+        ):
+            from .prompt_source_capabilities import PromptCapabilityError
+
+            raise PromptCapabilityError("server", "conditional update")
         if request_data is None:
             request_data = PromptCreateRequest(**kwargs)
         elif isinstance(request_data, dict):

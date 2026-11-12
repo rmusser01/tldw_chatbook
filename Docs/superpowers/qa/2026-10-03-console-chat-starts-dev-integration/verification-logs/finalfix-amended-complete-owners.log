@@ -1,0 +1,272 @@
+........................................................................ [ 29%]
+........................................................................ [ 58%]
+....................x................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.............F..................... [ 88%]
+.....F.......................                                            [100%]
+=================================== FAILURES ===================================
+_____ test_native_acceptance_consumes_only_open_target_revision[unchanged] _____
+
+tmp_path = PosixPath('/private/tmp/console-finalfix-amended-owners-01a0fa6c/test_native_acceptance_consume0')
+later_edit = 'unchanged'
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "later_edit", ["unchanged", "replacement", "same_text", "switch_away"]
+    )
+    async def test_native_acceptance_consumes_only_open_target_revision(
+        tmp_path, later_edit
+    ):
+        """The accepted handoff cannot resurrect an unchanged visible composer."""
+        import json
+        from Tests.Chat.test_console_chat_start import _native_start_rig
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(
+            tmp_path
+        )
+        entered, release = asyncio.Event(), asyncio.Event()
+        resolve = controller._resolve_for_send_bounded
+    
+        async def held_readiness(selection):
+            entered.set()
+            await release.wait()
+            return await resolve(selection)
+    
+        controller._resolve_for_send_bounded = held_readiness
+        app = _build_test_app()
+        _attach_real_dbs(app, tmp_path)
+        _configure_native_ready_console(app)
+        try:
+            async with app.run_test(size=(160, 48)) as pilot:
+                chat = ChatScreen(app)
+                await app.push_screen(chat)
+                app._initial_screen_pushed = True
+                app.current_tab = "chat"
+                await _wait_for_selector(chat, pilot, "#console-native-composer")
+                runtime = app.console_runtime
+                runtime._chat_store = store
+                runtime._chat_controller = controller
+                runtime._agent_bridge = controller._agent_bridge
+                controller.app = app
+                await chat._sync_native_console_chat_ui()
+                composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+                store.switch_session(source.id)
+                chat._session._sync_console_session_draft()
+                composer.load_draft("source composer sentinel")
+                chat._session._sync_console_session_draft()
+                assert source.draft == "source composer sentinel"
+                source_workspace = source.workspace_id
+                from dataclasses import replace
+    
+                # Shipping creation persists destination defaults before launch.
+                # The minimal ledger rig lacks them; use the actual mounted owner.
+                store.replace_session_settings(
+                    target.id, chat._session._blank_console_session_settings()
+                )
+                request = replace(
+                    request,
+                    configuration=controller.resolve_turn_configuration_snapshot(target.id),
+                )
+                submit = controller.submit_draft
+                results = []
+    
+                async def observe_submit(*args, **kwargs):
+                    result = await submit(*args, **kwargs)
+                    results.append(result)
+                    return result
+    
+                controller.submit_draft = observe_submit
+                start = asyncio.create_task(controller._chat_start.start(request))
+                try:
+                    await asyncio.wait_for(entered.wait(), 5)
+                    store.switch_session(target.id)
+                    chat._session._sync_console_session_draft()
+                    await chat._sync_native_console_chat_ui()
+                    composer.focus()
+                    await pilot.pause()
+                    assert composer.draft_text() == "original"
+                    assert target.agent_handoff_state == "pending"
+                    assert controller._chat_start.is_prepared(target.id)
+                    assert controller._chat_start._target_unchanged(request), {
+                        "settings_equal": target.settings
+                        == request.configuration.session_settings,
+                        "epoch": (
+                            store.conversation_context_epoch(target.id),
+                            request.context_epoch,
+                        ),
+                        "revision": (target.agent_handoff_revision, request.draft_revision),
+                        "draft": target.draft,
+                        "workspace": (target.workspace_id, request.workspace_id),
+                        "evidence": controller._has_explicit_staged_evidence(target.id),
+                        "attachments": store.pending_attachments(target.id),
+                        "prefill": store.session_one_shot_prefill(target.id),
+                        "queue": controller.prompt_queue_coordinator.controls_generation(
+                            target.id
+                        ),
+                    }
+                    publish = store.publish_agent_handoff_consumed
+    
+                    def after_receipt(session_id, revision):
+                        publish(session_id, revision)
+                        if later_edit in {"replacement", "same_text"}:
+                            # A genuine later revision can have identical text; it
+                            # is authored after acceptance and must survive.
+                            composer.load_draft(
+                                "later target edit"
+                                if later_edit == "replacement"
+                                else "original"
+                            )
+                            store.set_session_draft(target.id, composer.draft_text())
+    
+                    store.publish_agent_handoff_consumed = after_receipt
+                    if later_edit == "switch_away":
+                        chat._session._capture_console_draft_switch_snapshot()
+                        assert chat._session._console_draft_switch_snapshot is not None
+                    release.set()
+                    outcome = await asyncio.wait_for(start, 10)
+                    assert outcome.launch_status == "started", (
+                        outcome,
+                        [result.visible_copy for result in results],
+                    )
+                    expected = {
+                        "unchanged": "",
+                        "replacement": "later target edit",
+                        "same_text": "original",
+                        "switch_away": "",
+                    }[later_edit]
+                    if later_edit == "switch_away":
+                        # Qualify the switch-away save path before same-session
+                        # polling can consume the mounted receipt.
+                        store.switch_session(source.id)
+                        chat._session._sync_console_session_draft()
+                        assert target.draft == ""
+                        assert composer.draft_text() == "source composer sentinel"
+                        store.switch_session(target.id)
+                        chat._session._sync_console_session_draft()
+                    # The other cases observe normal mounted polling before any
+                    # explicit synchronization saves or switches the target.
+                    for _ in range(50):
+                        await pilot.pause(0.1)
+                        if composer.draft_text() == expected:
+                            break
+>                   assert composer.draft_text() == expected
+E                   AssertionError: assert 'original' == ''
+E                     
+E                     + original
+
+Tests/UI/test_console_runtime_ownership.py:3281: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 14:39:37 [WARNING ] root:1492 - Prompts service not initialized, self.prompts_db set to None.
+2026-10-03 14:39:37 [ERROR   ] root:1513 - ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     root:app.py:2277 Splash screen enabled: True
+INFO     root:app.py:2290 Creating splash screen - duration: 7.0, card: random
+INFO     root:app.py:2305 Splash screen yielded, returning early from compose
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=base provider=faster-whisper status=ok
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage app_version=0.2.3 attempt_id=87d71a22345a457fb6b264d2f3eb877a component=console duration_ms=0 phase=controller_submit python_version=3.12.11 sqlite_version=3.49.1 status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=87d71a22345a457fb6b264d2f3eb877a component=console duration_ms=1026 phase=provider_resolution status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=87d71a22345a457fb6b264d2f3eb877a capture_enabled=false component=console duration_ms=1029 phase=capture_policy status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=87d71a22345a457fb6b264d2f3eb877a component=console duration_ms=1031 phase=durable_commit status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=87d71a22345a457fb6b264d2f3eb877a component=console duration_ms=1098 phase=durable_commit status=succeeded
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=87d71a22345a457fb6b264d2f3eb877a component=console duration_ms=2024 phase=controller_submit status=completed
+ERROR    tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=worker_failed component=app exception_type=AttributeError operation=deferred_actor_pack_recovery
+INFO     tldw_chatbook.diagnostics.scheduling:persistent_diagnostics.py:256 event=scheduler_configured component=scheduling item_count=5 status=ok
+INFO     root:app_lifecycle.py:991 --- App Unmounting ---
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_stopping component=app
+___ test_character_handoff_uses_current_canonical_defaults_not_stale_session ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12f88cb60>
+
+    @pytest.mark.asyncio
+    async def test_character_handoff_uses_current_canonical_defaults_not_stale_session(
+        monkeypatch,
+    ):
+        card = _roleplay_card(name="Alba")
+        screen = _character_screen(monkeypatch, card)
+        store = screen._ensure_console_chat_store()
+        stale = screen._session._default_console_session_settings()
+        original = store.ensure_session(
+            settings=stale,
+            canonical_settings_baseline=stale,
+        )
+        screen.app_instance.app_config.setdefault("chat_defaults", {})["model"] = (
+            "canonical-current-model"
+        )
+        screen.app_instance.app_config.setdefault("chat_defaults", {})["provider"] = (
+            "openai"
+        )
+        current = screen._session._default_console_session_settings()
+>       assert stale.model != current.model
+E       AssertionError: assert 'canonical-current-model' != 'canonical-current-model'
+E        +  where 'canonical-current-model' = ConsoleSessionSettings(provider='openai', model='canonical-current-model', base_url=None, temperature=0.7, top_p=0.95,...treaming=True, character_label='', system_prompt=None, source='derived', pinned_prefill=None, persona_memory_mode=None).model
+E        +  and   'canonical-current-model' = ConsoleSessionSettings(provider='openai', model='canonical-current-model', base_url=None, temperature=0.7, top_p=0.95,...treaming=True, character_label='', system_prompt=None, source='derived', pinned_prefill=None, persona_memory_mode=None).model
+
+Tests/UI/test_console_session_controller.py:664: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 14:40:43 [WARNING ] root:1492 - Prompts service not initialized, self.prompts_db set to None.
+2026-10-03 14:40:43 [ERROR   ] root:1513 - ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+=============================== warnings summary ===============================
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_console_session_controller.py::test_workspace_created_blank_console_uses_published_defaults
+Tests/UI/test_console_session_controller.py::test_controller_new_session_preserves_explicit_source_settings
+Tests/UI/test_console_session_controller.py::test_personas_preview_handoff_preserves_control_derived_source_settings
+Tests/UI/test_console_session_controller.py::test_typed_then_cleared_work_marker_survives_screen_state_restore
+Tests/UI/test_console_session_controller.py::test_persona_memory_mode_survives_screen_state_restore
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/UI/Screens/chat_screen.py:24890: RuntimeWarning: coroutine 'Timer._run_timer' was never awaited
+    logger.error(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+Tests/UI/test_console_session_controller.py::test_postcommit_registration_failure_open_retry_reuses_identity
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/conftest.py:600: UserWarning: open file descriptors grew by 982 over the test session (start=14, end=996, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+20.14s call     Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+12.40s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+10.57s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+9.37s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+8.80s call     Tests/UI/test_console_session_controller.py::test_durable_fork_orders_commit_projection_registration_and_activation
+8.61s call     Tests/UI/test_console_session_controller.py::test_workspace_projection_failure_keeps_one_open_fork_pending_retry
+8.37s call     Tests/UI/test_console_session_controller.py::test_ambiguous_durable_commit_reconciles_without_second_bundle
+8.29s call     Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+8.26s call     Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+8.05s call     Tests/UI/test_console_session_controller.py::test_postcommit_registration_failure_open_retry_reuses_identity
+7.91s call     Tests/UI/test_console_runtime_ownership.py::test_post_unmount_raw_refusal_restores_on_second_console_visit
+7.90s call     Tests/UI/test_console_session_controller.py::test_promote_console_temporary_session_writes_durable_rows_to_the_database
+7.68s call     Tests/UI/test_console_session_controller.py::test_promote_console_temporary_session_second_call_does_not_duplicate_the_row
+7.63s call     Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target
+7.50s call     Tests/UI/test_console_session_controller.py::test_ambiguous_durable_collision_fails_closed_without_publication
+6.86s call     Tests/UI/test_console_session_controller.py::test_cancelled_fork_validation_generation_cannot_publish_late_result
+6.79s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+6.69s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]
+6.68s call     Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime
+5.90s call     Tests/UI/test_console_session_controller.py::test_activate_native_console_session_realigns_active_workspace
+5.90s call     Tests/UI/test_console_session_controller.py::test_fork_validation_freezes_the_accepted_title_until_retry
+5.78s call     Tests/UI/test_console_session_controller.py::test_fork_stage_error_names_safe_content_class_only[attachment]
+5.45s call     Tests/UI/test_console_session_controller.py::test_temporary_activation_failure_open_reuses_registered_id_once
+5.38s call     Tests/UI/test_console_runtime_ownership.py::test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
+5.37s call     Tests/UI/test_console_session_controller.py::test_apply_console_switcher_choice_activate_uses_shared_activation_path
+=========================== short test summary info ============================
+XFAIL Tests/UI/test_console_runtime_ownership.py::test_captured_attach_timer_overlap_rearms_real_sync_worker - TASK-32873: the real sync worker now reads whole-screen owner state (library projection, staged evidence, active settings, Textual message-pump context) that a bare __new__ ChatScreen mount cannot satisfy; needs the app_factory real-mount rewrite. Tracked in the task notes.
+FAILED Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+FAILED Tests/UI/test_console_session_controller.py::test_character_handoff_uses_current_canonical_defaults_not_stale_session
+2 failed, 242 passed, 1 xfailed, 10 warnings in 404.15s (0:06:44)

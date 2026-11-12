@@ -12,9 +12,9 @@ move.
 The screen-level routing is pinned here too, because it is exactly what the
 move must NOT change: `ChatScreen.on_key`'s stated policy is to "treat the
 Console composer as the default printable text target", so a printable key
-pressed while *nothing* is focused still has to land in the composer. That
-policy stays on the screen (`_should_capture_console_input` is the gate);
-only the per-key branch bodies move.
+pressed while *nothing* is focused still has to land in the composer.
+Editing keys leave a draft without a caret alone until it takes focus.
+That policy stays on the screen; only the per-key branch bodies move.
 
 The host is the real Console screen (`test_console_dictation._ready_host`),
 not a hand-built screen fixture -- the keymap is only observable through
@@ -24,6 +24,8 @@ thing itself.
 """
 
 from __future__ import annotations
+
+import time
 
 import pytest
 from textual.events import Key
@@ -45,11 +47,29 @@ async def _focused_composer(host, pilot, text: str = "") -> ConsoleComposerBar:
     return composer
 
 
+async def _clear_focus(host, pilot) -> None:
+    """Clear focus once the Console's activation stops giving it to the composer.
+
+    The activation focuses the composer more than once in the first ~0.3 s
+    after it mounts. A single ``set_focus(None)`` made in that window was
+    undone by the next restore, so the "nothing is focused" precondition
+    below was left to chance (it raced on dev too). Clear again until focus
+    stays cleared for a quiet window.
+    """
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        host.set_focus(None)
+        await pilot.pause(0.3)
+        if host.focused is None:
+            return
+
+
 # ---------------------------------------------------------------------------
 # Deletion keys
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backspace_deletes_the_character_left_of_the_caret():
     _, host = _ready_host()
@@ -64,6 +84,7 @@ async def test_backspace_deletes_the_character_left_of_the_caret():
         assert composer.cursor_index == 4
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_removes_the_character_right_of_the_caret():
     _, host = _ready_host()
@@ -80,6 +101,7 @@ async def test_delete_removes_the_character_right_of_the_caret():
         assert composer.cursor_index == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_w_deletes_the_word_left_of_the_caret():
     _, host = _ready_host()
@@ -93,6 +115,7 @@ async def test_ctrl_w_deletes_the_word_left_of_the_caret():
         assert composer.cursor_index == len("hello ")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_u_clears_the_whole_draft():
     _, host = _ready_host()
@@ -106,6 +129,7 @@ async def test_ctrl_u_clears_the_whole_draft():
         assert composer.cursor_index == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_c_clears_an_unselected_focused_draft_and_is_undoable():
     _, host = _ready_host()
@@ -151,6 +175,7 @@ def test_ctrl_c_handler_records_history_and_posts_draft_changed(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_left_and_right_step_the_caret_without_changing_the_draft():
     _, host = _ready_host()
@@ -168,6 +193,7 @@ async def test_left_and_right_step_the_caret_without_changing_the_draft():
         assert composer.draft_text() == "abcdef"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_home_and_end_jump_the_caret_to_the_draft_bounds():
     _, host = _ready_host()
@@ -184,6 +210,7 @@ async def test_home_and_end_jump_the_caret_to_the_draft_bounds():
         assert composer.draft_text() == "abcdef"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_up_and_down_step_visual_rows_inside_a_multiline_draft():
     _, host = _ready_host()
@@ -206,6 +233,7 @@ async def test_up_and_down_step_visual_rows_inside_a_multiline_draft():
         assert composer.draft_text() == "first\nsecond\nthird"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_up_on_the_first_visual_row_never_moves_the_caret():
     """Row 0 hands Up to prompt-history recall, which never moves the caret."""
@@ -226,6 +254,7 @@ async def test_up_on_the_first_visual_row_never_moves_the_caret():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_a_selects_the_entire_draft():
     _, host = _ready_host()
@@ -245,6 +274,7 @@ async def test_ctrl_a_selects_the_entire_draft():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_z_undoes_a_typed_run_and_ctrl_shift_z_redoes_it():
     _, host = _ready_host()
@@ -264,8 +294,10 @@ async def test_ctrl_z_undoes_a_typed_run_and_ctrl_shift_z_redoes_it():
         assert composer.draft_text() == "hi"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
+async def test_ctrl_e_expands_a_collapsed_paste_in_place():
+    """Owner decision 2026-10-30: Ctrl+E expands a token; Enter only sends."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         composer = await _focused_composer(host, pilot)
@@ -274,14 +306,15 @@ async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
         await pilot.pause()
 
         assert composer._display_draft_text() == (
-            f"Pasted text | {len(pasted)} characters | Expand"
+            f"Pasted text | {len(pasted)} characters | Ctrl+E expand"
         )
 
-        await pilot.press("enter")
+        await pilot.press("ctrl+e")
         await pilot.pause()
 
-        assert composer._display_draft_text() == "Expand?"
+        assert composer._display_draft_text() == pasted
         assert composer.draft_text() == pasted
+        assert composer.cursor_index == len(pasted)
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +322,7 @@ async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_printable_key_reaches_the_composer_while_nothing_is_focused():
     """`on_key`'s policy: the composer is the default printable text target."""
@@ -296,8 +330,7 @@ async def test_a_printable_key_reaches_the_composer_while_nothing_is_focused():
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        host.set_focus(None)
-        await pilot.pause()
+        await _clear_focus(host, pilot)
         assert host.focused is None
 
         await pilot.press("z")
@@ -307,18 +340,27 @@ async def test_a_printable_key_reaches_the_composer_while_nothing_is_focused():
         assert composer.cursor_index == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_an_edit_key_reaches_the_composer_while_nothing_is_focused():
-    """The same default-target policy covers the edit keys, not just typing."""
+async def test_editing_keys_require_focus_on_the_composer_draft():
+    """Keep editing keys off a draft with no caret, then edit after Escape."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")
-        host.set_focus(None)
-        await pilot.pause()
+        await _clear_focus(host, pilot)
         assert host.focused is None
 
+        await pilot.press("left")
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert host.focused is None
+        assert composer.draft_text() == "abc"
+        assert composer.cursor_index == len("abc")
+
+        await pilot.press("escape")
+        assert host.focused is composer
         await pilot.press("left")
         await pilot.press("backspace")
         await pilot.pause()
@@ -327,6 +369,7 @@ async def test_an_edit_key_reaches_the_composer_while_nothing_is_focused():
         assert composer.cursor_index == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_c_does_not_clear_the_draft_while_nothing_is_focused():
     _, host = _ready_host()
@@ -334,8 +377,7 @@ async def test_ctrl_c_does_not_clear_the_draft_while_nothing_is_focused():
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep me")
-        host.set_focus(None)
-        await pilot.pause()
+        await _clear_focus(host, pilot)
         assert host.focused is None
 
         await pilot.press("ctrl+c")

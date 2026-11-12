@@ -21,6 +21,7 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
     ArtifactDefinitionState,
     ArtifactType,
     BlockArtifactDefinition,
+    LiteralMixinDefinition,
 )
 from tldw_chatbook.Prompt_Management.prompt_artifact_codec import (
     decode_prompt_artifact,
@@ -81,6 +82,7 @@ class PromptBrowseScope:
 
     backend: Literal["local"] = "local"
     query: str = ""
+    artifact_type: ArtifactType | None = None
     collection_id: int | None = None
     sort_by: Literal["last_modified", "name"] = "last_modified"
     sort_order: Literal["asc", "desc"] = "desc"
@@ -90,6 +92,12 @@ class PromptBrowseScope:
     def __post_init__(self) -> None:
         if not isinstance(self.backend, str) or self.backend.strip().lower() != "local":
             raise ValueError("Prompt browsing is local-only.")
+        if self.artifact_type is not None and self.artifact_type not in {
+            "prompt",
+            "recipe",
+            "mixin",
+        }:
+            raise ValueError("Invalid prompt artifact type filter.")
         if not isinstance(self.query, str):
             raise TypeError("query must be a string.")
         if self.collection_id is not None and (
@@ -126,6 +134,7 @@ class PromptBrowseScope:
             (
                 self.backend,
                 self.query,
+                self.artifact_type,
                 self.collection_id,
                 self.sort_by,
                 self.sort_order,
@@ -200,7 +209,7 @@ def _prompt_browse_settled_status(
 ) -> PromptBrowseStatus:
     if has_items:
         return "ready"
-    if scope.query:
+    if scope.query or scope.artifact_type is not None:
         return "no_matches"
     if scope.collection_id is not None:
         return "empty_collection"
@@ -1500,7 +1509,7 @@ class PromptArtifactDraft:
     """Exact structured payload measurements used by Library save gates."""
 
     artifact_type: ArtifactType
-    definition: BlockArtifactDefinition
+    definition: BlockArtifactDefinition | LiteralMixinDefinition
     system_prompt: str
     user_prompt: str
     definition_bytes: bytes
@@ -1538,6 +1547,32 @@ def _definition_mapping(definition: BlockArtifactDefinition) -> dict[str, Any]:
             for lane in definition.lanes
         ],
     }
+
+
+def prepare_mixin_artifact_save(
+    definition: LiteralMixinDefinition, *, request_fields: Mapping[str, Any]
+) -> tuple[PromptArtifactDraft, dict[str, Any]]:
+    """Measure the literal payload under the same source save contract."""
+    from dataclasses import asdict
+
+    mapping = asdict(definition)
+    payload = {key: value for key, value in request_fields.items() if value is not None}
+    payload.update(
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition=mapping,
+        system_prompt="",
+        user_prompt=definition.body,
+    )
+    return PromptArtifactDraft(
+        "mixin",
+        definition,
+        "",
+        definition.body,
+        _canonical_json_bytes(mapping),
+        _canonical_json_bytes(payload),
+    ), payload
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -1612,9 +1647,11 @@ def require_artifact_save_supported(
     expected_version: int | None = None,
 ) -> None:
     """Reject unsupported or oversized artifact saves without truncation."""
-    expected_kind = (
-        "block_prompt" if draft.artifact_type == "prompt" else "block_recipe"
-    )
+    expected_kind = {
+        "prompt": "block_prompt",
+        "recipe": "block_recipe",
+        "mixin": "text_mixin",
+    }[draft.artifact_type]
     if draft.definition.kind != expected_kind:
         raise ValueError("artifact_type and prompt definition kind must agree.")
 
@@ -1662,7 +1699,7 @@ def require_artifact_save_supported(
 
 
 _PROMPT_SELECTION_SQLITE_MAX_INTEGER = 2**63 - 1
-_PROMPT_SELECTION_ARTIFACT_TYPES = frozenset({"prompt", "recipe"})
+_PROMPT_SELECTION_ARTIFACT_TYPES = frozenset({"prompt", "recipe", "mixin"})
 
 
 def _require_prompt_selection_integer(value: object, *, field_name: str) -> None:
@@ -1677,7 +1714,9 @@ def _require_prompt_selection_title(value: object) -> None:
 
 def _require_prompt_selection_artifact_type(value: object) -> None:
     if type(value) is not str or value not in _PROMPT_SELECTION_ARTIFACT_TYPES:
-        raise ValueError("artifact_type must be exactly 'prompt' or 'recipe'.")
+        raise ValueError(
+            "artifact_type must be exactly 'prompt', 'recipe', or 'mixin'."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1842,7 +1881,7 @@ class LibraryPromptDeleteReceipt:
             raise ValueError("Prompt delete receipt id must be positive.")
         if not isinstance(self.title, str):
             raise TypeError("Prompt delete receipt title must be text.")
-        if self.artifact_type not in {"prompt", "recipe"}:
+        if self.artifact_type not in {"prompt", "recipe", "mixin"}:
             raise ValueError("Prompt delete receipt type must be prompt or recipe.")
         if (
             not isinstance(self.expected_version, int)
@@ -1919,6 +1958,10 @@ class PromptEditorState:
     modified: str
     artifact_type: ArtifactType = "prompt"
     definition_state: ArtifactDefinitionState = "legacy"
+    mixin_definition: LiteralMixinDefinition | None = dataclass_field(
+        default=None, repr=False
+    )
+    mixin_draft: tuple[str, str, str] | None = dataclass_field(default=None, repr=False)
     block_editor_state: PromptBlockEditorState | None = None
     compiled_system_preview: str = ""
     compiled_user_preview: str = ""
@@ -1945,6 +1988,12 @@ def prompt_basic_unavailable_reason(
     can_update_original: bool = True,
 ) -> str:
     """Explain why a Prompt must use the full structured editor."""
+    if state.artifact_type == "mixin":
+        return (
+            "This mix-in changed elsewhere. Reload or save as new."
+            if conflict
+            else "Mix-ins use literal Instructions and Before/After placement."
+        )
     if conflict:
         return "Resolve the version conflict in Advanced view."
     if state.artifact_type != "prompt":
@@ -1973,6 +2022,7 @@ def prompt_basic_unavailable_reason(
 _DEFINITION_STATE_DISPLAY_LABELS: dict[str, str] = {
     "legacy": "text format",
     "supported_v2": "structured format",
+    "supported_v3": "literal mix-in",
     "foreign_v1": "external format",
     "unsupported": "unsupported format",
     "malformed": "malformed",
@@ -2127,7 +2177,9 @@ def _row(
         row_name = _text(record.get("name"))
         artifact_type = cast(
             ArtifactType,
-            "recipe" if record.get("artifact_type") == "recipe" else "prompt",
+            record.get("artifact_type")
+            if record.get("artifact_type") in {"recipe", "mixin"}
+            else "prompt",
         )
     # Task 8b D2/U1: surfaces the prompt's PURPOSE (details) instead of
     # `author · age` -- author (and keywords, never present on list rows
@@ -2154,13 +2206,15 @@ def _row(
         lane_summary = "User only"
     else:
         lane_summary = "Empty"
+    if artifact_type == "mixin":
+        lane_summary = "Literal instructions"
     source = _text(record.get("backend")) or "local"
     return PromptListRow(
         prompt_id=prompt_id,
         name=row_name,
         secondary=secondary,
         artifact_type=artifact_type,
-        type_label=artifact_type.title(),
+        type_label="Mix-in" if artifact_type == "mixin" else artifact_type.title(),
         lane_summary=lane_summary,
         source_label=source.title(),
         version=row_version,
@@ -2324,7 +2378,11 @@ def build_prompt_editor_state(
         else _raw_text(detail.get("user_prompt"))
     )
     block_state: PromptBlockEditorState | None = None
-    if decoded is not None and decoded.state == "supported_v2":
+    if (
+        decoded is not None
+        and decoded.state == "supported_v2"
+        and isinstance(decoded.definition, BlockArtifactDefinition)
+    ):
         try:
             block_state = PromptBlockEditorState.from_definition(
                 artifact_type=decoded.artifact_type,
@@ -2344,7 +2402,9 @@ def build_prompt_editor_state(
         )
 
     compatibility_reason = ""
-    if block_state is None:
+    if block_state is None and not (
+        decoded is not None and isinstance(decoded.definition, LiteralMixinDefinition)
+    ):
         compatibility_reason = (
             f"{definition_state.replace('_', ' ')} artifact is read-only; "
             "use compatibility text and convert only as a new Prompt."
@@ -2367,6 +2427,12 @@ def build_prompt_editor_state(
         modified=_timestamp_raw(detail),
         artifact_type=artifact_type,
         definition_state=definition_state,
+        mixin_definition=(
+            decoded.definition
+            if decoded is not None
+            and isinstance(decoded.definition, LiteralMixinDefinition)
+            else None
+        ),
         block_editor_state=block_state,
         compiled_system_preview=compiled_system,
         compiled_user_preview=compiled_user,

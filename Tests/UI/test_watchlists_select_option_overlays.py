@@ -86,6 +86,7 @@ def _painted_option_labels(screen, select: Select) -> list[str]:
     return [row for row in rows if row]
 
 
+@pytest.mark.bootstrap_profile
 async def test_items_status_filter_paints_every_status_option():
     """AC#1. The filter's overlay shows every status, intact.
 
@@ -124,6 +125,7 @@ async def test_items_status_filter_paints_every_status_option():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_status_filter_still_shows_its_value_when_focused_or_hovered():
     """The same defect one level up, on the control rather than its popup.
 
@@ -224,6 +226,7 @@ async def test_items_status_filter_covers_the_reader_set_the_backend_produces():
     )
 
 
+@pytest.mark.bootstrap_profile
 async def test_picking_a_status_filters_the_items_list():
     """AC#1. The filter is wired, not merely populated."""
     host = _watchlists_host()
@@ -246,10 +249,13 @@ async def test_picking_a_status_filters_the_items_list():
         await pilot.pause()
         await pilot.pause()
 
-        displayed = screen.query_one("#watchlists-items-pane", ArticleListPane).displayed_items()
+        displayed = screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).displayed_items()
         assert [row["id"] for row in displayed] == ["1"]
 
 
+@pytest.mark.bootstrap_profile
 async def test_new_rule_condition_select_paints_the_real_vocabulary():
     """AC#2. The condition Select offers every condition, intact.
 
@@ -281,6 +287,7 @@ async def test_new_rule_condition_select_paints_the_real_vocabulary():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_rule_condition_select_still_shows_its_value_when_focused():
     """The non-compact half of the same defect, on the other reported Select.
 
@@ -332,6 +339,7 @@ async def test_the_rule_condition_select_still_shows_its_value_when_focused():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_two_option_select_overlay_is_not_painted_away_entirely():
     """The worst case of the same mechanism, pinned separately.
 
@@ -360,6 +368,7 @@ async def test_a_two_option_select_overlay_is_not_painted_away_entirely():
         assert len(painted) == select.query_one(SelectOverlay).option_count
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover():
     """Review wave, Critical 1. "Compact" is not the same as "has no frame".
 
@@ -390,19 +399,25 @@ async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover()
     `#settings-provider-value` only as a hidden manual-entry compat control
     (`settings-provider-manual-hidden`, zero-size), which made this pin
     IndexError on an empty paint. The contract outlives the exemplar
-    (~21 bordered compact Selects remain), so it is pinned on the Console
+    (~21 bordered compact Selects remain), so it was pinned on the Console
     Behavior compaction-mode Select instead, scrolled into view first the
     way a user reaches it.
+
+    TASK-33007.5, rewritten on purpose: Providers & Models and Console
+    Behavior now draw their Selects one row tall with the compact input's left
+    edge (spec §6, R14), so that exemplar has no frame by design. The contract
+    is pinned on the Speech default voice profile Select, still compact AND bordered; the
+    frameless one-row shape is pinned in test_settings_model_defaults_rows.py.
     """
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
     async with host.run_test(size=(180, 50)) as pilot:
-        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-speech-tts")
         screen = pilot.app.screen
         await _wait_for_selector(
-            screen, pilot, "#settings-console-context-compaction-mode", timeout=5.0
+            screen, pilot, "#settings-speech-default-profile", timeout=5.0
         )
-        select = screen.query_one("#settings-console-context-compaction-mode", Select)
+        select = screen.query_one("#settings-speech-default-profile", Select)
         assert "-textual-compact" in select.classes, (
             "precondition: this control is the compact-AND-bordered shape"
         )
@@ -427,7 +442,7 @@ async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover()
             f"painted {_painted_rows(screen, select.region)!r}"
         )
 
-        await pilot.hover("#settings-console-context-compaction-mode")
+        await pilot.hover("#settings-speech-default-profile")
         await pilot.pause()
         assert _frame() == (rest_top, rest_bottom), (
             "and on hover -- a frame that appears and disappears under the "
@@ -487,6 +502,7 @@ def _rendered_background(screen, region, row_offset: int = 0):
 MIN_FOCUS_CONTRAST = 2.0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "select_id", ["#items-status-select", "#watchlists-backend-select"]
 )
@@ -519,7 +535,9 @@ async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
         await pilot.pause()
         await _wait_for_selector(screen, pilot, select_id, timeout=5.0)
         select = screen.query_one(select_id, Select)
-        assert not select.disabled, "focus contrast must be measured on a focusable control"
+        assert not select.disabled, (
+            "focus contrast must be measured on a focusable control"
+        )
 
         rest = _rendered_background(screen, select.region)
         select.focus()
@@ -538,6 +556,7 @@ async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_focus_is_at_least_as_loud_as_hover():
     """Round 2, O1's other half: the two cues must not be inverted.
 

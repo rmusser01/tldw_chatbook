@@ -1,0 +1,23 @@
+F..F                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_mixin_indexes_service_real_lookup_and_message_cleanup_without_statistics _
+Tests/DB/test_console_prompt_mixins.py:806: in test_mixin_indexes_service_real_lookup_and_message_cleanup_without_statistics
+    cursor.execute("DELETE FROM messages WHERE id=?", (first_ids["native-user"],))
+tldw_chatbook/DB/base_db.py:676: in execute
+    return self._tracked(
+tldw_chatbook/DB/base_db.py:657: in _tracked
+    result = run(*args)
+             ^^^^^^^^^^
+E   sqlite3.IntegrityError: semantic mutation authorization required for message delete
+______ test_original_retry_ignores_unavailable_current_usage_preferences _______
+Tests/Chat/test_console_prompt_mixin_retry.py:1561: in test_original_retry_ignores_unavailable_current_usage_preferences
+    h.store.get_session("session-1").prompt_mixin_preferences = unavailable
+    ^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'ConsoleChatStore' object has no attribute 'get_session'
+============================= slowest 25 durations =============================
+
+(12 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/DB/test_console_prompt_mixins.py::test_mixin_indexes_service_real_lookup_and_message_cleanup_without_statistics
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_original_retry_ignores_unavailable_current_usage_preferences
+2 failed, 2 passed in 2.80s

@@ -1,0 +1,20 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/private/tmp/mixins-reader-final-ci-tmp",
+      "Tests/CI/test_ci_queue_pressure_contract.py",
+      "Tests/CI/test_derived_artifacts_workflow.py",
+      "Tests/CI/test_ui_pr_gate_census_checker.py",
+      "-q"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "exit_code": 1,
+    "seconds": 56.913,
+    "log": "/private/tmp/mixins-reader-root-final/ci-contracts-0.log"
+  }
+]

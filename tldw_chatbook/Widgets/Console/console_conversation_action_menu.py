@@ -280,9 +280,12 @@ class ConsoleConversationActionMenu(VerticalScroll):
             classes="conversation-menu-summary",
         )
         for item in build_conversation_menu(self._target, self._page):
-            label = f"{item.label} ▸" if item.opens_page and item.action_id.endswith(
-                ("status", "more", "copy")
-            ) else item.label
+            label = (
+                f"{item.label} ▸"
+                if item.opens_page
+                and item.action_id.endswith(("status", "more", "copy"))
+                else item.label
+            )
             if item.is_current:
                 label = f"• {label}"
             button = Button(
@@ -329,7 +332,7 @@ class ConsoleConversationActionMenu(VerticalScroll):
                     self._opener_id, opener_anchor=self._opener_anchor
                 )
             )
-        self._detach()
+        self._remove_once()
 
     async def await_detachment(self) -> None:
         """Claim and fully detach this menu, awaiting the DOM removal.
@@ -341,10 +344,15 @@ class ConsoleConversationActionMenu(VerticalScroll):
         takes focus anyway.
         """
         self._claimed = True
-        await self._detach()
+        await self._remove_once()
 
-    def _detach(self) -> "AwaitRemove":
-        """Return the memoized single removal awaitable for this menu."""
+    def _remove_once(self) -> "AwaitRemove":
+        """Return the memoized single removal awaitable for this menu.
+
+        Not named ``_detach``: that is Textual's hook for clearing a removed
+        widget's parent, and shadowing it left every closed menu in the
+        registry, claiming the Console's next Esc (TASK-37960).
+        """
         if self._removal is None:
             self._removal = self.remove()
         return self._removal
@@ -399,7 +407,7 @@ class ConsoleConversationActionMenu(VerticalScroll):
                 opener_anchor=self._opener_anchor,
             )
         )
-        self._detach()
+        self._remove_once()
 
 
 def _slug(action_id: str) -> str:

@@ -42,4 +42,4 @@ A UX efficiency review (P1 trust, P1 speed, P2 help parity) found palette comman
 ## Links
 
 - [ADR-015: Complete the shell destination IA](015-shell-destination-ia.md)
-- [ADR-014: Retire the legacy navigation chrome](014-retire-legacy-navigation-chrome.md)
+- [ADR-290: Retire the legacy navigation chrome](290-retire-legacy-navigation-chrome.md)

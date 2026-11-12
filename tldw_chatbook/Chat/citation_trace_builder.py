@@ -243,6 +243,7 @@ class CitationTraceBuilder:
         "_evidence_snapshot_payloads",
         "_fingerprint_codec",
         "_generation_id",
+        "_governed_payload_bytes",
         "_identity_context",
         "_policy_capabilities",
         "_policy_version",
@@ -294,6 +295,7 @@ class CitationTraceBuilder:
         self._evidence_snapshot_payloads: list[EvidenceSnapshotPayload] = []
         self._answer_attempts: list[AnswerAttempt] = []
         self._answer_attempt_payloads: list[AnswerAttemptPayload] = []
+        self._governed_payload_bytes: int = 0
         self._sealed_write: SealedCitationWrite | None = None
 
     @classmethod
@@ -727,18 +729,26 @@ class CitationTraceBuilder:
             ...,
         ],
     ) -> None:
-        payloads = (
-            *self._evidence_run_payloads,
-            *self._evidence_snapshot_payloads,
-            *self._answer_attempt_payloads,
-            *proposed,
+        """Enforce the governed-payload UTF-8 budget with incremental accounting.
+
+        Task 19b: governed payloads are frozen pydantic models that never
+        mutate after recording, so a running byte counter (the
+        ``thinking_blocks`` incremental-growth pattern) replaces re-serializing
+        every accumulated payload on each ``record_*`` call. Only the proposed
+        payloads are canonicalized once, here. Every caller appends exactly
+        the proposed payloads immediately after a successful check, so the
+        counter absorbs them now; on overflow it is left untouched, keeping
+        the rejected payload unrecorded exactly as before.
+        """
+        proposed_bytes = sum(
+            self._canonical_payload_bytes(payload) for payload in proposed
         )
-        byte_count = sum(self._canonical_payload_bytes(payload) for payload in payloads)
-        if byte_count > GOVERNED_PAYLOAD_UTF8_BYTES_MAX:
+        if self._governed_payload_bytes + proposed_bytes > GOVERNED_PAYLOAD_UTF8_BYTES_MAX:
             raise ValueError(
                 "governed payload exceeds "
                 f"{GOVERNED_PAYLOAD_UTF8_BYTES_MAX} UTF-8 bytes"
             )
+        self._governed_payload_bytes += proposed_bytes
 
     @staticmethod
     def _canonical_payload_bytes(

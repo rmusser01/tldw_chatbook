@@ -24,6 +24,8 @@ from tldw_chatbook.Canvas.gateway import (
     CanvasGateway,
     CanvasGatewayEvent,
     CanvasGatewayLaunch,
+    CanvasGatewayNavigation,
+    CanvasGatewayProjection,
     CanvasGatewayScope,
     CanvasSourceResponse,
 )
@@ -259,6 +261,122 @@ async def test_original_browser_epoch_is_checked_before_authority_mutation(
             assert await response.json() == {"error": "selection_changed"}
             assert mutations == []
     finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.loopback_network
+@pytest.mark.parametrize(
+    "transition",
+    [
+        "same",
+        "revision",
+        "foreign",
+        "unavailable",
+        "revoked",
+        "expired",
+        "replaced",
+        "invalid",
+        "unchanged",
+    ],
+)
+async def test_navigation_completion_preserves_independently_current_selection(
+    transition,
+):
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+    now = [1000.0]
+
+    class Authority(_Authority):
+        def describe_selection(self, scope):
+            return CanvasGatewayProjection(
+                scope=scope,
+                options=(),
+                title="Selected",
+                sequence=1,
+                parent_revision_id=None,
+                source_bytes=1,
+                content_sha256=sha256_utf8("x"),
+                origin_message_id="message-a",
+                origin_turn_id="turn-a",
+                temporary=True,
+                following=True,
+            )
+
+        async def navigate(self, scope, **kwargs):
+            calls.append((scope, kwargs))
+            started.set()
+            await release.wait()
+            if transition == "invalid":
+                return None
+            stale = _scope(revision_id="stale-result")
+            return CanvasGatewayNavigation(stale, self.describe_selection(stale))
+
+    gateway = CanvasGateway(authority=Authority([]), clock=lambda: now[0])
+    try:
+        launch = await gateway.open_shell(_scope())
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as client:
+            origin, csrf, _ = await _ready_bridge(
+                client, gateway, launch, prepare=False
+            )
+            active = gateway._sessions[gateway._session_ids["browser-a"]]
+            pending = asyncio.create_task(
+                _post_json(
+                    client,
+                    _launch_url(launch, "api/navigate"),
+                    {"action": "follow", "selection_epoch": 0},
+                    origin=origin,
+                    csrf=csrf,
+                )
+            )
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                if transition in {"same", "revision", "foreign"}:
+                    selected = _scope(
+                        conversation_session_id="foreign-session"
+                        if transition == "foreign"
+                        else "conversation-session-a",
+                        revision_id="revision-b"
+                        if transition == "revision"
+                        else "revision-a",
+                    )
+                    gateway.change_selection(
+                        browser_session_id="browser-a", scope=selected
+                    )
+                elif transition == "unavailable":
+                    gateway.mark_browser_session_unavailable("browser-a")
+                elif transition == "revoked":
+                    gateway._revoke_session_id("browser-a")
+                elif transition == "expired":
+                    now[0] = active.expires_at + 1
+                elif transition == "replaced":
+                    replacement = await gateway.open_shell(_scope())
+                    await _ready_bridge(client, gateway, replacement, prepare=False)
+            finally:
+                release.set()
+            response = await pending
+            assert len(calls) == 1
+            if transition in {"same", "revision"}:
+                assert response.status == 409
+                assert await response.json() == {"error": "selection_changed"}
+                assert active.scope == selected
+                assert active.selection_epoch == 1
+                fresh = await client.get(_launch_url(launch, "api/state"))
+                assert fresh.status == 200
+                assert (await fresh.json())["selection"][
+                    "revision_id"
+                ] == selected.revision_id
+            elif transition == "unchanged":
+                assert response.status == 200
+                assert active.scope.revision_id == "stale-result"
+            else:
+                assert response.status == 503
+                assert await response.json() == {"error": "navigation_unavailable"}
+                assert active.scope.revision_id != "stale-result"
+    finally:
+        release.set()
         await gateway.aclose()
 
 
@@ -2831,6 +2949,7 @@ async def test_bridge_expiry_handles_settle_on_completion_and_lifecycle(
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_runtime_owns_one_lazy_gateway_and_disposes_it() -> None:
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 

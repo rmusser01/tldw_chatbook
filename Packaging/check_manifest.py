@@ -35,6 +35,8 @@ SEMANTIC_MUTATION_GUARD_MIGRATION_PATH = (
 # every file-backed migration step uses to locate its script.
 RUNTIME_MIGRATION_READ = re.compile(r'"migrations"\s*/\s*"([^"\n]+\.sql)"')
 REPO_ROOT = Path(__file__).resolve().parents[1]
+WEB_STATIC_ROOT = "tldw_chatbook/Web_Server/static/"
+WEB_VENDORED_NOTICE = f"{WEB_STATIC_ROOT}VENDORED.md"
 
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
@@ -172,6 +174,11 @@ CANVAS_GUIDE_RESOURCE_PATHS = {
     "tldw_chatbook/Canvas/static/mermaid-authoring.txt",
 }
 
+CODE_REVIEW_GUIDE_RESOURCE_PATHS = {
+    "tldw_chatbook/Agents/code_review_guides/review.md",
+    "tldw_chatbook/Agents/code_review_guides/verify.md",
+}
+
 # Built-in skills read at runtime by Skills_Interop.builtin_skills (TASK-32954).
 BUILTIN_SKILL_RESOURCE_PATHS = {
     "tldw_chatbook/assets/skills/character-creator/SKILL.md",
@@ -193,6 +200,7 @@ REQUIRED_SDIST_PATHS = (
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/css/components/stats_screen.css",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
+        "tldw_chatbook/Config_Files/default_config.toml",
         "tldw_chatbook/Evals/config/eval_config.yaml",
         "tldw_chatbook/Third_Party/aider/LICENSE.txt",
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
@@ -206,6 +214,7 @@ REQUIRED_SDIST_PATHS = (
     | PIXEL_MIGU_RESOURCE_PATHS
     | TIKTOKEN_RESOURCE_PATHS
     | CANVAS_GUIDE_RESOURCE_PATHS
+    | CODE_REVIEW_GUIDE_RESOURCE_PATHS
     | BUILTIN_SKILL_RESOURCE_PATHS
 )
 
@@ -217,6 +226,7 @@ REQUIRED_WHEEL_PATHS = (
         "tldw_chatbook/Backup_Recovery/native_qualification.json",
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "tldw_chatbook/Config_Files/rag_pipelines.toml",
+        "tldw_chatbook/Config_Files/default_config.toml",
         "tldw_chatbook/Evals/config/eval_config.yaml",
         "tldw_chatbook/Third_Party/aider/LICENSE.txt",
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
@@ -230,6 +240,7 @@ REQUIRED_WHEEL_PATHS = (
     | PIXEL_MIGU_RESOURCE_PATHS
     | TIKTOKEN_RESOURCE_PATHS
     | CANVAS_GUIDE_RESOURCE_PATHS
+    | CODE_REVIEW_GUIDE_RESOURCE_PATHS
     | BUILTIN_SKILL_RESOURCE_PATHS
 )
 
@@ -293,6 +304,29 @@ def source_migration_paths(repo_root: Path = REPO_ROOT) -> set[str]:
             "run the checker from a checkout that contains tldw_chatbook/"
         )
     return {f"{MIGRATIONS_PREFIX}{path.name}" for path in scripts}
+
+
+def source_web_static_paths(repo_root: Path = REPO_ROOT) -> set[str]:
+    """Return the complete fixed-root served assets and their vendored notice.
+
+    Raises:
+        FileNotFoundError: If the source assets or notice are unavailable.
+    """
+    directory = repo_root / WEB_STATIC_ROOT
+    files = {
+        path
+        for pattern in (
+            "*.html", "*.css", "*.js", "mobile/*.html", "mobile/*.css",
+            "mobile/*.js", "mobile/*.webmanifest", "mobile/*.png",
+        )
+        for path in directory.glob(pattern)
+        if path.is_file()
+    }
+    if not files or not (repo_root / WEB_VENDORED_NOTICE).is_file():
+        raise FileNotFoundError(
+            f"served web assets or vendored notice missing under {directory}"
+        )
+    return {path.relative_to(repo_root).as_posix() for path in files} | {WEB_VENDORED_NOTICE}
 
 
 def runtime_migration_paths(module_source: str) -> set[str]:
@@ -519,17 +553,23 @@ def _validate_content(
     for path in sorted((forbidden_paths or set()) & members):
         errors.append(f"{label}: forbidden path: {path}")
 
-    if label == "wheel":
-        for name in sorted(members):
-            if (
-                name.endswith(".md")
-                and not name.startswith("tldw_chatbook/Config_Files/")
-                and name != f"{SAMIRA_RESOURCE_ROOT}/ASSET_LICENSE.md"
-                and name not in PIXEL_MIGU_RESOURCE_PATHS
-                and name not in CANVAS_GUIDE_RESOURCE_PATHS
-                and name not in BUILTIN_SKILL_RESOURCE_PATHS
-            ):
-                errors.append(f"{label}: forbidden development Markdown: {name}")
+    for name in sorted(members):
+        if (
+            (
+                label == "wheel"
+                or name.startswith(WEB_STATIC_ROOT)
+                or name.startswith("tldw_chatbook/Agents/code_review_guides/")
+            )
+            and name.endswith(".md")
+            and not name.startswith("tldw_chatbook/Config_Files/")
+            and name != f"{SAMIRA_RESOURCE_ROOT}/ASSET_LICENSE.md"
+            and name not in PIXEL_MIGU_RESOURCE_PATHS
+            and name not in CANVAS_GUIDE_RESOURCE_PATHS
+            and name not in CODE_REVIEW_GUIDE_RESOURCE_PATHS
+            and name not in BUILTIN_SKILL_RESOURCE_PATHS
+            and name != WEB_VENDORED_NOTICE
+        ):
+            errors.append(f"{label}: forbidden development Markdown: {name}")
 
     samira_members = {
         name for name in members if name.startswith(f"{SAMIRA_RESOURCE_ROOT}/")
@@ -723,6 +763,11 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
     except FileNotFoundError as error:
         source_migrations = set()
         errors.append(f"source tree: {error}")
+    try:
+        source_web_assets = source_web_static_paths()
+    except FileNotFoundError as error:
+        source_web_assets = set()
+        errors.append(f"source tree: {error}")
     sdist_migrations, sdist_migration_errors = _archive_migration_requirements(
         "sdist", _sdist_member_text(sdist, CHACHANOTES_DB_MODULE_PATH)
     )
@@ -736,7 +781,10 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
         _validate_content(
             "sdist",
             sdist_members,
-            required_paths=REQUIRED_SDIST_PATHS | source_migrations | sdist_migrations,
+            required_paths=(
+                REQUIRED_SDIST_PATHS | source_migrations
+                | sdist_migrations | source_web_assets
+            ),
             required_globs=REQUIRED_SDIST_GLOBS,
             tiktoken_members=sdist_tiktoken_members,
         )
@@ -745,7 +793,10 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
         _validate_content(
             "wheel",
             wheel_members,
-            required_paths=REQUIRED_WHEEL_PATHS | source_migrations | wheel_migrations,
+            required_paths=(
+                REQUIRED_WHEEL_PATHS | source_migrations
+                | wheel_migrations | source_web_assets
+            ),
             required_globs=REQUIRED_WHEEL_GLOBS,
             forbidden_paths=FORBIDDEN_WHEEL_PATHS,
             tiktoken_members=wheel_tiktoken_members,

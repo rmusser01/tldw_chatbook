@@ -49,6 +49,7 @@ async def _open(host, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize(
@@ -91,6 +92,7 @@ async def test_resize_retains_conversation_query_editing(theme, selector):
         assert field.value == "unsubmitted quex"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -127,6 +129,7 @@ async def test_empty_conversation_filter_can_be_cleared_from_keyboard(theme, siz
         assert screen.query_one("#library-conversations-filter", Input).value == "b"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_conversation_find_and_new_focus_survive_resize(theme, monkeypatch):

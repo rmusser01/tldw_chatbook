@@ -16,6 +16,8 @@ documented clamp) and the config file is not touched.
 
 from __future__ import annotations
 
+import pytest
+
 from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
 from tldw_chatbook.config import _get_effective_config_path
 
@@ -27,6 +29,7 @@ def _config_file_fingerprint() -> tuple[bool, bytes]:
     return (True, config_path.read_bytes())
 
 
+@pytest.mark.bootstrap_profile
 def test_set_buffer_duration_does_not_write_config():
     service = LazyLiveDictationService()
     before = _config_file_fingerprint()
@@ -40,6 +43,7 @@ def test_set_buffer_duration_does_not_write_config():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_set_buffer_duration_clamps_without_config_write():
     service = LazyLiveDictationService()
     before = _config_file_fingerprint()

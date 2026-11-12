@@ -24,15 +24,14 @@ Console screen), never on the child's thread; with no loop ever captured
 
 Durability contract under test: ``set_message_usage`` on an already-
 terminal message flushes ``usage_json`` through the persistence adapter's
-version-neutral write, and that chain still lands AFTER
-``controller.shutdown()`` (the ``ChatScreen.on_unmount`` sequence) because
-nothing in teardown closes the ChaChaNotes DB or the app loop -- Task 1
-A2/A5 established the child thread and its DB writes survive teardown; this
-file proves the usage flush does too. What nothing can recover: spend not
-yet folded when the PROCESS exits -- it is durable nowhere (``agent_runs``
-rows carry no token data), which is why there is deliberately NO
-mount-time usage reconcile.
+version-neutral write. The current ``ChatScreen.on_unmount`` detaches its
+view while the controller, ChaChaNotes DB and app loop remain live. The
+durable test exercises that exact detach and reads the fold through a fresh
+handle. Permanent controller shutdown refuses late events. Spend still not
+folded at process exit cannot be recovered at mount; agent run rows carry
+no token data.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -49,6 +48,7 @@ from Tests.Chat.test_console_agent_bridge import (
     _FleetTwoChildGateway,
     _join_fleet_threads,
     _run,
+    _test_resolution,
 )
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -61,7 +61,12 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -221,16 +226,19 @@ async def test_survivor_spend_folds_into_the_message_row_when_the_last_child_set
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_fold_lands_durably_when_the_child_settles_after_console_teardown(
     tmp_path,
 ):
-    """15667 AC#3, the hard half: the user closes Console (the exact
-    ``on_unmount`` sequence: ``busy_fleet_session_count`` then
-    ``shutdown()``) while a survivor is still running; the child settles
-    afterwards and the fold still lands in the persisted conversation --
-    read back through a FRESH DB handle, not the old store's memory."""
+    """15667 AC#3: a survivor settles after the Console view detaches.
+
+    The app-owned runtime retains the original controller and store.
+    Read the resulting usage through a fresh handle on the same SQLite file.
+    """
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    runs_db = None
+    runtime = None
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
         session = store.ensure_session()
@@ -261,7 +269,19 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
         controller = ConsoleChatController(
             store=store, provider_gateway=object(), agent_bridge=bridge
         )
-        resolution = _resolution()
+        runtime = ConsoleRuntime(app=None)
+        runtime.set_chat_store(store)
+        runtime.set_chat_controller(controller)
+        runtime.set_agent_bridge(bridge)
+        view = SimpleNamespace()
+        generation = runtime.attach_view(view)
+        assert generation is not None
+        resolution = _test_resolution(
+            provider="openai",
+            model="gpt-4o",
+            readiness_key="openai",
+            execution_key="openai",
+        )
         signals = _turn_signals()
         conversation_id = controller._agent_conversation_id(session.id)
         try:
@@ -276,33 +296,29 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
             )
             assert outcome.status == "done"
             assert gateway.entered_event.wait(5), "the child never started"
-            await _finalize(
-                controller, aid, session.id, signals, resolution, outcome
-            )
+            await _finalize(controller, aid, session.id, signals, resolution, outcome)
             persisted_id = store.get_message(aid).persisted_message_id
             assert persisted_id is not None, (
                 "precondition: the turn's terminal mark persisted the reply"
             )
 
-            # The exact ChatScreen.on_unmount sequence, controller level
-            # (Task 1's harness): snapshot the count, then shut down.
             assert controller.busy_fleet_session_count() == 1
-            await controller.shutdown()
+            assert runtime.detach_view(view, generation)
+            assert runtime.view is None
+            assert runtime.chat_controller is controller
+            assert runtime.chat_store is store
 
-            # The screen is gone. The survivor bills one more call.
-            signals.record_usage_payload(
-                {"prompt_tokens": 40, "completion_tokens": 5}
-            )
+            # The view is detached. The survivor bills one more call.
+            signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
             signals.close_usage_call()
         finally:
             gate.set()
-        _join_fleet_threads()
+            _join_fleet_threads()
 
         folded = await _settle(
             lambda: (
-                store.get_message(aid).usage or ProviderUsage()
-            ).total_tokens
-            == 165
+                (store.get_message(aid).usage or ProviderUsage()).total_tokens == 165
+            )
         )
         assert folded, (
             "the post-teardown fold never ran: usage is "
@@ -319,6 +335,10 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
         finally:
             fresh.close()
     finally:
+        if runtime is not None:
+            await runtime.dispose()
+        if runs_db is not None:
+            runs_db.close()
         db.close()
 
 
@@ -360,14 +380,11 @@ async def test_a_conversation_export_includes_survivor_spend_after_the_fold(
         signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
         signals.close_usage_call()
 
-        controller._on_fleet_drained_reattach_usage(
-            _drain_event(session.id, aid)
-        )
+        controller._on_fleet_drained_reattach_usage(_drain_event(session.id, aid))
         folded = await _settle(
             lambda: (
-                store.get_message(aid).usage or ProviderUsage()
-            ).total_tokens
-            == 165
+                (store.get_message(aid).usage or ProviderUsage()).total_tokens == 165
+            )
         )
         assert folded, "precondition: the fold itself must have landed"
 
@@ -379,9 +396,7 @@ async def test_a_conversation_export_includes_survivor_spend_after_the_fold(
             for message in payload["messages"]
             if "usage" in message
         ]
-        assert [u.total_tokens for u in exported_usages if u is not None] == [
-            165
-        ], (
+        assert [u.total_tokens for u in exported_usages if u is not None] == [165], (
             "the export must include the folded usage row (survivor spend "
             f"included): {payload['messages']}"
         )
@@ -430,8 +445,9 @@ async def test_an_earlier_turns_survivor_folds_onto_its_own_message_after_a_late
         _drain_event(session.id, first.id, status="cancelled", run_id=None)
     )
     folded = await _settle(
-        lambda: (store.get_message(first.id).usage or ProviderUsage()).total_tokens
-        == 165
+        lambda: (
+            (store.get_message(first.id).usage or ProviderUsage()).total_tokens == 165
+        )
     )
     assert folded, (
         "the earlier turn's survivor spend must fold onto its OWN message "
@@ -466,9 +482,9 @@ async def test_re_attaching_twice_yields_the_same_stored_total():
     controller._on_fleet_drained_reattach_usage(event)
     folded = await _settle(
         lambda: (
-            store.get_message(placeholder.id).usage or ProviderUsage()
-        ).total_tokens
-        == 165
+            (store.get_message(placeholder.id).usage or ProviderUsage()).total_tokens
+            == 165
+        )
     )
     assert folded
     first_json = store.get_message(placeholder.id).usage.to_json()
@@ -478,6 +494,85 @@ async def test_re_attaching_twice_yields_the_same_stored_total():
     assert store.get_message(placeholder.id).usage.to_json() == first_json, (
         "re-attaching twice must yield the SAME stored record"
     )
+
+
+@pytest.mark.asyncio
+async def test_late_fleet_usage_preserves_selected_canonical_thinking():
+    store = ConsoleChatStore()
+    bridge = _FakeFleetBridge()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), agent_bridge=bridge
+    )
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    resolution = SimpleNamespace(provider="llama_cpp", model="Qwen3.8-27B")
+
+    def envelope(block_id, text):
+        return ThinkingEnvelope(
+            (
+                DisplayableThinkingBlock(
+                    block_id=block_id,
+                    round_ordinal=0,
+                    provider="llama_cpp",
+                    model="Qwen3.8-27B",
+                    protocol="chat_completions",
+                    source_format="reasoning_content",
+                    status="complete",
+                    text=text,
+                ),
+            )
+        )
+
+    original = envelope("original", "original thought")
+    selected = envelope("selected", "selected thought")
+    signals = _turn_signals()
+    store.append_stream_chunk(placeholder.id, "done")
+    await _finalize(controller, placeholder.id, session.id, signals, resolution)
+    assert store.get_message(placeholder.id).usage.total_tokens == 120
+    store.replace_message_thinking(placeholder.id, original)
+
+    store.begin_variant_stream(placeholder.id)
+    store.replace_message_thinking(placeholder.id, selected)
+    store.append_stream_chunk(placeholder.id, "done")
+    variant = store.finalize_variant_stream(placeholder.id)
+    old, new = variant.variants.variants
+    assert old.id != new.id and old.content == new.content == "done"
+    assert old.thinking == original
+    assert new.thinking == selected
+
+    def assert_selected_generation():
+        row = store.get_message(placeholder.id)
+        assert row.variants.selected_index == 1
+        assert row.variants.current.id == new.id
+        assert row.variants.variants[0].id == old.id
+        assert row.variants.variants[0].thinking == original
+        assert row.content == "done" and row.status == "complete"
+        assert row.thinking == row.variants.current.thinking == selected
+        assert row.provider_continuation is None
+
+    assert_selected_generation()
+    signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
+    signals.close_usage_call()
+    assert controller.unattributed_fleet_tokens(session.id) == 45
+    deliver = bridge.registered["usage-reattach"]
+    event = _drain_event(session.id, placeholder.id)
+    loop = asyncio.get_running_loop()
+    usage_records = []
+
+    for _ in range(2):
+        deliver(event)
+        folded = loop.create_future()
+        loop.call_soon(folded.set_result, None)
+        await folded
+        usage = store.get_message(placeholder.id).usage
+        assert usage.total_tokens == 165
+        usage_records.append(usage.to_json())
+        assert controller.unattributed_fleet_tokens(session.id) == 0
+        assert_selected_generation()
+    assert usage_records[0] == usage_records[1]
 
 
 @pytest.mark.asyncio
@@ -501,7 +596,10 @@ async def test_a_drain_for_an_unwatched_turn_is_a_harmless_no_op():
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
     await _finalize(
-        controller, earlier.id, session.id, _turn_signals(prompt=7, completion=1),
+        controller,
+        earlier.id,
+        session.id,
+        _turn_signals(prompt=7, completion=1),
         resolution,
     )
 
@@ -546,9 +644,7 @@ async def test_the_fold_preserves_the_turns_partial_flag():
     signals = _turn_signals()
     # The cancel path's exact pair (production order): partial attach,
     # then the watch with the same flag.
-    controller._attach_stream_usage(
-        placeholder.id, signals, resolution, partial=True
-    )
+    controller._attach_stream_usage(placeholder.id, signals, resolution, partial=True)
     controller._watch_post_turn_usage(
         session.id,
         signals,
@@ -565,9 +661,9 @@ async def test_the_fold_preserves_the_turns_partial_flag():
     )
     folded = await _settle(
         lambda: (
-            store.get_message(placeholder.id).usage or ProviderUsage()
-        ).total_tokens
-        == 165
+            (store.get_message(placeholder.id).usage or ProviderUsage()).total_tokens
+            == 165
+        )
     )
     assert folded, f"fold never landed: {store.get_message(placeholder.id).usage!r}"
     usage = store.get_message(placeholder.id).usage
@@ -593,9 +689,7 @@ async def test_source_map_records_only_turns_that_still_owe_a_drain():
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
     resolution = _resolution()
-    await _finalize(
-        controller, childless.id, session.id, _turn_signals(), resolution
-    )
+    await _finalize(controller, childless.id, session.id, _turn_signals(), resolution)
     assert controller._fleet_usage_reattach_sources == {}, (
         "a turn owing no drain must not retain its signals object"
     )
@@ -611,9 +705,7 @@ async def test_source_map_records_only_turns_that_still_owe_a_drain():
     controller._on_fleet_drained_reattach_usage(
         _drain_event(session.id, survivor_turn.id)
     )
-    await _settle(
-        lambda: controller._fleet_usage_reattach_sources == {}, seconds=2.0
-    )
+    await _settle(lambda: controller._fleet_usage_reattach_sources == {}, seconds=2.0)
     assert controller._fleet_usage_reattach_sources == {}
 
 
@@ -625,9 +717,7 @@ def test_has_unsettled_children_reads_the_drain_paired_counter(tmp_path):
     the re-attach source for a turn finalizing in that window."""
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=None
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=None)
     assert bridge.has_unsettled_children("conv-x") is False
     with bridge._change_window_lock:
         bridge._live_child_counts["conv-x"] = 0
@@ -662,6 +752,4 @@ def test_the_consumer_is_registered_at_construction_and_on_runtime_refresh():
 
     # No bridge / a bridge without the seam: constructor must not raise.
     ConsoleChatController(store=store, provider_gateway=object(), agent_bridge=None)
-    ConsoleChatController(
-        store=store, provider_gateway=object(), agent_bridge=object()
-    )
+    ConsoleChatController(store=store, provider_gateway=object(), agent_bridge=object())

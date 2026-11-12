@@ -1,0 +1,14 @@
+{
+  "results": {
+    "cases": 175,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0
+  },
+  "xml_sha256": "c5a3601b5fc4994d9d21cf0c790affc144ab9fa2766df228066e04144c216680",
+  "suites": [
+    "census checker",
+    "shard count statements",
+    "queue pressure contracts"
+  ]
+}

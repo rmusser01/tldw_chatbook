@@ -153,6 +153,7 @@ async def test_research_worker_survives_a_corrupt_research_store(tmp_path):
     assert any("Deep research started" in text for text in screen.system_messages)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_invalid_saved_backend_is_shown_before_console_research_launch(
     monkeypatch,
@@ -168,7 +169,7 @@ async def test_invalid_saved_backend_is_shown_before_console_research_launch(
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_command_grammar import CommandParse
     from tldw_chatbook.Research_Interop.local_research_engine import LocalResearchEngine
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 
     app = _build_test_app()
     host = ConsoleHarness(app)

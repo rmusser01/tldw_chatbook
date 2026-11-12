@@ -329,9 +329,7 @@ def _validate_failed_attempt_document(value: object) -> dict[str, Any]:
         "provider_id": _require_identifier(
             attempt["provider_id"], "failed_attempt.provider_id"
         ),
-        "model_id": _require_identifier(
-            attempt["model_id"], "failed_attempt.model_id"
-        ),
+        "model_id": _require_identifier(attempt["model_id"], "failed_attempt.model_id"),
         "artifact_root": _validate_artifact_document(
             attempt["artifact_root"],
             "failed_attempt.artifact_root",
@@ -585,10 +583,7 @@ def _validate_transcription_provenance_document(
     ):
         raise ValueError("a job cannot retry itself")
     if normalized_failed_attempt is not None:
-        if (
-            normalized_failed_attempt["attempt_id"]
-            != normalized["retry_of_attempt_id"]
-        ):
+        if normalized_failed_attempt["attempt_id"] != normalized["retry_of_attempt_id"]:
             raise ValueError("failed_attempt does not match retry_of_attempt_id")
         if normalized_failed_attempt["job_id"] != normalized["retry_of_job_id"]:
             raise ValueError("failed_attempt does not match retry_of_job_id")

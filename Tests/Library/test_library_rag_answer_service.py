@@ -141,7 +141,9 @@ class _FakeChat:
     event loop would freeze the UI.
     """
 
-    def __init__(self, *, reply: object = GROUNDED_ANSWER, error: Exception | None = None):
+    def __init__(
+        self, *, reply: object = GROUNDED_ANSWER, error: Exception | None = None
+    ):
         self.reply = reply
         self.error = error
         self.calls: list[dict] = []
@@ -561,7 +563,9 @@ async def test_a_bundle_build_failure_is_also_contained(monkeypatch):
 # --- Contract 5: an empty reply is a failure, not a silent success ------
 
 
-@pytest.mark.parametrize("reply", ["", "   \n  ", None, {}], ids=["empty", "blank", "none", "no_content"])
+@pytest.mark.parametrize(
+    "reply", ["", "   \n  ", None, {}], ids=["empty", "blank", "none", "no_content"]
+)
 async def test_an_empty_model_reply_is_a_failure(reply):
     answer = await generate_library_rag_answer(
         query=QUERY,
@@ -614,7 +618,10 @@ async def test_an_uncited_answer_stays_ready_but_carries_the_recovery_copy():
 
     assert answer.status == ANSWER_STATUS_READY
     assert answer.citation_status == "uncited"
-    assert answer.citation_recovery == "The answer does not cite available staged evidence."
+    assert (
+        answer.citation_recovery
+        == "The answer does not cite available staged evidence."
+    )
 
 
 async def test_an_invented_citation_label_is_reported_as_unverified():
@@ -688,8 +695,14 @@ def test_insufficient_evidence_validation_counts_as_an_abstention():
     """
     assert _is_abstention("Some text with no support.", "insufficient_evidence") is True
     assert _is_abstention(LIBRARY_RAG_NO_EVIDENCE_TEXT, "uncited") is True
-    assert _is_abstention("Nothing in your library supports an answer to that", "uncited") is True
-    assert _is_abstention("An expired credential caused the incident [S1].", "validated") is False
+    assert (
+        _is_abstention("Nothing in your library supports an answer to that", "uncited")
+        is True
+    )
+    assert (
+        _is_abstention("An expired credential caused the incident [S1].", "validated")
+        is False
+    )
 
 
 # --- Contract 7: the answer keeps what the provider told it (PR-T2 task 2) -
@@ -1031,15 +1044,31 @@ def test_the_system_prompt_pins_the_honesty_contract():
 # gate asks instead of merely "was an endpoint name configured".
 
 
+def _persist_nothing(monkeypatch) -> None:
+    """A persisted config that names no `[chat_defaults]` provider and no
+    provider-table model -- the FALLBACK arm of `resolve_library_rag_answer_
+    provider` (TASK-34000.21). The persisted pair takes precedence since
+    that task, and a bare sandbox config already carries the loader's own
+    `OpenAI` default, so the endpoint-fallback pins below must say
+    explicitly that nothing is persisted; the happy-path pins live in
+    `test_library_rag_answer_provider_resolution.py`."""
+    monkeypatch.setattr(app_config, "load_settings", lambda *a, **k: {})
+
+
 def test_resolve_provider_reads_the_configured_default_endpoint(monkeypatch):
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    _persist_nothing(monkeypatch)
+    monkeypatch.setattr(
+        app_config, "default_api_endpoint", "local-llama", raising=False
+    )
 
     provider, model = resolve_library_rag_answer_provider()
 
     assert provider == "local-llama"
-    # No model is resolved here -- the provider handler picks its own
-    # default (briefing_service precedent), matching `generate_library_rag_
-    # answer`'s own `model: str | None = None` contract.
+    # An endpoint the provider registry does not own, and nothing persisted
+    # that names a model: the provider handler picks its own default,
+    # matching `generate_library_rag_answer`'s own `model: str | None =
+    # None` contract (TASK-34000.21 keeps this arm; a registry-owned
+    # endpoint now resolves its own remembered model instead).
     assert model is None
 
 
@@ -1049,6 +1078,7 @@ def test_resolve_provider_rereads_the_module_global_on_every_call(monkeypatch):
     future caller) monkeypatching the module attribute after import would be
     silently ignored. Two calls straddling a monkeypatch must see two
     different answers."""
+    _persist_nothing(monkeypatch)
     monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
     assert resolve_library_rag_answer_provider()[0] == "openai"
 
@@ -1056,10 +1086,28 @@ def test_resolve_provider_rereads_the_module_global_on_every_call(monkeypatch):
     assert resolve_library_rag_answer_provider()[0] == "anthropic"
 
 
+def test_resolve_provider_treats_an_unreadable_settings_read_as_nothing_persisted(
+    monkeypatch,
+):
+    """TASK-34000.21: the resolver runs on every panel render and on the
+    scheduler's thread; a settings read that raises (the sandbox admission
+    handshake, an unreadable file) must resolve like a config that names
+    nothing -- the endpoint fallback with no model -- never propagate."""
+
+    def _boom(*a, **k):
+        raise RuntimeError("settings unreadable")
+
+    monkeypatch.setattr(app_config, "load_settings", _boom)
+    monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
+
+    assert resolve_library_rag_answer_provider() == ("openai", None)
+
+
 @pytest.mark.parametrize("blank_endpoint", ["", "   ", None])
 def test_resolve_provider_reports_none_for_an_empty_or_missing_endpoint(
     monkeypatch, blank_endpoint
 ):
+    _persist_nothing(monkeypatch)
     monkeypatch.setattr(
         app_config, "default_api_endpoint", blank_endpoint, raising=False
     )
@@ -1078,6 +1126,7 @@ def test_provider_ready_is_false_for_an_empty_or_missing_endpoint(
     already short-circuits to `(None, None)` for a blank endpoint, so
     `library_rag_answer_provider_ready` never even reaches the credential
     check added below."""
+    _persist_nothing(monkeypatch)
     monkeypatch.setattr(
         app_config, "default_api_endpoint", blank_endpoint, raising=False
     )
@@ -1184,6 +1233,7 @@ def test_provider_gate_offers_no_remedy_when_nothing_is_configured(monkeypatch):
     """The genuinely-unselected case must stay distinguishable: an empty
     remedy is what tells the state layer to keep the "select a
     provider/model" copy."""
+    _persist_nothing(monkeypatch)
     monkeypatch.setattr(app_config, "default_api_endpoint", "", raising=False)
 
     gate = library_rag_answer_provider_gate()
@@ -1200,9 +1250,7 @@ def test_provider_gate_names_the_provider_and_stays_silent_when_ready(monkeypatc
     monkeypatch.setattr(
         app_config,
         "load_settings",
-        lambda *a, **k: {
-            "api_settings": {"anthropic": {"api_key": "sk-ant-test-key"}}
-        },
+        lambda *a, **k: {"api_settings": {"anthropic": {"api_key": "sk-ant-test-key"}}},
     )
 
     gate = library_rag_answer_provider_gate()

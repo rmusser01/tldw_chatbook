@@ -655,7 +655,7 @@ class PersonaVisualRepository:
         """Activate one new graph inside an Actor Pack-owned outer transaction."""
 
         connection = self.db.get_connection()
-        depth = getattr(self.db._local, "transaction_depth", 0)
+        depth = self.db.managed_transaction_depth()
         if not connection.in_transaction or depth != 1:
             raise ValueError("persona_visual_transaction_not_owned")
         _validate_persona_id(persona_id)
@@ -861,7 +861,7 @@ class PersonaVisualRepository:
         return None if row is None else _decode_binding(row)
 
     def _require_owned_write_transaction(self) -> None:
-        managed_depth = getattr(self.db._local, "transaction_depth", 0)
+        managed_depth = self.db.managed_transaction_depth()
         if self.db.get_connection().in_transaction or managed_depth > 0:
             raise ValueError("persona_visual_transaction_active")
 
@@ -1319,7 +1319,7 @@ def _run_authority_guard(
         ownership_preserved = (
             db.get_connection() is connection
             and connection.in_transaction
-            and getattr(db._local, "transaction_depth", 0) == 1
+            and db.managed_transaction_depth() == 1
             and connection.total_changes == changes_before
         )
         if ownership_preserved:
@@ -1339,7 +1339,7 @@ def _run_authority_guard(
         or not released
         or db.get_connection() is not connection
         or not connection.in_transaction
-        or getattr(db._local, "transaction_depth", 0) != 1
+        or db.managed_transaction_depth() != 1
     ):
         raise ValueError("persona_visual_authority_changed")
 

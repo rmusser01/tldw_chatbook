@@ -1,0 +1,60 @@
+{
+  "version": "2.0",
+  "name": "Library export 2026-10-02",
+  "description": "",
+  "author": null,
+  "created_at": "2026-10-02T21:45:48.409173",
+  "updated_at": "2026-10-02T21:45:48.409174",
+  "content_items": [
+    {
+      "id": "87d06f44-77a1-4dc6-8b1d-abf2f152ebe1",
+      "type": "note",
+      "title": "Meeting Notes 2026-09-30",
+      "description": null,
+      "created_at": "2026-09-30T22:47:56+00:00",
+      "updated_at": "2026-09-30T22:47:56+00:00",
+      "tags": [],
+      "metadata": {},
+      "file_path": "content/notes/Meeting Notes 2026-09-30.md"
+    },
+    {
+      "id": "99e9af4c-251f-49ff-8143-552264c9f25b",
+      "type": "note",
+      "title": "Index — start here",
+      "description": null,
+      "created_at": "2026-10-01T20:47:56+00:00",
+      "updated_at": "2026-10-01T20:47:56+00:00",
+      "tags": [],
+      "metadata": {},
+      "file_path": "content/notes/Index — start here.md"
+    },
+    {
+      "id": "ddc4b00b-4e57-48cb-b132-0e07ad22b875",
+      "type": "note",
+      "title": "Ideas inbox",
+      "description": null,
+      "created_at": "2026-10-03T02:07:56+00:00",
+      "updated_at": "2026-10-03T02:07:56+00:00",
+      "tags": [],
+      "metadata": {},
+      "file_path": "content/notes/Ideas inbox.md"
+    }
+  ],
+  "relationships": [],
+  "include_media": false,
+  "include_embeddings": false,
+  "media_quality": "original",
+  "statistics": {
+    "total_conversations": 0,
+    "total_notes": 3,
+    "total_characters": 0,
+    "total_media_items": 0,
+    "total_prompts": 0,
+    "total_kept_briefings": 0,
+    "total_size_bytes": 0
+  },
+  "tags": [],
+  "categories": [],
+  "language": "en",
+  "license": null
+}

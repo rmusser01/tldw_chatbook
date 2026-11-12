@@ -199,10 +199,16 @@ if sys.argv[1]=='catalog_changed':
  except ValueError as error:assert str(error)=='isolated_catalog_changed'
  else:raise AssertionError('changed catalog launched')
 if sys.argv[1]=='data_alias':
- data.rename(data.with_name('saved-data'));data.symlink_to(data.with_name('saved-data'),target_is_directory=True)
+ import errno
+ from Tests.Backup_Recovery.path_aliases import create_directory_alias
+ saved=data.with_name('saved-data');data.rename(saved)
+ retained=saved/'alias-target.txt';retained.write_bytes(b'keep target bytes')
+ create_directory_alias(data,saved)
  try:_launch_descriptor(profile_id,control)
  except ValueError as error:assert str(error)=='catalog_target_invalid'
+ except OSError as error:assert os.name=='nt' and error.errno==errno.ELOOP and error.strerror=='windows_reparse_point_refused'
  else:raise AssertionError('data alias launched')
+ assert retained.read_bytes()==b'keep target bytes'
 if sys.argv[1]=='activation_missing':
  import shutil
  shutil.rmtree(control/'activation')
@@ -262,22 +268,28 @@ from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
 install()
 profile,control,ids=sys.argv[1:]
-from tldw_chatbook.Backup_Recovery.isolated_restore import launch_profile
+assert Path.home()==Path(os.environ['HOME'])
+from tldw_chatbook.Backup_Recovery.isolated_restore import launch_profile,select_profile
 import subprocess
 original_call=subprocess.call
+# A no-op child with selectors must fail the observer; a real CLI must select them.
+unselected=subprocess.run([sys.executable,'-B','-c',"import sys; sys.argv[:]=['unselected']",'--recovery-profile',profile,'--recovery-control-root',control],env=dict(os.environ,PYTHONPATH=str(Path.cwd())),capture_output=True,timeout=15)
+assert unselected.returncode==74,unselected.stderr
 # Exercise the real launcher and fresh CLI with a noninteractive help request.
-# The wrapper supplies only the terminal-mode argument; no authority is replaced.
+# Run one cold supported CLI; this is a functional check, not a startup-time SLA.
+# The disposable copy needs no bytecode writes; native authority is unchanged.
 def help_child(argv,**kwargs):
- result=subprocess.run([*argv,'--help'],**kwargs,capture_output=True,text=True,timeout=30)
+ result=subprocess.run([argv[0],'-B',*argv[1:],'--help'],**kwargs,capture_output=True,text=True,timeout=90)
  assert result.returncode==0,result.stderr[-4000:]
  return result.returncode
 subprocess.call=help_child
 assert launch_profile(profile,Path(control))==0
 subprocess.call=original_call
-sys.argv=['tldw-cli','--recovery-profile',profile,'--recovery-control-root',control,'--help']
-from tldw_chatbook.cli import main_cli_runner
-try:main_cli_runner()
-except SystemExit as error:assert error.code in (None,0),error
+# The parent reads through the same public selection/admission path as the
+# packaged storage probe, without importing the full TUI a second time.
+select_profile(profile,Path(control))
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+admit_startup()
 from tldw_chatbook.Backup_Recovery.isolated_restore import _launch_descriptor
 from tldw_chatbook.Backup_Recovery.activation import activation_permission
 from tldw_chatbook import config
@@ -404,6 +416,7 @@ def test_fresh_process_reopens_real_notes_chat_media_and_local_identity(tmp_path
         "data",
         "isolated",
         script="SEED=" + repr(_SEED) + "\n" + _DATA_RESTORE,
+        timeout=120,
     )
     root = tmp_path.resolve()
     descriptor = json.loads((root / "home" / "launch.json").read_text())
@@ -421,14 +434,29 @@ def test_fresh_process_reopens_real_notes_chat_media_and_local_identity(tmp_path
             Path(__file__).resolve().parents[1] / name, code / "Tests" / name
         )
     (code / "sitecustomize.py").write_text(
-        "import atexit, os\n"
+        "import atexit, os, sys\n"
+        "from pathlib import Path\n"
         "from Tests.network_guard import install, blocked_attempts\n"
         "install()\n"
+        "expected_cli_selection = None\n"
+        "if '--recovery-profile' in sys.argv:\n"
+        "    try:\n"
+        "        expected_cli_selection = (sys.argv[sys.argv.index('--recovery-profile') + 1], Path(sys.argv[sys.argv.index('--recovery-control-root') + 1]))\n"
+        "    except (IndexError, ValueError):\n"
+        "        os._exit(74)\n"
+        "def verify_cli_selection():\n"
+        "    if expected_cli_selection is None:\n"
+        "        return\n"
+        "    module = sys.modules.get('tldw_chatbook.Backup_Recovery.isolated_restore')\n"
+        "    if module is None or getattr(module, '_selected_profile', None) != expected_cli_selection:\n"
+        "        os._exit(74)\n"
+        "atexit.register(verify_cli_selection)\n"
         "atexit.register(lambda: os._exit(73) if blocked_attempts() else None)\n"
     )
     environment = dict(
         os.environ,
         HOME=str(root / "home"),
+        USERPROFILE=str(root / "home"),
         TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
         OPENAI_API_KEY="ambient-secret-must-not-be-used",
         TLDW_MEDIA_DB_PATH="/original/custom.db",
@@ -436,6 +464,7 @@ def test_fresh_process_reopens_real_notes_chat_media_and_local_identity(tmp_path
     result = subprocess.run(
         [
             sys.executable,
+            "-B",
             "-c",
             _READ_CHILD,
             descriptor["profile"],
@@ -446,7 +475,7 @@ def test_fresh_process_reopens_real_notes_chat_media_and_local_identity(tmp_path
         env=environment,
         capture_output=True,
         text=True,
-        timeout=45,
+        timeout=150,
         check=False,
     )
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]

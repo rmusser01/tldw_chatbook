@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N  Add files to Library notes.
+  a    o  Nothing chosen yet.
+  v    t  Import once — Copy files into Notes, reproducing your folder
+       e  structure as Library folders. Later changes to the originals are not
+       s  tracked.
+          ┃ Import once ┃
+--->      Keep a folder synced — Create a lasting connection. Changes continue
+          between the folder and Notes, and every note is collected in one
+     ---> managed Library folder rather than your folder structure.
+            Keep a folder synced
+          Neither? To edit the files where they already are, switch the strip
+--->      above to Folder files — it opens the folder directly and imports
+          nothing.
+
+
+
+
+             ‹ Notes
+  enter act | esc notes | F1 · F6 · Ctrl+P · Ctrl+Q

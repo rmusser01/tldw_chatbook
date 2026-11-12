@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import pytest
+
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT
 from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -67,6 +69,7 @@ def _shutdown(loop):
     loop.call_soon_threadsafe(loop.stop)
 
 
+@pytest.mark.bootstrap_profile
 def test_redirect_cut_returns_the_partial_and_separates_the_row():
     emitted: list[str] = []
 
@@ -102,6 +105,7 @@ def test_redirect_cut_returns_the_partial_and_separates_the_row():
     assert row[:-2] == content, f"row {row!r} vs partial {content!r}"
 
 
+@pytest.mark.bootstrap_profile
 def test_a_subagent_stream_is_never_cut_by_the_primary_abort():
     adapter, store, message_id, loop, _emitted = _adapter_harness(lambda: True)
     try:
@@ -120,6 +124,7 @@ def test_a_subagent_stream_is_never_cut_by_the_primary_abort():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_an_uncut_primary_stream_gets_no_separator():
     adapter, store, message_id, loop, _emitted = _adapter_harness(lambda: False)
     try:

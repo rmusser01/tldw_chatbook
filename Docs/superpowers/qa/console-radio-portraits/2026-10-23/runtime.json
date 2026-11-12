@@ -1,0 +1,25 @@
+{
+  "python": "3.12.11",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "packages": {
+    "textual": "8.2.8",
+    "Pillow": "12.1.1",
+    "sounddevice": "0.5.6",
+    "pytest": "8.4.2"
+  },
+  "runtime_base_commit": "8cbfdf5976",
+  "installed_journey": {
+    "wheel_sha256": "e39efc566be541b072adb3897b7aecb2699365865ceb0ba5e4ef6404f88953c0",
+    "installed_files": 3219
+  },
+  "full_restore": {
+    "wheel_sha256": "7f1accf49851d78849de23391f35e9d9979e2e3c0393a0885c820bbcf1ebbf80",
+    "installed_files": 3219
+  },
+  "f9_control": {
+    "wheel_sha256": "273dab8853736543dce7a0bedbce4d0cf45b2bd6a85d2448ed9fc28d3559035c",
+    "installed_files": 3219
+  },
+  "qualified_sink_sha256": "cd5dd7d831739b084a8a91d12ed931bdc5ca8dab31890abb9721aaf5fd90bbfb",
+  "source_note": "Installed journeys used the recorded base wheel builds; native device qualification includes the reviewed CoreAudio tail correction in this checkpoint."
+}

@@ -112,15 +112,84 @@ def _install_textual_compatibility_shims() -> None:
             lambda self: self.content,
             lambda self, value: self.update(value),
         )
+    _install_zero_width_fold_guard()
 
 
-__version__ = "0.2.3"
+#: Marks the guarded ``Content._wrap_and_format`` (idempotent, detectable).
+ZERO_WIDTH_FOLD_GUARD = "_tldw_zero_width_fold_guard"
+
+
+def _install_zero_width_fold_guard() -> None:
+    """Crop instead of folding text at a zero fold width (TASK-38740).
+
+    Textual 8.2.8 folds a line with ``range(0, length, width)`` (no wrap) or
+    Rich's ``chop_cells`` (wrap), and both raise ``ValueError`` when the fold
+    width is 0. A Button's label hits it when its content box is exactly its
+    two ``line-pad`` cells, an OptionList option when its box is 0. In layout
+    that exits the app, and no stylesheet rule can rule the width out: a
+    grid's auto row ignores ``min-width`` and ``max-width: 100%`` follows a
+    2-cell parent. Every height and paint of a ``Content`` goes through this
+    one method, so the guard lives here: at that width the text renders as
+    ``text-wrap: nowrap; text-overflow: clip``, one line cropped to the box.
+    ``text-overflow: ellipsis`` everywhere would also stop the raise, but in
+    this Textual a wrapped line then paints two cells wider than its widget
+    and shifts the rest of the row.
+
+    TASK-38952: that over-paint is cut here too. A wrapped box at or below
+    its line-pad renders the same cropped line, and a wrapped line wider
+    than the box minus its line-pad is cut to fit before the pad.
+    """
+    from textual.content import Content
+
+    upstream = Content._wrap_and_format
+    if getattr(upstream, ZERO_WIDTH_FOLD_GUARD, False):
+        return
+
+    def _wrap_and_format(
+        self,
+        width,
+        align="left",
+        overflow="fold",
+        no_wrap=False,
+        line_pad=0,
+        *args,
+        **kwargs,
+    ):
+        zero = 0 if no_wrap else 2 * line_pad
+        if (overflow == "fold" and width == zero) or (
+            # TASK-38952: below the line-pad too (a 1-cell Button painted 3).
+            not no_wrap and line_pad and 0 <= width <= zero
+        ):
+            # One cropped line: a wrapped crop would add the line-pad on top.
+            overflow, no_wrap = "clip", True
+        lines = upstream(
+            self, width, align, overflow, no_wrap, line_pad, *args, **kwargs
+        )
+        if not no_wrap and line_pad and width > zero:
+            # TASK-38952: upstream cuts a wrapped line to the full width and
+            # then pads it, so a line wider than the box minus its line-pad
+            # (an unbreakable word, trailing spaces) painted 2 cells past it.
+            for line in lines:
+                content = line.content
+                if content.cell_length > width:
+                    core = content[line_pad : len(content) - line_pad]
+                    line.content = core.truncate(
+                        width - 2 * line_pad, ellipsis=overflow == "ellipsis"
+                    ).pad(line_pad, line_pad)
+        return lines
+
+    setattr(_wrap_and_format, ZERO_WIDTH_FOLD_GUARD, True)
+    _wrap_and_format.__wrapped__ = upstream  # type: ignore[attr-defined]
+    Content._wrap_and_format = _wrap_and_format  # type: ignore[method-assign]
+
+
+__version__ = "0.2.4"
 __author__ = "Robert Musser"
 __email__ = "contact@rmusser.net"
 __license__ = "AGPLv3+"
 
 # Version tuple for programmatic comparison
-VERSION_TUPLE = (0, 2, 3)
+VERSION_TUPLE = (0, 2, 4)
 
 # Export key components when package is imported
 __all__ = [

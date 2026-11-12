@@ -116,42 +116,65 @@ def _page(url, title="T", excerpt="ex", marker=None):
 
 def test_format_blocks_footer_and_marker():
     out = _format_crawl_result(
-        [_page("http://e.com/1", "One", "first words"),
-         _page("http://e.com/m.pdf", "", "", marker="[application/pdf]")],
-        failed=2, blocked=1, stop_reason="page budget reached",
+        [
+            _page("http://e.com/1", "One", "first words"),
+            _page("http://e.com/m.pdf", "", "", marker="[application/pdf]"),
+        ],
+        failed=2,
+        blocked=1,
+        stop_reason="page budget reached",
     )
     assert "1. One\n   URL: http://e.com/1\n   first words" in out
     assert "2. [application/pdf]\n   URL: http://e.com/m.pdf" in out
-    assert out.endswith("Crawled 2 pages (2 failed, 1 blocked). Stopped: page budget reached.")
+    assert out.endswith(
+        "Crawled 2 pages (2 failed, 1 blocked). Stopped: page budget reached."
+    )
 
 
 def test_format_total_cap_omits_pages():
     from tldw_chatbook.Tools.web_tool_impls import CRAWL_RESULT_MAX_BYTES
 
     pages = [_page(f"http://e.com/{i}", f"T{i}", "x" * 190) for i in range(200)]
-    out = _format_crawl_result(pages, failed=0, blocked=0, stop_reason="page budget reached")
+    out = _format_crawl_result(
+        pages, failed=0, blocked=0, stop_reason="page budget reached"
+    )
     assert "further pages omitted" in out
-    assert len(out.encode("utf-8")) < CRAWL_RESULT_MAX_BYTES + 2048  # footer + omission slack
+    assert (
+        len(out.encode("utf-8")) < CRAWL_RESULT_MAX_BYTES + 2048
+    )  # footer + omission slack
     assert "Crawled 200 pages" in out  # footer reports the crawl, not the capped list
 
 
 def test_format_empty_crawl_is_just_footer():
-    out = _format_crawl_result([], failed=1, blocked=0, stop_reason="no more links within depth")
-    assert out == "Crawled 0 pages (1 failed, 0 blocked). Stopped: no more links within depth."
+    out = _format_crawl_result(
+        [], failed=1, blocked=0, stop_reason="no more links within depth"
+    )
+    assert (
+        out
+        == "Crawled 0 pages (1 failed, 0 blocked). Stopped: no more links within depth."
+    )
 
 
 def test_format_duplicate_redirects_skipped_clause():
     """New optional param (item 3): a nonzero count renders a third footer
     clause, following the existing `children_skipped` idiom exactly."""
     out = _format_crawl_result(
-        [], failed=0, blocked=0, stop_reason="page budget reached",
+        [],
+        failed=0,
+        blocked=0,
+        stop_reason="page budget reached",
         duplicates_skipped=1,
     )
-    assert out == "Crawled 0 pages (0 failed, 0 blocked; 1 duplicate redirects skipped). Stopped: page budget reached."
+    assert (
+        out
+        == "Crawled 0 pages (0 failed, 0 blocked; 1 duplicate redirects skipped). Stopped: page budget reached."
+    )
 
 
 def test_format_duplicate_redirects_skipped_clause_absent_when_zero():
-    out = _format_crawl_result([], failed=0, blocked=0, stop_reason="page budget reached")
+    out = _format_crawl_result(
+        [], failed=0, blocked=0, stop_reason="page budget reached"
+    )
     assert "duplicate redirects skipped" not in out
 
 
@@ -223,7 +246,9 @@ def _html(body_text: str, links: list[str] = (), title: str = "Page") -> httpx.R
         f"<html><head><title>{title}</title></head>"
         f"<body><p>{body_text}</p>{anchors}</body></html>"
     )
-    return httpx.Response(200, content=html.encode(), headers={"content-type": "text/html"})
+    return httpx.Response(
+        200, content=html.encode(), headers={"content-type": "text/html"}
+    )
 
 
 def _site(env, spec: dict) -> None:
@@ -231,17 +256,23 @@ def _site(env, spec: dict) -> None:
     for url, item in spec.items():
         if isinstance(item, tuple):
             body_text, links = item
-            env.routes[url] = _html(body_text, links, title=f"Title {url.rsplit('/', 1)[-1]}")
+            env.routes[url] = _html(
+                body_text, links, title=f"Title {url.rsplit('/', 1)[-1]}"
+            )
         else:
             env.routes[url] = item
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_lists_pages_with_titles_and_excerpts(crawl_env):
-    _site(crawl_env, {
-        "http://example.com/": ("home page words", ["/a", "/b"]),
-        "http://example.com/a": ("alpha page words", []),
-        "http://example.com/b": ("beta page words", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("home page words", ["/a", "/b"]),
+            "http://example.com/a": ("alpha page words", []),
+            "http://example.com/b": ("beta page words", []),
+        },
+    )
     out = web_crawl("http://example.com/")
     assert "Title a" in out and "alpha page words" in out
     assert "Title b" in out and "beta page words" in out
@@ -249,38 +280,53 @@ def test_crawl_lists_pages_with_titles_and_excerpts(crawl_env):
     assert out.endswith("Stopped: no more links within depth.")
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_respects_max_pages_budget(crawl_env):
-    _site(crawl_env, {
-        "http://example.com/": ("root", [f"/p{i}" for i in range(10)]),
-        **{f"http://example.com/p{i}": (f"page {i}", []) for i in range(10)},
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", [f"/p{i}" for i in range(10)]),
+            **{f"http://example.com/p{i}": (f"page {i}", []) for i in range(10)},
+        },
+    )
     out = web_crawl("http://example.com/", max_pages=4)
     assert len(crawl_env.calls) == 4
     assert "Stopped: page budget reached." in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_respects_max_depth(crawl_env):
-    _site(crawl_env, {
-        "http://example.com/": ("d0", ["/d1"]),
-        "http://example.com/d1": ("d1", ["/d2"]),
-        "http://example.com/d2": ("d2", ["/d3"]),
-        "http://example.com/d3": ("d3", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("d0", ["/d1"]),
+            "http://example.com/d1": ("d1", ["/d2"]),
+            "http://example.com/d2": ("d2", ["/d3"]),
+            "http://example.com/d3": ("d3", []),
+        },
+    )
     web_crawl("http://example.com/", max_depth=1)
     assert "http://example.com/d2" not in crawl_env.calls
     assert "http://example.com/d1" in crawl_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_stays_on_host_and_folds_www(crawl_env):
-    _site(crawl_env, {
-        "http://example.com/": ("root", [
-            "http://other.com/x",
-            "http://www.example.com/a",     # same host after www fold
-            "http://example.com/a",         # duplicate of the above
-            "http://example.com/a#section", # fragment variant: same identity
-        ]),
-        "http://www.example.com/a": ("alpha", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": (
+                "root",
+                [
+                    "http://other.com/x",
+                    "http://www.example.com/a",  # same host after www fold
+                    "http://example.com/a",  # duplicate of the above
+                    "http://example.com/a#section",  # fragment variant: same identity
+                ],
+            ),
+            "http://www.example.com/a": ("alpha", []),
+        },
+    )
     web_crawl("http://example.com/")
     assert "http://other.com/x" not in crawl_env.calls
     # www/apex/fragment variants collapse to one fetch.
@@ -288,6 +334,7 @@ def test_crawl_stays_on_host_and_folds_www(crawl_env):
     assert not any(c.startswith("http://example.com/a") for c in crawl_env.calls)
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_honors_base_href(crawl_env):
     crawl_env.routes["http://example.com/dir/"] = httpx.Response(
         200,
@@ -302,6 +349,7 @@ def test_crawl_honors_base_href(crawl_env):
     assert "http://example.com/other/rel.html" in crawl_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_blocked_link_counted_not_fatal(crawl_env, monkeypatch):
     """DNS flips private mid-crawl (rebinding): the later same-host URL is
     guard-blocked, counted, and the crawl continues.
@@ -317,10 +365,13 @@ def test_crawl_blocked_link_counted_not_fatal(crawl_env, monkeypatch):
         return [(2, 1, 6, "", (ip, 80))]
 
     monkeypatch.setattr(socket, "getaddrinfo", dns)
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/ok", "/blocked-later"]),
-        "http://example.com/blocked-later": ("never seen", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/ok", "/blocked-later"]),
+            "http://example.com/blocked-later": ("never seen", []),
+        },
+    )
 
     def ok_then_flip(request):
         state["private"] = True
@@ -333,17 +384,22 @@ def test_crawl_blocked_link_counted_not_fatal(crawl_env, monkeypatch):
     assert "http://example.com/blocked-later" not in crawl_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_failed_page_counted_not_fatal(crawl_env):
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/dead", "/ok"]),
-        "http://example.com/ok": ("fine", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/dead", "/ok"]),
+            "http://example.com/ok": ("fine", []),
+        },
+    )
     crawl_env.routes["http://example.com/dead"] = httpx.Response(500)
     out = web_crawl("http://example.com/")
     assert "1 failed" in out
     assert "fine" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_ssrf_substring_in_url_not_misclassified_as_blocked(crawl_env):
     """A same-host link whose URL text happens to CONTAIN the literal
     substring "[ssrf]" and simply 404s must be counted as failed, not
@@ -351,24 +407,32 @@ def test_crawl_ssrf_substring_in_url_not_misclassified_as_blocked(crawl_env):
     _validate_hop controls), not an unspoofable-in-name-only substring
     search — an attacker-served URL could otherwise forge a "blocked"
     classification for what is really an ordinary failure."""
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/x[ssrf]y"]),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/x[ssrf]y"]),
+        },
+    )
     crawl_env.routes["http://example.com/x[ssrf]y"] = httpx.Response(404)
     out = web_crawl("http://example.com/")
     assert "1 failed, 0 blocked" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_start_url_failure_raises_crawl_failed(crawl_env):
     crawl_env.routes["http://example.com/"] = httpx.Response(500)
     with pytest.raises(LocalToolError, match="crawl-failed"):
         web_crawl("http://example.com/")
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_nonhtml_listed_with_marker_not_expanded(crawl_env):
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/doc.pdf"]),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/doc.pdf"]),
+        },
+    )
     crawl_env.routes["http://example.com/doc.pdf"] = httpx.Response(
         200, content=b"%PDF-1.7 pretend", headers={"content-type": "application/pdf"}
     )
@@ -377,19 +441,24 @@ def test_crawl_nonhtml_listed_with_marker_not_expanded(crawl_env):
     assert "http://example.com/doc.pdf" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_offhost_redirect_listed_not_expanded(crawl_env):
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/moved"]),
-        "http://elsewhere.com/final": ("away content", ["/next-on-elsewhere"]),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/moved"]),
+            "http://elsewhere.com/final": ("away content", ["/next-on-elsewhere"]),
+        },
+    )
     crawl_env.routes["http://example.com/moved"] = httpx.Response(
         302, headers={"location": "http://elsewhere.com/final"}
     )
     out = web_crawl("http://example.com/")
-    assert "http://elsewhere.com/final" in out       # listed at final URL
+    assert "http://elsewhere.com/final" in out  # listed at final URL
     assert "http://elsewhere.com/next-on-elsewhere" not in crawl_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_redirect_duplicate_targets_listed_once(crawl_env):
     """Two different same-host pages that both redirect to the SAME final
     URL must list that final URL once, not once per redirecting source —
@@ -400,9 +469,12 @@ def test_crawl_redirect_duplicate_targets_listed_once(crawl_env):
     footer's "N duplicate redirects skipped" clause (item 3) — root
     contributes 1 listed page (via /one's redirect), /two's redirect to the
     same target is the one deduped skip."""
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/one", "/two"]),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/one", "/two"]),
+        },
+    )
     crawl_env.routes["http://example.com/one"] = httpx.Response(
         302, headers={"location": "http://example.com/target"}
     )
@@ -416,22 +488,30 @@ def test_crawl_redirect_duplicate_targets_listed_once(crawl_env):
     assert "1 duplicate redirects skipped" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_no_duplicates_omits_duplicate_redirects_clause(crawl_env):
     """A crawl with no deduped redirects must not mention the clause at
     all — it's additive, not a permanent zero-value fixture in the footer."""
-    _site(crawl_env, {
-        "http://example.com/": ("home page words", ["/a", "/b"]),
-        "http://example.com/a": ("alpha page words", []),
-        "http://example.com/b": ("beta page words", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("home page words", ["/a", "/b"]),
+            "http://example.com/a": ("alpha page words", []),
+            "http://example.com/b": ("beta page words", []),
+        },
+    )
     out = web_crawl("http://example.com/")
     assert "duplicate redirects skipped" not in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_redirect_into_private_space_blocked(crawl_env):
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/trap"]),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/trap"]),
+        },
+    )
     crawl_env.routes["http://example.com/trap"] = httpx.Response(
         302, headers={"location": "http://169.254.169.254/latest/meta-data"}
     )
@@ -440,6 +520,7 @@ def test_crawl_redirect_into_private_space_blocked(crawl_env):
     assert "http://169.254.169.254/latest/meta-data" not in crawl_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_deadline_stops(crawl_env):
     from tldw_chatbook.Tools.web_tool_impls import CRAWL_DEADLINE_SECONDS
 
@@ -455,6 +536,7 @@ def test_crawl_deadline_stops(crawl_env):
     assert "http://example.com/never" not in crawl_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_deadline_stops_during_redirect_hop(crawl_env):
     """Between-hops deadline coverage: a redirect whose handler advances the
     clock past CRAWL_DEADLINE_SECONDS must cause the crawl to stop, and the
@@ -463,7 +545,9 @@ def test_crawl_deadline_stops_during_redirect_hop(crawl_env):
 
     def redirect_with_deadline_advance(request):
         crawl_env.clock.now += CRAWL_DEADLINE_SECONDS + 1
-        return httpx.Response(302, headers={"location": "http://example.com/after-deadline"})
+        return httpx.Response(
+            302, headers={"location": "http://example.com/after-deadline"}
+        )
 
     _site(crawl_env, {"http://example.com/": ("root", ["/redirect"])})
     crawl_env.routes["http://example.com/redirect"] = redirect_with_deadline_advance
@@ -473,15 +557,20 @@ def test_crawl_deadline_stops_during_redirect_hop(crawl_env):
     assert "http://example.com/after-deadline" not in crawl_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_rate_limits_between_pages(crawl_env):
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/a"]),
-        "http://example.com/a": ("alpha", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/a"]),
+            "http://example.com/a": ("alpha", []),
+        },
+    )
     web_crawl("http://example.com/")
     assert crawl_env.clock.sleeps  # second same-domain fetch waited
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_uses_crawl_user_agent(crawl_env):
     seen_agents: list[str] = []
 
@@ -494,6 +583,7 @@ def test_crawl_uses_crawl_user_agent(crawl_env):
     assert seen_agents == ["tldw-chatbook-web-crawl/1.0"]
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_warm_writes_fetch_cache(crawl_env):
     from tldw_chatbook.Tools.web_tool_impls import web_fetch
 
@@ -517,18 +607,23 @@ def test_crawl_invalid_args(crawl_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_survives_malformed_href_in_link_loop(crawl_env):
     """A malformed href (urljoin raises ValueError: 'Invalid IPv6 URL') must
     be skipped, not crash the whole crawl."""
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["http://[", "/good"]),
-        "http://example.com/good": ("good page words", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["http://[", "/good"]),
+            "http://example.com/good": ("good page words", []),
+        },
+    )
     out = web_crawl("http://example.com/")
     assert "good page words" in out
     assert "Crawled 2 pages (0 failed, 0 blocked)" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_survives_malformed_base_href(crawl_env):
     """A malformed <base href> must fall back to final_url as the resolution
     base, not crash the whole crawl."""
@@ -546,13 +641,17 @@ def test_crawl_survives_malformed_base_href(crawl_env):
     assert "http://example.com/good" in crawl_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_malformed_redirect_location_counted_as_failed(crawl_env):
     """A redirect Location that urljoin cannot parse becomes a per-page
     [invalid-url] failure, not an uncaught ValueError."""
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/trap", "/ok"]),
-        "http://example.com/ok": ("fine words", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/trap", "/ok"]),
+            "http://example.com/ok": ("fine words", []),
+        },
+    )
     crawl_env.routes["http://example.com/trap"] = httpx.Response(
         302, headers={"location": "http://["}
     )
@@ -561,26 +660,34 @@ def test_crawl_malformed_redirect_location_counted_as_failed(crawl_env):
     assert "fine words" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_warm_write_includes_truncation_marker(crawl_env):
     """A truncated HTML page must warm-write the SAME truncation marker
     web_fetch would produce, so a later default web_fetch() cache hit does
     not silently hand back a cut page as if it were complete."""
     from tldw_chatbook.Tools.web_tool_impls import FETCH_MAX_BYTES, web_fetch
 
-    big_html = "<html><body><p>" + ("y " * ((FETCH_MAX_BYTES + 5000) // 2)) + "</p></body></html>"
+    big_html = (
+        "<html><body><p>"
+        + ("y " * ((FETCH_MAX_BYTES + 5000) // 2))
+        + "</p></body></html>"
+    )
     crawl_env.routes["http://example.com/"] = httpx.Response(
         200, content=big_html.encode(), headers={"content-type": "text/html"}
     )
     web_crawl("http://example.com/")
     n_calls = len(crawl_env.calls)
     result = web_fetch("http://example.com/")
-    assert result.endswith(f"[... truncated: response exceeded max_bytes={FETCH_MAX_BYTES} ...]")
+    assert result.endswith(
+        f"[... truncated: response exceeded max_bytes={FETCH_MAX_BYTES} ...]"
+    )
     assert len(crawl_env.calls) == n_calls  # served from cache, no new request
 
 
 # ---------------------------------------------------------------------------
 # sitemap mode (spec §2)
 # ---------------------------------------------------------------------------
+
 
 def _sitemap_response(xml: bytes) -> httpx.Response:
     return httpx.Response(200, content=xml, headers={"content-type": "application/xml"})
@@ -596,7 +703,8 @@ except ImportError:
     defusedxml = None
 
 requires_defusedxml = pytest.mark.skipif(
-    defusedxml is None, reason="defusedxml not installed (websearch/ebook/subscriptions extra)"
+    defusedxml is None,
+    reason="defusedxml not installed (websearch/ebook/subscriptions extra)",
 )
 
 _ENTITY_SITEMAP = (
@@ -606,23 +714,31 @@ _ENTITY_SITEMAP = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @requires_defusedxml
 def test_sitemap_entity_declaration_root_is_crawl_failed(crawl_env):
-    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(_ENTITY_SITEMAP)
+    crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(
+        _ENTITY_SITEMAP
+    )
     with pytest.raises(LocalToolError, match="crawl-failed"):
         web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
 
 
+@pytest.mark.bootstrap_profile
 @requires_defusedxml
 def test_sitemap_entity_declaration_child_is_skipped(crawl_env):
-    index = (b'<?xml version="1.0"?>'
-             b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-             b"<sitemap><loc>http://example.com/bad.xml</loc></sitemap>"
-             b"<sitemap><loc>http://example.com/good.xml</loc></sitemap>"
-             b"</sitemapindex>")
-    good = (b'<?xml version="1.0"?>'
-            b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-            b"<url><loc>http://example.com/page</loc></url></urlset>")
+    index = (
+        b'<?xml version="1.0"?>'
+        b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<sitemap><loc>http://example.com/bad.xml</loc></sitemap>"
+        b"<sitemap><loc>http://example.com/good.xml</loc></sitemap>"
+        b"</sitemapindex>"
+    )
+    good = (
+        b'<?xml version="1.0"?>'
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>http://example.com/page</loc></url></urlset>"
+    )
     crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
     crawl_env.routes["http://example.com/bad.xml"] = _sitemap_response(_ENTITY_SITEMAP)
     crawl_env.routes["http://example.com/good.xml"] = _sitemap_response(good)
@@ -631,6 +747,7 @@ def test_sitemap_entity_declaration_child_is_skipped(crawl_env):
     assert "still works" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_mode_seeds_pages_and_skips_expansion(crawl_env):
     xml = (
         b'<?xml version="1.0"?>'
@@ -640,11 +757,14 @@ def test_sitemap_mode_seeds_pages_and_skips_expansion(crawl_env):
         b"</urlset>"
     )
     crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
-    _site(crawl_env, {
-        "http://example.com/a": ("alpha words", ["/should-not-follow"]),
-        "http://example.com/b": ("beta words", []),
-        "http://example.com/should-not-follow": ("nope", []),
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/a": ("alpha words", ["/should-not-follow"]),
+            "http://example.com/b": ("beta words", []),
+            "http://example.com/should-not-follow": ("nope", []),
+        },
+    )
     out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
     assert "alpha words" in out and "beta words" in out
     # sitemap IS the discovery: links on seeded pages are not expanded
@@ -652,6 +772,7 @@ def test_sitemap_mode_seeds_pages_and_skips_expansion(crawl_env):
     assert "Stopped: sitemap exhausted." in out
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_index_one_level(crawl_env):
     index = (
         b'<?xml version="1.0"?>'
@@ -675,6 +796,7 @@ def test_sitemap_index_one_level(crawl_env):
     assert "http://cdn-other.com/s2.xml" not in crawl_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_offhost_page_urls_filtered(crawl_env):
     xml = (
         b'<?xml version="1.0"?>'
@@ -692,6 +814,7 @@ def test_sitemap_offhost_page_urls_filtered(crawl_env):
     assert "http://10.0.0.5/internal" not in crawl_env.calls  # off-host AND private
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_respects_max_pages(crawl_env):
     urls = "".join(
         f"<url><loc>http://example.com/p{i}</loc></url>".encode().decode()
@@ -704,23 +827,28 @@ def test_sitemap_respects_max_pages(crawl_env):
     ).encode()
     crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(xml)
     _site(crawl_env, {f"http://example.com/p{i}": (f"page {i}", []) for i in range(10)})
-    web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=3)
+    web_crawl(
+        "http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=3
+    )
     page_calls = [c for c in crawl_env.calls if "/p" in c]
     assert len(page_calls) == 3
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_unfetchable_raises_crawl_failed(crawl_env):
     crawl_env.routes["http://example.com/sitemap.xml"] = httpx.Response(500)
     with pytest.raises(LocalToolError, match="crawl-failed"):
         web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_garbage_xml_raises_crawl_failed(crawl_env):
     crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(b"not xml")
     with pytest.raises(LocalToolError, match="crawl-failed"):
         web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_namespace_free_urlset_seeds_pages(crawl_env):
     """A sitemap without the sitemaps.org XML namespace (some generators
     emit these) must still seed pages — pre-fix, the namespaced-only
@@ -741,6 +869,7 @@ def test_parse_sitemap_namespace_free_urlset():
     assert children == []
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_deadline_during_child_fetch_reports_deadline_reached(crawl_env):
     """The child-sitemap loop's bound check is a plain `break`, not an
     exception: if the clock crosses the deadline while fetching a child
@@ -776,6 +905,7 @@ def test_sitemap_deadline_during_child_fetch_reports_deadline_reached(crawl_env)
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("ctype", ["application/pdf", "text/html", ""])
 def test_crawl_pdf_sniff_not_poisoned_into_html_branch(crawl_env, ctype):
     """CRITICAL: a PDF served with a misleading (or absent) content-type
@@ -796,15 +926,21 @@ def test_crawl_pdf_sniff_not_poisoned_into_html_branch(crawl_env, ctype):
     pdf_body = b"%PDF-1.7 pretend pdf body padding " + b"z" * 20
     headers = {"content-type": ctype} if ctype else {}
     _site(crawl_env, {"http://example.com/": ("root", ["/doc"])})
-    crawl_env.routes["http://example.com/doc"] = httpx.Response(200, content=pdf_body, headers=headers)
+    crawl_env.routes["http://example.com/doc"] = httpx.Response(
+        200, content=pdf_body, headers=headers
+    )
     out = web_crawl("http://example.com/")
     # All three parametrized content types wrap a %PDF- sniffed body, so
     # is_pdf is true in every case: the marker is always [application/pdf].
     assert "[application/pdf]" in out
     assert "%PDF-" not in out
-    assert ("http://example.com/doc", web_tool_impls.FETCH_MAX_BYTES) not in web_tool_impls._fetch_cache
+    assert (
+        "http://example.com/doc",
+        web_tool_impls.FETCH_MAX_BYTES,
+    ) not in web_tool_impls._fetch_cache
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_html_only_aborts_sniffed_pdf_despite_declared_html(crawl_env):
     """A response DECLARED text/html but whose body sniffs as a PDF must
     still abort the read early under html_only (crawl) mode. Pre-fix, the
@@ -812,6 +948,7 @@ def test_crawl_html_only_aborts_sniffed_pdf_despite_declared_html(crawl_env):
     "text/html" IS an HTML type, the break never fired and the crawl drained
     up to the 1 MiB page cap instead of aborting once the type is known
     from the sniff."""
+
     def guarded_chunks():
         yield b"%PDF-"  # 5 bytes: under the 12-byte sniff window, resolves NEXT chunk
         for i in range(3):
@@ -829,6 +966,7 @@ def test_crawl_html_only_aborts_sniffed_pdf_despite_declared_html(crawl_env):
     assert "[application/pdf]" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_mislabeled_binary_declared_html_reads_full_body(crawl_env):
     """Review fix round 1 (Important 2): a binary served AS text/html
     during a crawl keeps today's full-read behavior (the binary design
@@ -841,9 +979,13 @@ def test_crawl_mislabeled_binary_declared_html_reads_full_body(crawl_env):
     (re-review): a single-chunk body is fully captured before the abort
     check runs, so only a multi-chunk response lets the buggy predicate
     actually cut the tail — verified red against the pre-fix code."""
+
     def chunked():
-        yield b"\x89PNG\r\n\x1a\n" + b"\x00" * 8  # 16 bytes: sniff resolves kind=image here
+        yield (
+            b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+        )  # 16 bytes: sniff resolves kind=image here
         yield b"TAILMARKER after the sniff window"
+
     _site(crawl_env, {"http://example.com/": ("root", ["/masq"])})
     crawl_env.routes["http://example.com/masq"] = httpx.Response(
         200, content=chunked(), headers={"content-type": "text/html"}
@@ -852,6 +994,7 @@ def test_crawl_mislabeled_binary_declared_html_reads_full_body(crawl_env):
     assert "TAILMARKER" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_warm_cache_does_not_mask_binary_metadata_for_later_fetch(crawl_env):
     """task-3280 / Qodo PR #1442 (1): crawl's mojibake decode of a
     MISLABELED binary must not warm the (url, FETCH_MAX_BYTES) cache key
@@ -872,6 +1015,7 @@ def test_crawl_warm_cache_does_not_mask_binary_metadata_for_later_fetch(crawl_en
         web_tool_impls.web_fetch("http://example.com/pic")
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_nonpdf_nonhtml_marker_uses_declared_type(crawl_env):
     """The is_pdf branch must not swallow every non-HTML response into a
     hardcoded '[application/pdf]' marker: a genuinely non-PDF, non-HTML
@@ -879,12 +1023,15 @@ def test_crawl_nonpdf_nonhtml_marker_uses_declared_type(crawl_env):
     actual declared content-type."""
     _site(crawl_env, {"http://example.com/": ("root", ["/image.png"])})
     crawl_env.routes["http://example.com/image.png"] = httpx.Response(
-        200, content=b"\x89PNG\r\n\x1a\n" + b"binarydata", headers={"content-type": "image/png"}
+        200,
+        content=b"\x89PNG\r\n\x1a\n" + b"binarydata",
+        headers={"content-type": "image/png"},
     )
     out = web_crawl("http://example.com/")
     assert "[image/png]" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_caps_links_enqueued_per_page(crawl_env, monkeypatch):
     """IMPORTANT: an unbounded frontier lets one page's link spam blow up
     visited/queue memory (52,975 entries measured from a single page in the
@@ -892,16 +1039,20 @@ def test_crawl_caps_links_enqueued_per_page(crawl_env, monkeypatch):
     CRAWL_MAX_LINKS_PER_PAGE."""
     monkeypatch.setattr(web_tool_impls, "CRAWL_MAX_LINKS_PER_PAGE", 5)
     links = [f"/p{i}" for i in range(20)]
-    _site(crawl_env, {
-        "http://example.com/": ("root", links),
-        **{f"http://example.com/p{i}": (f"page {i}", []) for i in range(20)},
-    })
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", links),
+            **{f"http://example.com/p{i}": (f"page {i}", []) for i in range(20)},
+        },
+    )
     web_crawl("http://example.com/", max_pages=100)
     # root fetch + exactly the capped number of links enqueued from it.
     # Expected: root (1) + at most 5 links from CRAWL_MAX_LINKS_PER_PAGE = 6 total.
     assert len(crawl_env.calls) == 6
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_index_caps_children_fetched(crawl_env, monkeypatch):
     """IMPORTANT: the sitemapindex child loop is bounded only by deadline +
     rate limit today — off-host children never trip max_pages's early
@@ -923,12 +1074,19 @@ def test_sitemap_index_caps_children_fetched(crawl_env, monkeypatch):
         b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>'
     )
     for i in range(10):
-        crawl_env.routes[f"http://example.com/s{i}.xml"] = _sitemap_response(empty_child)
-    web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml", max_pages=100)
+        crawl_env.routes[f"http://example.com/s{i}.xml"] = _sitemap_response(
+            empty_child
+        )
+    web_crawl(
+        "http://example.com/",
+        sitemap_url="http://example.com/sitemap.xml",
+        max_pages=100,
+    )
     child_calls = [c for c in crawl_env.calls if c != "http://example.com/sitemap.xml"]
     assert len(child_calls) == 3
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_child_budget_reached_stop_reason(crawl_env, monkeypatch):
     """When the SITEMAP_MAX_CHILDREN break fires (children left unfetched),
     the footer must say so honestly instead of claiming "sitemap exhausted"
@@ -958,6 +1116,7 @@ def test_sitemap_child_budget_reached_stop_reason(crawl_env, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_redirect_dedup_lists_content_fetched_via_redirect(crawl_env):
     """REGRESSION vs dev: the redirect-dedup guard checked the final URL
     against `visited` — but `visited` holds ENQUEUED urls, not LISTED ones.
@@ -976,6 +1135,7 @@ def test_crawl_redirect_dedup_lists_content_fetched_via_redirect(crawl_env):
     assert "Crawled 2 pages" in out
 
 
+@pytest.mark.bootstrap_profile
 @requires_defusedxml
 def test_sitemap_children_skipped_counted_in_footer(crawl_env):
     """AC#1's skip-and-COUNT half (previously unimplemented): child fetch
@@ -999,11 +1159,14 @@ def test_sitemap_children_skipped_counted_in_footer(crawl_env):
     assert out.endswith("Stopped: sitemap exhausted.")
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_budget_truncated_reports_page_budget_reached(crawl_env):
     """A plain urlset with MORE same-host URLs than max_pages — the default
     path for nearly every real sitemap at the default max_pages=20 — must
     not claim "sitemap exhausted"; `take()`'s cap left candidates behind."""
-    urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(10))
+    urls_xml = "".join(
+        f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(10)
+    )
     xml = (
         '<?xml version="1.0"?>'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
@@ -1017,11 +1180,14 @@ def test_sitemap_budget_truncated_reports_page_budget_reached(crawl_env):
     assert out.endswith("Stopped: page budget reached.")
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_exactly_consumed_still_reports_exhausted(crawl_env):
     """Boundary: a sitemap with EXACTLY max_pages same-host URLs (nothing
     left over) must still report "sitemap exhausted" — take() only flips the
     truncation flag when a candidate was actually left unconsidered."""
-    urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3))
+    urls_xml = "".join(
+        f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3)
+    )
     xml = (
         '<?xml version="1.0"?>'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
@@ -1035,13 +1201,16 @@ def test_sitemap_exactly_consumed_still_reports_exhausted(crawl_env):
     assert out.endswith("Stopped: sitemap exhausted.")
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_trailing_offhost_loc_does_not_flip_budget_truncated(crawl_env):
     """False-positive guard: take()'s max_pages check must run AFTER the
     scope_host filter. 3 same-host locs exactly fill max_pages=3; a 4th,
     TRAILING off-host loc would be discarded by the host filter regardless
     — it must not flip budget_truncated and make the footer claim "page
     budget reached" when every same-host candidate was actually considered."""
-    urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3))
+    urls_xml = "".join(
+        f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3)
+    )
     urls_xml += "<url><loc>http://other.com/off-host</loc></url>"
     xml = (
         '<?xml version="1.0"?>'
@@ -1057,12 +1226,15 @@ def test_sitemap_trailing_offhost_loc_does_not_flip_budget_truncated(crawl_env):
     assert out.endswith("Stopped: sitemap exhausted.")
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_trailing_duplicate_loc_does_not_flip_budget_truncated(crawl_env):
     """Same false-positive guard, duplicate-filter side: a 4th, TRAILING loc
     that duplicates the first same-host URL would be discarded by the
     `seen` filter regardless of max_pages — it must not flip
     budget_truncated either."""
-    urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3))
+    urls_xml = "".join(
+        f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(3)
+    )
     urls_xml += "<url><loc>http://example.com/p0</loc></url>"  # duplicate of the first
     xml = (
         '<?xml version="1.0"?>'
@@ -1077,6 +1249,7 @@ def test_sitemap_trailing_duplicate_loc_does_not_flip_budget_truncated(crawl_env
     assert out.endswith("Stopped: sitemap exhausted.")
 
 
+@pytest.mark.bootstrap_profile
 def test_sitemap_seed_deadline_and_budget_both_hit_deadline_wins(crawl_env):
     """Coverage add (final-review observation): when a sitemap child fetch
     simultaneously exhausts the wall-clock deadline AND fills max_pages via
@@ -1100,7 +1273,9 @@ def test_sitemap_seed_deadline_and_budget_both_hit_deadline_wins(crawl_env):
 
     def slow_child_over_budget(request):
         crawl_env.clock.now += CRAWL_DEADLINE_SECONDS + 1
-        urls_xml = "".join(f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(5))
+        urls_xml = "".join(
+            f"<url><loc>http://example.com/p{i}</loc></url>" for i in range(5)
+        )
         xml = (
             '<?xml version="1.0"?>'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
@@ -1114,7 +1289,9 @@ def test_sitemap_seed_deadline_and_budget_both_hit_deadline_wins(crawl_env):
     )
     assert out.endswith("Stopped: deadline reached.")
     page_calls = [c for c in crawl_env.calls if "/p" in c]
-    assert page_calls == []  # deadline hit before the seeded pages get their own attempt
+    assert (
+        page_calls == []
+    )  # deadline hit before the seeded pages get their own attempt
 
 
 # ---------------------------------------------------------------------------
@@ -1124,6 +1301,7 @@ def test_sitemap_seed_deadline_and_budget_both_hit_deadline_wins(crawl_env):
 # crawl_env's own fixture default sets respect_robots_txt=False (existing-
 # suite compatibility, design doc Critical 1) -- every test below opts back
 # in explicitly via _enable_robots().
+
 
 def _enable_robots(monkeypatch, respect: bool = True) -> None:
     monkeypatch.setattr(
@@ -1135,22 +1313,31 @@ def _robots_txt(body: bytes, status: int = 200) -> httpx.Response:
     return httpx.Response(status, content=body, headers={"content-type": "text/plain"})
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_disallowed_page_skipped_and_counted(crawl_env, monkeypatch):
     _enable_robots(monkeypatch)
-    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /private\n")
-    _site(crawl_env, {
-        "http://example.com/": ("root", ["/private", "/ok"]),
-        "http://example.com/ok": ("fine words", []),
-    })
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(
+        b"User-agent: *\nDisallow: /private\n"
+    )
+    _site(
+        crawl_env,
+        {
+            "http://example.com/": ("root", ["/private", "/ok"]),
+            "http://example.com/ok": ("fine words", []),
+        },
+    )
     out = web_crawl("http://example.com/")
     assert "1 robots-disallowed" in out
     assert "fine words" in out
     assert "http://example.com/private" not in crawl_env.calls  # blocked before the hop
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_disallowed_child_sitemap_skipped(crawl_env, monkeypatch):
     _enable_robots(monkeypatch)
-    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /bad.xml\n")
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(
+        b"User-agent: *\nDisallow: /bad.xml\n"
+    )
     index = (
         b'<?xml version="1.0"?>'
         b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
@@ -1164,7 +1351,9 @@ def test_crawl_disallowed_child_sitemap_skipped(crawl_env, monkeypatch):
         b"<url><loc>http://example.com/page</loc></url></urlset>"
     )
     crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(index)
-    crawl_env.routes["http://example.com/bad.xml"] = _sitemap_response(good)  # would succeed IF fetched
+    crawl_env.routes["http://example.com/bad.xml"] = _sitemap_response(
+        good
+    )  # would succeed IF fetched
     crawl_env.routes["http://example.com/good.xml"] = _sitemap_response(good)
     _site(crawl_env, {"http://example.com/page": ("still works", [])})
     out = web_crawl("http://example.com/", sitemap_url="http://example.com/sitemap.xml")
@@ -1173,9 +1362,12 @@ def test_crawl_disallowed_child_sitemap_skipped(crawl_env, monkeypatch):
     assert "http://example.com/bad.xml" not in crawl_env.calls  # blocked before the hop
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_disallowed_start_url_returns_structured_refusal(crawl_env, monkeypatch):
     _enable_robots(monkeypatch)
-    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /\n")
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(
+        b"User-agent: *\nDisallow: /\n"
+    )
     crawl_env.routes["http://example.com/"] = _html("root", [])
     with pytest.raises(LocalToolError) as exc_info:
         web_crawl("http://example.com/")
@@ -1187,9 +1379,14 @@ def test_crawl_disallowed_start_url_returns_structured_refusal(crawl_env, monkey
     assert "http://example.com/" not in crawl_env.calls  # blocked before the hop
 
 
-def test_crawl_disallowed_root_sitemap_returns_structured_refusal(crawl_env, monkeypatch):
+@pytest.mark.bootstrap_profile
+def test_crawl_disallowed_root_sitemap_returns_structured_refusal(
+    crawl_env, monkeypatch
+):
     _enable_robots(monkeypatch)
-    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /sitemap.xml\n")
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(
+        b"User-agent: *\nDisallow: /sitemap.xml\n"
+    )
     crawl_env.routes["http://example.com/sitemap.xml"] = _sitemap_response(
         b'<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>'
     )
@@ -1198,9 +1395,12 @@ def test_crawl_disallowed_root_sitemap_returns_structured_refusal(crawl_env, mon
     msg = str(exc_info.value)
     assert msg.startswith("[crawl-failed] sitemap could not be fetched: ")
     assert "[robots-disallowed]" in msg
-    assert "http://example.com/sitemap.xml" not in crawl_env.calls  # blocked before the hop
+    assert (
+        "http://example.com/sitemap.xml" not in crawl_env.calls
+    )  # blocked before the hop
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_robots_uses_crawl_user_agent(crawl_env, monkeypatch):
     """Disallow the web_fetch UA but allow the crawl UA -- proves web_crawl
     checks robots.txt against _CRAWL_USER_AGENT, not _USER_AGENT."""
@@ -1214,11 +1414,14 @@ def test_crawl_robots_uses_crawl_user_agent(crawl_env, monkeypatch):
     assert "root words" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_crawl_toggle_off_makes_no_robots_fetch(crawl_env):
     # crawl_env's own fixture default is respect_robots_txt=False; this
     # test proves a PRESENT, fully-disallowing robots.txt is never even
     # fetched while the toggle is off.
-    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(b"User-agent: *\nDisallow: /\n")
+    crawl_env.routes["http://example.com/robots.txt"] = _robots_txt(
+        b"User-agent: *\nDisallow: /\n"
+    )
     _site(crawl_env, {"http://example.com/": ("root words", [])})
     out = web_crawl("http://example.com/")
     assert "root words" in out

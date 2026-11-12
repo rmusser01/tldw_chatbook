@@ -97,11 +97,11 @@ def test_no_dropdown_offers_the_bare_misspelled_lightning_whisper_id() -> None:
 
     assert "lightning-whisper" not in privacy_ids
     assert "lightning-whisper" not in all_ids
-    assert "lightning-whisper-mlx" in privacy_ids
-    assert "lightning-whisper-mlx" in all_ids
+    assert "lightning-whisper-mlx" not in privacy_ids
+    assert "lightning-whisper-mlx" not in all_ids
 
 
-# -- task-1282 follow-up: normalize an already-persisted legacy provider id --
+# -- 0.2.4: retain a saved legacy provider until an explicit replacement --
 
 
 def _fake_get_cli_setting_legacy_provider(section, key=None, default=None):
@@ -118,16 +118,8 @@ def _fake_get_cli_setting_legacy_provider(section, key=None, default=None):
     return key
 
 
-def test_load_settings_normalizes_legacy_provider_id(monkeypatch) -> None:
-    """A `dictation.provider` config value saved under the pre-task-1282
-    dropdown (`"lightning-whisper"`) must resolve to the real dispatch id
-    (`"lightning-whisper-mlx"`) when the production window loads its settings.
-    Correcting the dropdown's own options (tested above) does nothing for a
-    config file a user already saved with the old, broken value -- this is
-    what actually unbreaks that user without them touching Settings again.
-    Read-side only: `_load_settings()` must not write the normalized value
-    back to config as a side effect of merely loading it.
-    """
+def test_load_settings_preserves_raw_deferred_legacy_provider_id(monkeypatch) -> None:
+    """Opening a saved legacy selection must retain its exact value, without writes."""
     import tldw_chatbook.UI.Dictation_Window_Improved as dwi
 
     monkeypatch.setattr(dwi, "get_cli_setting", _fake_get_cli_setting_legacy_provider)
@@ -142,31 +134,14 @@ def test_load_settings_normalizes_legacy_provider_id(monkeypatch) -> None:
         dwi.ImprovedDictationWindow
     )._load_settings()
 
-    assert settings["provider"] == "lightning-whisper-mlx"
+    assert settings["provider"] == "lightning-whisper"
     assert save_calls == []
 
 
-def test_initialize_service_constructs_with_normalized_legacy_provider_id(
+def test_initialize_service_refuses_deferred_legacy_before_construction(
     monkeypatch,
 ) -> None:
-    """Drives the exact path the bug report described:
-    `ImprovedDictationWindow._initialize_service()` forwards
-    `self.settings["provider"]` straight into `LazyLiveDictationService`
-    unmodified, so if `_load_settings()` ever stopped normalizing, the
-    service itself would be constructed with the dead legacy id. Patches
-    only the service constructor (and the two calls `_initialize_service()`
-    makes on the constructed instance) plus `_show_status`, which otherwise
-    needs a mounted widget; no audio device is touched anywhere here.
-
-    Constructs the window via its real `__init__` rather than `__new__`:
-    `is_initialized`/`initialization_error` are Textual `reactive`
-    attributes, and `_initialize_service()` assigns to them on both its
-    success and failure paths, which raises `ReactiveError` on an instance
-    that skipped `Widget.__init__` (no mounting/DOM is otherwise needed --
-    `__init__` alone is enough to satisfy the reactive machinery). This also
-    means `get_cli_setting` must be patched *before* construction, since
-    `__init__` itself calls `_load_settings()`.
-    """
+    """A saved deferred alias refuses initialization before the service constructor."""
     import tldw_chatbook.UI.Dictation_Window_Improved as dwi
 
     monkeypatch.setattr(dwi, "get_cli_setting", _fake_get_cli_setting_legacy_provider)
@@ -188,36 +163,164 @@ def test_initialize_service_constructs_with_normalized_legacy_provider_id(
     window = dwi.ImprovedDictationWindow()
     window._show_status = lambda *_args, **_kwargs: None
 
-    assert window.settings["provider"] == "lightning-whisper-mlx"
-    assert window._initialize_service() is True
-    assert constructed_kwargs["transcription_provider"] == "lightning-whisper-mlx"
+    assert window.settings["provider"] == "lightning-whisper"
+    assert window._initialize_service() is False
+    assert constructed_kwargs == {}
+    assert window.dictation_service is None
+    assert "Your saved settings have not been changed." in window.initialization_error
 
 
-def test_provider_select_accepts_the_normalized_legacy_value() -> None:
-    """The dropdown must tolerate a normalized legacy value at init time.
-
-    `Select.value` raises `InvalidSelectValueError` when set (at mount, via
-    `_init_selected_option`) to something absent from its own options --
-    exactly what would happen if the raw legacy `"lightning-whisper"` config
-    value reached `Select(value=...)` unnormalized, since the production
-    window's option list has not offered that id since task-1282. Calls
-    `_init_selected_option` directly (the real method `_on_mount` uses) so
-    this exercises actual `Select` validation without needing a running app.
-    """
+@pytest.mark.parametrize("stored", ["lightning-whisper-mlx", "lightning-whisper"])
+def test_provider_select_accepts_only_its_retained_unavailable_value(stored) -> None:
+    """Only the exact saved deferred value is retained as an unavailable option."""
     from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow
-    from tldw_chatbook.Utils.local_stt_providers import normalize_provider_id
     from textual.widgets import Select
     from textual.widgets._select import InvalidSelectValueError
 
     window = ImprovedDictationWindow.__new__(ImprovedDictationWindow)
-    window.settings = {"privacy": {"local_only": True}}
+    window.settings = {"provider": stored, "privacy": {"local_only": True}}
     options = window._get_provider_options()
 
-    normalized = normalize_provider_id("lightning-whisper")
     select = Select(options=options, value=Select.NULL)
-    select._init_selected_option(normalized)  # must not raise
-    assert select.value == normalized
+    select._init_selected_option(stored)
+    assert select.value == stored
+    assert "unavailable" in next(label for label, value in options if value == stored).lower()
 
     unnormalized_select = Select(options=options, value=Select.NULL)
+    other = "lightning-whisper" if stored == "lightning-whisper-mlx" else "lightning-whisper-mlx"
     with pytest.raises(InvalidSelectValueError):
-        unnormalized_select._init_selected_option("lightning-whisper")
+        unnormalized_select._init_selected_option(other)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored", ["lightning-whisper-mlx", "lightning-whisper"])
+async def test_passive_provider_events_keep_raw_saved_selection_without_writes(monkeypatch, stored):
+    from textual.widgets import Button, Select
+
+    import tldw_chatbook.UI.Dictation_Window_Improved as dwi
+    from Tests.UI.test_dictation_settings_debounce import _DictationHarness
+
+    monkeypatch.setattr(dwi, "get_cli_setting", lambda section, key=None: stored if section == "dictation.provider" else key)
+    writes = []
+    monkeypatch.setattr(dwi, "save_settings_to_cli_config", writes.append)
+    monkeypatch.setattr(dwi, "LazyLiveDictationService", lambda **kwargs: pytest.fail("service created"))
+    async with _DictationHarness().run_test(size=(140, 60)) as pilot:
+        await pilot.pause()
+        view = pilot.app.query_one(dwi.ImprovedDictationWindow)
+        assert view.settings["provider"] == stored
+        assert view._settings_snapshot()["dictation"]["provider"] == stored
+        button = view.query_one("#dictation-toggle-btn", Button)
+        assert button.disabled
+        assert "Your saved settings have not been changed." in str(button.tooltip)
+        select = view.query_one("#provider-select", Select)
+        select.value = "faster-whisper"
+        select.post_message(Select.Changed(select, stored))
+        select.value = Select.NULL
+        select.set_options(view._get_provider_options())
+        select.value = stored
+        await pilot.pause()
+        assert view.settings["provider"] == stored
+        assert view.dictation_service is None
+        assert writes == []
+    assert writes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved", ["lightning-whisper", "auto"])
+async def test_deliberate_supported_replacement_persists_once_without_service_creation(
+    monkeypatch, saved
+):
+    import copy
+
+    from textual.widgets import Collapsible, Select
+
+    import tldw_chatbook.UI.Dictation_Window_Improved as dwi
+    from Tests.UI.test_dictation_settings_debounce import _DictationHarness
+
+    def setting(section, default=None):
+        if section == "dictation.provider":
+            return saved
+        if section == "transcription.default_provider":
+            return "lightning-whisper"
+        return default
+
+    monkeypatch.setattr(dwi, "get_cli_setting", setting)
+    writes = []
+    monkeypatch.setattr(dwi, "save_settings_to_cli_config", lambda snapshot: writes.append(copy.deepcopy(snapshot)))
+    monkeypatch.setattr(dwi, "LazyLiveDictationService", lambda **kwargs: pytest.fail("replacement initialized service"))
+    async with _DictationHarness().run_test(size=(140, 60)) as pilot:
+        await pilot.pause()
+        view = pilot.app.query_one(dwi.ImprovedDictationWindow)
+        for section in view.query(Collapsible):
+            section.collapsed = False
+        select = view.query_one("#provider-select", Select)
+        select.focus()
+        await pilot.press("enter", "home", "down", "down", "down", "enter")
+        await pilot.pause()
+        assert view.settings["provider"] == "faster-whisper"
+        assert view.dictation_service is None
+        assert view.is_initialized is False
+        await view.remove()
+    assert len(writes) == 1
+    assert writes[0]["dictation"]["provider"] == "faster-whisper"
+
+
+@pytest.mark.asyncio
+async def test_privacy_edit_refreshes_options_without_rewriting_saved_alias(monkeypatch):
+    from textual.widgets import Select, Switch
+
+    import tldw_chatbook.UI.Dictation_Window_Improved as dwi
+    from Tests.UI.test_dictation_settings_debounce import _DictationHarness
+
+    monkeypatch.setattr(dwi, "get_cli_setting", _fake_get_cli_setting_legacy_provider)
+    writes = []
+    monkeypatch.setattr(dwi, "save_settings_to_cli_config", writes.append)
+    async with _DictationHarness().run_test(size=(140, 60)) as pilot:
+        await pilot.pause()
+        view = pilot.app.query_one(dwi.ImprovedDictationWindow)
+        view.query_one("#local-only-switch", Switch).value = False
+        await pilot.pause()
+        assert view.query_one("#provider-select", Select).value == "lightning-whisper"
+        await view.remove()
+    assert len(writes) == 1
+    assert writes[0]["dictation.privacy"]["local_only"] is False
+    assert writes[0]["dictation"]["provider"] == "lightning-whisper"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retired", [False, True])
+async def test_replacement_keeps_existing_service_and_terminal_retirement(monkeypatch, retired):
+    from types import SimpleNamespace
+
+    from textual.widgets import Collapsible, Select
+
+    import tldw_chatbook.UI.Dictation_Window_Improved as dwi
+    from Tests.UI.test_dictation_settings_debounce import _DictationHarness
+
+    monkeypatch.setattr(dwi, "get_cli_setting", _fake_get_cli_setting_legacy_provider)
+    writes = []
+    monkeypatch.setattr(dwi, "save_settings_to_cli_config", writes.append)
+    owner = SimpleNamespace(
+        state=dwi.DictationState.IDLE,
+        processing_thread=None,
+        abandon=lambda: pytest.fail("replacement abandoned an existing owner"),
+    )
+    async with _DictationHarness().run_test(size=(140, 60)) as pilot:
+        await pilot.pause()
+        view = pilot.app.query_one(dwi.ImprovedDictationWindow)
+        view.dictation_service = owner
+        if retired:
+            view.cleanup()
+        for section in view.query(Collapsible):
+            section.collapsed = False
+        select = view.query_one("#provider-select", Select)
+        select.focus()
+        await pilot.press("enter", "home", "down", "down", "down", "enter")
+        await pilot.pause()
+        assert view.settings["provider"] == "lightning-whisper"
+        assert view.dictation_service is owner
+        assert view._retired is retired
+        assert writes == []
+    assert view._retired is True
+    assert view.dictation_service is owner
+    assert writes == []

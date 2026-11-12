@@ -17,10 +17,14 @@ RULES = st.lists(
     st.fixed_dictionaries(
         {
             "rule_kind": st.sampled_from(["mcp_tool", "skill"]),
-            "rule_name": st.sampled_from(["fs_write", "web_search", "fs_*", "web_*", "x*"]),
+            "rule_name": st.sampled_from(
+                ["fs_write", "web_search", "fs_*", "web_*", "x*"]
+            ),
             "allowed": st.booleans(),
             "require_confirmation": st.booleans(),
-            "max_calls_per_turn": st.one_of(st.none(), st.integers(min_value=1, max_value=9)),
+            "max_calls_per_turn": st.one_of(
+                st.none(), st.integers(min_value=1, max_value=9)
+            ),
         }
     ),
     max_size=6,
@@ -29,7 +33,9 @@ NAMES = st.sampled_from(["fs_write", "fs_read", "web_search", "web_fetch", "unre
 
 
 def baseline(name):
-    return evaluate_tool_policy(PersonaToolPolicy(), rule_kind="mcp_tool", tool_name=name)
+    return evaluate_tool_policy(
+        PersonaToolPolicy(), rule_kind="mcp_tool", tool_name=name
+    )
 
 
 @given(rules=RULES, name=NAMES)
@@ -61,30 +67,45 @@ def test_deny_by_default_when_kind_rules_present():
 def test_explicit_denial_wins_and_confirmation_ors():
     policy = parse_persona_policy_from_rules(
         [
-            {"rule_kind": "mcp_tool", "rule_name": "web_*", "allowed": True,
-             "require_confirmation": True, "max_calls_per_turn": 4},
+            {
+                "rule_kind": "mcp_tool",
+                "rule_name": "web_*",
+                "allowed": True,
+                "require_confirmation": True,
+                "max_calls_per_turn": 4,
+            },
             {"rule_kind": "mcp_tool", "rule_name": "web_search", "allowed": False},
         ]
     )
     verdict = evaluate_tool_policy(policy, rule_kind="mcp_tool", tool_name="web_search")
     assert verdict.advertised is False
     other = evaluate_tool_policy(policy, rule_kind="mcp_tool", tool_name="web_fetch")
-    assert other.advertised and other.requires_confirmation and other.max_calls_per_turn == 4
+    assert (
+        other.advertised
+        and other.requires_confirmation
+        and other.max_calls_per_turn == 4
+    )
 
 
 def test_bounded_wildcard_is_prefix_only():
     policy = parse_persona_policy_from_rules(
         [{"rule_kind": "mcp_tool", "rule_name": "fs_*", "allowed": False}]
     )
-    assert not evaluate_tool_policy(policy, rule_kind="mcp_tool", tool_name="fs_list").advertised
-    assert evaluate_tool_policy(policy, rule_kind="mcp_tool", tool_name="git_status").advertised
+    assert not evaluate_tool_policy(
+        policy, rule_kind="mcp_tool", tool_name="fs_list"
+    ).advertised
+    assert evaluate_tool_policy(
+        policy, rule_kind="mcp_tool", tool_name="git_status"
+    ).advertised
 
 
 def test_skill_rules_do_not_affect_mcp_tools():
     policy = parse_persona_policy_from_rules(
         [{"rule_kind": "skill", "rule_name": "deep-research", "allowed": False}]
     )
-    assert evaluate_tool_policy(policy, rule_kind="mcp_tool", tool_name="fs_read").advertised
+    assert evaluate_tool_policy(
+        policy, rule_kind="mcp_tool", tool_name="fs_read"
+    ).advertised
 
 
 def test_floor_state_only_lowers_allow():
@@ -95,9 +116,14 @@ def test_floor_state_only_lowers_allow():
     floored = persona_floor_state(allowed, policy, "web_search")
     assert (floored.state, floored.origin) == ("ask", "persona_policy")
     # deny/ask pass through untouched; non-matching tool untouched
-    assert persona_floor_state(
-        EffectiveToolState(state="deny", origin="tool_override"), policy, "web_search"
-    ).state == "deny"
+    assert (
+        persona_floor_state(
+            EffectiveToolState(state="deny", origin="tool_override"),
+            policy,
+            "web_search",
+        ).state
+        == "deny"
+    )
     assert persona_floor_state(allowed, policy, "fs_read") is allowed
 
 
@@ -113,9 +139,7 @@ def test_invalid_rules_are_dropped_with_metadata_only_warnings():
             self.records.append(str(message))
 
     handler = _Handler()
-    logger_id = logger.add(
-        handler, level="WARNING"
-    )
+    logger_id = logger.add(handler, level="WARNING")
     try:
         policy = parse_persona_policy_from_rules(
             [

@@ -32,7 +32,9 @@ def test_runtime_snapshot_is_defensive_and_advances_after_successful_save(
         encoding="utf-8",
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
-    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
     _reset_config_state()
 
     before = config.get_runtime_config_snapshot(force_reload=True)
@@ -59,7 +61,9 @@ def test_concurrent_runtime_reads_never_observe_file_cache_split(
     target = tmp_path / "config.toml"
     target.write_text('[chat_defaults]\nprovider = "before"\n', encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
-    monkeypatch.setattr(sys.modules[__name__], "config", install_config_source(monkeypatch))
+    monkeypatch.setattr(
+        sys.modules[__name__], "config", install_config_source(monkeypatch)
+    )
     _reset_config_state()
     initial = config.get_runtime_config_snapshot(force_reload=True)
 
@@ -85,15 +89,12 @@ def test_concurrent_runtime_reads_never_observe_file_cache_split(
         reader_futures = [executor.submit(reader) for _ in range(3)]
         writer_future.result()
         observations = [
-            observation
-            for future in reader_futures
-            for observation in future.result()
+            observation for future in reader_futures for observation in future.result()
         ]
 
     assert all(generation >= initial.generation for generation, _ in observations)
     assert all(
-        value == "before" or value.startswith("provider-")
-        for _, value in observations
+        value == "before" or value.startswith("provider-") for _, value in observations
     )
     assert config.get_runtime_config_snapshot().values["chat_defaults"]["provider"] == (
         "provider-11"
@@ -102,12 +103,12 @@ def test_concurrent_runtime_reads_never_observe_file_cache_split(
 
 def test_storage_default_and_console_session_contract_sources_remain_separate():
     package_root = Path(config.__file__).parent
-    storage_source = (
-        package_root / "UI" / "Screens" / "settings_screen.py"
-    ).read_text(encoding="utf-8")
-    session_source = (
-        package_root / "Chat" / "console_session_settings.py"
-    ).read_text(encoding="utf-8")
+    storage_source = (package_root / "UI" / "Screens" / "settings_screen.py").read_text(
+        encoding="utf-8"
+    )
+    session_source = (package_root / "Chat" / "console_session_settings.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "changes apply on next launch" in storage_source.lower()
     assert "session" in session_source.lower()

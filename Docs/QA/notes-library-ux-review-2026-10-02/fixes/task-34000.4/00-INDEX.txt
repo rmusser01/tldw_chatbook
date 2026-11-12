@@ -1,0 +1,37 @@
+TASK-34000.4 (review finding L-01) -- live and test evidence, 2026-10-04/05
+Harness: the review's isolated nlrev harness (own HOME/XDG/config/DB paths per run), tmux sockets w1b-t1-<k>.
+Code under test in 01-74 and 83: origin/dev 8c4dfe59a2 + this task's final working tree (2026-10-05, after the
+WIP checkpoint was finished: fallback at the open-surface seam, guard wired at all five Library seams). Plain
+.txt pane captures; the four "keyboard-export-focused" captures also keep .ansi, because focus is a style
+("┃ Export… ┃", bold underline). Driver: a scripted tmux route per profile/size (mouse clicks by cell,
+keyboard = Tab until the Export… button holds focus, then Enter; keys sent the way the terminal does).
+
+Golden profile, 160x45 (socket w1b-t1-1)
+  01 Media list                        02 Export canvas after a MOUSE click on Export… ("Media · 23 items")
+  03 F1 help over Export               04 Ctrl+P palette over Export
+  05 Escape -> back on the Media list  06 rail navigation afterwards (Notes)
+  07 Export… holding keyboard focus    08 Export canvas after ENTER on the focused button
+  09 F1 / 10 Ctrl+P / 11 Escape back, keyboard route
+  12 the Export canvas repainted after resizing the terminal 160x45 -> 120x36
+  13 Export canvas from the rail's Export row          -- AC#2 comparison
+  14 Export canvas from select mode (Select all 20)    -- AC#2 comparison
+  15 Ctrl+Q exited the app; run-log counts (0 tracebacks, 0 ERROR/CRITICAL)
+Golden profile, 120x36 (w1b-t1-2): 20 Media list; 21-24 mouse route; 25 rail navigation (Notes); 26-30 keyboard
+  route; 31 repaint after resizing 120x36 -> 160x45; 32 Ctrl+Q + run-log counts
+Fresh profile + one imported .md, 160x45 (w1b-t1-3): 40 empty landing; 41 ideas.md imported; 42 Media (1);
+  43-46 mouse route; 47 rail navigation; 48-52 keyboard route; 53 repaint after resize; 54 Ctrl+Q + run-log counts
+Fresh profile + one imported .md, 120x36 (w1b-t1-4): 60-62 landing / import / Media (1); 63-66 mouse route;
+  67 rail navigation; 68-72 keyboard route; 73 repaint after resize; 74 Ctrl+Q + run-log counts
+
+Probes and tests
+  80  which awaited removals ever finish on Textual 8.2.8 (two result tables); 80a/80b the probe sources
+  81  the AC#4 regression test: green on the unmodified base, red (bounded) with the review-era await restored,
+      red (bounded) on the review's own commit 2d34cbf80d
+  82  the guard tests against five mutations in one run, each named by its own test
+  83  the final targeted test pass on this branch, with the PR UI lane file's solo timing
+
+Controls, same harness and clicks, golden 160x45
+  90-92 the commit the review ran against, 2d34cbf80d: Export… freezes the app (the P0, reproduced; 2026-10-04)
+  93-94 this wave's base, 8c4dfe59a2, unmodified: Export… opens -- already fixed there by 3cee32b3d0 (2026-10-04)
+  95-97 this branch's final code with the defect put back in a scratch copy: refused, Export opens through the
+        open-surface seam's fallback, one ERROR line names the canvas, no freeze (2026-10-05)

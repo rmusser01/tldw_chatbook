@@ -1,0 +1,4 @@
+{
+  "sha256": "92d533458ef440f13c8a948378363995951515e307feed0829f51d8cf7ebee60",
+  "raw_text": "def mounted_approval_rows(console):\n    return list(console.query(\".approval-row\"))\n"
+}

@@ -1,0 +1,15 @@
+{
+  "args": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "scripts/check_persistent_diagnostic_inventory.py"
+  ],
+  "exit_code": 0,
+  "stdout": "diagnostic inventory verified: 701 owners, 1053 TASK-492 calls, 56 TASK-31551 calls, 7767 TASK-494 calls, 16 sink files\n",
+  "stderr": "",
+  "raw_tool_chunk": "a8d739",
+  "base": "38c9d2edcf10bc69d0d7597514fa319db7e4ccd2",
+  "all_other_owners_privacy_sinks_conserved": true,
+  "only_changed_owner": "tldw_chatbook/UI/Library_Modules/library_file_export.py"
+}

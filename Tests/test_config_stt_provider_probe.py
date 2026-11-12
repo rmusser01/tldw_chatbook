@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
     ("installed", "expected"),
     [
         (("parakeet_mlx", "lightning_whisper_mlx"), "parakeet-mlx"),
-        (("lightning_whisper_mlx",), "lightning-whisper-mlx"),
+        (("lightning_whisper_mlx",), "faster-whisper"),
         ((), "faster-whisper"),
     ],
 )
@@ -133,9 +134,8 @@ def test_non_macos_stt_default_fallback_is_hyphenated(
         monkeypatch: pytest's monkeypatch fixture; sets `TLDW_CONFIG_PATH`
             and forces `config_module.sys.platform` to `"linux"`.
     """
-    from tldw_chatbook import config as config_module
 
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+    config_module = select_config_source(monkeypatch, tmp_path / "config.toml")
     config_module._CONFIG_CACHE = None
     config_module._CONFIG_CACHE_SOURCE = None
     config_module._SETTINGS_CACHE = None
@@ -151,7 +151,7 @@ def test_non_macos_stt_default_fallback_is_hyphenated(
     ("installed", "expected"),
     [
         (("parakeet_mlx", "lightning_whisper_mlx"), "parakeet-mlx"),
-        (("lightning_whisper_mlx",), "lightning-whisper-mlx"),
+        (("lightning_whisper_mlx",), "faster-whisper"),
         ((), "faster-whisper"),
     ],
 )
@@ -286,7 +286,6 @@ def test_existing_transcription_default_provider_is_respected_and_file_not_rewri
     never returns, so this cannot pass by coincidentally matching whatever
     this host's own platform default happens to be.
     """
-    from tldw_chatbook import config as config_module
 
     config_path = tmp_path / "config.toml"
     config_path.write_text(
@@ -294,7 +293,7 @@ def test_existing_transcription_default_provider_is_respected_and_file_not_rewri
         encoding="utf-8",
     )
     before_bytes = config_path.read_bytes()
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module = select_config_source(monkeypatch, config_path)
 
     resolved = config_module.get_cli_setting("transcription", "default_provider", None)
 

@@ -20,6 +20,7 @@ def _painted(host, widget):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("control", ["title", "encoding", "details", "recent"])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -90,6 +91,7 @@ async def test_import_resize_preserves_visible_control_and_draft_without_data_wo
         preflight.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outside_import", [False, True])
 @pytest.mark.parametrize("size", [(80, 24), (170, 24)])

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import json
 
+import httpx
 import pytest
 
 import tldw_chatbook.Chat.Chat_Functions as chat_functions
@@ -13,7 +15,6 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
     build_project_instruction_deferral_rows,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
-
 
 _CONTEXT = "NESTED_GRAMMAR_SENTINEL"
 _CANONICAL_NATIVE_ROWS = [
@@ -36,13 +37,11 @@ _CANONICAL_NATIVE_ROWS = [
     {
         "role": "tool",
         "tool_call_id": "call-a",
-        "name": "fs_read",
         "content": "deferred-a",
     },
     {
         "role": "tool",
         "tool_call_id": "call-b",
-        "name": "fs_list",
         "content": "deferred-b",
     },
     {
@@ -150,3 +149,184 @@ def test_final_handler_boundary_never_exposes_internal_marker(monkeypatch, endpo
     sent = seen[payload_key]
     assert all(marker_aware or EPHEMERAL_ORIGIN_KEY not in row for row in sent)
     assert _CANONICAL_NATIVE_ROWS[-1][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
+
+
+@pytest.mark.asyncio
+async def test_native_review_read_deferral_resumes_through_strict_hosted_payload():
+    """A context-only retry must reach the next request without dispatching early."""
+    from tldw_chatbook.Agents.agent_models import (
+        RUN_DONE,
+        AgentConfig,
+        ModelTurn,
+        ToolResult,
+    )
+    from tldw_chatbook.Agents.agent_runtime import (
+        LoopDeps,
+        ToolBatchPreparation,
+        run_agent_loop,
+    )
+    from tldw_chatbook.Agents.project_instruction_runtime import (
+        PROJECT_INSTRUCTION_ROW_KEY,
+        InstructionDeliveryReceipt,
+    )
+    from tldw_chatbook.Chat.console_prepared_request import thaw_json
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderResolution,
+    )
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+        HostedProviderResolution,
+        build_hosted_chat_payload,
+    )
+    from tldw_chatbook.provider_registry import CUSTOM_HOSTED
+
+    def no_network(_request):
+        raise AssertionError("offline regression must not dispatch HTTP")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(no_network))
+    gateway = ConsoleProviderGateway(
+        http_client=client, config_provider=dict, environ={}
+    )
+    resolution = ConsoleProviderResolution(
+        provider="custom-ep:ac24-local",
+        execution_key="custom-hosted",
+        model="qwen",
+        base_url="http://127.0.0.1:8010/v1",
+        ready=True,
+        max_tokens=1024,
+    )
+    hosted = HostedProviderResolution(
+        provider="custom-hosted",
+        model="qwen",
+        api_key="",
+        base_url=resolution.base_url,
+        timeout=1.0,
+        retries=0,
+        retry_delay=0.0,
+        streaming=True,
+    )
+    context = {
+        "role": "user",
+        "content": _CONTEXT,
+        EPHEMERAL_ORIGIN_KEY: "project_instructions",
+        PROJECT_INSTRUCTION_ROW_KEY: "review-source-context",
+    }
+    receipt = InstructionDeliveryReceipt(
+        receipt_id="review-source-receipt",
+        chain_id="verification-continuation",
+        through_revision=1,
+        source_digests=(),
+        outcome_keys=(),
+        row_keys=("review-source-context",),
+    )
+
+    def native_turn(ids):
+        calls = tuple(
+            ToolCall("code_review_read", {"view": "source"}, cid) for cid in ids
+        )
+        return ModelTurn(
+            tool_calls=calls,
+            assistant_message={
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": c.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": c.name,
+                            "arguments": json.dumps(c.args),
+                        },
+                    }
+                    for c in calls
+                ],
+            },
+        )
+
+    turns = iter(
+        [
+            native_turn(("deferred-a", "deferred-b")),
+            native_turn(("accepted-a",)),
+            ModelTurn(text="done"),
+        ]
+    )
+    payloads, reviewed, executed = [], [], []
+
+    def call_model(messages, _active):
+        original = copy.deepcopy(messages)
+        rows = console_agent_bridge._serialize_project_instruction_rows_for_transport(
+            messages, native_tools=True
+        )
+        prepared = gateway.prepare_chat_request(
+            resolution,
+            rows,
+            context_window_override_tokens=32768,
+            apply_safety_window=False,
+        )
+        handler_kwargs = chat_functions.project_chat_handler_kwargs(
+            "custom-hosted",
+            {"messages_payload": thaw_json(prepared.messages_payload)},
+        )
+        payloads.append(
+            build_hosted_chat_payload(
+                CUSTOM_HOSTED,
+                resolution=hosted,
+                messages_payload=handler_kwargs["input_data"],
+                system_message=prepared.system_message,
+            )
+        )
+        assert messages == original
+        return next(turns)
+
+    def prepare(calls):
+        if calls[0].call_id == "deferred-a":
+            return ToolBatchPreparation("retry_with_context", (context,), receipt)
+        return ToolBatchPreparation("proceed")
+
+    try:
+        outcome = run_agent_loop(
+            AgentConfig(
+                model="qwen", system_prompt="", allowed_tools=("code_review_read",)
+            ),
+            [{"role": "user", "content": "Continue the admitted verification"}],
+            [],
+            LoopDeps(
+                call_model=call_model,
+                prepare_tool_calls=prepare,
+                review_tool_calls=lambda calls: (
+                    reviewed.extend(c.call_id for c in calls) or {}
+                ),
+                invoke_tool=lambda call: (
+                    executed.append(call.call_id)
+                    or ToolResult(ok=True, content="captured source")
+                ),
+                spawn=lambda _task: ToolResult(
+                    ok=False, error="no child in this control"
+                ),
+                find_tools=lambda _query: [],
+                load_schemas=lambda _ids: [],
+                should_cancel=lambda: False,
+                clock=lambda: 0.0,
+            ),
+        )
+        assert outcome.status == RUN_DONE and outcome.final_text == "done"
+        assert reviewed == executed == ["accepted-a"]
+        deferred = payloads[1]["messages"][-3:]
+        assert [row["role"] for row in deferred] == ["tool", "tool", "user"]
+        assert [row["tool_call_id"] for row in deferred[:2]] == [
+            "deferred-a",
+            "deferred-b",
+        ]
+        assert all(
+            set(row) == {"role", "tool_call_id", "content"} for row in deferred[:2]
+        )
+        assert all(_CONTEXT not in row["content"] for row in deferred[:2])
+        assert deferred[-1] == {"role": "user", "content": _CONTEXT}
+        assert payloads[-1]["messages"][-1] == {
+            "role": "tool",
+            "tool_call_id": "accepted-a",
+            "content": "captured source",
+        }
+    finally:
+        await gateway.aclose()
+        await client.aclose()

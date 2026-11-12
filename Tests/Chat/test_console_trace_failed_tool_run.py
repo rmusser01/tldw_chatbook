@@ -165,6 +165,7 @@ def _prior_evidence(app):
     return calls, requests
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("project_enabled", [False, True])
 @pytest.mark.parametrize("bypass", [0, 1])
 async def test_captured_sends_after_failed_empty_tool_run(
@@ -219,6 +220,7 @@ async def test_captured_sends_after_failed_empty_tool_run(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "tamper",
     [
@@ -495,6 +497,7 @@ async def test_closed_history_is_revalidated_before_dispatch(
         assert _prior_evidence(app) == original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("project_enabled", [False, True])
 @pytest.mark.parametrize("transform", [False, True])
 async def test_failed_history_with_discarded_and_uncaptured_followups(
@@ -510,6 +513,7 @@ async def test_failed_history_with_discarded_and_uncaptured_followups(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("project_enabled", [False, True])
 @pytest.mark.parametrize("cold", [False, True])
 async def test_guard_stopped_search_allows_next_capture(
@@ -623,6 +627,7 @@ async def test_guard_stopped_search_allows_next_capture(
         web_tool_impls._reset_state_for_tests()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("project_enabled", [False, True])
 @pytest.mark.parametrize("cold", [False, True])
 @pytest.mark.parametrize("change_discard_at_binding", [False, True])

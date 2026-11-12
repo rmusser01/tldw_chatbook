@@ -130,6 +130,7 @@ def _workflow_matrix_rows(evidence: str) -> dict[str, list[str]]:
     return rows
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> None:
     """Verify power-user paths can be repeated through deterministic shell seams."""

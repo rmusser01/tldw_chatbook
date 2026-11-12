@@ -281,6 +281,34 @@ def test_repaint_capture_discards_cumulative_stream_before_fresh_state(
     assert writes == [b"\x0c"]
 
 
+def test_fresh_repaint_waits_past_first_quiet_interval_for_paint(monkeypatch):
+    probe = _load_probe_module()
+    state = b"\x1b[2J\x1b[Hfresh state\x1b[0m"
+    requested = False
+    delivered = False
+    waits = []
+
+    def request_repaint():
+        nonlocal requested
+        requested = True
+
+    def select_ready(readable, _write, _errors, timeout):
+        if not requested or delivered:
+            return [], [], []
+        waits.append(timeout)
+        return (readable if timeout >= 0.10 else []), [], []
+
+    def read_state(_fd):
+        nonlocal delivered
+        delivered = True
+        return state
+
+    monkeypatch.setattr(probe.select, "select", select_ready)
+    monkeypatch.setattr(probe, "_read_pty", read_state)
+    assert probe._capture_fresh_repaint(7, request_repaint) == state
+    assert len(waits) == 1 and 0.10 <= waits[0] <= 0.50
+
+
 def test_drain_helpers_treat_linux_eio_as_clean_eof(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

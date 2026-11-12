@@ -1,0 +1,10 @@
+from common import *
+p='backlog/docs/lessons-backlog-hygiene.md';old=blob(OLD,p);base=blob(BASE,p);new=blob(NEW,p)
+assert base.startswith(old) and new.startswith(old)
+assert len(base)-len(old)==869 and len(new)-len(old)==682
+candidate=base+new[len(old):];assert sha(candidate)=='49f6324c6348519e418d883b8c78b80d5c4dbc2a340c2318ed4edab26b3d1f97'
+assert git('diff','--name-only','--diff-filter=U').decode().splitlines()==[p]
+(O/'rebase-conflict.patch').write_bytes(git('diff','--cc','--',p))
+dump('lesson-union.json',{'path':p,'current_rebase_head':git('rev-parse','HEAD').decode().strip(),'replayed_commit':git('rev-parse','REBASE_HEAD').decode().strip(),'base_sha256':sha(base),'upstream_sha256':sha(new),'feature_append_bytes':869,'incoming_append_bytes':682,'candidate_sha256':sha(candidate),'reverse_feature_append_restores_exact_upstream':candidate[:len(old)]+candidate[len(base):]==new})
+(W/p).write_bytes(candidate);git('add','--',p)
+sys.exit(run('rebase-continue',['git','-c','gc.auto=0','rebase','--continue'],{'GIT_EDITOR':'true'}))

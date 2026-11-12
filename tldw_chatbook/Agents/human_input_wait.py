@@ -1,4 +1,4 @@
-"""Run-scoped marks for waits on a HUMAN decision (ADR-067).
+"""Run-scoped marks for waits on a HUMAN decision (ADR-314).
 
 Three blocking prompts arm a card and then poll for the user's answer:
 the tool approval round (``ConsoleChatController.request_mcp_approvals``),
@@ -82,4 +82,4 @@ def human_input_wait_active(run_id: str | None) -> bool:
         True while at least one wait holds the mark. Never raises.
     """
     with _WAIT_LOCK:
-        return (_WAIT_REFCOUNTS.get(run_id or "", 0) > 0)
+        return _WAIT_REFCOUNTS.get(run_id or "", 0) > 0

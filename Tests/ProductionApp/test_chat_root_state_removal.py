@@ -20,7 +20,7 @@ from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from Tests.console_provider_doubles import with_destination
@@ -97,15 +97,19 @@ class _BlockingProviderGateway:
         self._block_forever = asyncio.Event()
 
     async def resolve_for_send(self, selection) -> ConsoleProviderResolution:
-        return with_destination(ConsoleProviderResolution(
-            provider=selection.provider,
-            base_url="",
-            model=(
-                selection.explicit_model or selection.configured_model or "gpt-task-650"
-            ),
-            ready=True,
-            execution_key="openai",
-        ))
+        return with_destination(
+            ConsoleProviderResolution(
+                provider=selection.provider,
+                base_url="",
+                model=(
+                    selection.explicit_model
+                    or selection.configured_model
+                    or "gpt-task-650"
+                ),
+                ready=True,
+                execution_key="openai",
+            )
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         del resolution, messages

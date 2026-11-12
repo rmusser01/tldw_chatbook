@@ -8,22 +8,22 @@ from ..Backup_Recovery import raw_participants as raw
 
 def read_templates():
     """Read selected user templates; shipped fallback remains a separate source."""
-    with raw._scope(sys.modules[__name__], "note_templates") as operation:
-        selected = raw._selected(operation)
-        with raw._file(operation, selected, "r") as stream:
+    with raw.scope(sys.modules[__name__], "note_templates") as operation:
+        selected = raw.selected_target(operation)
+        with raw.file(operation, selected, "r") as stream:
             data = json.load(stream)
         return data.get("templates", data)
 
 
 def merge_templates(entries, *, unique=False, selected=None):
     """Reread and publish one complete merge; return only committed keys/count."""
-    with raw._scope(
+    with raw.scope(
         sys.modules[__name__], "note_templates", writing=True, selected_read=selected
     ) as operation:
-        destination = raw._selected(operation)
-        raw._mkdirs(operation)
+        destination = raw.selected_target(operation)
+        raw.mkdirs(operation)
         try:
-            with raw._file(operation, destination, "r") as stream:
+            with raw.file(operation, destination, "r") as stream:
                 data = json.load(stream)
                 templates = data.get("templates", data)
         except FileNotFoundError:
@@ -41,11 +41,11 @@ def merge_templates(entries, *, unique=False, selected=None):
             keys.append(key)
         temporary = destination.with_suffix(destination.suffix + ".tmp")
         try:
-            with raw._file(operation, temporary, "w") as stream:
+            with raw.file(operation, temporary, "w") as stream:
                 json.dump(
                     {"templates": templates}, stream, indent=2, ensure_ascii=False
                 )
-            raw._replace(operation, temporary, destination)
+            raw.replace(operation, temporary, destination)
         finally:
-            raw._remove_temporary(operation, temporary)
+            raw.remove_temporary(operation, temporary)
         return keys, len(templates)

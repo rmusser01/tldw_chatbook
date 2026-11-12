@@ -1,0 +1,28 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____________ test_before_user_after_preserves_braces_and_whitespace ____________
+
+    def test_before_user_after_preserves_braces_and_whitespace():
+>       from tldw_chatbook.Chat.console_prompt_mixins import compose_mixin_content
+E       ImportError: cannot import name 'compose_mixin_content' from 'tldw_chatbook.Chat.console_prompt_mixins' (/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/console_prompt_mixins.py)
+
+Tests/Chat/test_console_prompt_mixin_composition.py:18: ImportError
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 14:27:17.545 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-01 14:27:17.586 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-01 14:27:17.628 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-01 14:27:17.629 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_________ test_multipart_preserves_original_parts_and_does_not_mutate __________
+
+    def test_multipart_preserves_original_parts_and_does_not_mutate():
+>       from tldw_chatbook.Chat.console_prompt_mixins import compose_mixin_content
+E       ImportError: cannot import name 'compose_mixin_content' from 'tldw_chatbook.Chat.console_prompt_mixins' (/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/console_prompt_mixins.py)
+
+Tests/Chat/test_console_prompt_mixin_composition.py:27: ImportError
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_composition.py::test_before_user_after_preserves_braces_and_whitespace
+FAILED Tests/Chat/test_console_prompt_mixin_composition.py::test_multipart_preserves_original_parts_and_does_not_mutate
+2 failed in 0.35s

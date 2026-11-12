@@ -1,0 +1,10 @@
+index plan pins: 308 index names declared under tldw_chatbook/DB, 306 census rows, 88 plan-pinned.
+
+FAIL: 2 index(es) are created but absent from scripts/index_plan_pin_census.tsv.
+  Adding an index is a query-plan decision, not a schema detail: with no sqlite_stat1
+  the planner may simply never choose it (TASK-21126 shipped 5 MB of dead index that way).
+  Capture EXPLAIN QUERY PLAN on a corpus with sqlite_stat1 ABSENT, then paste ONE of:
+    idx_automatic_chains_allowance_root	plan-pinned	<test file> (tldw_chatbook/DB/AgentRuns_DB.py, tldw_chatbook/DB/migrations/agent_runs_v21_to_v22_chat_starts.sql, tldw_chatbook/DB/recovery_operations.py)
+    idx_automatic_chains_allowance_root	pre-convention	<why no plan pin> (tldw_chatbook/DB/AgentRuns_DB.py, tldw_chatbook/DB/migrations/agent_runs_v21_to_v22_chat_starts.sql, tldw_chatbook/DB/recovery_operations.py)
+    idx_automatic_chat_start_conversation_active	plan-pinned	<test file> (tldw_chatbook/DB/AgentRuns_DB.py, tldw_chatbook/DB/migrations/agent_runs_v21_to_v22_chat_starts.sql, tldw_chatbook/DB/recovery_operations.py)
+    idx_automatic_chat_start_conversation_active	pre-convention	<why no plan pin> (tldw_chatbook/DB/AgentRuns_DB.py, tldw_chatbook/DB/migrations/agent_runs_v21_to_v22_chat_starts.sql, tldw_chatbook/DB/recovery_operations.py)

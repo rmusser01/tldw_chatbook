@@ -1,0 +1,373 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 62,
+      "row": 422
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport dataclasses\nfrom collections.abc import Mapping\nfrom pathlib import Path\nfrom typing import TYPE_CHECKING, Any, Literal\n\nfrom loguru import logger\nfrom textual import on\nfrom textual.css.query import NoMatches, QueryError\nfrom textual.widget import Widget\nfrom textual.widgets import (\n    Button,\n    Checkbox,\n    Collapsible,\n    Input,\n    Select,\n    Static,\n    TextArea,\n)\nfrom textual.worker import Worker\n\nfrom tldw_chatbook.Utils.input_validation import escape_markup\n\nfrom ...DB.Prompts_DB import ConflictError as PromptConflictError\nfrom ...Library.library_export_scope import ExportScope\nfrom ...Library.library_prompts_state import (\n    DEFAULT_PROMPT_BROWSE_PAGE_SIZE,\n    PromptBrowseResult,\n    PromptBrowseScope,\n    PromptEditorState,\n    PromptHistoryRestoreRequest,\n    PromptHistoryState,\n    PromptSelectionBasket,\n    PromptSelectionEntry,\n    build_prompt_editor_state,\n    classify_prompt_save_error,\n    prepare_mixin_artifact_save,\n    prepare_prompt_artifact_save,\n    prompt_basic_unavailable_reason,\n    prompt_editor_meta_line,\n    require_artifact_save_supported,\n)\nfrom ...Library.library_shell_state import (\n    LIBRARY_ROW_BROWSE_PROMPTS,\n    LIBRARY_ROW_CREATE_PROMPT,\n    library_choice_label,\n)\nfrom ...Prompt_Management.prompt_artifact_codec import deserialize_definition\nfrom ...Prompt_Management.prompt_artifact_models import ArtifactType\nfrom ...Prompt_Management.prompt_batch_models import (\n    PromptBatchDeleteResult,\n    PromptBatchRestoreResult,\n    PromptBatchTarget,\n)\nfrom ...Prompt_Management.prompt_markdown_export import render_prompt_markdown\nfrom ...Third_Party.textual_fspicker import FileOpen, FileSave\nfrom ...Utils.adaptive_reader_state import resolve_adaptive_reader_layout\nfrom ...Widgets.confirmation_dialog import ConfirmationDialog\nfrom ...Widgets.Library import (\n    PROMPT_DISCARD_TOOLTIP_BUSY,\n    PROMPT_DISCARD_TOOLTIP_CLEAN,\n    PROMPT_DISCARD_TOOLTIP_DIRTY,\n    LibraryAdaptiveReaderShell,\n    LibraryPromptsListCanvas,\n    LibraryPromptWorkPane,\n)\nfrom ...Widgets.Library.prompt_delete_confirmation_modal import (\n    PromptDeleteConfirmationModal,\n    PromptDeleteItem,\n    PromptDeleteRequest,\n)\nfrom ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor\nfrom ...Widgets.Prompts.prompt_block_editor_state import (\n    PromptBlockEditorState,\n    set_artifact_type,\n)\nfrom ...Widgets.Prompts.prompt_mixin_editor import PromptMixinEditor\nfrom .canvas_sync import _sync_library_canvas\nfrom .library_prompts_state import LibraryPromptsState, prompt_state_shim_attr\nfrom .prompt_history_region import LibraryPromptHistoryRegion\nfrom .screen_constants import (\n    _LIBRARY_PROMPT_WRITE_IN_PROGRESS_COPY,\n    _LIBRARY_PROMPT_WRITE_WORKER_GROUPS,\n    _LIBRARY_PROMPTS_IMPORT_WORKER_GROUP,\n    _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS,\n    LIBRARY_PROMPT_DIRTY_VETO_COPY,\n    LIBRARY_PROMPT_ENTRY_DIRTY_VETO_COPY,\n    LIBRARY_PROMPT_SAVE_STATUS_COPY,\n    LIBRARY_PROMPT_TEXT_MAX_CHARS,\n    LIBRARY_PROMPTS_READER_PROFILE,\n)\nfrom .screen_support_types import LibraryEntryReconcileResult\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 424
+          },
+          "location": {
+            "column": 1,
+            "row": 337
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 337
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 337,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 32,
+      "row": 444
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "LibraryScreen",
+          "end_location": {
+            "column": 32,
+            "row": 444
+          },
+          "location": {
+            "column": 17,
+            "row": 444
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 17,
+      "row": 444
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 444,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 925
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 925
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 925,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 2100
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2100
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 2100,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 3399
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 3399
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 3399,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 3436
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 3436
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 3436,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 3482
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 3482
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 3482,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 72,
+      "row": 3922
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "        from .library_file_export import (\n            library_export_picker_location,  # lazy, TASK-34000.3\n        )\n",
+          "end_location": {
+            "column": 1,
+            "row": 3923
+          },
+          "location": {
+            "column": 1,
+            "row": 3922
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 9,
+      "row": 3922
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3922,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 3985
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 3985
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 3985,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "S110",
+    "end_location": {
+      "column": 17,
+      "row": 4383
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 4379
+    },
+    "message": "`try`-`except`-`pass` detected, consider logging the exception",
+    "name": "try-except-pass",
+    "noqa_row": 4379,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/try-except-pass"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 4379
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 4379
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4379,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 4438
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 4438
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4438,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 4815
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 4815
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4815,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 4912
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 4912
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4912,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 4993
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 4993
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 4993,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 5056
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5056
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 5056,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 5171
+    },
+    "filename": "/private/tmp/task7-fix1-base-lint/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5171
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 5171,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  }
+]

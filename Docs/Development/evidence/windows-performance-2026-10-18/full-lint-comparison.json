@@ -1,0 +1,17 @@
+{
+  "tldw_chatbook/UI/Console_Modules/config_sync.py": {
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "baseline": 22,
+    "current": 22,
+    "new": []
+  },
+  "Docs/Development/evidence/windows-performance-2026-10-18/probe.py": {
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  }
+}

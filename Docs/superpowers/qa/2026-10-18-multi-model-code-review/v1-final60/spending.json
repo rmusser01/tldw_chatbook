@@ -1,0 +1,27 @@
+{
+  "source_head": "b35bb489eaf62d8b10c6ab9779e3634411b02663",
+  "manifest_sha256": "93e4fa56fc332275bc489e066b015682aa02325fd8d9e527772106956c37d4d2",
+  "historical_requests": 386,
+  "new_generation_requests": 26,
+  "approved_new_requests": 60,
+  "cumulative_requests": 412,
+  "cumulative_request_ceiling": 446,
+  "historical_children": 26,
+  "new_children": 2,
+  "approved_new_children": 3,
+  "cumulative_children": 28,
+  "cumulative_child_ceiling": 29,
+  "metadata_gets": 5,
+  "new_generation_by_model": {
+    "unsloth/Qwen3.8-27B-GGUF:Q8_0": 9,
+    "gpt-6-luna": 10,
+    "deepseek-flash": 7
+  },
+  "single_invocation_consumed": true,
+  "automatic_retries": 0,
+  "unused_requests_in_consumed_invocation": 34,
+  "unused_child_slots_in_consumed_invocation": 1,
+  "previously_retired_requests": 48,
+  "total_retired_unused_requests": 82,
+  "no_new_invocation_authority": true
+}

@@ -1,0 +1,7 @@
+{
+  "candidate_file": "persisted-ready-callers-final-green.log",
+  "candidate_line": 15,
+  "classification": "Configuration api_key_env_var stores an environment variable name, not credential bytes. Match is a substring of a public DUMMY test constant.",
+  "resolution": "Exclude fields explicitly holding environment variable names from exact credential-value comparison. Actual key/token/password/secret fields and environment values remain checked.",
+  "actual_credential_finding": false
+}

@@ -56,13 +56,13 @@ class _SyncService(MockSchedulingServiceMixin):
         ]
 
     async def sync_now(self, owner_id=None):
-        if self._outcome is not None and self._outcome.status == "ok" and (
-            self._outcome.pulled or self._outcome.pushed
+        if (
+            self._outcome is not None
+            and self._outcome.status == "ok"
+            and (self._outcome.pulled or self._outcome.pushed)
         ):
             # A real transfer records the pull timestamp, like the engine.
-            self.db.update_sync_state(
-                "local", last_pull_at="2026-08-28T12:00:00+00:00"
-            )
+            self.db.update_sync_state("local", last_pull_at="2026-08-28T12:00:00+00:00")
         return self._outcome
 
 
@@ -88,6 +88,7 @@ async def _sync_via_action(pilot, workbench):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sync_that_transfers_nothing_says_so():
     app = _App(_SyncService(SyncOutcome("ok", pulled=0, pushed=0)))
@@ -104,6 +105,7 @@ async def test_sync_that_transfers_nothing_says_so():
         assert not any(m.startswith("Sync completed") for m in messages), messages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sync_that_transfers_reports_counts():
     app = _App(_SyncService(SyncOutcome("ok", pulled=2, pushed=1)))
@@ -127,6 +129,7 @@ async def test_sync_that_transfers_reports_counts():
         assert _format_local_timestamp("2026-08-28T12:00:00+00:00") in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_sync_reports_failure_not_a_noop():
     """Review F3: the engine swallows server errors internally; the UI
@@ -146,11 +149,10 @@ async def test_failed_sync_reports_failure_not_a_noop():
             (n.message, n.severity) for n in notifications
         ]
         assert "connection refused" in failure[0].message
-        assert not any(
-            "nothing to pull or push" in n.message for n in notifications
-        )
+        assert not any("nothing to pull or push" in n.message for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_sync_also_surfaces_phase_errors():
     """Final review finding 6: `_on_sync_failed` used to drop
@@ -179,12 +181,11 @@ async def test_failed_sync_also_surfaces_phase_errors():
         failure = [n for n in notifications if "Sync failed" in n.message]
         assert failure and "connection refused" in failure[0].message
         also = [n for n in notifications if "Automation results pull" in n.message]
-        assert also, [
-            (n.message, n.severity) for n in notifications
-        ]
+        assert also, [(n.message, n.severity) for n in notifications]
         assert also[0].severity == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_not_applicable_sync_says_so():
     app = _App(_SyncService(SyncOutcome("not_applicable")))
@@ -200,6 +201,7 @@ async def test_not_applicable_sync_says_so():
         assert any("Sync skipped" in m for m in messages), messages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sync_key_agrees_with_the_collapsed_bar():
     """Review F10: with a notifications service but NO active server id,
@@ -207,9 +209,7 @@ async def test_sync_key_agrees_with_the_collapsed_bar():
     same predicate instead of running a sync underneath it."""
     service = _SyncService(SyncOutcome("ok", pulled=1, pushed=0))
     app = _App(service)
-    app.runtime_policy = SimpleNamespace(
-        state=SimpleNamespace(active_server_id=None)
-    )
+    app.runtime_policy = SimpleNamespace(state=SimpleNamespace(active_server_id=None))
     async with app.run_test(size=(160, 48)) as pilot:
         workbench = SchedulesWorkbench(app_instance=pilot.app)
         await pilot.app.push_screen(workbench)

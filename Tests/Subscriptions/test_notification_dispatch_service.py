@@ -32,6 +32,7 @@ def test_notification_dispatch_service_persists_then_notifies(tmp_path):
         "Watchlist source deleted: Server source deleted within restore window.",
         severity="warning",
         timeout=None,
+        markup=False,  # runtime text is never markup (TASK-34803)
     )
 
 

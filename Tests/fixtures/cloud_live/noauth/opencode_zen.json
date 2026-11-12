@@ -1,0 +1,283 @@
+{
+  "server": "opencode_zen",
+  "base_url": "https://opencode.ai/zen/v1",
+  "probe_model": "claude-haiku-4-5",
+  "listing": {
+    "status": 200,
+    "entries": [
+      {
+        "id": "claude-fable-5"
+      },
+      {
+        "id": "claude-fable-5-1"
+      },
+      {
+        "id": "claude-opus-5-5"
+      },
+      {
+        "id": "claude-opus-5"
+      },
+      {
+        "id": "claude-opus-4-8"
+      },
+      {
+        "id": "claude-opus-4-7"
+      },
+      {
+        "id": "claude-opus-4-6"
+      },
+      {
+        "id": "claude-opus-4-5"
+      },
+      {
+        "id": "claude-sonnet-5-5"
+      },
+      {
+        "id": "claude-sonnet-5"
+      },
+      {
+        "id": "claude-sonnet-4-6"
+      },
+      {
+        "id": "claude-sonnet-4-5"
+      },
+      {
+        "id": "claude-sonnet-4"
+      },
+      {
+        "id": "claude-haiku-4-5"
+      },
+      {
+        "id": "gemini-3.6-flash"
+      },
+      {
+        "id": "gemini-3.8-flash"
+      },
+      {
+        "id": "gemini-3.7-flash"
+      },
+      {
+        "id": "gemini-3.5-flash-lite"
+      },
+      {
+        "id": "gemini-3.5-flash"
+      },
+      {
+        "id": "gemini-3.1-pro"
+      },
+      {
+        "id": "gemini-3-flash"
+      },
+      {
+        "id": "gpt-6-astra"
+      },
+      {
+        "id": "gpt-6.1-sol"
+      },
+      {
+        "id": "gpt-6-sol"
+      },
+      {
+        "id": "gpt-6-luna"
+      },
+      {
+        "id": "gpt-5.6-sol"
+      },
+      {
+        "id": "gpt-5.6-terra"
+      },
+      {
+        "id": "gpt-5.6-luna"
+      },
+      {
+        "id": "gpt-5.5"
+      },
+      {
+        "id": "gpt-5.5-pro"
+      },
+      {
+        "id": "gpt-5.4"
+      },
+      {
+        "id": "gpt-5.4-pro"
+      },
+      {
+        "id": "gpt-5.4-mini"
+      },
+      {
+        "id": "gpt-5.4-nano"
+      },
+      {
+        "id": "gpt-5.3-codex-spark"
+      },
+      {
+        "id": "gpt-5.3-codex"
+      },
+      {
+        "id": "gpt-5.2"
+      },
+      {
+        "id": "gpt-5.2-codex"
+      },
+      {
+        "id": "gpt-5.1"
+      },
+      {
+        "id": "gpt-5.1-codex-max"
+      },
+      {
+        "id": "gpt-5.1-codex"
+      },
+      {
+        "id": "gpt-5.1-codex-mini"
+      },
+      {
+        "id": "gpt-5"
+      },
+      {
+        "id": "gpt-5-codex"
+      },
+      {
+        "id": "gpt-5-nano"
+      },
+      {
+        "id": "grok-build-0.1"
+      },
+      {
+        "id": "grok-4.7"
+      },
+      {
+        "id": "grok-4.6"
+      },
+      {
+        "id": "grok-4.5"
+      },
+      {
+        "id": "muse-spark-1.3"
+      },
+      {
+        "id": "muse-spark-1.2"
+      },
+      {
+        "id": "deepseek-v4.1-flash"
+      },
+      {
+        "id": "deepseek-v4-pro"
+      },
+      {
+        "id": "deepseek-v4-flash"
+      },
+      {
+        "id": "deepseek-v4-flash-vision-exp"
+      },
+      {
+        "id": "glm-5.3-flash"
+      },
+      {
+        "id": "glm-5.3"
+      },
+      {
+        "id": "glm-5.2"
+      },
+      {
+        "id": "glm-5.1"
+      },
+      {
+        "id": "glm-5"
+      },
+      {
+        "id": "minimax-m3"
+      },
+      {
+        "id": "minimax-m2.7"
+      },
+      {
+        "id": "minimax-m2.5"
+      },
+      {
+        "id": "kimi-k3"
+      },
+      {
+        "id": "kimi-k2.7-code"
+      },
+      {
+        "id": "kimi-k2.6"
+      },
+      {
+        "id": "kimi-k2.5"
+      },
+      {
+        "id": "qwen3.8-flash"
+      },
+      {
+        "id": "qwen3.6-plus"
+      },
+      {
+        "id": "qwen3.5-plus"
+      },
+      {
+        "id": "jev-1.13"
+      },
+      {
+        "id": "big-pickle"
+      },
+      {
+        "id": "jev-1.13-free"
+      },
+      {
+        "id": "deepseek-v4-flash-free"
+      },
+      {
+        "id": "muse-spark-1.3-contributor-free"
+      },
+      {
+        "id": "muse-spark-1.2-contributor-free"
+      },
+      {
+        "id": "mimo-v2.6-flash-free"
+      },
+      {
+        "id": "space-bunny-free"
+      },
+      {
+        "id": "longcat-2.5-preview-free"
+      },
+      {
+        "id": "mimo-v2.5-free"
+      },
+      {
+        "id": "ling-3.0-flash-fin-free"
+      },
+      {
+        "id": "nemotron-3-ultra-free"
+      },
+      {
+        "id": "nemotron-3.5-lightning-free"
+      },
+      {
+        "id": "qwen3.8-max"
+      }
+    ]
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "type": "error",
+      "error": {
+        "type": "AuthError",
+        "message": "Missing API key."
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "type": "error",
+      "error": {
+        "type": "AuthError",
+        "message": "Invalid API key."
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:20:03+00:00"
+}

@@ -47,6 +47,15 @@ from tldw_chatbook.Canvas.models import (
 from tldw_chatbook.Chat.console_agent_bridge import _compose_run_registry_and_allowed
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+@pytest.fixture(autouse=True)
+def _private_canvas_run_log_context(monkeypatch):
+    # These synthetic provider runs have no workspace binding. Explicit
+    # RunLogWriter controls below retain their own private destination.
+    from tldw_chatbook.Agents import run_log
+
+    monkeypatch.setattr(run_log, "resolve_log_root", lambda: None)
+
+
 CANVAS_ID = "11111111-1111-4111-8111-111111111111"
 REVISION_ID = "22222222-2222-4222-8222-222222222222"
 NEXT_REVISION_ID = "33333333-3333-4333-8333-333333333333"
@@ -61,6 +70,9 @@ SCOPE = CanvasScope(
 SOURCE_SENTINEL = "<!doctype html><p>CANVAS-SOURCE-7f941a</p>"
 PROJECTION_BYTE_CAP = 64 * 1024
 RESULT_BYTE_CAP = MAX_DURABLE_SOURCE_BYTES_PER_REVISION + PROJECTION_BYTE_CAP
+
+# Real provider policy getters retain the collection-time private config source.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _revision(

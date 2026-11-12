@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+1.63s call     Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority[refusal]
+1.36s call     Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority[cancellation]
+
+(4 durations < 1s hidden.)
+2 passed in 4.93s

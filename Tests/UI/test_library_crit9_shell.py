@@ -71,6 +71,7 @@ def _narrow_stage_layout(screen):
     return layout
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("row_id", "shell_id", "profile"),
     [
@@ -126,6 +127,7 @@ async def test_a_canvas_with_nothing_open_gives_its_columns_to_the_list(
         assert items.region.width > work.region.width, (items.region, work.region)
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_landing_hub_keeps_a_readable_measure_on_a_wide_terminal() -> None:
     """task-32217 AC#3: the landing is capped, not stretched to 190 cells."""
     host = _library_host()
@@ -144,6 +146,7 @@ async def test_the_landing_hub_keeps_a_readable_measure_on_a_wide_terminal() -> 
         assert landing.region.height > 0, landing.region
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_skills_list_shows_each_row_s_trust_state() -> None:
     """task-32223: an approved and an unapproved skill no longer paint alike."""
     app = _build_test_app()
@@ -167,6 +170,7 @@ async def test_the_skills_list_shows_each_row_s_trust_state() -> None:
         assert any("summarize · needs review" in label for label in labels), labels
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "row_id",
     [
@@ -215,6 +219,7 @@ async def test_escape_returns_to_the_library_pane_below_64_columns(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "row_id", ["browse-media", "browse-prompts", "browse-collections"]
 )
@@ -244,6 +249,7 @@ async def test_the_registered_footer_names_the_return_below_64_columns(
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_return_chip_disappears_once_the_library_pane_is_back() -> None:
     """task-32225: the chip follows the pane, not just the width."""
     host = _library_host()
@@ -273,6 +279,7 @@ async def test_the_return_chip_disappears_once_the_library_pane_is_back() -> Non
         assert screen.query_one("#library-rail").display
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_conversations_footer_advertises_the_filter_key_it_honours() -> None:
     """task-32228 AC#1: "/" is advertised exactly while it works.
 
@@ -309,6 +316,7 @@ async def test_the_conversations_footer_advertises_the_filter_key_it_honours() -
         assert getattr(screen.focused, "id", None) == "library-conversations-filter"
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_return_chip_stands_down_where_escape_belongs_to_the_surface() -> None:
     """task-32225 fix round 1: the chip may not override an earlier Escape.
 
@@ -351,6 +359,7 @@ async def test_the_return_chip_stands_down_where_escape_belongs_to_the_surface()
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_the_narrow_stage_gate_survives_a_screen_with_no_active_app() -> None:
     """task-32225 fix round 2: the gate must not read ``Screen.size`` too early.
 
@@ -377,6 +386,7 @@ def test_the_narrow_stage_gate_survives_a_screen_with_no_active_app() -> None:
     assert isinstance(screen._library_footer_shortcuts_for_current_state(), tuple)
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_conversations_footer_advertises_escape_on_arrival() -> None:
     """task-32228 AC#1 (ruling R1): arrive with focus on the list, like siblings.
 
@@ -437,6 +447,7 @@ def test_an_unrecognised_trust_status_never_claims_trust() -> None:
     assert _trust_row_label("", blocked=False) == ""
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_slash_chip_stands_down_when_its_box_is_in_a_closed_pane() -> None:
     """task-32225 re-review N4: the same dead-chip test, one key over.
 
@@ -475,6 +486,7 @@ async def test_the_slash_chip_stands_down_when_its_box_is_in_a_closed_pane() -> 
         assert screen.focused is before, screen.focused
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_slash_chip_survives_where_the_key_still_works() -> None:
     """Negative control for the chip above: a reachable box keeps its chip.
 
@@ -507,6 +519,7 @@ async def test_the_slash_chip_survives_where_the_key_still_works() -> None:
         assert getattr(screen.focused, "id", "") == "library-media-filter"
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_disarmed_entry_focus_request_cannot_steal_focus_back() -> None:
     """Qodo #3: the queued entry-focus callback must respect its own disarm.
 
@@ -541,6 +554,7 @@ async def test_a_disarmed_entry_focus_request_cannot_steal_focus_back() -> None:
         assert screen.focused is rail_search, screen.focused
 
 
+@pytest.mark.bootstrap_profile
 async def test_an_unrecognised_trust_status_paints_no_word_on_the_row() -> None:
     """Qodo #2: the unknown-status fallback, through the real list canvas.
 
@@ -573,6 +587,7 @@ async def test_an_unrecognised_trust_status_paints_no_word_on_the_row() -> None:
         assert not any(label.rstrip().endswith("·") for label in labels), labels
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_row_that_is_not_yet_focusable_does_not_consume_the_entry_focus_arm() -> None:
     """task-32302: the mechanism behind the 32228 regression, pinned.
 

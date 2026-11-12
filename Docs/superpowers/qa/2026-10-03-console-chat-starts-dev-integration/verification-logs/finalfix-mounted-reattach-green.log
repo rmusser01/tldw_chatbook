@@ -1,0 +1,10 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+21.05s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+19.37s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+16.30s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+14.29s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]
+1.13s call     Tests/UI/test_console_session_controller.py::test_character_handoff_uses_current_canonical_defaults_not_stale_session
+
+(10 durations < 1s hidden.)
+5 passed in 79.87s (0:01:19)

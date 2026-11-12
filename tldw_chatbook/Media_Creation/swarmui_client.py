@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from loguru import logger
 
-from ..config import load_settings
+from ..config import load_settings, without_ciphertext
 from ..Utils.tls_trust import ssl_context_for_transport
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
@@ -108,7 +108,11 @@ class SwarmUIClient:
         media_config = config.get("media_creation", {}).get("swarmui", {})
 
         self.base_url = base_url or media_config.get("api_url", "http://localhost:7801")
-        self.api_key = api_key or media_config.get("api_key", "")
+        # TASK-34100.4 AC #10: a key still `enc:` reads as absent; ciphertext
+        # is never sent as the bearer.
+        self.api_key = without_ciphertext(api_key) or without_ciphertext(
+            media_config.get("api_key", ""), ""
+        )
 
         # Remove trailing slash
         self.base_url = self.base_url.rstrip("/")

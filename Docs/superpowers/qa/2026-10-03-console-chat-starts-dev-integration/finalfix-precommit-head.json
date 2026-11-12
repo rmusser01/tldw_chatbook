@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "git",
+    "rev-parse",
+    "HEAD"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 0.03510403633117676,
+  "output": "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe\n"
+}

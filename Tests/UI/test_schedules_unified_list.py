@@ -176,6 +176,7 @@ def _row_ids(workbench, kind: str | None = None) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mixed_listing_renders_both_kinds_painted():
     """Reminders and definitions both render, each with a real glyph and
@@ -226,6 +227,7 @@ async def test_mixed_listing_renders_both_kinds_painted():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_chip_includes_to_server_pending_reminder():
     """spec S3: `to_server_pending` stays Active -- "they still execute
@@ -241,6 +243,7 @@ async def test_active_chip_includes_to_server_pending_reminder():
         assert definition_ids == {"def-active", "def-unread"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_paused_chip_includes_disabled_reminder_and_paused_definition():
     async with _App().run_test(size=(160, 48)) as pilot:
@@ -252,6 +255,7 @@ async def test_paused_chip_includes_disabled_reminder_and_paused_definition():
         assert _row_ids(workbench, "definition") == {"def-paused"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_completed_chip_includes_fired_reminder_and_archived_definition():
     """The brief's own two named cases: a fired one-time reminder AND an
@@ -265,6 +269,7 @@ async def test_completed_chip_includes_fired_reminder_and_archived_definition():
         assert _row_ids(workbench, "definition") == {"def-archived"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_all_chip_excludes_completed_rows():
     async with _App().run_test(size=(160, 48)) as pilot:
@@ -276,6 +281,7 @@ async def test_all_chip_excludes_completed_rows():
         assert "def-archived" not in _row_ids(workbench, "definition")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_chip_button_press_switches_the_active_chip():
     """The chip row is real buttons, not just the pure `_set_queue_chip`
@@ -302,6 +308,7 @@ def _pane_hidden(widget) -> bool:
     return "pane-hidden" in widget.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_highlighting_routes_to_the_matching_detail_pane_both_directions():
     async with _App().run_test(size=(160, 48)) as pilot:
@@ -352,6 +359,7 @@ async def test_highlighting_routes_to_the_matching_detail_pane_both_directions()
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reminder_actions_still_fire_amid_a_mixed_list():
     """Smoke test: edit/mark/toggle on a REMINDER row still work exactly
@@ -384,6 +392,7 @@ async def test_reminder_actions_still_fire_amid_a_mixed_list():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_row_mark_and_toggle_still_no_op():
     """Mark/toggle-enabled on a definition row still no-op -- PR-4 task 3
@@ -415,6 +424,7 @@ async def test_definition_row_mark_and_toggle_still_no_op():
         assert workbench._scheduling_service.updated == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_row_edit_opens_the_form_for_a_recurring_question_row():
     """redesign PR-4, task 3: `e` on a Queue definition row now opens the
@@ -449,6 +459,7 @@ async def test_definition_row_edit_opens_the_form_for_a_recurring_question_row()
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reminder_toggle_triggers_no_new_definitions_fetch():
     """redesign PR-2 Task 2 review, finding 3: a reminder-only action
@@ -497,6 +508,7 @@ async def test_reminder_toggle_triggers_no_new_definitions_fetch():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_search_narrows_a_mixed_reminder_and_definition_list():
     """The brief's own named AC ("search narrows") for the mixed list --
@@ -560,6 +572,7 @@ def _counting_definitions_service() -> tuple[_MixedService, list]:
     return service, calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_automations_edit_save_refetches_definitions_immediately():
     """Round 2 pinned that a save marks the cache stale and the NEXT
@@ -614,6 +627,7 @@ async def test_automations_edit_save_refetches_definitions_immediately():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_run_now_refetches_the_queue_definitions():
     """A local run-now is an Automations-era mutation path: it must still
@@ -663,6 +677,7 @@ async def test_local_run_now_refetches_the_queue_definitions():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_returning_to_the_screen_while_stale_refetches_definitions():
     """The staleness consumer's NEW home (redesign PR-4 task 5).
@@ -689,7 +704,7 @@ async def test_returning_to_the_screen_while_stale_refetches_definitions():
         workbench._definitions_stale = True
         calls_before_push = len(calls)
 
-        workbench._push_conflicts_overlay()
+        await workbench._push_conflicts_overlay()
         await pilot.pause()
         assert pilot.app.screen is not workbench
         assert len(calls) == calls_before_push, (
@@ -708,6 +723,7 @@ async def test_returning_to_the_screen_while_stale_refetches_definitions():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_returning_to_the_screen_when_nothing_is_stale_refetches_nothing():
     """The re-homed consumer's own no-op half: `ScreenResume` fires on
@@ -728,8 +744,9 @@ async def test_returning_to_the_screen_when_nothing_is_stale_refetches_nothing()
         assert workbench._definitions_stale is False
         calls_before_push = len(calls)
 
-        workbench._push_conflicts_overlay()
+        await workbench._push_conflicts_overlay()
         await pilot.pause()
+        assert pilot.app.screen is not workbench
         await pilot.press("escape")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
@@ -741,6 +758,7 @@ async def test_returning_to_the_screen_when_nothing_is_stale_refetches_nothing()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_mutation_reminder_toggle_still_skips_the_refetch():
     """Round-1 pin, re-asserted here explicitly: with no Automations
@@ -809,6 +827,7 @@ def _toasts(app) -> list[str]:
 # --- F1: a rail Create ▾ save paints its row without leaving the tab -------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_create_recurring_question_paints_the_new_row():
     """Final review F1: Task 3 moved definition-create onto the Queue
@@ -900,6 +919,7 @@ class _TransferredService(MockSchedulingServiceMixin):
         return []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transferred_definition_unread_matches_the_results_badge():
     """Final review F2, the review's own repro: the results badge read 2
@@ -972,6 +992,7 @@ class _DefinitionAboveReminderService(MockSchedulingServiceMixin):
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_acknowledge_incident_keeps_the_selected_reminder_showing():
     """Final review F3: `_update_detail_for_index` takes a `_visible_rows`
@@ -1028,6 +1049,7 @@ class _OwnerRecordingService(MockSchedulingServiceMixin):
         return True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reminder_writes_thread_the_rows_own_owner():
     """Final review F4: the list spans owners since Task 1 but the writes
@@ -1076,7 +1098,7 @@ class _PullService(MockSchedulingServiceMixin):
                 {
                     "id": "result-pulled",
                     "definition_id": "def-1",
-                    "owner_id": "local",
+                    "owner_id": owner_id,
                     "review_state": "unread",
                     "kind": "finding",
                     "created_at": "2026-08-28T00:00:00+00:00",
@@ -1087,10 +1109,14 @@ class _PullService(MockSchedulingServiceMixin):
             _run_phase=_run_phase, _pull_results=object()
         )
 
+    def sync_target_owner_id(self) -> str:
+        return self.owner_id
+
     async def list_tasks(self, owner_id=None, include_projections=True):
         return []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_results_pull_reveals_the_rail_mark_all_read_button():
     """Final review F5: an SSE-triggered pull only refreshed the Results
@@ -1112,6 +1138,7 @@ async def test_results_pull_reveals_the_rail_mark_all_read_button():
         assert sum(row.unread_count for row in workbench._all_rows) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_marking_all_read_from_the_results_tab_clears_the_queue_dots():
     """The inverse half of F5: mark-all-read shares the fan-out, so the
@@ -1148,6 +1175,7 @@ async def test_marking_all_read_from_the_results_tab_clears_the_queue_dots():
 # --- F6: the placeholder matches what search actually matches -------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_filter_placeholder_names_title_and_question():
     """Final review F6: the placeholder still promised type and status
@@ -1167,6 +1195,7 @@ async def test_filter_placeholder_names_title_and_question():
 # per-key picture.)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_row_keys_answer_honestly_by_kind():
     """Final review F8, superseded by redesign PR-4 ruling 1 + task 3:
@@ -1256,6 +1285,7 @@ class _AgentTaskOnlyService(MockSchedulingServiceMixin):
         return []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_row_edit_refuses_honestly_for_a_non_recurring_question_row():
     """redesign PR-4, task 3: `e` on an `agent_task` Queue row refuses --
@@ -1304,6 +1334,7 @@ async def _completed_chip_notice(size) -> str:
         ).visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_view_copy_drops_the_chip_hint_when_chips_are_hidden():
     """Final review F10: below width 84 the chip row is hidden while the
@@ -1341,6 +1372,7 @@ class _ServerRunNowService(MockSchedulingServiceMixin):
         return []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_run_now_marks_definitions_stale():
     """Final review F11: the branch's own rule is "mark staleness at each
@@ -1393,6 +1425,7 @@ async def test_server_run_now_marks_definitions_stale():
 # --- F12: the ticker does not re-read the definition detail ---------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tick_skips_the_definition_detail_read_for_an_unchanged_row():
     """Final review F12: the ticker re-ran 3 DB reads a minute for a row
@@ -1438,6 +1471,7 @@ async def test_tick_skips_the_definition_detail_read_for_an_unchanged_row():
         assert len(reads) == after_selection + 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tick_skips_the_reminder_detail_reads_for_an_unchanged_row():
     """redesign PR-4 task 5 (ruling 5's rider): F12's guard was applied to

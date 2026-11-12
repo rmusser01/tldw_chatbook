@@ -1,0 +1,4 @@
+CONTROL: this wave's base, origin/dev 8c4dfe59a2 (git archive export, unmodified), golden profile, 160x45, socket=w1b-t1-6
+Clicked Export… in the Media Items toolbar. "Export bundle (.zip)" appeared within 12s: YES  (capture 93)
+F1 opened Library Shortcuts: YES; Escape returned to the Media list: YES; 5s after Ctrl+Q the tmux session had: ended
+So the freeze the review found on 2d34cbf80d does not reproduce on 8c4dfe59a2: 3cee32b3d0 (task-31249, 2026-10-02 20:46 -0700) landed between them.

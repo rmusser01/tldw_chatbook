@@ -313,6 +313,7 @@ def pcm():
     return BufferAudioSource(bytes(960), 48_000)
 
 
+@pytest.mark.bootstrap_profile
 def test_real_facade_owner_keeps_managed_root_and_vad_leased_across_idle_reuse(
     tmp_path, native
 ):
@@ -525,6 +526,7 @@ def test_inference_keeps_root_and_vad_deletion_blocked_until_actual_completion(
             sources.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("secondary_failure", [False, True])
 def test_failed_native_close_keeps_original_provider_and_leases_without_retry(
     tmp_path, monkeypatch, secondary_failure

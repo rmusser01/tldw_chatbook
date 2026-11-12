@@ -20,13 +20,13 @@ from tldw_chatbook.Workspaces.registry_service import (
 )
 
 
-def build_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
-    return LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
-    )
+def build_registry(tmp_path: Path, request) -> LocalWorkspaceRegistryService:
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+    request.addfinalizer(db.close)
+    return LocalWorkspaceRegistryService(db)
 
 
-def test_v2_database_migrates_preserving_rows(tmp_path):
+def test_v2_database_migrates_preserving_rows(tmp_path, request):
     legacy = tmp_path / "legacy.sqlite"
     conn = sqlite3.connect(legacy)
     conn.executescript(
@@ -46,6 +46,7 @@ def test_v2_database_migrates_preserving_rows(tmp_path):
     conn.commit()
     conn.close()
     db = WorkspaceDB(legacy, client_id="client-1")
+    request.addfinalizer(db.close)
     assert db.get_schema_version() == WorkspaceDB._CURRENT_SCHEMA_VERSION
     with db.connection() as read_conn:
         cols = {
@@ -58,13 +59,13 @@ def test_v2_database_migrates_preserving_rows(tmp_path):
         assert row[0] == "Research"
     assert db.is_agent_backfill_complete() is False
     db.mark_agent_backfill_complete()
-    assert (
-        WorkspaceDB(legacy, client_id="client-1").is_agent_backfill_complete() is True
-    )
+    reopened = WorkspaceDB(legacy, client_id="client-1")
+    request.addfinalizer(reopened.close)
+    assert reopened.is_agent_backfill_complete() is True
 
 
-def test_defaults_roundtrip_and_validation(tmp_path):
-    registry = build_registry(tmp_path)
+def test_defaults_roundtrip_and_validation(request, tmp_path):
+    registry = build_registry(tmp_path, request)
     record = registry.create_workspace(workspace_id="w-9", name="Lit Review")
     assert record.assistant_defaults is None
     defaults = WorkspaceAssistantDefaults(
@@ -77,7 +78,7 @@ def test_defaults_roundtrip_and_validation(tmp_path):
     assert cleared.assistant_defaults is None
 
 
-def test_every_assistant_defaults_writer_traverses_attached_guard(tmp_path):
+def test_every_assistant_defaults_writer_traverses_attached_guard(request, tmp_path):
     """A sibling create/set/replace/clear path must not bypass lifecycle locking."""
 
     class RecordingGuard:
@@ -90,7 +91,7 @@ def test_every_assistant_defaults_writer_traverses_attached_guard(tmp_path):
             yield
 
     guard = RecordingGuard()
-    registry = build_registry(tmp_path)
+    registry = build_registry(tmp_path, request)
     registry.attach_tool_profile_guard(guard)
     first = WorkspaceAssistantDefaults(
         assistant_id="p1", tool_policy_profile_id="local-one"
@@ -116,6 +117,7 @@ def test_every_assistant_defaults_writer_traverses_attached_guard(tmp_path):
 
 
 def test_deferred_tool_profile_guard_blocks_profile_changes_until_activation(
+    request,
     tmp_path,
 ):
     """The app bootstrap cannot leave direct registry writers fail-open."""
@@ -125,7 +127,7 @@ def test_deferred_tool_profile_guard_blocks_profile_changes_until_activation(
         def mutation_scope(self, **_kwargs):
             yield
 
-    registry = build_registry(tmp_path)
+    registry = build_registry(tmp_path, request)
     bootstrap = DeferredWorkspaceToolProfileGuard()
     registry.attach_tool_profile_guard(bootstrap)
     registry.create_workspace(workspace_id="w-bootstrap", name="Bootstrap")
@@ -160,9 +162,10 @@ def test_deferred_tool_profile_guard_blocks_profile_changes_until_activation(
 
 
 def test_deferred_tool_profile_guard_protects_persisted_profile_references(
+    request,
     tmp_path,
 ):
-    registry = build_registry(tmp_path)
+    registry = build_registry(tmp_path, request)
     existing = WorkspaceAssistantDefaults(
         assistant_id="p1", tool_policy_profile_id="research"
     )
@@ -187,7 +190,7 @@ def test_deferred_tool_profile_guard_protects_persisted_profile_references(
     assert registry.get_workspace("w-existing").assistant_defaults == existing
 
 
-def test_inline_create_forwards_tool_profile_confirmation_token(tmp_path):
+def test_inline_create_forwards_tool_profile_confirmation_token(request, tmp_path):
     """Dropping the create token before the guard would preserve the inline bypass."""
 
     class TokenGuard:
@@ -196,7 +199,7 @@ def test_inline_create_forwards_tool_profile_confirmation_token(tmp_path):
             assert kwargs["confirmation_token"] == "opaque-token"
             yield
 
-    registry = build_registry(tmp_path)
+    registry = build_registry(tmp_path, request)
     registry.attach_tool_profile_guard(TokenGuard())
     defaults = WorkspaceAssistantDefaults(
         assistant_id="p1", tool_policy_profile_id="research"
@@ -211,8 +214,8 @@ def test_inline_create_forwards_tool_profile_confirmation_token(tmp_path):
     assert created.assistant_defaults == defaults
 
 
-def test_read_write_requires_confirmation(tmp_path):
-    registry = build_registry(tmp_path)
+def test_read_write_requires_confirmation(request, tmp_path):
+    registry = build_registry(tmp_path, request)
     registry.create_workspace(workspace_id="w-2", name="W2")
     defaults = WorkspaceAssistantDefaults(
         assistant_id="p1", persona_memory_mode="read_write"
@@ -222,10 +225,10 @@ def test_read_write_requires_confirmation(tmp_path):
     registry.set_assistant_defaults("w-2", defaults, confirm_read_write=True)
 
 
-def test_malformed_stored_json_degrades_without_logging_private_values(tmp_path):
+def test_malformed_stored_json_degrades_without_logging_private_values(request, tmp_path):
     from loguru import logger
 
-    registry = build_registry(tmp_path)
+    registry = build_registry(tmp_path, request)
     registry.create_workspace(workspace_id="w-3", name="W3")
     with registry.db.transaction() as conn:
         conn.execute(

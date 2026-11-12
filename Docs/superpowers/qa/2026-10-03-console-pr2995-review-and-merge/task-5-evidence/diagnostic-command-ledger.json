@@ -1,0 +1,96 @@
+[
+  {
+    "label": "four-original-diag",
+    "environment": {
+      "TLDW_TEST_CONFIG_ROOT": "/private/tmp/pr2995-task5/four-profile",
+      "PYTHONPATH": "/private/tmp/pr2995-task5:/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+      "OWNERSHIP_DIAG_LOG": "/private/tmp/pr2995-task5/four-diag.jsonl"
+    },
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime",
+      "Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime",
+      "Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll",
+      "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]",
+      "-p",
+      "ownership_diag",
+      "--basetemp=/private/tmp/pr2995-task5/four-basetemp",
+      "--timeout=300",
+      "--tb=long",
+      "-vv"
+    ],
+    "exit": 1,
+    "receipt_kind": "reconstructed from executed tool commands; outputs and edit scripts preserved"
+  },
+  {
+    "label": "startup-red-control",
+    "environment": {
+      "TLDW_TEST_CONFIG_ROOT": "/private/tmp/pr2995-task5/red-profile",
+      "PYTHONPATH": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook"
+    },
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/UI/test_console_runtime_ownership.py::test_manual_console_fixture_owns_startup_before_any_mount",
+      "Tests/UI/test_console_runtime_ownership.py::test_public_startup_console_keeps_its_claim_across_navigation",
+      "--basetemp=/private/tmp/pr2995-task5/red-basetemp",
+      "--timeout=300",
+      "--tb=short",
+      "-vv"
+    ],
+    "exit": 1,
+    "receipt_kind": "reconstructed from executed tool commands; outputs and edit scripts preserved"
+  },
+  {
+    "label": "causal-red",
+    "environment": {
+      "TLDW_TEST_CONFIG_ROOT": "/private/tmp/pr2995-task5/causal-profile",
+      "PYTHONPATH": "/private/tmp/pr2995-task5:/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+      "OWNERSHIP_DIAG_LOG": "/private/tmp/pr2995-task5/causal-diag.jsonl"
+    },
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/UI/test_console_runtime_ownership.py::test_manual_console_fixture_owns_startup_before_any_mount",
+      "-p",
+      "ownership_diag",
+      "--basetemp=/private/tmp/pr2995-task5/causal-basetemp",
+      "--timeout=300",
+      "--tb=short",
+      "-vv"
+    ],
+    "exit": 1,
+    "receipt_kind": "reconstructed from executed tool commands; outputs and edit scripts preserved"
+  },
+  {
+    "label": "six-green-diag",
+    "environment": {
+      "TLDW_TEST_CONFIG_ROOT": "/private/tmp/pr2995-task5/green-profile",
+      "PYTHONPATH": "/private/tmp/pr2995-task5:/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+      "OWNERSHIP_DIAG_LOG": "/private/tmp/pr2995-task5/green-diag.jsonl"
+    },
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime",
+      "Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime",
+      "Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll",
+      "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]",
+      "Tests/UI/test_console_runtime_ownership.py::test_manual_console_fixture_owns_startup_before_any_mount",
+      "Tests/UI/test_console_runtime_ownership.py::test_public_startup_console_keeps_its_claim_across_navigation",
+      "-p",
+      "ownership_diag",
+      "--basetemp=/private/tmp/pr2995-task5/green-basetemp",
+      "--timeout=300",
+      "--tb=short",
+      "-vv"
+    ],
+    "exit": 0,
+    "receipt_kind": "reconstructed from executed tool commands; outputs and edit scripts preserved"
+  }
+]

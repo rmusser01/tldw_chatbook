@@ -1,0 +1,133 @@
+{
+  "base_ref": "149adb53f1d10b090e31a5f458e8c2ffcd3ca458",
+  "base_sha": "149adb53f1d10b090e31a5f458e8c2ffcd3ca458",
+  "baseline_red_paths": [
+    "Tests/Chat/test_console_provider_gateway.py",
+    "Tests/Utils/test_egress.py"
+  ],
+  "files": {
+    "Tests/Chat/test_console_provider_gateway.py": {
+      "debt_units": 64,
+      "formatter_required": true,
+      "normalized_diff_sha256": "347d91b17ee52a685206dc9a680b45a137fe6fccd9469ae253e662972b1c8844",
+      "source_hunks": [
+        [
+          5065,
+          5076
+        ],
+        [
+          11902,
+          11908
+        ],
+        [
+          11973,
+          11979
+        ],
+        [
+          12003,
+          12011
+        ],
+        [
+          12128,
+          12134
+        ],
+        [
+          12198,
+          12218
+        ],
+        [
+          12227,
+          12234
+        ]
+      ],
+      "source_sha256": "6c0621f21ea09ea8625ccca0403ef70da4969f19bce9029a002a3687bb9e279a"
+    },
+    "Tests/UI/test_console_cost_chip_screen.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "87689f77a049d577763f66075fc3cdd9c53314a3192fceb7a27b97d9824980dd"
+    },
+    "Tests/UI/test_console_spend_projection.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "ed1bc654121ec1ee278749c25125e54bacdf2a923618555c647ab0389f751bb8"
+    },
+    "Tests/Utils/test_egress.py": {
+      "debt_units": 81,
+      "formatter_required": true,
+      "normalized_diff_sha256": "0fb8bbf63bb68ac71f7fe6a09e8c3db619cc15657a1c802185b89ef886c262aa",
+      "source_hunks": [
+        [
+          46,
+          52
+        ],
+        [
+          154,
+          162
+        ],
+        [
+          230,
+          235
+        ],
+        [
+          342,
+          347
+        ],
+        [
+          390,
+          395
+        ],
+        [
+          542,
+          548
+        ],
+        [
+          732,
+          745
+        ],
+        [
+          872,
+          880
+        ],
+        [
+          928,
+          941
+        ],
+        [
+          1200,
+          1206
+        ],
+        [
+          1215,
+          1221
+        ],
+        [
+          1260,
+          1268
+        ],
+        [
+          1315,
+          1332
+        ],
+        [
+          1336,
+          1340
+        ]
+      ],
+      "source_sha256": "a7180c9349c32f2226b408f025d8f9dd944fdb49776b37ae538ea4eaf5c4ba89"
+    }
+  },
+  "generated_at_utc": "2026-10-03T19:38:19.560657+00:00",
+  "paths": [
+    "Tests/Chat/test_console_provider_gateway.py",
+    "Tests/Utils/test_egress.py",
+    "Tests/UI/test_console_cost_chip_screen.py",
+    "Tests/UI/test_console_spend_projection.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

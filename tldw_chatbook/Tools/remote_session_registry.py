@@ -4,12 +4,25 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from loguru import logger
 
-from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
-from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+if TYPE_CHECKING:
+    from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
+
+
+def __getattr__(name: str):
+    """Keep the existing type exports without loading SSH transport at run end."""
+    if name in {"RemoteSessionWorker", "SessionStartError"}:
+        from tldw_chatbook.Tools import remote_session_worker
+
+        return getattr(remote_session_worker, name)
+    if name == "TransportFailureKind":
+        from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+
+        return TransportFailureKind
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 #: How many closed run keys stay tombstoned (R12). A closed key never
 #: reopens a session; the oldest tombstone is evicted past this bound.
@@ -84,6 +97,9 @@ class RemoteSessionRegistry:
                 ``OP_TIMEOUT`` is raised only to its own caller (not recorded,
                 so not shared with waiters).
         """
+        from tldw_chatbook.Tools.remote_session_worker import SessionStartError
+        from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+
         entered = time.monotonic()
         with self._lock:
             if self._shutdown:

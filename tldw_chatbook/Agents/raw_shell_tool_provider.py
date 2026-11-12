@@ -51,15 +51,12 @@ RAW_SHELL_APPROVAL_WARNING = (
 #: the closed Select -- keep the two in step (`_RAW_SHELL_DECISION_OPTIONS`
 #: in `Widgets/Chat_Widgets/chat_approval_card.py`).
 RAW_SHELL_SESSION_SCOPE_NOTICE = (
-    "\"All shell · session\" covers future raw "
+    '"All shell · session" covers future raw '
     "shell commands, not only this displayed command. It clears on Disarm or "
     "when Chatbook exits."
 )
 RAW_SHELL_APPROVAL_OPTIONS = ("approve_once", "approve_session", "deny")
-_MAX_MODEL_RESULT_CHARS = 4000
-RawShellProgressSink = Callable[
-    [str, str, RawCliStreamEvent | RawCliResult], None
-]
+RawShellProgressSink = Callable[[str, str, RawCliStreamEvent | RawCliResult], None]
 
 _SHELLS = ("auto", "bash", "powershell", "cmd")
 
@@ -507,9 +504,7 @@ class RawShellToolProvider:
         approved = stamp in {"approve_once", "approve_session"}
         if not approved:
             try:
-                approved = self._runtime.model_session_granted(
-                    self.console_session_id
-                )
+                approved = self._runtime.model_session_granted(self.console_session_id)
             except Exception:
                 approved = False
         if not approved:
@@ -525,10 +520,29 @@ class RawShellToolProvider:
                 return ToolResult.blocked(
                     RAW_SHELL_DENY_REFUSAL, approval_decision="denied"
                 )
+            from .code_review_checks import current_check_execution
+
+            check_execution = current_check_execution()
+            callbacks = {}
+            if check_execution is not None:
+                if (
+                    check_execution.provider is not self
+                    or dict(args) != check_execution.arguments
+                ):
+                    return ToolResult.blocked(
+                        "check execution owner or specification mismatch"
+                    )
+                callbacks["on_started"] = lambda _started: check_execution.accepted(
+                    request.invocation_id
+                )
+                callbacks["admission_scope"] = check_execution.admission_scope
             result = self._runtime.execute(
                 request,
                 lambda event: self._emit_progress(run_id, call_id, event),
+                **callbacks,
             )
+            if check_execution is not None:
+                check_execution.settled(result)
             self._emit_progress(run_id, call_id, result)
         except Exception as exc:
             detail = (str(exc) or type(exc).__name__)[:300]
@@ -537,7 +551,7 @@ class RawShellToolProvider:
                 error=f"raw shell execution failed: {detail}",
                 outcome="failed",
             )
-        return self._tool_result(result)
+        return self._tool_result(result, command=request.command)
 
     def _emit_progress(
         self,
@@ -555,8 +569,10 @@ class RawShellToolProvider:
             return
 
     @staticmethod
-    def _tool_result(result: RawCliResult) -> ToolResult:
+    def _tool_result(result: RawCliResult, *, command: str = "") -> ToolResult:
         """Map one executor settlement to the ordinary bounded tool contract."""
+        from tldw_chatbook.Tools.shell_search_outcomes import is_empty_search
+
         exit_code = "none" if result.exit_code is None else str(result.exit_code)
         detail = (
             f"terminal_state: {result.terminal_state}\n"
@@ -568,7 +584,7 @@ class RawShellToolProvider:
             f"cleanup_proven: {str(result.cleanup_proven).lower()}\n"
             f"stdout:\n{result.stdout_preview or '(no output)'}\n"
             f"stderr:\n{result.stderr_preview or '(no output)'}"
-        )[:_MAX_MODEL_RESULT_CHARS]
+        )
         # TASK-26006: one labeled recovery line for known failure shapes,
         # APPENDED after the untouched output -- never on success, never
         # more than one, absent for unrecognized failures.
@@ -578,7 +594,16 @@ class RawShellToolProvider:
         )
         if hint is not None:
             detail = f"{detail}\n{hint}"
-        if result.terminal_state == "exited" and result.exit_code == 0:
+        if result.terminal_state == "exited" and (
+            result.exit_code == 0
+            or not result.truncated
+            and is_empty_search(
+                command,
+                result.exit_code,
+                result.stderr_preview,
+                shell=result.resolved_shell,
+            )
+        ):
             return ToolResult(ok=True, content=detail)
         if result.terminal_state == "timed_out":
             outcome = "timeout"

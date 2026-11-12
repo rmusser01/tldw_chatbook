@@ -1,0 +1,87 @@
+--- tldw_chatbook/Chat/console_runtime.py:ConsoleRuntime.__init__ candidate
++++ integrated
+@@ -147,6 +147,9 @@
+         self._attention_lock = threading.RLock()
+         self._attention_operation_lock = threading.RLock()
+         self._attention_revision = 0
++        self._attention_refresh_task: asyncio.Task[None] | None = None
++        self._attention_refresh_request: tuple | None = None
++        self._attention_refresh_force = False
+         self._console_needs_attention: bool | None = None
+         self._last_known_terminal_marks: tuple[tuple[str, str], ...] | None = None
+         self._notified_terminal_receipts: set[str] = set()
+--- tldw_chatbook/UI/Console_Modules/console_spend_projection.py:ConsoleContextReadSnapshot._key candidate
++++ integrated
+@@ -38,6 +38,7 @@
+                 store.session_settings_revision(session_id),
+                 store.session_context_summary(session_id),
+                 self.config_projection._key() if self.config_projection else None,
++                _context_presentation_source_key(controller),
+             )
+         except (AttributeError, KeyError, StopIteration):
+             return None
+--- tldw_chatbook/UI/Screens/chat_screen.py:ChatScreen._sync_native_console_chat_ui candidate
++++ integrated
+@@ -150,6 +150,23 @@
+             # and the later reads rebuild, while a settled tick pays for one
+             # build. Task-scoped: only THIS coroutine's task reads the cache —
+             # workers and handlers interleaving during the awaits build live.
++            if poll_record is None:
++                from ..Console_Modules.config_sync import prepare_console_presentation_sync
++
++                prepared = await prepare_console_presentation_sync(self)
++                if _console_screen_is_torn_down(self):
++                    return False
++                current_visit = self._current_console_attach_visit()
++                if (
++                    not visit.same_visit(current_visit)
++                    or visit.active != current_visit.active
++                ):
++                    self._console_sync_requested = True
++                    return False
++                if not prepared or getattr(self, "_console_sync_maintenance_paused", False):
++                    self._console_control_bar_replay_whole_sync = True
++                    self._request_console_control_bar_sync(delayed=True)
++                    return False
+             with self._workspace.tick_workspace_build_scope():
+                 if config_sync.project_console_tick(self) is False:  # Replay owns it.
+                     return False
+@@ -191,7 +208,7 @@
+                     self._console_attach_reconciled
+                     or self._console_attach_reconcile_running
+                 ):
+-                    self.call_after_refresh(self._reconcile_console_after_attach)
++                    self.call_after_refresh(self._start_console_attach_reconciliation)
+             if not poll_is_current():
+                 return False
+             if poll_record is None and not self._console_sync_requested and full_source is not None and run_controls.poll_source_is_current(self, full_source):
+--- tldw_chatbook/UI/Screens/settings_screen.py:SettingsScreen.__init__ candidate
++++ integrated
+@@ -465,21 +465,13 @@
+         ) = None
+         self._advanced_config_settings: AdvancedConfigSettings | None = None
+         self._ownership_by_category_cache = self._build_ownership_by_category()
+-        # Lazily-memoized cache, NOT a recompose=True reactive (P3 whole-branch
+-        # review Fix 1 + Fix 2): InternalPromptsPanel.Modified fires on every
+-        # prompt Save/Reset, and authoring.customized_count() iterates all
+-        # CATALOG entries with a config read each (~2.5ms). A recompose=True
+-        # reactive here would (a) unmount/remount the whole detail pane on
+-        # every save, wiping the panel's search text and scroll -- defeating
+-        # its own targeted _refresh_row design -- and (b) get recomputed live
+-        # on every Settings sidebar category-search keystroke via
+-        # _category_summaries(). Initialized to None and computed on first
+-        # DISPLAY (never in __init__): the count reads config, and reading
+-        # config during construction can force a config-file load/creation
+-        # before the app is ready (breaking storage-readiness checks). Kept
+-        # fresh afterward by _on_internal_prompts_modified via the panel's own
+-        # computed count (no extra live call).
++        # Display only: the checked read runs after mount on a worker. Updating
++        # existing rows preserves the prompt editor's search and scroll state.
+         self._internal_prompts_customized_count: int | None = None
++        self._internal_prompts_count_identity: tuple[int, str] | None = None
++        self._internal_prompts_count_revision = 0
++        self._internal_prompts_count_pending = False
++        self._internal_prompts_count_failed = False
+         # None = not yet synced; _sync_responsive_workbench() applies the
+         # compact classes on first call (on_mount) and on every resize.
+         self._workbench_compact: bool | None = None

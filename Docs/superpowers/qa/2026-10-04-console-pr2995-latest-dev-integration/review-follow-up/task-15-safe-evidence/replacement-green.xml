@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="2.952" timestamp="2026-10-04T14:47:36.116507-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_console_chat_start" name="test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[replacement]" time="2.001"><failure message="AssertionError: assert 'review_required' == 'not_started'&#10;  &#10;  - not_started&#10;  + review_required">tmp_path = PosixPath('/private/tmp/pr2995-task15/replacement-green/test_post_drain_cleanup_keeps_0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1102bd7f0&gt;
+fault = 'replacement'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "fault", ["publication", "abandonment", "run_state", "replacement"]
+    )
+    async def test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release(
+        tmp_path, monkeypatch, fault
+    ):
+        """Fallible UI cleanup cannot retain a drained slot or steal a replacement."""
+        import asyncio
+        from copy import copy
+        from dataclasses import replace
+        from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(
+            tmp_path
+        )
+        coordinator = controller._chat_start
+        ledger = runs.automatic_work
+        abort = ledger.abort_chat_start
+        abandon = controller._abandon_preparation
+        set_state = controller._set_run_state
+        saved = {}
+    
+        def fail(*args, **kwargs):
+            raise OSError("private cleanup failure")
+    
+        async def refuse_accept(item):
+            saved["item"] = item
+            saved["preparation"] = store.preparation_for_session(target.id)
+            assert saved["preparation"] is not None
+            if fault == "abandonment":
+                monkeypatch.setattr(controller, "_abandon_preparation", fail)
+            raise OSError("private preaccept refusal")
+    
+        monkeypatch.setattr(coordinator, "accept", refuse_accept)
+    
+        def refunded(*args, **kwargs):
+            result = abort(*args, **kwargs)
+            assert result
+            item = saved["item"]
+            if fault == "run_state":
+                # Re-establish the exact validation state to exercise its cleanup fence.
+                set_state(item.validating_state, session_id=target.id)
+                monkeypatch.setattr(controller, "_set_run_state", fail)
+            return result
+    
+        monkeypatch.setattr(ledger, "abort_chat_start", refunded)
+        publish = coordinator._publish_outcome
+    
+        async def publication(*args, **kwargs):
+            item = saved["item"]
+            if fault == "publication":
+                raise OSError("private publication failure")
+            if fault == "replacement":
+                replacement = copy(item)
+                replacement.token = object()
+                replacement.preparation_id = "replacement-preparation"
+                coordinator._active[target.id] = replacement
+                item.capacity_owner._automatic_primary_claims[target.id] = replacement.token
+                saved["replacement"] = replacement
+                abandon(saved["preparation"].preparation_id)
+                replacement_preparation = replace(
+                    saved["preparation"], preparation_id="replacement-preparation"
+                )
+                assert (
+                    store.begin_preparation(replacement_preparation)
+                    is replacement_preparation
+                )
+                saved["replacement_preparation"] = replacement_preparation
+                saved["state"] = ConsoleRunState(ConsoleRunStatus.VALIDATING, "replacement")
+                set_state(saved["state"], session_id=target.id)
+            return await publish(*args, **kwargs)
+    
+        monkeypatch.setattr(coordinator, "_publish_outcome", publication)
+        start = asyncio.create_task(coordinator.start(request))
+        try:
+            await asyncio.sleep(0)
+            item = coordinator._active[target.id]
+            results = await asyncio.gather(item.task, return_exceptions=True)
+            assert item.outcome.done()
+            assert results == [None]
+            outcome = await start
+&gt;           assert outcome.launch_status == (
+                "review_required" if fault == "publication" else "not_started"
+            )
+E           AssertionError: assert 'review_required' == 'not_started'
+E             
+E             - not_started
+E             + review_required
+
+Tests/Chat/test_console_chat_start.py:3676: AssertionError</failure></testcase></testsuite></testsuites>

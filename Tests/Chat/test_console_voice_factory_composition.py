@@ -255,6 +255,7 @@ async def test_factory_imports_actual_trace_only_after_actual_pair_commit(
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_saved_controller_sealed_headers_import_through_winning_claim(
     tmp_path,

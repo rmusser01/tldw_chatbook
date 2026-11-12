@@ -75,6 +75,7 @@ def _painted_text(screen, widget):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -143,6 +144,7 @@ async def test_rechunk_feedback_survives_mode_and_scope_recompose(theme, size):
         assert service.calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("recompose", [False, True])
@@ -171,6 +173,7 @@ async def test_completed_rechunk_receipt_is_retained_and_wraps(size, recompose):
         assert RECEIPT in _painted_text(screen, summary)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["missing", "policy", "exception"])
 async def test_failure_clears_progress_after_recompose_and_allows_retry(failure):

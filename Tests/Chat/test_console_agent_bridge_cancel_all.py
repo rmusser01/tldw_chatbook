@@ -244,6 +244,7 @@ async def test_await_fleet_terminal_resolves_after_real_coordinator_finish(tmp_p
     assert await asyncio.wait_for(waiter, timeout=1) is True
 
 
+@pytest.mark.bootstrap_profile
 def test_cancel_all_takes_the_published_services_child_and_a_retained_survivor(
     tmp_path, monkeypatch
 ):
@@ -305,6 +306,7 @@ def test_cancel_all_takes_the_published_services_child_and_a_retained_survivor(
     assert bridge.fleet_snapshot("conv-1") == []
 
 
+@pytest.mark.bootstrap_profile
 def test_cancel_all_reaches_a_survivor_with_no_run_in_flight(tmp_path, monkeypatch):
     """The retained-owner-only tier: no published service exists at all.
 
@@ -359,6 +361,7 @@ def test_cancel_all_reaches_a_survivor_with_no_run_in_flight(tmp_path, monkeypat
     assert bridge.cancel_all_subagents("conv-1") == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_cancel_all_reuses_the_per_handle_cancel_path_one_call_per_live_handle(
     tmp_path, monkeypatch
 ):

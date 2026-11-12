@@ -6,6 +6,7 @@ import math
 import os
 import time
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import ExitStack
 from copy import deepcopy
 from typing import Any, Literal, Never, cast
 
@@ -28,7 +29,7 @@ from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 from tldw_chatbook.LLM_Calls.hosted_chat import _MAX_RETRY_AFTER_SECONDS
 from tldw_chatbook.Utils.input_validation import strict_json_loads
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatAuthenticationError,
     ChatBadRequestError,
     ChatConfigurationError,
@@ -45,7 +46,10 @@ from tldw_chatbook.config import (
     provider_settings_for_key,
     resolve_provider_api_key,
 )
-from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.egress import (
+    create_owned_default_session,
+    create_pooled_default_session,
+)
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
 logger = logger.bind(module="qwencloud")
@@ -166,8 +170,8 @@ def _advance_retry_policy(
     return next_policy, delay
 
 
-def _transport_without_hidden_retries() -> HTTPAdapter:
-    retry_policy = Retry(
+def _zero_hidden_retry_policy() -> Retry:
+    return Retry(
         total=0,
         connect=0,
         read=0,
@@ -177,7 +181,6 @@ def _transport_without_hidden_retries() -> HTTPAdapter:
         allowed_methods=frozenset({"POST"}),
         raise_on_status=False,
     )
-    return HTTPAdapter(max_retries=retry_policy)
 
 
 def _is_mode_model_mismatch(response: requests.Response) -> bool:
@@ -1072,6 +1075,25 @@ def normalize_qwencloud_response(
     raise _provider_error("QwenCloud response used an unknown API mode.")
 
 
+def _new_transport_session() -> requests.Session:
+    """Build one zero-retry transport session for the per-thread registry.
+
+    ADR-222 (TASK-34418) + task-34387: identical wire semantics to the
+    session ``chat_with_qwencloud`` built per call -- a default session with
+    the ``_zero_hidden_retry_policy()`` mount that keeps every retry
+    decision in this module's own bounded loop. The adapter is mounted by
+    :func:`create_pooled_default_session` at pooled-session creation (its
+    configuration is part of the pool key), so the shared session is never
+    mutated after creation. Resolved through this module's
+    ``create_pooled_default_session`` global at call time so the existing
+    test seam keeps working.
+    """
+    return create_pooled_default_session(
+        mount_retry=_zero_hidden_retry_policy(),
+        mount_prefixes=("https://", "http://"),
+    )
+
+
 @_provider_recovery.unqualified
 def chat_with_qwencloud(
     input_data: list[dict[str, Any]],
@@ -1164,7 +1186,6 @@ def chat_with_qwencloud(
         raise _configuration_error("QwenCloud timeout must be positive and finite.")
     retries, retry_delay = _retry_configuration(provider_settings)
     retry_policy = _build_retry_policy(retries=retries, retry_delay=retry_delay)
-    adapter = _transport_without_hidden_retries()
 
     suffix = "/responses" if final_mode == "responses" else "/chat/completions"
     api_url = f"{final_base}{suffix}"
@@ -1173,22 +1194,49 @@ def chat_with_qwencloud(
         "Content-Type": "application/json",
     }
 
-    session = create_default_session()
-    stream_owns_session = False
-    try:
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        get_session,
+        trust_setting_fragment,
+    )
+
+    with ExitStack() as transport_scope:
+        owned = None
+        if final_streaming:
+            from tldw_chatbook.LLM_Calls.qwencloud_streaming import _OwnedQwenTransport
+
+            session = create_owned_default_session()
+            owned = _OwnedQwenTransport(session)
+            transport_scope.callback(_best_effort_close, owned)
+            _provider_recovery._own_ordinary_stream_transport(owned)
+            if isinstance(session, requests.Session):
+                session.hooks["response"].insert(0, owned.capture_response)
+            for prefix in ("https://", "http://"):
+                session.mount(
+                    prefix, HTTPAdapter(max_retries=_zero_hidden_retry_policy())
+                )
+        else:
+            session = get_session(
+                f"qwencloud:{final_base}:{trust_setting_fragment()}",
+                _new_transport_session,
+            )
         for attempt_index in range(retries + 1):
             response: requests.Response | None = None
             retry_sleep: float | None = None
             try:
-                response = session.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=timeout,
-                    stream=True,
-                )
+                try:
+                    response = session.post(
+                        api_url,
+                        headers=headers,
+                        json=payload,
+                        timeout=timeout,
+                        stream=True,
+                    )
+                except RequestException as error:
+                    if owned is not None and error.response is not None:
+                        owned.own_response(error.response)
+                    raise
+                if owned is not None:
+                    owned.own_response(response)
                 status_code = int(response.status_code)
                 if status_code in _RETRYABLE_STATUS_CODES and attempt_index < retries:
                     retry_policy, retry_sleep = _advance_retry_policy(
@@ -1198,18 +1246,19 @@ def chat_with_qwencloud(
                     )
                 else:
                     response.raise_for_status()
-                    if final_streaming:
+                    if owned is not None:
                         from tldw_chatbook.LLM_Calls.qwencloud_streaming import (
                             QwenCloudStream,
                         )
 
                         stream = QwenCloudStream(
                             response=response,
-                            session=session,
                             api_mode=final_mode,
+                            _owned_transport=owned,
                         )
+                        transport_scope.pop_all()
+                        owned = None
                         response = None
-                        stream_owns_session = True
                         return stream
                     result = response.json()
                     if not isinstance(result, Mapping):
@@ -1286,15 +1335,13 @@ def chat_with_qwencloud(
                 )
                 raise _provider_error("QwenCloud returned malformed JSON.") from None
             finally:
-                if response is not None:
+                if owned is not None:
+                    owned.finish_response()
+                elif response is not None:
                     _best_effort_close(response)
 
             if retry_sleep is None:
                 raise _provider_error("QwenCloud retry state was incomplete.")
             if retry_sleep > 0:
                 time.sleep(retry_sleep)
-    finally:
-        if not stream_owns_session:
-            _best_effort_close(session)
-
-    raise _provider_error("QwenCloud request attempts were exhausted.")
+        raise _provider_error("QwenCloud request attempts were exhausted.")

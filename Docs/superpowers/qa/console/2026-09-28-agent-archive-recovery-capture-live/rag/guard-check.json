@@ -1,0 +1,8 @@
+{
+  "parsed_hook_count": 1,
+  "rag_blocked": true,
+  "reason": "Generic RAG is disabled for this no-index archive verification. Use archive recovery for archived conversations.",
+  "archive_search_hook_unblocked": true,
+  "restore_hook_unblocked": true,
+  "note": "Restriction only; normal permission/runtime/confirmation gates were not bypassed."
+}

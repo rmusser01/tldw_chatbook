@@ -690,10 +690,11 @@ async def test_startup_recovery_and_reviewed_apply_share_root_lock() -> None:
 )
 @pytest.mark.asyncio
 async def test_production_startup_resumes_transient_linked_undo_attention(
+    make_notes_state_store,
     tmp_path: Path,
     failure_state: NotesSyncOperationState,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note = _note(content="note side", version=4)
     notes = FakeNoteAuthority(note)
     files = FakeFilesystem(_file(content="file side"))
@@ -760,10 +761,11 @@ async def test_production_startup_resumes_transient_linked_undo_attention(
 @pytest.mark.parametrize("damage", ("missing", "corrupt"))
 @pytest.mark.asyncio
 async def test_production_startup_blocks_invalid_linked_undo_recovery(
+    make_notes_state_store,
     tmp_path: Path,
     damage: str,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note = _note(content="note side", version=4)
     notes = FakeNoteAuthority(note)
     files = FakeFilesystem(_file(content="file side"))

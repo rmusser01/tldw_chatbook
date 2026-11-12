@@ -58,6 +58,7 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.MCP.unified_control_plane_service import MCPHubGateDeniedError
+from tldw_chatbook.UI.MCP_Modules import mcp_inspector_reveal
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     PermissionProfileContext,
     tool_state_kind,
@@ -273,7 +274,7 @@ _ACTION_LABELS: dict[HubAction, str] = {
     HubAction.VALIDATE: "Check readiness",
     HubAction.VIEW_DETAILS: "View details",
     HubAction.OPEN_TOOL_CATALOG: "Open tool catalog",
-    HubAction.OPEN_AUDIT: "Open audit",
+    HubAction.OPEN_AUDIT: "Open history",
 }
 
 # Tooltips for the actions that have first-class UI (see _wired_actions()).
@@ -282,7 +283,7 @@ _ACTION_LABELS: dict[HubAction, str] = {
 _WIRED_ACTION_TOOLTIPS: dict[HubAction, str] = {
     HubAction.VIEW_DETAILS: "Show this server's detail view in Servers mode.",
     HubAction.OPEN_TOOL_CATALOG: "Switch to Tools mode.",
-    HubAction.OPEN_AUDIT: "Switch to Audit mode.",
+    HubAction.OPEN_AUDIT: "Switch to History mode.",
     HubAction.CONNECT: "Connect to this server and discover its tools.",
     HubAction.VALIDATE: "Test the connection without changing the cached catalog.",
     HubAction.REFRESH_DISCOVERY: "Reconnect and refresh the tool/resource/prompt catalog.",
@@ -347,6 +348,8 @@ def _risk_floored_notice(effective: EffectiveToolState) -> str:
     if effective.origin == "tool_override":
         return _ALWAYS_ASK_NOTICE
     return _RISK_FLOORED_NOTICE
+
+
 # task-32281: cap on one exact-input allow rule row's displayed argument
 # summary -- long enough to be legible, short enough that a row with a big
 # argument payload doesn't dominate the permission block.
@@ -929,7 +932,10 @@ class MCPInspector(VerticalScroll):
 
     # F-056: Escape closes the Test Tool panel when it's open (same path as
     # its Close button); no-op otherwise.
-    BINDINGS = [Binding("escape", "close_test_panel", "Close test panel", show=False)]
+    BINDINGS = [
+        Binding("escape", "close_test_panel", "Close test panel", show=False),
+        Binding("up", "test_approval_up", "Reveal test approval", show=False),
+    ]
 
     BUNDLED_CSS = """
     MCPInspector {
@@ -1478,19 +1484,11 @@ class MCPInspector(VerticalScroll):
         self._test_panel_token: object | None = None
 
     def on_resize(self) -> None:
-        """Keep the current editor visible after the viewport settles."""
-        self.call_after_refresh(self._reveal_focused_control)
+        self.call_after_refresh(mcp_inspector_reveal.reveal_other_focus, self)
 
-    def _reveal_focused_control(self) -> None:
-        if (
-            not self.is_attached
-            or not self.display
-            or self.app.screen is not self.screen
-        ):
-            return
-        focused = self.app.focused
-        if focused is not None and self in focused.ancestors:
-            focused.scroll_visible(animate=False, immediate=True)
+    def _action_test_approval_up(self) -> None:
+        if not mcp_inspector_reveal.reveal_test_approval(self):
+            super().action_scroll_up()
 
     def _advanced_object_label(self) -> str:
         """Compute the "Showing: <object>" text for `#mcp-adv-object`.
@@ -2287,7 +2285,9 @@ class MCPInspector(VerticalScroll):
         """
         # Capture before yielding; cached refreshes retain the original review.
         if tool is not None and reviewed_definition_hash is None:
-            reviewed_definition_hash = definition_hash(tool.description, tool.input_schema)
+            reviewed_definition_hash = definition_hash(
+                tool.description, tool.input_schema
+            )
         self._current_permission_definition_hash = reviewed_definition_hash
         container = self.query_one("#mcp-inspector-permission", Vertical)
         self._retire_permission_navigation("mcp-inspector-goto-permission")
@@ -2440,8 +2440,7 @@ class MCPInspector(VerticalScroll):
             )
             widgets.append(
                 Static(
-                    f"{rule_prefix} · {_arg_rule_summary(args_json)}"
-                    f"{inherited_suffix}",
+                    f"{rule_prefix} · {_arg_rule_summary(args_json)}{inherited_suffix}",
                     id=f"mcp-inspector-arg-rule-{index}",
                     classes="ds-field-row",
                     markup=False,
@@ -2497,7 +2496,9 @@ class MCPInspector(VerticalScroll):
                 tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
             )
             self._session_approval_actions[button] = (
-                server_key, tool_name, self._current_permission_profile_context
+                server_key,
+                tool_name,
+                self._current_permission_profile_context,
             )
             widgets.append(button)
         if show_goto_button:
@@ -2577,7 +2578,8 @@ class MCPInspector(VerticalScroll):
                 session_approvals=session_approvals,
                 reviewed_definition_hash=(
                     self._current_permission_definition_hash
-                    if expected_view is not None else None
+                    if expected_view is not None
+                    else None
                 ),
             )
 
@@ -3043,7 +3045,7 @@ class MCPInspector(VerticalScroll):
         """The `HubTool` `#mcp-inspector-tool` currently describes, or `None`.
 
         Read-only accessor for `MCPWorkbench.open_test_for_selected_tool()`
-        (the `t` keybinding's entry point, mcp_screen.py) to check whether
+        (the `t` keybinding's entry point, the Tools & MCP pane) to check whether
         there's anything to test before dispatching -- mirrors how every
         other cross-widget read here goes through a public method rather
         than reaching into `_current_tool` directly.

@@ -1,0 +1,4 @@
+{
+  "sha256": "06b14b96934daa4ae9bb064bb11b8eb728522537c76d37f5fe8d65d394f3542d",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"7.892\" timestamp=\"2026-11-02T08:08:08.265208-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\"><testcase classname=\"Tests.UI.test_console_send_ready_attachment\" name=\"test_attachment_readiness_waits_for_checked_config_projection\" time=\"5.083\" /></testsuite></testsuites>"
+}

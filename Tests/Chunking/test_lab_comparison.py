@@ -55,6 +55,7 @@ def with_chunks(result, texts, spans=None):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_identity_difference_is_not_itself_incompatibility():
     from tldw_chatbook.Chunking.lab_comparison import comparison_reason
 
@@ -65,6 +66,7 @@ def test_identity_difference_is_not_itself_incompatibility():
     assert comparison_reason(a, b) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("field", ["backend", "engine_version", "execution_version"])
 def test_older_matching_versions_compare_but_mixed_versions_do_not(field):
     from tldw_chatbook.Chunking.lab_comparison import comparison_reason
@@ -80,6 +82,7 @@ def test_older_matching_versions_compare_but_mixed_versions_do_not(field):
     assert field.replace("_", " ") in comparison_reason(a, old).lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_sample_and_failed_results_have_recovery_reasons():
     from tldw_chatbook.Chunking.lab_comparison import comparison_reason
 
@@ -91,6 +94,7 @@ def test_sample_and_failed_results_have_recovery_reasons():
     assert "successful" in comparison_reason(a, failed).lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_methods_options_and_chunking_assets_are_experimental_variables():
     from tldw_chatbook.Chunking.lab_comparison import comparison_reason, diff_configs
 
@@ -135,6 +139,7 @@ def test_methods_options_and_chunking_assets_are_experimental_variables():
     } in diff_configs(a, b)
 
 
+@pytest.mark.bootstrap_profile
 def test_distribution_unicode_words_nearest_rank_and_expansion():
     from tldw_chatbook.Chunking.lab_comparison import summarize_result
 
@@ -153,6 +158,7 @@ def test_distribution_unicode_words_nearest_rank_and_expansion():
     assert summary["overlap_characters"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_zero_output_has_unavailable_quantiles_and_no_division_by_zero():
     from tldw_chatbook.Chunking.lab_comparison import summarize_result
 
@@ -168,6 +174,7 @@ def test_zero_output_has_unavailable_quantiles_and_no_division_by_zero():
     assert summary["expansion_ratio"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_historical_large_integer_budget_does_not_break_output_counts():
     from tldw_chatbook.Chunking.lab_comparison import summarize_result
 
@@ -187,6 +194,7 @@ def test_historical_large_integer_budget_does_not_break_output_counts():
     assert summary["budget"]["oversized_chunks"] == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_measurement_requires_identity_and_does_not_reuse_chunking_tokenizer():
     from tldw_chatbook.Chunking.lab_comparison import (
         comparison_deltas,
@@ -209,6 +217,7 @@ def test_measurement_requires_identity_and_does_not_reuse_chunking_tokenizer():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_unlike_method_budgets_never_become_deltas():
     from tldw_chatbook.Chunking.lab_comparison import (
         comparison_deltas,
@@ -237,6 +246,7 @@ def test_unlike_method_budgets_never_become_deltas():
     assert set(comparison_deltas(a, b)) == {"chunk_count", "characters", "words"}
 
 
+@pytest.mark.bootstrap_profile
 def test_diff_uses_complete_captured_documents_with_position_sensitive_operations():
     from tldw_chatbook.Chunking.lab_comparison import diff_configs
 
@@ -284,6 +294,7 @@ def test_diff_uses_complete_captured_documents_with_position_sensitive_operation
     assert any(d["path"] == "/classifier/rules/0" for d in diffs)
 
 
+@pytest.mark.bootstrap_profile
 def test_repeated_text_never_gets_guessed_mapping_and_transformed_is_distinct():
     from tldw_chatbook.Chunking.lab_comparison import (
         chunk_mapping,
@@ -304,6 +315,7 @@ def test_repeated_text_never_gets_guessed_mapping_and_transformed_is_distinct():
     assert summarize_result(changed)["overlap_characters"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_verified_overlap_is_union_based_not_expansion():
     from tldw_chatbook.Chunking.lab_comparison import summarize_result
 

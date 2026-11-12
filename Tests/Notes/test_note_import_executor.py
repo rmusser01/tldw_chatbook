@@ -9,7 +9,7 @@ import threading
 import time
 import traceback
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC
 from itertools import pairwise
@@ -89,21 +89,60 @@ def target_harness(
     ]
 ]:
     """Return the real local target stack over one temporary database."""
-    db = CharactersRAGDB(tmp_path / "target.db", client_id="target-template")
-    service = NotesInteropService(
-        base_db_directory=tmp_path,
-        api_client_id="target-api",
-        global_db_to_use=db,
-    )
-    target_db = service._get_db("target-user")
-    folders = LocalNoteFolderRepository(target_db)
-    target = LocalNoteImportTarget(
-        db=target_db,
-        folder_repository=folders,
-    )
-    yield target, service, folders, target_db
-    service.close_all_user_connections()
-    db.close_connection()
+    with ExitStack() as owners:
+        db = CharactersRAGDB(tmp_path / "target.db", client_id="target-template")
+        owners.callback(db.close_connection)
+        service = NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="target-api",
+            global_db_to_use=db,
+        )
+        owners.callback(service.close_all_user_connections)
+        target_db = service._get_db("target-user")
+        folders = LocalNoteFolderRepository(target_db)
+        target = LocalNoteImportTarget(
+            db=target_db,
+            folder_repository=folders,
+        )
+        yield target, service, folders, target_db
+
+
+def test_target_harness_retires_owners_on_setup_refusal(tmp_path, monkeypatch):
+    events = []
+    refusal = CharactersRAGDBError("test setup refusal")
+
+    class Template:
+        def close_connection(self):
+            events.append("template closed")
+
+    template = Template()
+
+    def make_template(db_path, *, client_id):
+        assert db_path == tmp_path / "target.db"
+        assert client_id == "target-template"
+        return template
+
+    class Interop:
+        def __init__(self, *, base_db_directory, api_client_id, global_db_to_use):
+            assert base_db_directory == tmp_path
+            assert api_client_id == "target-api"
+            assert global_db_to_use is template
+
+        def _get_db(self, user_id):
+            assert user_id == "target-user"
+            events.append("setup refused")
+            raise refusal
+
+        def close_all_user_connections(self):
+            events.append("interop closed")
+
+    monkeypatch.setitem(globals(), "CharactersRAGDB", make_template)
+    monkeypatch.setitem(globals(), "NotesInteropService", Interop)
+    with pytest.raises(CharactersRAGDBError) as caught:
+        next(target_harness.__wrapped__(tmp_path))
+
+    assert caught.value is refusal
+    assert events == ["setup refused", "interop closed", "template closed"]
 
 
 def _payload(
@@ -225,6 +264,13 @@ def real_executor(target_harness, tmp_path):
     return executor, target, receipts, service, folders, db
 
 
+@pytest.fixture
+def owned_sync_executor(real_executor, request):
+    _executor, _target, receipts, _service, _folders, _db = real_executor
+    request.addfinalizer(receipts._store.close)
+    return real_executor
+
+
 def _expected_note_id(item_id: str, payload_index: int) -> str:
     return str(
         uuid5(
@@ -292,6 +338,7 @@ def test_target_constructor_rejects_a_different_repository_database_safely(
         assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_target_ensure_folder_is_deterministic_and_replay_safe(
     target_harness,
 ) -> None:
@@ -306,13 +353,16 @@ def test_target_ensure_folder_is_deterministic_and_replay_safe(
 
     assert first.folder_id == _FOLDER_ID
     assert retry == first
-    folder_sync_id = _db.get_connection().execute(
-        "SELECT sync_id FROM note_folders WHERE id = ?", (_FOLDER_ID,)
-    ).fetchone()[0]
+    folder_sync_id = (
+        _db.get_connection()
+        .execute("SELECT sync_id FROM note_folders WHERE id = ?", (_FOLDER_ID,))
+        .fetchone()[0]
+    )
     assert str(UUID(folder_sync_id)) == folder_sync_id
     assert UUID(folder_sync_id).version == 4
 
 
+@pytest.mark.bootstrap_profile
 def test_target_folder_projection_is_frozen_usable_and_private_safe(
     target_harness,
 ) -> None:
@@ -343,6 +393,7 @@ def test_target_folder_projection_is_frozen_usable_and_private_safe(
             assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("field", ["folder_id", "name", "path", "normalized_path"])
 def test_target_folder_projection_rejects_non_exact_text_fields(
     target_harness,
@@ -379,6 +430,7 @@ def test_target_folder_projection_rejects_non_exact_text_fields(
     assert "Private Imported" not in repr(caught.value)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_root_reuse_requires_explicit_allow_existing(target_harness) -> None:
     target, _service, folders, _db = target_harness
     existing = folders.create_folder(
@@ -399,6 +451,7 @@ def test_target_root_reuse_requires_explicit_allow_existing(target_harness) -> N
     assert reused.normalized_path == existing.normalized_path
 
 
+@pytest.mark.bootstrap_profile
 def test_target_deleted_deterministic_folder_identity_is_a_conflict(
     target_harness,
 ) -> None:
@@ -415,6 +468,7 @@ def test_target_deleted_deterministic_folder_identity_is_a_conflict(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_target_reconciles_a_concurrent_folder_create_winner(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -434,6 +488,7 @@ def test_target_reconciles_a_concurrent_folder_create_winner(
     assert result.folder_id == _FOLDER_ID
 
 
+@pytest.mark.bootstrap_profile
 def test_target_concurrent_different_folder_identity_is_a_conflict(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -455,6 +510,7 @@ def test_target_concurrent_different_folder_identity_is_a_conflict(
     assert "hostile" not in repr(caught.value)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_concurrent_folder_id_winner_on_another_path_is_a_conflict(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -570,6 +626,7 @@ def test_target_real_two_connection_same_path_race_has_one_safe_winner(
         second_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_target_folder_conflict_precedes_following_note_mutation(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -595,6 +652,7 @@ def test_target_folder_conflict_precedes_following_note_mutation(
     assert target.read_note(note_id=_NOTE_ID) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("segments", "folder_id", "allow_existing"),
     [
@@ -617,6 +675,7 @@ def test_target_folder_validation_failures_are_permanent(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_target_folder_segments_stop_at_the_bounded_overflow_probe(
     target_harness,
 ) -> None:
@@ -641,6 +700,7 @@ def test_target_folder_segments_stop_at_the_bounded_overflow_probe(
     assert next_calls == 65
 
 
+@pytest.mark.bootstrap_profile
 def test_target_read_note_returns_a_frozen_private_projection(target_harness) -> None:
     target, _service, _folders, _db = target_harness
     created = target.create_note(note_id=_NOTE_ID, payload=_payload())
@@ -661,6 +721,7 @@ def test_target_read_note_returns_a_frozen_private_projection(target_harness) ->
         assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_target_create_note_persists_exact_payload_and_reconciles_retry(
     target_harness,
 ) -> None:
@@ -682,6 +743,7 @@ def test_target_create_note_persists_exact_payload_and_reconciles_retry(
     assert count == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_target_uses_injected_service_database_client_id_for_direct_writes(
     target_harness,
 ) -> None:
@@ -713,6 +775,7 @@ def test_target_uses_injected_service_database_client_id_for_direct_writes(
     assert client_ids == {"target-user"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "different",
     [
@@ -738,6 +801,7 @@ def test_target_create_note_rejects_deterministic_id_payload_conflicts(
     assert count == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_target_replace_note_pins_one_version_increment_and_reconciles_retry(
     target_harness,
 ) -> None:
@@ -758,6 +822,7 @@ def test_target_replace_note_pins_one_version_increment_and_reconciles_retry(
     assert retry == updated
 
 
+@pytest.mark.bootstrap_profile
 def test_target_replace_note_rejects_missing_different_or_later_state(
     target_harness,
 ) -> None:
@@ -785,6 +850,7 @@ def test_target_replace_note_rejects_missing_different_or_later_state(
         target.replace_note(note_id=_NOTE_ID, expected_version=1, payload=replacement)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_replace_note_translates_an_optimistic_race(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -817,6 +883,7 @@ def test_target_replace_note_translates_an_optimistic_race(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_target_create_rolls_back_note_on_internal_keyword_sync_failure(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -841,6 +908,7 @@ def test_target_create_rolls_back_note_on_internal_keyword_sync_failure(
     assert row is None
 
 
+@pytest.mark.bootstrap_profile
 def test_target_replace_rolls_back_text_on_internal_keyword_sync_failure(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -865,6 +933,7 @@ def test_target_replace_rolls_back_text_on_internal_keyword_sync_failure(
     assert target.read_note(note_id=_NOTE_ID) == original
 
 
+@pytest.mark.bootstrap_profile
 def test_target_keyword_sync_is_exact_canonical_and_idempotent(target_harness) -> None:
     target, service, _folders, db = target_harness
     target.create_note(note_id=_NOTE_ID, payload=_payload(keywords=()))
@@ -916,6 +985,7 @@ def test_target_keyword_sync_is_exact_canonical_and_idempotent(target_harness) -
     assert tuple(stale) == ("stale", 0)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_keyword_sync_handles_hidden_deleted_links_exactly(
     target_harness,
 ) -> None:
@@ -984,10 +1054,11 @@ def test_target_keyword_sync_handles_hidden_deleted_links_exactly(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_creates_multi_payload_notes_with_exact_keywords_and_memberships(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, target, receipts, _service, folders, db = real_executor
+    executor, target, receipts, _service, folders, db = owned_sync_executor
     payloads = (
         _payload(title="First", content="First body", keywords=("Alpha", "beta")),
         _payload(title="Second", content="Second body", keywords=("Gamma",)),
@@ -1056,11 +1127,12 @@ def test_executor_creates_multi_payload_notes_with_exact_keywords_and_membership
     assert durable.items[0].outcome is ImportItemOutcome.IMPORTED
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_links_wikilink_targets_created_in_the_same_batch(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
     """Obsidian links to batch mates become note links; the rest stay literal."""
-    executor, target, _receipts, _service, _folders, _db = real_executor
+    executor, target, _receipts, _service, _folders, _db = owned_sync_executor
     linking = _execution_item(
         item_id="link-source",
         payloads=(
@@ -1124,11 +1196,12 @@ def test_executor_links_wikilink_targets_created_in_the_same_batch(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_leaves_wikilink_text_alone_outside_obsidian_mode(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
     """A payload with no recorded wikilinks is written exactly as parsed."""
-    executor, target, _receipts, _service, _folders, _db = real_executor
+    executor, target, _receipts, _service, _folders, _db = owned_sync_executor
     literal = _execution_item(
         item_id="link-source",
         payloads=(_payload(title="A", content="See [[link-target]]."),),
@@ -1156,6 +1229,7 @@ def test_executor_leaves_wikilink_text_alone_outside_obsidian_mode(
     assert note.content == "See [[link-target]]."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("batch_size", "item_count", "expected_running_completed"),
     [
@@ -1165,6 +1239,7 @@ def test_executor_leaves_wikilink_text_alone_outside_obsidian_mode(
     ],
 )
 def test_executor_processes_items_in_bounded_batches_with_monotonic_frozen_progress(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     batch_size: int,
@@ -1173,6 +1248,7 @@ def test_executor_processes_items_in_bounded_batches_with_monotonic_frozen_progr
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / f"progress-{batch_size}.sqlite3")
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -1215,11 +1291,12 @@ def test_executor_processes_items_in_bounded_batches_with_monotonic_frozen_progr
         progress[-1].completed = 0  # type: ignore[misc]
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_cancellation_before_first_batch_mutates_no_target(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     item = _execution_item(
         item_id="cancel-before-first",
         payloads=(_payload(),),
@@ -1255,6 +1332,7 @@ def test_executor_cancellation_before_first_batch_mutates_no_target(
     assert durable.folder_effects[0].state is ImportEffectState.PENDING
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_cancels_only_between_batches_after_current_target_call_returns(
     target_harness,
     tmp_path: Path,
@@ -1322,6 +1400,7 @@ def test_executor_cancels_only_between_batches_after_current_target_call_returns
     assert durable.items[1].outcome is ImportItemOutcome.PENDING
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_cancels_between_folder_batches_after_current_target_returns(
     target_harness,
     tmp_path: Path,
@@ -1419,6 +1498,7 @@ def test_executor_cancels_between_folder_batches_after_current_target_returns(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_executor_async_offloads_the_whole_execution_and_keeps_loop_responsive(
     real_executor,
     monkeypatch: pytest.MonkeyPatch,
@@ -1595,8 +1675,10 @@ async def test_execute_async_file_backed_recursive_import_reopens_and_replays_on
         reopened_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("crash_boundary", ["folder", "payload", "membership", "item"])
 def test_executor_reopens_and_reconciles_each_create_crash_window(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1605,6 +1687,7 @@ def test_executor_reopens_and_reconciles_each_create_crash_window(
     target, _service, folders, db = target_harness
     receipt_path = tmp_path / f"crash-{crash_boundary}.sqlite3"
     receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -1650,6 +1733,7 @@ def test_executor_reopens_and_reconciles_each_create_crash_window(
     monkeypatch.undo()
 
     reopened_receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(reopened_receipts._store.close)
     resumed = NoteImportExecutor(
         target=target,
         receipt_repository=reopened_receipts,
@@ -1685,7 +1769,9 @@ def test_executor_reopens_and_reconciles_each_create_crash_window(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_reopens_after_committed_create_item_finalization(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1693,6 +1779,7 @@ def test_executor_reopens_after_committed_create_item_finalization(
     target, _service, folders, db = target_harness
     receipt_path = tmp_path / "post-create-item-finalization.sqlite3"
     receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -1735,6 +1822,7 @@ def test_executor_reopens_after_committed_create_item_finalization(
 
     monkeypatch.setattr(target, "create_note", forbidden_create)
     reopened_receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(reopened_receipts._store.close)
     resumed = NoteImportExecutor(
         target=target,
         receipt_repository=reopened_receipts,
@@ -1762,7 +1850,9 @@ def test_executor_reopens_after_committed_create_item_finalization(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_reopens_after_committed_update_item_finalization(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1770,6 +1860,7 @@ def test_executor_reopens_after_committed_update_item_finalization(
     target, _service, folders, db = target_harness
     receipt_path = tmp_path / "post-update-item-finalization.sqlite3"
     receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -1822,6 +1913,7 @@ def test_executor_reopens_after_committed_update_item_finalization(
 
     monkeypatch.setattr(target, "replace_note", forbidden_replace)
     reopened_receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(reopened_receipts._store.close)
     resumed = NoteImportExecutor(
         target=target,
         receipt_repository=reopened_receipts,
@@ -1858,11 +1950,12 @@ def test_executor_reopens_after_committed_update_item_finalization(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_reconciles_update_crash_without_repeating_optimistic_update(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     existing = target.create_note(
         note_id="crash-update-target",
         payload=_payload(content="Before", keywords=("old",)),
@@ -1909,10 +2002,11 @@ def test_executor_reconciles_update_crash_without_repeating_optimistic_update(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_fresh_update_conflict_uses_version_conflict_reason(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     existing = target.create_note(
         note_id="fresh-update-conflict",
         payload=_payload(content="Before"),
@@ -1945,11 +2039,12 @@ def test_executor_fresh_update_conflict_uses_version_conflict_reason(
     assert durable.payload_effects[0].reason_code == "version_conflict"
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_interrupted_update_with_later_version_uses_note_conflict_reason(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     existing = target.create_note(
         note_id="recovery-update-conflict",
         payload=_payload(content="Before"),
@@ -1998,11 +2093,12 @@ def test_executor_interrupted_update_with_later_version_uses_note_conflict_reaso
     assert durable.payload_effects[0].reason_code == "note_conflict"
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_durably_fails_applied_update_that_diverges_before_item_finalize(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     existing = target.create_note(
         note_id="applied-update-diverged",
         payload=_payload(content="Before"),
@@ -2067,13 +2163,16 @@ def test_executor_durably_fails_applied_update_that_diverges_before_item_finaliz
     assert retried_durable.items[0].reason_code == "note_conflict"
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_applied_multi_create_divergence_preserves_per_payload_counts(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / "multi-divergence.sqlite3")
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -2140,11 +2239,12 @@ def test_executor_applied_multi_create_divergence_preserves_per_payload_counts(
     assert (exact_note.version, exact_note.title) == (1, "Remains exact")
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_applied_update_divergence_fails_pending_membership(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     existing = target.create_note(
         note_id="update-pending-membership",
         payload=_payload(content="Before"),
@@ -2206,11 +2306,12 @@ def test_executor_applied_update_divergence_fails_pending_membership(
     assert durable.items[0].outcome is ImportItemOutcome.FAILED
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_retry_failed_reuses_exact_session_and_only_retries_retryable_work(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     retry_payload = _payload(title="Retryable")
     permanent_payload = _payload(title="Permanent")
     items = tuple(
@@ -2271,11 +2372,12 @@ def test_executor_retry_failed_reuses_exact_session_and_only_retries_retryable_w
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_retry_failed_rejects_changed_plan_digest_before_target_call(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, _receipts, _service, _folders, _db = real_executor
+    executor, target, _receipts, _service, _folders, _db = owned_sync_executor
     payload = _payload(title="Retry digest")
     item = _execution_item(
         item_id="retry-digest",
@@ -2313,6 +2415,7 @@ def test_executor_retry_failed_rejects_changed_plan_digest_before_target_call(
     assert target_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("original_payload", "substituted_payload"),
     [
@@ -2329,12 +2432,12 @@ def test_executor_retry_failed_rejects_changed_plan_digest_before_target_call(
     ],
 )
 def test_executor_rejects_canonically_equivalent_text_substitution_before_target_call(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
     original_payload: ParsedNotePayload,
     substituted_payload: ParsedNotePayload,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     original_item = _execution_item(
         item_id="unicode-authority",
         payloads=(original_payload,),
@@ -2370,10 +2473,11 @@ def test_executor_rejects_canonically_equivalent_text_substitution_before_target
     assert "Cafe\u0301" not in repr(substituted)
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_retry_failed_resumes_cancelled_pending_work_in_same_session(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, _target, receipts, _service, _folders, _db = real_executor
+    executor, _target, receipts, _service, _folders, _db = owned_sync_executor
     item = _execution_item(
         item_id="cancel-retry",
         payloads=(_payload(),),
@@ -2399,10 +2503,11 @@ def test_executor_retry_failed_resumes_cancelled_pending_work_in_same_session(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_create_identity_collision_uses_note_conflict_reason(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, target, _receipts, _service, _folders, _db = real_executor
+    executor, target, _receipts, _service, _folders, _db = owned_sync_executor
     item = _execution_item(
         item_id="identity-collision",
         payloads=(_payload(title="Approved"),),
@@ -2428,10 +2533,11 @@ def test_executor_create_identity_collision_uses_note_conflict_reason(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_completed_single_payload_receipt_produces_private_exact_prior_observation(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, _target, receipts, _service, _folders, _db = real_executor
+    executor, _target, receipts, _service, _folders, _db = owned_sync_executor
     payload = _payload(title="Prior private", content="Private prior body")
     item = _execution_item(
         item_id="prior-single",
@@ -2467,12 +2573,15 @@ def test_completed_single_payload_receipt_produces_private_exact_prior_observati
         assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_prior_observations_select_the_latest_completed_matching_source(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / "prior-latest.sqlite3")
+    request.addfinalizer(receipts._store.close)
     first_payload = _payload(title="Older receipt", content="Older body")
     second_payload = _payload(title="Latest receipt", content="Latest body")
     first_item = _execution_item(
@@ -2521,12 +2630,15 @@ def test_prior_observations_select_the_latest_completed_matching_source(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_prior_observations_do_not_fall_back_past_latest_multi_payload_receipt(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / "prior-no-fallback.sqlite3")
+    request.addfinalizer(receipts._store.close)
     first_item = _execution_item(
         item_id="same-source-single",
         payloads=(_payload(title="Older single"),),
@@ -2586,12 +2698,15 @@ def test_prior_observations_do_not_fall_back_past_latest_multi_payload_receipt(
     assert observations[0].note_id != _expected_note_id("same-source-single", 0)
 
 
+@pytest.mark.bootstrap_profile
 def test_prior_observations_reject_duplicate_items_in_latest_source_session(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / "prior-duplicate-source.sqlite3")
+    request.addfinalizer(receipts._store.close)
     older_item = _execution_item(
         item_id="duplicate-source-older",
         payloads=(_payload(title="Older exact source"),),
@@ -2649,8 +2764,10 @@ def test_prior_observations_reject_duplicate_items_in_latest_source_session(
     assert all(value not in rendered for value in private_values)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("excluded_state", ["multi", "failed", "cancelled", "missing"])
 def test_prior_observations_omit_unconfirmed_sources_but_keep_multi_record_ones(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2658,6 +2775,7 @@ def test_prior_observations_omit_unconfirmed_sources_but_keep_multi_record_ones(
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / f"prior-{excluded_state}.sqlite3")
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -2709,13 +2827,14 @@ def test_prior_observations_omit_unconfirmed_sources_but_keep_multi_record_ones(
         assert observations == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("fatal_type", [KeyboardInterrupt, SystemExit, GeneratorExit])
 def test_executor_never_records_process_control_exceptions_as_item_failures(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
     fatal_type: type[BaseException],
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     item = _execution_item(
         item_id=f"fatal-{fatal_type.__name__.casefold()}",
         payloads=(_payload(),),
@@ -2741,8 +2860,9 @@ def test_executor_never_records_process_control_exceptions_as_item_failures(
     assert durable.payload_effects[0].state is ImportEffectState.PENDING
 
 
-def test_executor_update_can_replace_without_adding_membership(real_executor) -> None:
-    executor, target, _receipts, _service, folders, _db = real_executor
+@pytest.mark.bootstrap_profile
+def test_executor_update_can_replace_without_adding_membership(owned_sync_executor) -> None:
+    executor, target, _receipts, _service, folders, _db = owned_sync_executor
     existing = target.create_note(
         note_id="existing-replace",
         payload=_payload(content="Original body", keywords=("old",)),
@@ -2773,10 +2893,11 @@ def test_executor_update_can_replace_without_adding_membership(real_executor) ->
     assert folders.list_memberships(note_ids=(existing.note_id,)) == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_update_can_add_membership_without_replacing_content(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, target, receipts, _service, folders, db = real_executor
+    executor, target, receipts, _service, folders, db = owned_sync_executor
     original_payload = _payload(content="Original body", keywords=("keep",))
     existing = target.create_note(
         note_id="existing-membership", payload=original_payload
@@ -2822,10 +2943,11 @@ def test_executor_update_can_add_membership_without_replacing_content(
     assert durable.items[0].observed_version == existing.version
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_update_keeps_content_and_unblocked_membership_independent(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, target, receipts, _service, folders, db = real_executor
+    executor, target, receipts, _service, folders, db = owned_sync_executor
     existing = target.create_note(
         note_id="existing-independent-update",
         payload=_payload(content="Original body", keywords=("old",)),
@@ -2893,10 +3015,11 @@ def test_executor_update_keeps_content_and_unblocked_membership_independent(
     assert durable.items[0].outcome is ImportItemOutcome.FAILED
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_membership_only_stale_version_durably_fails_membership_effect(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, target, receipts, _service, folders, _db = real_executor
+    executor, target, receipts, _service, folders, _db = owned_sync_executor
     existing = target.create_note(note_id="existing-stale", payload=_payload())
     item = _execution_item(
         item_id="stale-membership",
@@ -2938,11 +3061,12 @@ def test_executor_membership_only_stale_version_durably_fails_membership_effect(
     assert durable.items[0].outcome is ImportItemOutcome.FAILED
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_membership_attach_rechecks_note_version_atomically(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, folders, db = real_executor
+    executor, target, receipts, _service, folders, db = owned_sync_executor
     existing = target.create_note(note_id="membership-race", payload=_payload())
     item = _execution_item(
         item_id="membership-race",
@@ -3001,10 +3125,11 @@ def test_executor_membership_attach_rechecks_note_version_atomically(
     assert durable.items[0].outcome is ImportItemOutcome.FAILED
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_all_skip_including_unsupported_and_failed_mutates_nothing(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, _target, receipts, _service, folders, db = real_executor
+    executor, _target, receipts, _service, folders, db = owned_sync_executor
     items = tuple(
         _execution_item(
             item_id=f"skip-{classification.value}",
@@ -3041,10 +3166,11 @@ def test_executor_all_skip_including_unsupported_and_failed_mutates_nothing(
     assert all(item.outcome is ImportItemOutcome.SKIPPED for item in durable.items)
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_creates_only_authorized_folders_and_reuses_only_resolved_root(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, _target, _receipts, _service, folders, _db = real_executor
+    executor, _target, _receipts, _service, folders, _db = owned_sync_executor
     existing_root = folders.create_folder(
         name="Imported Root", parent_id=None, folder_id="preexisting-root"
     )
@@ -3080,10 +3206,11 @@ def test_executor_creates_only_authorized_folders_and_reuses_only_resolved_root(
     assert folders.get_folder_by_path(("Imported Root", "Unused Child")) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_folder_conflict_fails_dependent_work_without_creating_note(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, target, receipts, _service, folders, _db = real_executor
+    executor, target, receipts, _service, folders, _db = owned_sync_executor
     folders.create_folder(
         name="Imported Root", parent_id=None, folder_id="different-root-id"
     )
@@ -3143,10 +3270,11 @@ def test_executor_folder_conflict_fails_dependent_work_without_creating_note(
     assert durable.items[0].outcome is ImportItemOutcome.FAILED
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_folder_blocked_create_payload_does_not_stop_unaffected_payload(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, target, receipts, _service, folders, db = real_executor
+    executor, target, receipts, _service, folders, db = owned_sync_executor
     folders.create_folder(
         name="Blocked Root", parent_id=None, folder_id="different-blocked-root-id"
     )
@@ -3211,11 +3339,12 @@ def test_executor_folder_blocked_create_payload_does_not_stop_unaffected_payload
     assert durable.items[0].outcome is ImportItemOutcome.FAILED
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_reports_honest_mixed_counts_and_retryable_failures(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, _receipts, _service, _folders, _db = real_executor
+    executor, target, _receipts, _service, _folders, _db = owned_sync_executor
     existing = target.create_note(note_id="existing-mixed", payload=_payload())
     imported = _execution_item(
         item_id="created",
@@ -3281,11 +3410,12 @@ def test_executor_reports_honest_mixed_counts_and_retryable_failures(
     ) == (ImportSessionState.NEEDS_ATTENTION, 4, 4, 1, 1, 1, 1, 1, "database_busy")
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_persists_each_effect_before_advancing_and_aborts_fatal_faults(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     item = _execution_item(
         item_id="fatal-after-create",
         payloads=(_payload(),),
@@ -3318,11 +3448,12 @@ def test_executor_persists_each_effect_before_advancing_and_aborts_fatal_faults(
     assert target.read_note(note_id=_expected_note_id(item.item_id, 0)) is not None
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_summarizes_retryability_across_all_membership_failures(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     item = _execution_item(
         item_id="mixed-membership-failures",
         payloads=(_payload(),),
@@ -3369,11 +3500,12 @@ def test_executor_summarizes_retryability_across_all_membership_failures(
     assert [effect.retryable for effect in durable.membership_effects] == [False, True]
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_summarizes_retryability_across_all_required_folder_failures(
-    real_executor,
+    owned_sync_executor,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     item = _execution_item(
         item_id="mixed-folder-failures",
         payloads=(_payload(),),
@@ -3443,6 +3575,7 @@ def test_executor_summarizes_retryability_across_all_required_folder_failures(
     assert [effect.retryable for effect in durable.membership_effects] == [False, True]
 
 
+@pytest.mark.bootstrap_profile
 def test_target_membership_attach_is_idempotent_and_requires_active_targets(
     target_harness,
 ) -> None:
@@ -3492,6 +3625,7 @@ def test_target_membership_attach_is_idempotent_and_requires_active_targets(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "hostile",
     [
@@ -3527,6 +3661,7 @@ def test_target_exception_translation_is_safe_and_does_not_chain_raw_errors(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_target_internal_value_errors_are_fatal_and_baseexceptions_escape(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3562,6 +3697,7 @@ def test_target_internal_value_errors_are_fatal_and_baseexceptions_escape(
 _FAULT_DETAIL_CANARY = "zqleakcanary"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("fault", "expected_type"),
     [
@@ -3629,6 +3765,7 @@ class _UnexpectedRuntimeFault(RuntimeError):
     pass
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "fault_type",
     [AssertionError, MemoryError, TypeError, ValueError, _UnexpectedRuntimeFault],
@@ -3674,6 +3811,7 @@ def test_target_unexpected_faults_abort_as_safe_internal_errors(
     assert private_detail not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_unexpected_fault_cannot_borrow_item_level_sqlite_classification(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -3703,6 +3841,7 @@ def test_unexpected_fault_cannot_borrow_item_level_sqlite_classification(
     assert private_detail not in rendered_traceback
 
 
+@pytest.mark.bootstrap_profile
 def test_unknown_fault_chain_is_not_inspected_for_sqlite_contention(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -3734,6 +3873,7 @@ def test_unknown_fault_chain_is_not_inspected_for_sqlite_contention(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "operation",
     [
@@ -3775,6 +3915,7 @@ def test_constructor_explicit_validation_remains_permanent_without_context() -> 
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 def test_constructor_component_access_faults_are_safe_fatal_errors(
     target_harness,
 ) -> None:
@@ -3802,6 +3943,7 @@ def test_constructor_component_access_faults_are_safe_fatal_errors(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("helper_name", "operation"),
     [
@@ -3839,6 +3981,7 @@ def test_internal_db_row_type_errors_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "row",
     [
@@ -3875,6 +4018,7 @@ def test_selected_note_row_contract_faults_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 def test_selected_keyword_row_missing_column_is_a_safe_fatal_error(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -3890,6 +4034,7 @@ def test_selected_keyword_row_missing_column_is_a_safe_fatal_error(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "row",
     [
@@ -3915,6 +4060,7 @@ def test_linked_keyword_row_contract_faults_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "rows",
     [
@@ -3939,6 +4085,7 @@ def test_keyword_match_row_contract_faults_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("selected_row", "lastrowid"),
     [
@@ -3986,6 +4133,7 @@ def test_keyword_ensure_contract_faults_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 def test_create_note_postcondition_fault_is_safe_fatal_and_rolls_back(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -4007,6 +4155,7 @@ def test_create_note_postcondition_fault_is_safe_fatal_and_rolls_back(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_replace_note_postcondition_fault_is_safe_fatal_and_rolls_back(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -4094,6 +4243,7 @@ def test_replace_note_postcondition_fault_is_safe_fatal_and_rolls_back(
     assert snapshot_target_state() == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "folder_id",
     ["invalid/path", ".leading", "éclair"],
@@ -4133,6 +4283,7 @@ def test_target_reuses_strict_folder_id_validation_before_repository_access(
     assert folder_id not in repr(caught.value)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_construction_and_mutations_do_not_log_private_values(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -4215,6 +4366,7 @@ def test_target_construction_and_mutations_do_not_log_private_values(
         assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_target_injected_failures_do_not_log_raw_private_details(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -4243,6 +4395,7 @@ def test_target_injected_failures_do_not_log_raw_private_details(
     assert hostile not in "".join(loguru_messages) + caplog.text
 
 
+@pytest.mark.bootstrap_profile
 def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
     target_harness,
 ) -> None:
@@ -4303,9 +4456,9 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         "WHERE entity = 'notes' AND entity_id = ? ORDER BY change_id",
         (_NOTE_ID,),
     ).fetchall()
-    assert [
-        (row["operation"], row["version"]) for row in note_sync_on_create
-    ] == [("create", 1)]
+    assert [(row["operation"], row["version"]) for row in note_sync_on_create] == [
+        ("create", 1)
+    ]
 
     target.replace_note(
         note_id=_NOTE_ID,
@@ -4416,15 +4569,16 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_update_existing_on_an_unchanged_repeat_updates_without_new_placement(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
     """task-32176: the review lets an unchanged repeat be switched to Update
     existing, which leaves folder placement alone. The plan still carries the
     membership the parser proposed, but the receipt ledger only records a
     membership effect when the plan approved one, so treating every proposed
     membership as authorized aborted the whole run with no receipt."""
-    executor, target, receipts, _service, _folders, _db = real_executor
+    executor, target, receipts, _service, _folders, _db = owned_sync_executor
     existing = target.create_note(
         note_id="unchanged-repeat-update",
         payload=_payload(content="Same body"),
@@ -4466,6 +4620,7 @@ def _note_link_rows(db: CharactersRAGDB) -> set[tuple[str, str]]:
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_imported_bodies_maintain_the_note_link_relation(target_harness) -> None:
     """Import writes notes with its own SQL, so it maintains links too.
 

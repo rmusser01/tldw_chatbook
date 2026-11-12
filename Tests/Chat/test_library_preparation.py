@@ -133,12 +133,15 @@ def test_only_the_two_disclosure_outcomes_create_events(outcome: str) -> None:
 def test_cancelled_and_failure_outcomes_create_no_durable_event(
     outcome: str | None,
 ) -> None:
-    assert library_preparation_event_for_outcome(
-        outcome,
-        attempt_id="attempt-1",
-        result_count=0,
-        source_types=("notes", "media", "conversations"),
-    ) is None
+    assert (
+        library_preparation_event_for_outcome(
+            outcome,
+            attempt_id="attempt-1",
+            result_count=0,
+            source_types=("notes", "media", "conversations"),
+        )
+        is None
+    )
 
 
 def test_unknown_outcome_does_not_silently_widen_the_event_vocabulary() -> None:
@@ -302,7 +305,9 @@ def test_contribution_rejects_a_runtime_owner_override() -> None:
     assert writer.operations == []
 
 
-def test_projection_is_active_turn_filtered_bounded_and_input_order_independent() -> None:
+def test_projection_is_active_turn_filtered_bounded_and_input_order_independent() -> (
+    None
+):
     first = {
         "message_id": "turn-1",
         "conversation_id": "conversation-1",
@@ -346,7 +351,9 @@ def test_projection_is_active_turn_filtered_bounded_and_input_order_independent(
     assert expected[1].source_types == ("notes", "media")
 
 
-def test_projection_omits_malformed_wrong_owner_and_duplicate_rows_fail_closed() -> None:
+def test_projection_omits_malformed_wrong_owner_and_duplicate_rows_fail_closed() -> (
+    None
+):
     valid_payload = encode_library_preparation_event(_event())
     rows = [
         {
@@ -386,15 +393,18 @@ def test_projection_omits_malformed_wrong_owner_and_duplicate_rows_fail_closed()
         },
     ]
 
-    assert project_library_preparation(
-        rows,
-        [
-            "turn-bad-json",
-            "turn-wrong-owner",
-            "turn-duplicate",
-            "turn-other-kind",
-        ],
-    ) == ()
+    assert (
+        project_library_preparation(
+            rows,
+            [
+                "turn-bad-json",
+                "turn-wrong-owner",
+                "turn-duplicate",
+                "turn-other-kind",
+            ],
+        )
+        == ()
+    )
 
 
 def test_generic_trajectory_sidecar_cannot_displace_or_duplicate_user_anchor() -> None:
@@ -544,7 +554,191 @@ def test_imported_sidecar_and_unknown_fields_are_inert(db) -> None:
         if record.message_id == user_row["id"]
     )
     assert imported_user.step_started_at != 999.0
-    assert project_library_preparation(
-        payload["trajectory_rows"],
-        [str(user_row["id"])],
-    ) == ()
+    assert (
+        project_library_preparation(
+            payload["trajectory_rows"],
+            [str(user_row["id"])],
+        )
+        == ()
+    )
+
+
+# --- TASK-33621.51: what a sent turn's Automatic Library search did ---------
+#
+# The v1 record held only "zero_matches" and a reasonless "bypassed", so a
+# grounded turn had no record at all and a bypassed one lost why it was
+# bypassed. Each test below fails on the pre-fix vocabulary.
+
+_ALL_SOURCES = ("notes", "media", "conversations")
+
+
+def test_a_grounded_send_records_how_many_sources_it_sent() -> None:
+    event = library_preparation_event_for_outcome(
+        "evidence_sent",
+        attempt_id="attempt-1",
+        result_count=3,
+        source_types=_ALL_SOURCES,
+    )
+
+    assert event is not None
+    encoded = encode_library_preparation_event(event)
+    assert decode_library_preparation_event(encoded) == event
+    assert json.loads(encoded)["outcome"] == "evidence_sent"
+    assert json.loads(encoded)["result_count"] == 3
+
+
+def test_a_grounded_send_cannot_record_zero_sources() -> None:
+    with pytest.raises(LibraryPreparationValidationError):
+        library_preparation_event_for_outcome(
+            "evidence_sent",
+            attempt_id="attempt-1",
+            result_count=0,
+            source_types=_ALL_SOURCES,
+        )
+
+
+@pytest.mark.parametrize("reason", ["timed_out", "stopped", "failed"])
+def test_a_bypassed_send_keeps_why_it_was_bypassed(reason: str) -> None:
+    event = library_preparation_event_for_outcome(
+        "bypassed",
+        attempt_id="attempt-1",
+        result_count=0,
+        source_types=_ALL_SOURCES,
+        bypass_reason=reason,
+    )
+
+    assert event is not None
+    encoded = encode_library_preparation_event(event)
+    assert json.loads(encoded)["bypass_reason"] == reason
+    decoded = decode_library_preparation_event(encoded)
+    assert decoded == event
+    assert decoded.bypass_reason == reason
+
+
+def test_a_record_without_a_reason_keeps_its_exact_v1_bytes() -> None:
+    """Rows written before the reason existed still decode, unchanged."""
+    legacy = (
+        '{"version":1,"outcome":"bypassed","attempt_id":"attempt-1",'
+        '"result_count":0,"source_types":["notes"]}'
+    )
+
+    decoded = decode_library_preparation_event(legacy)
+
+    assert decoded.bypass_reason is None
+    assert encode_library_preparation_event(decoded) == legacy
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reason"),
+    [
+        ("zero_matches", "timed_out"),
+        ("evidence_sent", "failed"),
+        ("bypassed", "the query was secret"),
+        ("bypassed", ""),
+    ],
+)
+def test_a_reason_belongs_only_to_a_bypass_and_its_closed_vocabulary(
+    outcome: str, reason: str
+) -> None:
+    with pytest.raises(LibraryPreparationValidationError):
+        library_preparation_event_for_outcome(
+            outcome,
+            attempt_id="attempt-1",
+            result_count=1 if outcome == "evidence_sent" else 0,
+            source_types=_ALL_SOURCES,
+            bypass_reason=reason,
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"version":1,"outcome":"zero_matches","attempt_id":"a",'
+        '"result_count":0,"source_types":["notes"],"bypass_reason":"failed"}',
+        '{"version":1,"outcome":"bypassed","attempt_id":"a",'
+        '"result_count":0,"source_types":["notes"],"bypass_reason":null}',
+        '{"version":1,"outcome":"bypassed","attempt_id":"a",'
+        '"result_count":0,"source_types":["notes"],"bypass_reason":"query"}',
+        '{"version":1,"outcome":"evidence_sent","attempt_id":"a",'
+        '"result_count":0,"source_types":["notes"]}',
+    ],
+)
+def test_the_decoder_rejects_reasons_and_counts_outside_the_contract(
+    payload: str,
+) -> None:
+    with pytest.raises(LibraryPreparationValidationError):
+        decode_library_preparation_event(payload)
+
+
+def test_projection_carries_each_turns_count_and_reason() -> None:
+    rows = [
+        {
+            "message_id": turn_id,
+            "turn_id": turn_id,
+            "seq": seq,
+            "event_kind": "library_preparation",
+            "payload_json": encode_library_preparation_event(event),
+        }
+        for seq, (turn_id, event) in enumerate(
+            (
+                (
+                    "turn-grounded",
+                    library_preparation_event_for_outcome(
+                        "evidence_sent",
+                        attempt_id="a1",
+                        result_count=4,
+                        source_types=_ALL_SOURCES,
+                    ),
+                ),
+                (
+                    "turn-bypassed",
+                    library_preparation_event_for_outcome(
+                        "bypassed",
+                        attempt_id="a2",
+                        result_count=0,
+                        source_types=_ALL_SOURCES,
+                        bypass_reason="stopped",
+                    ),
+                ),
+            ),
+            start=1,
+        )
+    ]
+
+    views = project_library_preparation(rows, ["turn-grounded", "turn-bypassed"])
+
+    assert [(v.turn_id, v.outcome, v.result_count, v.bypass_reason) for v in views] == [
+        ("turn-grounded", "evidence_sent", 4, None),
+        ("turn-bypassed", "bypassed", 0, "stopped"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "count", "reason"),
+    [("evidence_sent", 2, None), ("bypassed", 0, "timed_out")],
+)
+def test_export_keeps_the_new_records_instead_of_dropping_them(
+    db, outcome: str, count: int, reason: str | None
+) -> None:
+    conversation_id = _seed_conversation(db)
+    canonical = encode_library_preparation_event(
+        library_preparation_event_for_outcome(
+            outcome,
+            attempt_id="attempt-1",
+            result_count=count,
+            source_types=_ALL_SOURCES,
+            bypass_reason=reason,
+        )
+    )
+    _insert_preparation_row(db, conversation_id, payload_json=canonical)
+
+    for include_payloads in (False, True):
+        exported = build_trajectory_export(
+            db, conversation_id, include_payloads=include_payloads
+        )
+        row = next(
+            item
+            for item in exported["trajectory_rows"]
+            if item["event_kind"] == "library_preparation"
+        )
+        assert row["payload_json"] == canonical

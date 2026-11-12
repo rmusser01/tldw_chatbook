@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────┐  P    ‹ Back to list                                   │
+│   a  │ Prompts (10)                                         │  r                                                     │
+│   v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  o                     More actions                    │
+│      │ ▊ Filter prompts… (Enter)                          ▎ │  m  ┃                    Export…                     ┃ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  p                    Copy Markdown                    │
+│      │                                                      │  t                      Duplicate                      │
+│      │   collection: All prompts                            │  s                     Collections                     │
+│      │    sort: Newest      █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█istory                       │
+│      │      Import…         █                                                          █Delete                       │
+│      │  Release notes from c█                  Replace existing file?                  █                             │
+│ ---> │  Local · User only   █                                                          █                             │
+│      │                      █        Replace "Weekly review coach.md" in ~/exp?        █                             │
+│      │  Weekly review coach █                                                          █                             │
+│      │  Local · has system a█  The existing file will be overwritten by this export.   █                             │
+│      │                      █                                                          █                             │
+│      │  SQL query explainer █                                                          █                             │
+│      │  Local · has system a█                   Cancel      Replace                    █                             │
+│      │                      █                                                          █                             │
+│ ---> │ 1-10 of 10           █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█                             │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      └──────────────────────────────────────────────────────┘                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

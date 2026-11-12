@@ -1,0 +1,1155 @@
+{
+  "schema_version": 1,
+  "utc": "2026-10-22T15:30:08.875732+00:00",
+  "qualification": {
+    "utc": "2026-10-22T15:27:32.856650+00:00",
+    "pr": {
+      "baseRefName": "dev",
+      "headRefOid": "7168e8d976c692e60a6cc8c2f1ae0878ed3a37fd",
+      "mergeCommit": {
+        "oid": "7700c63a688355a2df595941b8b2b4dc8a819074"
+      },
+      "mergedAt": "2026-10-22T15:26:51Z",
+      "state": "MERGED",
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39804918590/job/119915441448",
+          "name": "Merge queue",
+          "startedAt": "2026-10-22T15:26:58Z",
+          "status": "IN_PROGRESS",
+          "workflowName": "Merge Queue"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T14:52:53Z",
+          "conclusion": "SKIPPED",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596155/job/119898627799",
+          "name": "platform-evidence",
+          "startedAt": "2026-10-22T14:57:17Z",
+          "status": "COMPLETED",
+          "workflowName": "TASK-19637 pinned workspace platform evidence"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T14:52:53Z",
+          "conclusion": "SKIPPED",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596253/job/119900742264",
+          "name": "Linux storage - Python ${{ matrix.python }}",
+          "startedAt": "2026-10-22T15:01:06Z",
+          "status": "COMPLETED",
+          "workflowName": "TASK-32011 one-off Linux storage evidence"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:20:23Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099742",
+          "name": "PR Fast Lane",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T14:53:56Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799678785/job/119896493441",
+          "name": "Merge queue",
+          "startedAt": "2026-10-22T14:53:29Z",
+          "status": "COMPLETED",
+          "workflowName": "Merge Queue"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T14:59:16Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596151/job/119896192148",
+          "name": "UI latency guardrails",
+          "startedAt": "2026-10-22T14:52:56Z",
+          "status": "COMPLETED",
+          "workflowName": "Perf Guard"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:08:30Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099925",
+          "name": "PR Fast Lane (admission-sensitive)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:06:15Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099424",
+          "name": "PR Fast Lane (admission-sensitive 2)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:09:52Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897100102",
+          "name": "UI Fast Lane (1)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:07:52Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897100096",
+          "name": "UI Fast Lane (2)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:11:16Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897100099",
+          "name": "UI Fast Lane (3)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:09:22Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099960",
+          "name": "UI Fast Lane (4)",
+          "startedAt": "2026-10-22T14:54:35Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:10:25Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897100007",
+          "name": "UI Fast Lane (5)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:08:08Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099918",
+          "name": "UI Fast Lane (6)",
+          "startedAt": "2026-10-22T14:54:35Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:09:05Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099935",
+          "name": "UI Fast Lane (7)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:09:17Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897100022",
+          "name": "UI Fast Lane (8)",
+          "startedAt": "2026-10-22T14:54:35Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897100009",
+          "name": "UI Fast Lane (9)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "IN_PROGRESS",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:09:04Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099786",
+          "name": "UI Fast Lane (10)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:09:38Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099944",
+          "name": "UI Fast Lane (11)",
+          "startedAt": "2026-10-22T14:54:35Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:10:54Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099994",
+          "name": "UI Fast Lane (12)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:06:48Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897100086",
+          "name": "UI Fast Lane (13)",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:06:59Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897100048",
+          "name": "Console P0 regression gate",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:01:15Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099752",
+          "name": "Dreams and Guardian boundary contracts",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:01:51Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119897099696",
+          "name": "Dreams tracking tests",
+          "startedAt": "2026-10-22T14:54:34Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:25:36Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119911817539",
+          "name": "Derived artifacts reproduce from their sources",
+          "startedAt": "2026-10-22T15:20:26Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:26:13Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119914723245",
+          "name": "Merge queue tick",
+          "startedAt": "2026-10-22T15:25:40Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T14:53:03Z",
+          "conclusion": "NEUTRAL",
+          "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/3205",
+          "name": "cubic · AI code reviewer",
+          "startedAt": "2026-10-22T14:53:00Z",
+          "status": "COMPLETED",
+          "workflowName": ""
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "CodeRabbit",
+          "startedAt": "2026-10-22T14:52:57Z",
+          "state": "SUCCESS",
+          "targetUrl": ""
+        }
+      ],
+      "url": "https://github.com/rmusser01/tldw_chatbook/pull/3205"
+    },
+    "dev": "7700c63a688355a2df595941b8b2b4dc8a819074",
+    "candidate": "e41fc622e2702b3e87a1f21d83f1f328ed48b821",
+    "sources": [
+      {
+        "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py",
+        "tested_blob": "2a452eb66361386ccdde41c9e9b06aa570df52b4",
+        "dev_blob": "2a452eb66361386ccdde41c9e9b06aa570df52b4",
+        "identical": true,
+        "canonical_sha256": "c9ee26fd247f4bf1aae98b621304fe5ccbbec595a8368943a1d814c5119c945d"
+      },
+      {
+        "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+        "tested_blob": "7a0c212622a1155ad118e01c252f3eef8366d27d",
+        "dev_blob": "7a0c212622a1155ad118e01c252f3eef8366d27d",
+        "identical": true,
+        "canonical_sha256": "c0a443d5d23c3a3aa38247882e06d7f70b4684365cad9227a63028ba78f71792"
+      },
+      {
+        "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_messages.py",
+        "tested_blob": "66257b9bcaeca74d199ab28b2d9be31790270234",
+        "dev_blob": "66257b9bcaeca74d199ab28b2d9be31790270234",
+        "identical": true,
+        "canonical_sha256": "1fc87b19da9ba3cbed7a5bbda0b50f37899e38bc02fff925cdf82d1997375fd2"
+      },
+      {
+        "path": "Tests/UI/test_personas_pending_save_drafts.py",
+        "tested_blob": "86ca0271859ec30719dd149d1465004211acfabf",
+        "dev_blob": "86ca0271859ec30719dd149d1465004211acfabf",
+        "identical": true,
+        "canonical_sha256": "937d678ec912a4f1862c519f3b50db85816c79f2ac3849e1c942fe8027a071d4"
+      },
+      {
+        "path": "tldw_chatbook/UI/Study_Modules/flashcards_handler.py",
+        "tested_blob": "1b9a9387c93bcfa3c342f0bf29b80f3e75eacb9b",
+        "dev_blob": "1b9a9387c93bcfa3c342f0bf29b80f3e75eacb9b",
+        "identical": true,
+        "canonical_sha256": "bd4b0a25381647e783fb21fb5b068dc091e6200d1ae48430ebaa1e40cd8e28ff"
+      },
+      {
+        "path": "tldw_chatbook/UI/Study_Window.py",
+        "tested_blob": "be48e8ca2b1fa154def3d19fc30f9e582f18f116",
+        "dev_blob": "be48e8ca2b1fa154def3d19fc30f9e582f18f116",
+        "identical": true,
+        "canonical_sha256": "b8e04726b5ca172fef9873c814d3d0193fd697e80b376cce5e1b0817e0a0f0b7"
+      },
+      {
+        "path": "tldw_chatbook/Study_Interop/study_scope_service.py",
+        "tested_blob": "eebbd5d04429fae2557e5b2b855ed8c571b08bb5",
+        "dev_blob": "eebbd5d04429fae2557e5b2b855ed8c571b08bb5",
+        "identical": true,
+        "canonical_sha256": "9776c8701ee0283c5afc7f4489ce2a487169aaa65ee52981c1bde9167c76fd41"
+      },
+      {
+        "path": "tldw_chatbook/Study_Interop/local_study_service.py",
+        "tested_blob": "74e03022716b6db1dcae3c57674f6fd2c4a49f37",
+        "dev_blob": "74e03022716b6db1dcae3c57674f6fd2c4a49f37",
+        "identical": true,
+        "canonical_sha256": "09202b354198e77acca2ba84f191e6c6bf9e422e26867faed60776bdcf9c6f59"
+      },
+      {
+        "path": "tldw_chatbook/Study_Interop/server_study_service.py",
+        "tested_blob": "fcba2ba25b7981c5a0809af421edb777200cbf02",
+        "dev_blob": "fcba2ba25b7981c5a0809af421edb777200cbf02",
+        "identical": true,
+        "canonical_sha256": "c081fb1c93f7ddd5c61f5c0b2fb32d9b6fb139c2c0d3860e931d00ec5bcfd05e"
+      },
+      {
+        "path": "Tests/UI/test_study_quiz_create_drafts.py",
+        "tested_blob": "6782249d74218f4cdec528825f8374c6a7a07cc0",
+        "dev_blob": "6782249d74218f4cdec528825f8374c6a7a07cc0",
+        "identical": true,
+        "canonical_sha256": "ee16e681467b89fd119d92765a56190ace87fea478b02a29ea9ba58bdd92e95a"
+      },
+      {
+        "path": "tldw_chatbook/UI/STTS_Window.py",
+        "tested_blob": "e4fc46b0a2c56ce03d8cbcc802e0cba0785be5c7",
+        "dev_blob": "e4fc46b0a2c56ce03d8cbcc802e0cba0785be5c7",
+        "identical": true,
+        "canonical_sha256": "a4b31bc2b48c24a7051b7295fa59cdef36db972cc11e8186fe07737ae38a8b95"
+      }
+    ],
+    "all_sources_identical": true,
+    "ci": {
+      "required": {
+        "check": {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T15:25:36Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144/job/119911817539",
+          "name": "Derived artifacts reproduce from their sources",
+          "startedAt": "2026-10-22T15:20:26Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        "run": {
+          "id": 39799596144,
+          "run_attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "7168e8d976c692e60a6cc8c2f1ae0878ed3a37fd",
+          "html_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596144"
+        }
+      },
+      "perf": {
+        "check": {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T14:59:16Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596151/job/119896192148",
+          "name": "UI latency guardrails",
+          "startedAt": "2026-10-22T14:52:56Z",
+          "status": "COMPLETED",
+          "workflowName": "Perf Guard"
+        },
+        "run": {
+          "id": 39799596151,
+          "run_attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "7168e8d976c692e60a6cc8c2f1ae0878ed3a37fd",
+          "html_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39799596151"
+        }
+      }
+    },
+    "open_pr_count": 23,
+    "open_pr_path_count": 3486,
+    "overlap": {
+      "3148": {
+        "pr": {
+          "headRefName": "codex/managed-plugins",
+          "headRefOid": "97ac608aba159bd8696ea50d279261867d97e16a",
+          "number": 3148,
+          "title": "Add managed plugins, Git marketplaces and expanded hooks",
+          "url": "https://github.com/rmusser01/tldw_chatbook/pull/3148"
+        },
+        "paths": [
+          "tldw_chatbook/UI/Screens/personas_screen.py"
+        ]
+      },
+      "3050": {
+        "pr": {
+          "headRefName": "codex/console-send-lag-integration",
+          "headRefOid": "2557f186f6e635567c370824fa43e2aadec6b82d",
+          "number": 3050,
+          "title": "Reduce Console Send delay with integrated preparation and Windows admission fixes",
+          "url": "https://github.com/rmusser01/tldw_chatbook/pull/3050"
+        },
+        "paths": [
+          "tldw_chatbook/UI/Screens/personas_screen.py"
+        ]
+      },
+      "3049": {
+        "pr": {
+          "headRefName": "claude/console-send-admission-cost",
+          "headRefOid": "bdff2a2d957c9b3ee4cf532589562b901c193df3",
+          "number": 3049,
+          "title": "perf(console): cut Windows Send latency (stacked on #3023)",
+          "url": "https://github.com/rmusser01/tldw_chatbook/pull/3049"
+        },
+        "paths": [
+          "tldw_chatbook/UI/Screens/personas_screen.py"
+        ]
+      }
+    },
+    "changed_overlap_heads": [],
+    "review": "audit-review.md, accepted Study refinements applied to provisional-task-specifications.json",
+    "diagnostics_were_not_rerun_after_merge": true
+  },
+  "book": {
+    "title": "Creating TUI Applications with Textual and Python",
+    "author": "Michael Driscoll",
+    "edition": "2025-07-25",
+    "pdf_pages": 455,
+    "sha256": "798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6",
+    "reference_not_instructions": true
+  },
+  "environment": {
+    "python": "3.12.10",
+    "textual": "8.2.8",
+    "os": "Windows",
+    "mounted_not_native_terminal_uat": true
+  },
+  "tasks": [
+    {
+      "title": "Keep full audiobook imports authoritative over shortened previews",
+      "priority": "medium",
+      "goal": "Preserve the complete imported audiobook source through preview refreshes, chapter detection and the Generate action so successful import cannot silently omit the end of a document.",
+      "evidence": "A mounted native file-import witness drove the real Import button, ready file picker and original async file read, then actual TextArea.Changed, real ChapterDetector and Generate button. A 1600-character file initially reached detection intact but its shortened preview then replaced content_text with 1003 characters (first 1000 plus artificial dots). The ending chapter disappeared, and the Generate event submitted 1003 while the notice still reported 1600 imported. The 900- and 1000-character controls retained exact source and both chapters. Final receipt: two passes and one intended retention failure; original file bytes were unchanged. No synthesis, generated audio, provider billing or persisted source loss was tested. Notes/Conversation imports share the shortening/Changed path by source inspection; their journeys were not exercised.",
+      "book": "Chapter 7, Preventing Messages, printed 144–145 / PDF 153–154: programmatic widget updates can emit ordinary change messages. Keep presentation refreshes from becoming unintended source edits. The application-specific source guarantee comes from the real import/Generate trace.",
+      "related": [
+        "36100",
+        "34394",
+        "19576",
+        "16471",
+        "15478",
+        "15773",
+        "16849",
+        "16850",
+        "32808.3",
+        "32893"
+      ],
+      "dedup": "TASK-36100 owns stale chapter publication after deliberate source changes and explicitly excludes long-preview truncation. TASK-34394 moved file reads off-loop; TASK-19576/16471 own import reachability and service routing. TASK-15478 and TASK-15773/16849/16850 own dispatch/parser/editor correctness. TASK-32808.3 concerns truncation display conventions, and TASK-32893 enumerates other text/data losses. None owns the full imported working source being replaced by a shortened preview. Preserve those completed contracts.",
+      "adrs": [
+        "033-application-session-state-ownership.md",
+        "011-chatbook-workbench-ui-system.md"
+      ],
+      "adr_reason": "Repair content ownership within the existing audiobook widget. No new storage, service/provider contract or global state owner is needed; recheck ADR requirements if implementation introduces one.",
+      "sources": [
+        [
+          "tldw_chatbook/UI/STTS_Window.py",
+          579
+        ],
+        [
+          "tldw_chatbook/UI/STTS_Window.py",
+          872
+        ],
+        [
+          "tldw_chatbook/UI/STTS_Window.py",
+          1194
+        ]
+      ],
+      "ac": [
+        "Successful audiobook file import preserves all imported text in the working source and actual Generate request, including text beyond character 1000; preview ellipsis is never silently substituted into that source.",
+        "Chapter detection and its editor/table reflect the complete imported source, including a chapter beyond the preview cutoff; intentional later edits and clears retain TASK-36100 freshness guarantees.",
+        "Equivalent Notes and Conversation import previews preserve the same full-source guarantee. Intentional source editing has a consistent, explicit relationship to the text submitted by Generate, without silently discarding unseen imported content.",
+        "Bounded mounted regressions drive real import/change/Generate events for long, exactly-1000 and short sources, demonstrate the defect before the fix and preserve ordinary imports and deliberate edits without provider or synthesis effects."
+      ],
+      "labels": [
+        "speech",
+        "textual-patterns",
+        "source-integrity"
+      ],
+      "scope": "workers",
+      "rank": 1,
+      "id": 36130,
+      "path": "backlog/tasks/task-36130 - Keep-full-audiobook-imports-authoritative-over-shortened-previews.md"
+    },
+    {
+      "title": "Preserve avatars uploaded while an earlier Character Save is pending",
+      "priority": "medium",
+      "goal": "A Character Save must acknowledge only its submitted avatar. A later valid upload must remain staged and unsaved when that earlier Save completes.",
+      "evidence": "Mounted private-profile native test uses actual Ctrl+S, real Upload Button, fully mounted EnhancedFileOpen and its selected-path dismiss seam, actual validated file read/staging and original SQLite update delayed by a threading Event. Initial red PNG is persisted at version 1. During a held update that submitted red, selecting a different blue PNG stages blue with attachment_dirty=true and aggregate_dirty=true. Completing the original real update persists red at version 2 and changes the live editor back to red, attachment_dirty=false, form_dirty=false and aggregate clean. The ordinary upload-before-Save control persists blue at version 2 and becomes clean. Corrected run-2 has 1 passing control and 1 intended avatar-retention failure in 56.03 seconds. Initial run-1 premature picker dismissal caused secondary NoMatches before picker Mount completed and is excluded. No source changes, external backend calls or simulated storage success.",
+      "book": "Chapter 7 printed 149 / PDF 158: Asynchronous handlers and background work; the application must retain the correct user state while awaiting work. Chapter 17 printed 326 / PDF 335: Worker-to-UI completion and result applicability. The reference does not prescribe a save acknowledgement policy; the observed attachment owner controls this finding.",
+      "related": [
+        "100",
+        "481",
+        "31241",
+        "31243",
+        "33622.14",
+        "33910.8",
+        "36097"
+      ],
+      "dedup": "TASK-36097 Done covers raw text/greetings; its implementation QA explicitly identifies staged-avatar handling as outside the accepted scope at Docs/superpowers/qa/2026-10-21-textual-save-and-source-freshness.md:39. This is newly demonstrated attachment-domain loss, not another text/greetings task. TASK-100 Done restores ordinary upload/Save; TASK-481 Done covers sequential Save/version/thumbnail behavior. TASK-31243 In Progress and TASK-33910.8 To Do cover navigation/activation guards and discard/load fencing rather than Save acknowledgement. Full task bodies and current/archive text screened. Current open-PR path census has only personas_screen.py overlap in PR3148@97ac608aba159bd8696ea50d279261867d97e16a, PR3050@2557f186f6e635567c370824fa43e2aadec6b82d and PR3049@bdff2a2d957c9b3ee4cf532589562b901c193df3; no Character editor widget overlaps. Exact upload methods are AST-identical; their older Save methods differ only by absence of the current raw-form tuple change. None preserves later attachments. Bounded recent git log --all symbol/path screening finds only current PR3205 changes. Recheck live heads before filing.",
+      "adrs": [
+        "046-roleplay-chat-display-identity-and-template-provenance.md",
+        "033-application-session-state-ownership.md",
+        "150-design-token-system-and-design-language.md",
+        "161-component-pattern-library.md"
+      ],
+      "adr_reason": "No new ADR is required for a bounded correction within the existing Character attachment owner. Accepted ADR-046 aggregate-draft amendments explicitly include staged attachments; Accepted application-session-state ADR-033 preserves ownership. Accepted ADR-150/161 govern incidental UI composition only. No new schema, service/provider boundary, global store or mutation-lifetime framework is proposed.",
+      "sources": [
+        [
+          "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py",
+          786
+        ],
+        [
+          "tldw_chatbook/UI/Screens/personas_screen.py",
+          10784
+        ],
+        [
+          "tldw_chatbook/UI/Screens/personas_screen.py",
+          15744
+        ]
+      ],
+      "labels": [
+        "personas",
+        "textual-patterns",
+        "drafts",
+        "attachments"
+      ],
+      "scope": "forms",
+      "ac": [
+        "If a valid avatar upload is staged after an ordinary Character Save captures its submission, completing that Save retains the exact later bytes as an unsaved attachment while adopting the actual persisted record identity and version.",
+        "The current editor preview/readout and existing aggregate leave/quit draft predicate continue to represent the retained attachment; choosing Stay preserves it without silently acknowledging or replacing it.",
+        "A subsequent explicit Save persists the retained avatar to the same Character with the correct version and then becomes clean; uploads made before Save persist normally and failed saves retain staged bytes.",
+        "Mounted real-picker-result and real-store regressions distinguish upload-before-Save, upload-during-pending-Save and same-record retry/failure outcomes while preserving path validation, storage admission, stale-editor fences and existing raw-text/greetings coverage."
+      ],
+      "rank": 2,
+      "id": 36131,
+      "path": "backlog/tasks/task-36131 - Preserve-avatars-uploaded-while-an-earlier-Character-Save-is-pending.md"
+    },
+    {
+      "title": "Preserve newer Flashcards drafts when earlier creates complete",
+      "priority": "medium",
+      "goal": "Completing a submitted deck or flashcard must retain newer unsaved authoring text entered while that create is pending.",
+      "evidence": "On e41fc622e2702b3e87a1f21d83f1f328ed48b821, 2 mounted preservation witnesses fail and 2 unchanged-submission controls pass (4 nodes, 30.84s; no errors/skips). Actual Create Deck/Create Card Button.Pressed workers run in a mounted StudyWindow. An asyncio.Event holds the existing scope-service await; keyboard -new edits land in enabled deck-name or front/back/tags fields. Release delegates to the original real StudyScopeService/LocalStudyService and in-memory SQLite. SQLite contains exactly the original normalized submission once; the same current widget instances are then cleared. Selected text resets to Selection(0,0), while focus remains. Controls leave fields unchanged during the same hold and verify one persisted record plus normal clearing. This models a supported awaited response: ordinary synchronous local service calls are not claimed to naturally suspend, and no live server was tested. Initial run initial-e41fc622 failed only in fixture construction because server_service was omitted; it is retained but is not product evidence. Mixed-field, failure, raw-whitespace and focus-move cases are future regression requirements; they were not demonstrated by this audit.",
+      "book": "Attached Creating TUI Applications with Textual and Python, SHA256 798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6. Chapter 7 printed149/PDF158 explains awaited handlers/background work; Chapter17 printed326/PDF335 demonstrates worker/result lifecycle checks. Chapter9 printed170-171/PDF179-180 and printed180/PDF189 explains editable widget state and focus. The data-loss claim comes from mounted current-code evidence, not from a book rule. Relevant extracted pages are retained in the study evidence folder.",
+      "related": [
+        "34751",
+        "34755",
+        "34752",
+        "36099",
+        "20979",
+        "34000.6"
+      ],
+      "dedup": "Screened all 5618 task metadata entries, body/symbol searches and 24 open PRs/3517 complete paths from root receipts. Full close matches read: TASK34751 Done owns list writer, teardown safety and literal text; TASK34755 To Do owns settled create status and writes to a replacement panel; TASK34752 To Do owns quiz question-list writes; TASK36099 Done in PR3205 owns quiz/question drafts only. TASK20979 To Do concerns agent output and making real rows visible; TASK34000.6 Done owns real-service keyword parity and geometry. No existing task covers newer authoring fields in the still-mounted Flashcards form, and no open PR touches the five relevant handler/window/service files. Keep status, list writer and cross-panel ownership independently scoped.",
+      "adrs": [
+        "033-application-session-state-ownership.md",
+        "011-chatbook-workbench-ui-system.md"
+      ],
+      "adr_reason": "ADR required: no new ADR. This bounded repair retains screen-local authoring state across an existing create result under accepted ADR033/011. It does not change service interfaces, persistence, runtime authority or cross-panel state ownership.",
+      "sources": [
+        [
+          "tldw_chatbook/UI/Study_Modules/flashcards_handler.py",
+          755
+        ],
+        [
+          "tldw_chatbook/UI/Study_Modules/flashcards_handler.py",
+          785
+        ],
+        [
+          "tldw_chatbook/UI/Study_Modules/flashcards_handler.py",
+          797
+        ],
+        [
+          "tldw_chatbook/UI/Study_Modules/flashcards_handler.py",
+          842
+        ],
+        [
+          "tldw_chatbook/UI/Study_Window.py",
+          1053
+        ],
+        [
+          "tldw_chatbook/UI/Study_Window.py",
+          1069
+        ],
+        [
+          "tldw_chatbook/Study_Interop/study_scope_service.py",
+          986
+        ],
+        [
+          "tldw_chatbook/Study_Interop/study_scope_service.py",
+          1072
+        ],
+        [
+          "tldw_chatbook/Study_Interop/local_study_service.py",
+          93
+        ],
+        [
+          "tldw_chatbook/Study_Interop/local_study_service.py",
+          186
+        ],
+        [
+          "tldw_chatbook/Study_Interop/server_study_service.py",
+          173
+        ],
+        [
+          "tldw_chatbook/Study_Interop/server_study_service.py",
+          243
+        ]
+      ],
+      "ac": [
+        "A successful pending deck create persists only its submitted deck name and preserves any exact newer raw name still in the current authoring field, including a whitespace-only edit.",
+        "A successful pending flashcard create persists only its submitted front, back and parsed tags; independent or combined newer raw edits to any of those fields remain in the form. Completion preserves current editing context, including caret/selection and focus, without stealing focus deliberately moved elsewhere.",
+        "Unchanged fields clear after one successful creation; a definite failed create preserves current drafts and remains retryable under the existing service contract. Uncertain-write retry/idempotency policy is outside this task.",
+        "Bounded mounted regressions use the existing create events/workers, controlled service awaits and real StudyScopeService/LocalStudyService with SQLite; live drafts are asserted separately from stored records and unchanged-success/failure-retry controls pass."
+      ],
+      "labels": [
+        "study",
+        "textual-patterns",
+        "drafts"
+      ],
+      "scope": "study",
+      "rank": 3,
+      "id": 36132,
+      "path": "backlog/tasks/task-36132 - Preserve-newer-Flashcards-drafts-when-earlier-creates-complete.md"
+    }
+  ],
+  "receipts": [
+    {
+      "scope": "forms",
+      "local_path": ".test-tmp/textual-audit-after-3205/forms/run-2/result.xml",
+      "sha256": "9d371f7cd6d0ae0459a4d61efca5ce474b1e33b95e367e01f6d5cb65395d38b2",
+      "suites": [
+        {
+          "tests": "2",
+          "failures": "1",
+          "errors": "0",
+          "skipped": "0",
+          "time": "56.019"
+        }
+      ]
+    },
+    {
+      "scope": "workers",
+      "local_path": ".test-tmp/textual-audit-after-3205/workers/import-result-r4.xml",
+      "sha256": "0dd59ca0fbf27398cbba0de90ddc8d9437b8585573e4b633ac3eb195429e8f75",
+      "suites": [
+        {
+          "tests": "3",
+          "failures": "1",
+          "errors": "0",
+          "skipped": "0",
+          "time": "33.390"
+        }
+      ]
+    },
+    {
+      "scope": "study",
+      "local_path": ".test-tmp/textual-audit-after-3205/study/witness-e41fc622-v2/result.xml",
+      "sha256": "b791b6ebcdd52e332d181d70e29116e530a47483a7237b2cee0a3277998ca89e",
+      "suites": [
+        {
+          "tests": "4",
+          "failures": "2",
+          "errors": "0",
+          "skipped": "0",
+          "time": "30.831"
+        }
+      ]
+    }
+  ],
+  "case_summary": {
+    "cases": 9,
+    "passed_controls": 5,
+    "intended_finding_failures": 4,
+    "qualifying_setup_errors": 0,
+    "fixes_implemented": false
+  },
+  "independent_review": {
+    "path": "audit-review.md",
+    "sha256": "c1a393e55b55d612f01c2e9775edb22e52a300f17c274432185a025e2402c84a",
+    "critical": 0,
+    "important": 0,
+    "minor_refinements_applied": [
+      "definite failure retry under existing contract, no uncertain-write exactly-once promise",
+      "preserve current focus without stealing deliberate focus moves"
+    ]
+  },
+  "allocation": {
+    "max_claimed": 36100,
+    "lead": 30,
+    "ids": [
+      36130,
+      36131,
+      36132
+    ],
+    "sweep_utc": "2026-10-22T15:28:43.678846+00:00",
+    "refs": 285,
+    "unique_ref_oids": 274,
+    "worktrees": 52,
+    "nul_delimited": true
+  },
+  "manifests": {
+    "forms": {
+      "tested_head": "e41fc622e2702b3e87a1f21d83f1f328ed48b821",
+      "sources": {
+        "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py": {
+          "blob": "2a452eb66361386ccdde41c9e9b06aa570df52b4",
+          "working_sha256": "0cc4a5d188bbf00a9bd7aec0ff48249bbf3240ca217ba1ab198f025b03801141"
+        },
+        "tldw_chatbook/UI/Screens/personas_screen.py": {
+          "blob": "7a0c212622a1155ad118e01c252f3eef8366d27d",
+          "working_sha256": "58da36e9bc374db7ab31a043dcefaf04e5b4329b31145caff293b27a714fa94d"
+        },
+        "tldw_chatbook/Widgets/Persona_Widgets/personas_messages.py": {
+          "blob": "66257b9bcaeca74d199ab28b2d9be31790270234",
+          "working_sha256": "ad65fb852a574b61093be21d316b41e18c1c33f598db8717363f923bba05080a"
+        },
+        "Tests/UI/test_personas_pending_save_drafts.py": {
+          "blob": "86ca0271859ec30719dd149d1465004211acfabf",
+          "working_sha256": "da0f869013ffebc4763a5e0740e86d52574ffc244e1e57e825a792d120b8050a"
+        }
+      },
+      "runs": {
+        "run-1": {
+          "tests": "2",
+          "failures": "2",
+          "errors": "0",
+          "time": "56.309"
+        },
+        "run-2": {
+          "tests": "2",
+          "failures": "1",
+          "errors": "0",
+          "time": "56.019"
+        }
+      },
+      "receipts": {
+        "backlog-screening.txt": "8dd45eb7e6a8e9dd35e7b8694e86277e2b4898f2b81e68122629f348d317bebc",
+        "before-save.json": "8570105248e7f4b5be7b5870ff0b558afbaa59a15a814556c671507508bd5f23",
+        "conftest.py": "0bf15d165054fb1967d58d674e0af18bedb85ed4d1b50c56b85731684dc55d4c",
+        "during-save.json": "9cbfc663c036e329468eb2f87d916264b4fabe16eba6deca2083b0f7c5751079",
+        "history-screening.txt": "cce984c8d1f82a34b99cc3277f24418866fc478370191af7ad82e5f850edce61",
+        "overlap-method-screening.json": "ae036a6659705362848219ea829ae3075d6b12d741b3a1360527feabd7bca8ce",
+        "report.md": "78098c07c1002df141c02e3972b2afceb5dbf5fef94560070e32e5a18085fdb2",
+        "task-spec.json": "eaa023f93622efddd890ee56a02dce7758401f5bea778f40acdc9d352e6c0436",
+        "test_avatar_pending.py": "d20bb08dbba143a1d6d3a852a8f951bf2039b9f7a02e98fd38e2ec5e26b950a2",
+        "run-1\\result.xml": "e4a086a05e8c9e5054058aad53d3feb2adae3874aa19eeb3ce5fbb43776f13c1",
+        "run-1\\run.log": "fdc8c0a8fddb675c1640bbdade31427aaa603d90165c0f2317fb9c6cb5d1a970",
+        "run-2\\result.xml": "9d371f7cd6d0ae0459a4d61efca5ce474b1e33b95e367e01f6d5cb65395d38b2",
+        "run-2\\run.log": "09d83e253e409a56cebc663a9131346ee215fdd5d281d4db4fee126859dcf0c1",
+        "run-1\\base\\test_avatar_upload_retained_th0\\private-profile-process\\pytest.log": "57a3d8b6ea2af82aa8aa933fb6174b611173ab92e449cc4e00f88f9b5ba8e082",
+        "run-1\\base\\test_avatar_upload_retained_th0\\private-profile-process\\pytest.xml": "cf38a6a2d3fca60e94b2c5a9034a51920b12d234729a633b0ef519026129a6eb",
+        "run-1\\base\\test_avatar_upload_retained_th0\\private-profile-process\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\ancestry-settled.json": "2af7a48c08903857003d3379c575ff638a0f96f76e734ed6ca167944592a8775",
+        "run-1\\base\\test_avatar_upload_retained_th0\\private-profile-process\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\admission\\registry.json": "7b34aa585d3152c0a2907a3ff18678ad129caa3df58884c83be4285c4bea7183",
+        "run-1\\base\\test_avatar_upload_retained_th1\\private-profile-process\\pytest.log": "cabeee1d7698fd5f3484df9f48cf37ebe92a85dff7888324967d0e7e17ea3734",
+        "run-1\\base\\test_avatar_upload_retained_th1\\private-profile-process\\pytest.xml": "aa2695056d4ba78ac802e8cb94ece183e4f9c6a72958db6a18a157ffc10b8ead",
+        "run-1\\base\\test_avatar_upload_retained_th1\\private-profile-process\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\ancestry-settled.json": "baeff51928fecf265313f5b0480561a0f398055d9226e9c9c1aca156b21a0ee5",
+        "run-1\\base\\test_avatar_upload_retained_th1\\private-profile-process\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\admission\\registry.json": "1ac93ac2b5247886e61ec2e8215ff58cfd19daaeedc5a1b7539f6aa5fa1eeb84",
+        "run-1\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\ancestry-settled.json": "1b018c619ac835afad1f622c9b79bd20dd0e37fdb616190d1af7da492a6bd88a",
+        "run-1\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\admission\\registry.json": "9db001e0b432b81ef98346e542340dff1310edb8b637ec4d2cd0a23984166425",
+        "run-2\\base\\test_avatar_upload_retained_th0\\private-profile-process\\pytest.log": "1dde9008b63d81045d53473446a36e267e777f0618730bc2637e31761a742331",
+        "run-2\\base\\test_avatar_upload_retained_th0\\private-profile-process\\pytest.xml": "07dafbdbbb3be4f14b6485f853f45a96e78e609a6330362b3812998ad2da7bd5",
+        "run-2\\base\\test_avatar_upload_retained_th0\\private-profile-process\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\ancestry-settled.json": "428834238d5b7efaf5d3b773d5d3a8028c05529aea5ae60b5428167e63af6f7e",
+        "run-2\\base\\test_avatar_upload_retained_th0\\private-profile-process\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\admission\\registry.json": "b0d4833e1c2e192ca0e8fb9813ea10c5e59dbaa90093e37150b54218c6c8c975",
+        "run-2\\base\\test_avatar_upload_retained_th1\\private-profile-process\\pytest.log": "7ea6998cb8deaa1dad860250c69fe846702b979212f38f1f853adf1a503f72d2",
+        "run-2\\base\\test_avatar_upload_retained_th1\\private-profile-process\\pytest.xml": "a7d403bdb2347024494e70655d5d14c7df0874e3641165bf7bf3ed44731842e6",
+        "run-2\\base\\test_avatar_upload_retained_th1\\private-profile-process\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\ancestry-settled.json": "2b4a83688558fa9f4b9a94214a4c0fd8b0379945e74b682ea738d32466d90f3b",
+        "run-2\\base\\test_avatar_upload_retained_th1\\private-profile-process\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\admission\\registry.json": "4d9aba33432f782d6914562b87921a4dbddf8dff7e46052aec5c5bc751982cdc",
+        "run-2\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\ancestry-settled.json": "e8313b6470a2715a2168a615c63af92d8b94788385c68d5f6c87bd8d5ab86741",
+        "run-2\\profile\\home\\.config\\tldw_cli\\recovery-bootstrap\\admission\\registry.json": "737d21a2f4013f3cbb5ca9463379a1d97089d775543b97d6eacbee35e32ff536"
+      }
+    },
+    "workers": {
+      "candidate_sha": "e41fc622e2702b3e87a1f21d83f1f328ed48b821",
+      "source_git_blob": "e4fc46b0a2c56ce03d8cbcc802e0cba0785be5c7",
+      "source_sha256_canonical_git_bytes": "a4b31bc2b48c24a7051b7295fa59cdef36db972cc11e8186fe07737ae38a8b95",
+      "source_sha256_checkout_bytes": "a83141125e71c5668d954f34ce67752f5db8931e0addc5b1e3546b7dc1aec843",
+      "preexisting_markers": {
+        "content[:1000] + \"...\" if len(content) > 1000 else content": {
+          "candidate_count": 1,
+          "parent_count": 1
+        },
+        "self.content_text = content": {
+          "candidate_count": 2,
+          "parent_count": 1
+        },
+        "self.content_text[:1000] + \"...\"": {
+          "candidate_count": 2,
+          "parent_count": 2
+        }
+      },
+      "source_file_receipts": {
+        "900": {
+          "path": ".test-tmp\\textual-audit-after-3205\\workers\\pytest-r4\\test_file_import_retains_full_0\\private-profile-process\\pytest\\test_file_import_retains_full_0\\book.txt",
+          "length": 900,
+          "source_file_unchanged": true,
+          "sha256": "ec6c2d2c6021b1f1600862543c4a7a0c532f2a8439a045e74e91836767542463"
+        },
+        "1000": {
+          "path": ".test-tmp\\textual-audit-after-3205\\workers\\pytest-r4\\test_file_import_retains_full_1\\private-profile-process\\pytest\\test_file_import_retains_full_0\\book.txt",
+          "length": 1000,
+          "source_file_unchanged": true,
+          "sha256": "8008dbfcfd6a6e234ee61f8385eddd0102d3708c0efc9821395ea8db28c9de52"
+        },
+        "1600": {
+          "path": ".test-tmp\\textual-audit-after-3205\\workers\\pytest-r4\\test_file_import_retains_full_2\\private-profile-process\\pytest\\test_file_import_retains_full_0\\book.txt",
+          "length": 1600,
+          "source_file_unchanged": true,
+          "sha256": "6b540374333946ba3a18af81c035eacc9a0420832401e85cfa5adc75142691c9"
+        }
+      },
+      "artifacts_sha256": {
+        "test_long_import.py": "dddbd8231aa7fe1600397f275e36601720670814654a4d1ae28fc6d6937a838e",
+        "file-900.json": "39fa69054e95e6d380fe72892a020aa81ad01f6878a467901172da0bf9b148ed",
+        "file-1000.json": "80406b909c2fd27e2dce0017d418f7ca4605bc6131f30560dbe8f792bf2a33c5",
+        "file-1600.json": "cfcd66693770b0f4b529c35e89a191a9cef7b0c8f4d13e268c18706faf9a03b4",
+        "import-result-r4.xml": "0dd59ca0fbf27398cbba0de90ddc8d9437b8585573e4b633ac3eb195429e8f75"
+      },
+      "book_pages_read": {
+        "printed144_pdf153": "Chapter7-TextualEventsandMessages 144\nFigure9.3. LoadingaFile\nGoodjob! YoujustcreatedahandywaytochooseafilewithTextual!\nPreventing Messages\nTextualalsohasawayto temporarily disablethepostingofmessagesorevents. Youcandothisvia\nthespecial prevent() method,returningacontextmanager. Youuse prevent() whe",
+        "printed145_pdf154": "Chapter7-TextualEventsandMessages 145\nfile_path =self .query_one(Input)\nwith file_path .prevent(Input .Changed):\nfile_path .value =\"\"\nEitherway,thiscodewilltemporarilyblockthe Input.changed eventeffectively.\nThe OnDecorator\nWhencreatingamessageoreventhandler,youshouldnamethemaccordingly. Therecommen"
+      },
+      "qualified_final_receipts_sha256": {
+        "conftest.py": "0bf15d165054fb1967d58d674e0af18bedb85ed4d1b50c56b85731684dc55d4c",
+        "test_long_import.py": "dddbd8231aa7fe1600397f275e36601720670814654a4d1ae28fc6d6937a838e",
+        "import-result-r4.xml": "0dd59ca0fbf27398cbba0de90ddc8d9437b8585573e4b633ac3eb195429e8f75",
+        "file-1000.json": "80406b909c2fd27e2dce0017d418f7ca4605bc6131f30560dbe8f792bf2a33c5",
+        "file-1600.json": "cfcd66693770b0f4b529c35e89a191a9cef7b0c8f4d13e268c18706faf9a03b4",
+        "file-900.json": "39fa69054e95e6d380fe72892a020aa81ad01f6878a467901172da0bf9b148ed",
+        "pytest-r4\\test_file_import_retains_full_0\\private-profile-process\\pytest.xml": "4c9cb1279fcf482b3d97e73443994c0223ee3ef958691112ecf5dc3d38df40f6",
+        "pytest-r4\\test_file_import_retains_full_1\\private-profile-process\\pytest.xml": "122afc906b461a4ad9bbe2ff0adb4dce74b261c9309a2ff4b5eea9e2718dd62a",
+        "pytest-r4\\test_file_import_retains_full_2\\private-profile-process\\pytest.xml": "77bbd1795aae0a9a942e567b1af7274758f9485866c438a63e302cd99d8e356a",
+        "pytest-r4\\test_file_import_retains_full_0\\private-profile-process\\pytest.log": "80b5a48024e97b971ba31c9858fa11ff1c75a4e2392e24fe2b5724431ea38b1e",
+        "pytest-r4\\test_file_import_retains_full_1\\private-profile-process\\pytest.log": "4022f1e4bb28d72b221c4c0868c9e1689f4690a2c82d3731c88f5bd9dff4210b",
+        "pytest-r4\\test_file_import_retains_full_2\\private-profile-process\\pytest.log": "2b75ca66bcb8d67e99ff119b5428c8ca7cc39c32c5f3b30cc3049afcc14c4915"
+      },
+      "excluded_setup_receipts_sha256": {
+        "test_long_import.initial.txt": "424c6d62f0526a98eec3ebc5b41a7a3ef7c6fe89651d4190678c0a3c8b39b235",
+        "test_long_import.r2.txt": "184dafc17bc7a4188d9e0a719bd0652b6297284a8470d37f58e9af57bd01ef9b",
+        "test_long_import.r3.txt": "783cd6fde5ae8598fcb5e1dd63eb464ed502b6e4e0d086bc6e741742cd170aa9",
+        "import-result.xml": "a025bed05f3c2a93c5f08a0579648f0606b50e5494f2ce04453dc88eda817eba",
+        "import-result-r2.xml": "82554ae756556e928ed7d03978f5222312e2915ebf9ec144c9ebe1e13f3b2d1d",
+        "import-result-r3.xml": "2f7fae3aa027d35c6957c64103423dbd3e626d62793152ac42416b91f1e00fee"
+      }
+    },
+    "study": {
+      "utc": "2026-10-22T14:42:25.753273+00:00",
+      "head": "e41fc622e2702b3e87a1f21d83f1f328ed48b821",
+      "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+      "textual": "8.2.8",
+      "junit": [
+        {
+          "tests": "4",
+          "failures": "2",
+          "errors": "0",
+          "skipped": "0",
+          "time": "30.831"
+        }
+      ],
+      "production_selected_diff_clean": true,
+      "canonical_source_checks": {
+        "tldw_chatbook/UI/Study_Modules/flashcards_handler.py": {
+          "git_blob": "1b9a9387c93bcfa3c342f0bf29b80f3e75eacb9b",
+          "working_lf_matches_tested_git_blob": true
+        },
+        "tldw_chatbook/UI/Study_Window.py": {
+          "git_blob": "be48e8ca2b1fa154def3d19fc30f9e582f18f116",
+          "working_lf_matches_tested_git_blob": true
+        },
+        "tldw_chatbook/Study_Interop/study_scope_service.py": {
+          "git_blob": "eebbd5d04429fae2557e5b2b855ed8c571b08bb5",
+          "working_lf_matches_tested_git_blob": true
+        },
+        "tldw_chatbook/Study_Interop/local_study_service.py": {
+          "git_blob": "74e03022716b6db1dcae3c57674f6fd2c4a49f37",
+          "working_lf_matches_tested_git_blob": true
+        },
+        "tldw_chatbook/Study_Interop/server_study_service.py": {
+          "git_blob": "fcba2ba25b7981c5a0809af421edb777200cbf02",
+          "working_lf_matches_tested_git_blob": true
+        },
+        "Tests/UI/test_study_quiz_create_drafts.py": {
+          "git_blob": "6782249d74218f4cdec528825f8374c6a7a07cc0",
+          "working_lf_matches_tested_git_blob": true
+        }
+      },
+      "sources": [
+        [
+          "tldw_chatbook/UI/Study_Modules/flashcards_handler.py",
+          755
+        ],
+        [
+          "tldw_chatbook/UI/Study_Modules/flashcards_handler.py",
+          785
+        ],
+        [
+          "tldw_chatbook/UI/Study_Modules/flashcards_handler.py",
+          797
+        ],
+        [
+          "tldw_chatbook/UI/Study_Modules/flashcards_handler.py",
+          842
+        ],
+        [
+          "tldw_chatbook/UI/Study_Window.py",
+          1053
+        ],
+        [
+          "tldw_chatbook/UI/Study_Window.py",
+          1069
+        ],
+        [
+          "tldw_chatbook/Study_Interop/study_scope_service.py",
+          986
+        ],
+        [
+          "tldw_chatbook/Study_Interop/study_scope_service.py",
+          1072
+        ],
+        [
+          "tldw_chatbook/Study_Interop/local_study_service.py",
+          93
+        ],
+        [
+          "tldw_chatbook/Study_Interop/local_study_service.py",
+          186
+        ],
+        [
+          "tldw_chatbook/Study_Interop/server_study_service.py",
+          173
+        ],
+        [
+          "tldw_chatbook/Study_Interop/server_study_service.py",
+          243
+        ]
+      ],
+      "artifacts": {
+        "book-page-158.txt": {
+          "sha256": "276dcaf17d66639dc4665585c9fe8b38fa8c9e8f07687f88bf368e1ceff38c8e",
+          "bytes": 1829
+        },
+        "book-page-179.txt": {
+          "sha256": "6e23e85c1edc9e7f2fefef0f01c1a22f3b79ab2baf620d25197d1378851dece4",
+          "bytes": 1393
+        },
+        "book-page-180.txt": {
+          "sha256": "b88d1c40a034a6e07e1538568f86ef61a989c468c4003ade24a5147e70a62596",
+          "bytes": 1958
+        },
+        "book-page-189.txt": {
+          "sha256": "b9be867067f0a79f4b0b1a1cccb8c60fa8e3abb3458f705f9331b425c85d7109",
+          "bytes": 925
+        },
+        "book-page-335.txt": {
+          "sha256": "0f828f29ddb8103420cb87e5b19f1e96d9c5e87ce50e6ecec05ddd958df7ac9f",
+          "bytes": 2122
+        },
+        "conftest.py": {
+          "sha256": "0bf15d165054fb1967d58d674e0af18bedb85ed4d1b50c56b85731684dc55d4c",
+          "bytes": 58
+        },
+        "create_deck-edited.json": {
+          "sha256": "c2e1bea12b6e83f53f91c1e93b928420794e4400630ae42a6de9cd9f8d289c08",
+          "bytes": 1034
+        },
+        "create_deck-unchanged.json": {
+          "sha256": "38174036bd8271f8451d7c8b01c8feea7dd4a0efb264867ad7242e49b49c0d57",
+          "bytes": 1031
+        },
+        "create_flashcard-edited.json": {
+          "sha256": "bca61afb55b9839a56f426b516390d58e35984af7aa6330b448a3f705215116f",
+          "bytes": 1361
+        },
+        "create_flashcard-unchanged.json": {
+          "sha256": "b3a5bb304c8131522bafbdd93d31f72c96eb2f5ef7c1e4588101186ab0dacc38",
+          "bytes": 1350
+        },
+        "duplicate-screen.json": {
+          "sha256": "8143209869b4acc64e0e7a0300254c94d4b779c7269033e3a73ec700bb6bf37f",
+          "bytes": 55811
+        },
+        "initial-e41fc622/command.json": {
+          "sha256": "adddccff01145f6a82efd6b7034e6da7f965f3f619a2c5e6652f3ba7e420f74e",
+          "bytes": 555
+        },
+        "initial-e41fc622/pytest/test_success_preserves_newer_k0/private-profile-process/pytest.log": {
+          "sha256": "10d2073d879eb10a5d37a1f48f992efb92d97a7af1c434372f2ae2b4cb55ab9d",
+          "bytes": 36769
+        },
+        "initial-e41fc622/pytest/test_success_preserves_newer_k0/private-profile-process/pytest.xml": {
+          "sha256": "652ff6e44ceb9fccf3ed17e158c2ab7eaf3df5e49a38cfb55a2e21311b72264a",
+          "bytes": 1820
+        },
+        "initial-e41fc622/pytest/test_success_preserves_newer_k1/private-profile-process/pytest.log": {
+          "sha256": "1602f034e225956ab193edcf70503a6c767a526768172a10a04e1ba191cf6005",
+          "bytes": 36799
+        },
+        "initial-e41fc622/pytest/test_success_preserves_newer_k1/private-profile-process/pytest.xml": {
+          "sha256": "413a58d6eaed20cc63706a1fb774b0efa525751091fa3d2dc5d01a564b953e52",
+          "bytes": 1840
+        },
+        "initial-e41fc622/pytest/test_unchanged_success_persist0/private-profile-process/pytest.log": {
+          "sha256": "df5ad3d6feeec0a9c0c1fd0b36f9946ebe42aa3168b3a67ab18f999eaf0aaf3d",
+          "bytes": 36789
+        },
+        "initial-e41fc622/pytest/test_unchanged_success_persist0/private-profile-process/pytest.xml": {
+          "sha256": "68a358f74f6f1dea9650d6fa46f688bd56f0a5c6e488580500141f742034d856",
+          "bytes": 1832
+        },
+        "initial-e41fc622/pytest/test_unchanged_success_persist1/private-profile-process/pytest.log": {
+          "sha256": "0113800ae5014ddb347a5e71cb9a1ed787f96ded978b44f048deb545856eddc5",
+          "bytes": 36819
+        },
+        "initial-e41fc622/pytest/test_unchanged_success_persist1/private-profile-process/pytest.xml": {
+          "sha256": "a864860867cc72f01d2013ee9ca49f954963ae28b1278d060f77d92f71638849",
+          "bytes": 1852
+        },
+        "initial-e41fc622/result.xml": {
+          "sha256": "b72c90300adaaa4aadfa401175da885ab9cfe303f64918514665a61d7dab8832",
+          "bytes": 148730
+        },
+        "initial-e41fc622/run.log": {
+          "sha256": "034610eb6dca4385c4bf1b5d847d7b7eb7a2de0a4d03c6c894d53302cda09172",
+          "bytes": 79004
+        },
+        "initial-e41fc622/witness.py": {
+          "sha256": "978a308b24ab1b67884580d3f1343b7c621989a82dc2601491f2516b95702c96",
+          "bytes": 6976
+        },
+        "report.md": {
+          "sha256": "3f3bcf4cff3c021149534be87e15e3f7b148f3a6d0dff512b745b861bf44b55e",
+          "bytes": 8424
+        },
+        "run-audit.py": {
+          "sha256": "4fc7473cc1f987e15434a895829dc88f3dd177ecd9029250281db0c3f3cae323",
+          "bytes": 2919
+        },
+        "source-receipt.json": {
+          "sha256": "2b6714dca3a3b40850fb2d0126cd9d4733805facf3043610b4d07d4309ca0ac7",
+          "bytes": 2138
+        },
+        "task-spec.json": {
+          "sha256": "c9f83facfdddfb853667e60fc4378586bf14c819d79da7af1654d6ab86096eb5",
+          "bytes": 5131
+        },
+        "test_flashcard_create_drafts_audit.py": {
+          "sha256": "7a5fbd791ae855d4d61f0cd291d8608e5ae531dd45283e74ee0f41ab066045ef",
+          "bytes": 6997
+        },
+        "witness-e41fc622-v2/command.json": {
+          "sha256": "632c0c5ca5c4f377a06a67939ef490557afd5ccfd4037d98a301b2cfc9f26e41",
+          "bytes": 561
+        },
+        "witness-e41fc622-v2/conftest.py": {
+          "sha256": "0bf15d165054fb1967d58d674e0af18bedb85ed4d1b50c56b85731684dc55d4c",
+          "bytes": 58
+        },
+        "witness-e41fc622-v2/pytest/test_success_preserves_newer_k0/private-profile-process/pytest.log": {
+          "sha256": "c8ae0e34aa3108c7f589769334c119263d0d3c239459c9eb132fb8b54b08a2fa",
+          "bytes": 39598
+        },
+        "witness-e41fc622-v2/pytest/test_success_preserves_newer_k0/private-profile-process/pytest.xml": {
+          "sha256": "4373b099f11eafaa0b5e7a9fa6e10d8b8367c582adb1113deaae81fe0ca4517a",
+          "bytes": 4142
+        },
+        "witness-e41fc622-v2/pytest/test_success_preserves_newer_k1/private-profile-process/pytest.log": {
+          "sha256": "6671e929bc396e5eb800adb3439b45f3867c8cb02f7ee6112ca6018725dda800",
+          "bytes": 39639
+        },
+        "witness-e41fc622-v2/pytest/test_success_preserves_newer_k1/private-profile-process/pytest.xml": {
+          "sha256": "aabebe06f0179ba01076a5c1dfedd9b53e663514fd13bed5bf98be252326460b",
+          "bytes": 4176
+        },
+        "witness-e41fc622-v2/pytest/test_unchanged_success_persist0/private-profile-process/pytest.log": {
+          "sha256": "32dcc9d892c8a5f48a89a82a5983067030d05a145c81ea75673aac686188d720",
+          "bytes": 2158
+        },
+        "witness-e41fc622-v2/pytest/test_unchanged_success_persist0/private-profile-process/pytest.xml": {
+          "sha256": "a2b1b5c636b8d3e408ff5692d1b21b8ce894c8ed167d5470a0f5f089cfedcee8",
+          "bytes": 412
+        },
+        "witness-e41fc622-v2/pytest/test_unchanged_success_persist1/private-profile-process/pytest.log": {
+          "sha256": "08acf545b6c1ee3ead5c0fd98c27f6f3d68cd5f49afaaf884049435f90eef49d",
+          "bytes": 2173
+        },
+        "witness-e41fc622-v2/pytest/test_unchanged_success_persist1/private-profile-process/pytest.xml": {
+          "sha256": "d36f0deda80e58c50d1e635db3aafb623a1ab090daeb702abec679dbcb5649a6",
+          "bytes": 417
+        },
+        "witness-e41fc622-v2/result.xml": {
+          "sha256": "b791b6ebcdd52e332d181d70e29116e530a47483a7237b2cee0a3277998ca89e",
+          "bytes": 84702
+        },
+        "witness-e41fc622-v2/run-audit.py": {
+          "sha256": "4fc7473cc1f987e15434a895829dc88f3dd177ecd9029250281db0c3f3cae323",
+          "bytes": 2919
+        },
+        "witness-e41fc622-v2/run.log": {
+          "sha256": "bfc6d20ddfe6edae2bef0ede42c59540231812d35b34512c35217514e5d5186c",
+          "bytes": 46096
+        },
+        "witness-e41fc622-v2/test_flashcard_create_drafts_audit.py": {
+          "sha256": "7a5fbd791ae855d4d61f0cd291d8608e5ae531dd45283e74ee0f41ab066045ef",
+          "bytes": 6997
+        }
+      }
+    }
+  }
+}

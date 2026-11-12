@@ -1,0 +1,39 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="21.487" timestamp="2026-10-25T11:20:03.822951-07:00" hostname="DESKTOP-BISU2HE">
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-before-shell]" time="10.387">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-replacement-matched-red\pytest\test_start_completion_respects0\private-profile-process\pytest.log&#10;--- child failure: AssertionError: assert '' == 'replacement draft'&#10;  &#10;  - replacement draft&#10;request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-before-shell]&gt;&gt;&#10;entry = 'shell', return_before_response = True&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&quot;entry&quot;, [&quot;shell&quot;, &quot;inner&quot;])&#10;    @pytest.mark.parametrize(&#10;        &quot;return_before_response&quot;, [False, True], ids=[&quot;return-after&quot;, &quot;return-before&quot;]&#10;    )&#10;    @private_profile_test&#10;    async def test_start_completion_respects_replaced_quiz_panel(&#10;        request, entry, return_before_response&#10;    ):&#10;        client = Client()&#10;        app = Host(client)&#10;        async with app.run_">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-replacement-matched-red\pytest\test_start_completion_respects0\private-profile-process\pytest.log
+E   --- child failure: AssertionError: assert '' == 'replacement draft'
+E     
+E     - replacement draft
+E   request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-before-shell]&gt;&gt;
+E   entry = 'shell', return_before_response = True
+</failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-before-inner]" time="9.668">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-replacement-matched-red\pytest\test_start_completion_respects1\private-profile-process\pytest.log&#10;--- child failure: AssertionError: assert '' == 'replacement draft'&#10;  &#10;  - replacement draft&#10;request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-before-inner]&gt;&gt;&#10;entry = 'inner', return_before_response = True&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&quot;entry&quot;, [&quot;shell&quot;, &quot;inner&quot;])&#10;    @pytest.mark.parametrize(&#10;        &quot;return_before_response&quot;, [False, True], ids=[&quot;return-after&quot;, &quot;return-before&quot;]&#10;    )&#10;    @private_profile_test&#10;    async def test_start_completion_respects_replaced_quiz_panel(&#10;        request, entry, return_before_response&#10;    ):&#10;        client = Client()&#10;        app = Host(client)&#10;        async with app.run_">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-replacement-matched-red\pytest\test_start_completion_respects1\private-profile-process\pytest.log
+E   --- child failure: AssertionError: assert '' == 'replacement draft'
+E     
+E     - replacement draft
+E   request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-before-inner]&gt;&gt;
+E   entry = 'inner', return_before_response = True
+</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

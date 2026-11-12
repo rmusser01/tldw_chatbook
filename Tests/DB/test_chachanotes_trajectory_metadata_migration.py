@@ -43,13 +43,12 @@ def test_migrates_v37_to_v38_and_creates_table(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "test.db", client_id="test")
     connection = db.get_connection()
     assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
-    cols = {row["name"] for row in connection.execute(
-        "PRAGMA table_info(message_trajectory_metadata)"
-    )}
+    cols = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(message_trajectory_metadata)")
+    }
     assert TRAJECTORY_COLUMNS <= cols
-    indexes = list(connection.execute(
-        "PRAGMA index_list(message_trajectory_metadata)"
-    ))
+    indexes = list(connection.execute("PRAGMA index_list(message_trajectory_metadata)"))
     idx = {row["name"] for row in indexes}
     assert any("conv_seq" in name for name in idx), idx
     # Ledger-ordering guarantee: the (conversation_id, seq) index is UNIQUE.
@@ -68,9 +67,7 @@ def test_migrates_v37_to_v38_and_creates_table(tmp_path: Path) -> None:
 def test_upsert_and_read_roundtrip(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "test.db", client_id="test")
     conv = db.add_conversation({"title": "t"})
-    msg = db.add_message(
-        {"conversation_id": conv, "sender": "user", "content": "hi"}
-    )
+    msg = db.add_message({"conversation_id": conv, "sender": "user", "content": "hi"})
     db.upsert_trajectory_rows(
         [
             TrajectoryRowWrite(
@@ -181,9 +178,7 @@ def test_get_trajectory_rows_includes_soft_deleted_messages(
 ) -> None:
     db = CharactersRAGDB(tmp_path / "test.db", client_id="test")
     conv = db.add_conversation({"title": "t"})
-    msg = db.add_message(
-        {"conversation_id": conv, "sender": "user", "content": "hi"}
-    )
+    msg = db.add_message({"conversation_id": conv, "sender": "user", "content": "hi"})
     db.upsert_trajectory_rows(
         [
             TrajectoryRowWrite(
@@ -215,7 +210,8 @@ def test_v37_database_upgrades(tmp_path: Path) -> None:
     )
     connection = db.get_connection()
     assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
-    cols = {row["name"] for row in connection.execute(
-        "PRAGMA table_info(message_trajectory_metadata)"
-    )}
+    cols = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(message_trajectory_metadata)")
+    }
     assert TRAJECTORY_COLUMNS <= cols

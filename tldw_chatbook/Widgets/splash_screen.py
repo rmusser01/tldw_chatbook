@@ -17,11 +17,11 @@ from textual.message import Message
 from loguru import logger
 
 from ..Constants import DEFAULT_SPLASH_DURATION_SECONDS
-from ..config import get_cli_setting
+from ..config import get_cli_setting, load_cli_config_and_ensure_existence
 
 # Import the registration system and load all effects
-from ..Utils.Splash_Screens import load_all_effects, get_effect_class
-from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
+from ..UI.Splash_Screens import load_all_effects, get_effect_class
+from ..UI.Splash_Screens.card_definitions import get_all_card_definitions
 from tldw_chatbook.Widgets.pausable_progress import PausableProgressBar
 
 
@@ -213,10 +213,8 @@ class SplashScreen(Container):
         # Try to load from config
         try:
             _EFFECTS_KEYS = {"fade_in_duration", "fade_out_duration", "animation_speed"}
-            # TASK-32804.8: read the splash_screen section ONCE, then index
-            # it, instead of a get_cli_setting call per key (its docstring
-            # documents this section-only shape).
-            section = get_cli_setting("splash_screen", default={})
+            # TASK-32804.8: read the mapping once instead of calling per key.
+            section = load_cli_config_and_ensure_existence().get("splash_screen", {})
             section = section if isinstance(section, dict) else {}
             effects = section.get("effects", {})
             effects = effects if isinstance(effects, dict) else {}
@@ -351,9 +349,7 @@ class SplashScreen(Container):
                 # TASK-2154.10 (AC-04): render the SAME card's static content
                 # instead of playing its effect -- branding and readability
                 # survive, motion does not.
-                logger.info(
-                    f"Reduced motion: rendering '{self.card_name}' statically"
-                )
+                logger.info(f"Reduced motion: rendering '{self.card_name}' statically")
                 self._display_static_fallback()
                 return
             # Start animation

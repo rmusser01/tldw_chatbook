@@ -7,7 +7,9 @@ from tldw_chatbook.Character_Chat.world_info_regex import (
 )
 
 
-@pytest.mark.parametrize("pattern", ["w[ao]rden", r"https?://", r"(\d{3}-)+\d{4}", "(a|b)*", "hello"])
+@pytest.mark.parametrize(
+    "pattern", ["w[ao]rden", r"https?://", r"(\d{3}-)+\d{4}", "(a|b)*", "hello"]
+)
 def test_valid_patterns_pass(pattern):
     validate_regex_pattern(pattern)  # must not raise
 
@@ -28,26 +30,32 @@ def test_catastrophic_patterns_rejected(pattern):
         validate_regex_pattern(pattern)
 
 
-@pytest.mark.parametrize("pattern", [
-    "((a+))+",       # nesting must not evade the nested-quantifier detector
-    "(?:(a+))+",     # non-capturing wrapper
-    "(((a+)))+",     # deeper nesting
-    "(a|a|a)+",      # N-way identical alternation (not just 2-way)
-    "(?:x|x)*",      # identical alternation behind a non-capturing group
-])
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "((a+))+",  # nesting must not evade the nested-quantifier detector
+        "(?:(a+))+",  # non-capturing wrapper
+        "(((a+)))+",  # deeper nesting
+        "(a|a|a)+",  # N-way identical alternation (not just 2-way)
+        "(?:x|x)*",  # identical alternation behind a non-capturing group
+    ],
+)
 def test_catastrophic_variants_rejected(pattern):
     with pytest.raises(ValueError, match="too complex"):
         validate_regex_pattern(pattern)
 
 
-@pytest.mark.parametrize("pattern", [
-    "(a|aa)*$",       # a branch that is a PREFIX of another, not a duplicate
-    "(a|aa)*",
-    "(ab|abc)+",      # the same shape with longer branches
-    r"(\d|\d\d)*",    # ... and with escaped tokens, which must not confuse
-    "(?:a|aa)*",      # behind a non-capturing group
-    "(x|xx|y)+",      # the overlapping pair need not be the only branches
-])
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "(a|aa)*$",  # a branch that is a PREFIX of another, not a duplicate
+        "(a|aa)*",
+        "(ab|abc)+",  # the same shape with longer branches
+        r"(\d|\d\d)*",  # ... and with escaped tokens, which must not confuse
+        "(?:a|aa)*",  # behind a non-capturing group
+        "(x|xx|y)+",  # the overlapping pair need not be the only branches
+    ],
+)
 def test_prefix_overlapping_alternation_rejected(pattern):
     """``(a|aa)*`` is not a DUPLICATE alternation, and it still explodes.
 
@@ -60,13 +68,16 @@ def test_prefix_overlapping_alternation_rejected(pattern):
         validate_regex_pattern(pattern)
 
 
-@pytest.mark.parametrize("pattern", [
-    "(?P<name>x+)",     # inner quantifier but NOT externally quantified — safe
-    "(?:abc){2,5}",     # bounded outer quantifier — safe
-    r"(\d{3}-)+\d{4}",  # bounded inner quantifier — safe
-    "(a|b|c)+",         # distinct alternatives — safe
-    "(cat|dog)*",       # distinct alternatives — safe
-])
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "(?P<name>x+)",  # inner quantifier but NOT externally quantified — safe
+        "(?:abc){2,5}",  # bounded outer quantifier — safe
+        r"(\d{3}-)+\d{4}",  # bounded inner quantifier — safe
+        "(a|b|c)+",  # distinct alternatives — safe
+        "(cat|dog)*",  # distinct alternatives — safe
+    ],
+)
 def test_safe_variants_still_pass(pattern):
     validate_regex_pattern(pattern)  # must not raise
 
@@ -86,7 +97,9 @@ def test_regex_search_returns_bool():
     assert regex_search("x", "no match here", ignore_case=True) is False
 
 
-@pytest.mark.parametrize("pattern", [r"(\|\|\|)+", r"(a|b\|a)*", "(a[|]b)+", r"(foo\|bar)+"])
+@pytest.mark.parametrize(
+    "pattern", [r"(\|\|\|)+", r"(a|b\|a)*", "(a[|]b)+", r"(foo\|bar)+"]
+)
 def test_escaped_or_class_pipes_are_not_alternation_false_positives(pattern):
     """Escaped pipes (\\|) and pipes inside a character class are NOT alternation
     separators — safe patterns must pass (Gemini/Qodo #705)."""

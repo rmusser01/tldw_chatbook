@@ -1,0 +1,94 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "profiled": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "attach_poll": true,
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-ldu_mehn",
+  "periodic_tracebacks": "python-thread-synchronous",
+  "traceback_interval_seconds": 60.0,
+  "loop_clock_resolution_seconds": 0.015625,
+  "probe_poll_seconds": 0.03125,
+  "probe_heartbeat_seconds": 0.03125,
+  "import_ms": 3581.0041000077035,
+  "construct_ms": 16519.97439999832,
+  "mount_ready_ms": 25079.18719999725,
+  "startup_phases": {
+    "basic_init": 1.1058504000247922,
+    "attribute_init": 2.379997749812901e-05,
+    "parallel_init": 8.298590099991998,
+    "total_init": 16.519479699985823
+  },
+  "console_resume": [
+    {
+      "iteration": 0,
+      "resume_to_input_ms": 130.85320001118816,
+      "resume_to_attach_ms": 1241.3928000023589,
+      "input_ms": 15.639499993994832,
+      "max_loop_overshoot_ms": 163.69429999031126,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1249.114300007932
+    },
+    {
+      "iteration": 1,
+      "resume_to_input_ms": 139.55839999835007,
+      "resume_to_attach_ms": 970.0377999979537,
+      "input_ms": 12.903900002129376,
+      "max_loop_overshoot_ms": 128.61980000161566,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1000.3790999762714
+    },
+    {
+      "iteration": 2,
+      "resume_to_input_ms": 145.60260000871494,
+      "resume_to_attach_ms": 1555.3243999893311,
+      "input_ms": 7.516500016208738,
+      "max_loop_overshoot_ms": 106.80899998988025,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1592.6798000000417
+    },
+    {
+      "iteration": 3,
+      "resume_to_input_ms": 169.26859997329302,
+      "resume_to_attach_ms": 994.1005999862682,
+      "input_ms": 34.19120001490228,
+      "max_loop_overshoot_ms": 103.78110001329333,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1034.1701999714132
+    },
+    {
+      "iteration": 4,
+      "resume_to_input_ms": 171.00740000023507,
+      "resume_to_attach_ms": 1038.8923999853432,
+      "input_ms": 48.17550000734627,
+      "max_loop_overshoot_ms": 91.56030000303872,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1082.7969999809284
+    },
+    {
+      "iteration": 5,
+      "resume_to_input_ms": 155.09680000832304,
+      "resume_to_attach_ms": 1551.5744000149425,
+      "input_ms": 29.09890000591986,
+      "max_loop_overshoot_ms": 94.70599997439422,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1578.0768000113312
+    }
+  ],
+  "final_screen": null,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0,
+  "periodic_traceback_dumps": 0
+}

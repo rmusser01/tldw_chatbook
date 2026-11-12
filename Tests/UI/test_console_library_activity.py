@@ -77,7 +77,9 @@ class _ActivityHarness(App):
         )
 
 
-async def test_selected_turn_orders_citations_before_activity_and_renders_facts() -> None:
+async def test_selected_turn_orders_citations_before_activity_and_renders_facts() -> (
+    None
+):
     app = _ActivityHarness(_view(), citation_count=3)
 
     async with app.run_test(size=(42, 20)):
@@ -97,7 +99,9 @@ async def test_selected_turn_orders_citations_before_activity_and_renders_facts(
         )
         assert any("note · [red] literal title · note-1" in line for line in copy)
         assert any("media · 研究 🧪 · media-2" in line for line in copy)
-        literal = next(item for item in statics if "[red] literal title" in str(item.renderable))
+        literal = next(
+            item for item in statics if "[red] literal title" in str(item.renderable)
+        )
         assert literal._render_markup is False
 
 
@@ -108,12 +112,16 @@ async def test_selected_turn_has_explicit_empty_activity_state() -> None:
     )
 
     async with app.run_test():
-        assert str(
-            app.query_one("#console-library-activity-empty", Static).renderable
-        ) == "No Library activity for this turn."
-        assert str(
-            app.query_one("#console-selected-turn-cited-sources", Static).renderable
-        ) == "Cited sources (0)"
+        assert (
+            str(app.query_one("#console-library-activity-empty", Static).renderable)
+            == "No Library activity for this turn."
+        )
+        assert (
+            str(
+                app.query_one("#console-selected-turn-cited-sources", Static).renderable
+            )
+            == "Cited sources (0)"
+        )
 
 
 async def test_selected_turn_becomes_visible_when_selection_arrives() -> None:
@@ -129,7 +137,9 @@ async def test_selected_turn_becomes_visible_when_selection_arrives() -> None:
         assert selected_turn.styles.display == "block"
 
 
-async def test_unsaved_activity_state_exposes_retry_without_owning_persistence() -> None:
+async def test_unsaved_activity_state_exposes_retry_without_owning_persistence() -> (
+    None
+):
     app = _ActivityHarness(
         _view(),
         flush_result=LibraryActivityFlushResult(
@@ -204,7 +214,9 @@ async def test_error_copy_is_literal_and_invalid_time_degrades_safely() -> None:
         assert "time unavailable" in str(action.renderable)
 
 
-async def test_message_affordance_selects_turn_opens_inspector_and_focuses_activity() -> None:
+async def test_message_affordance_selects_turn_opens_inspector_and_focuses_activity() -> (
+    None
+):
     from Tests.UI.test_console_right_rail import make_console_pilot
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -233,17 +245,87 @@ async def test_message_affordance_selects_turn_opens_inspector_and_focuses_activ
         await pilot.pause(0.05)
         await pilot.pause()
 
-        transcript = screen.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
         selected_turn = screen.query_one("#console-selected-turn")
         assert transcript.selected_message_id == assistant.id
         assert selected_turn.styles.display == "block"
         assert screen.query_one("#console-right-rail").display
         assert pilot.app.focused is not None
-        assert (
-            pilot.app.focused.id
-            == "console-selected-turn-library-activity-heading"
+        assert pilot.app.focused.id == "console-selected-turn-library-activity-heading"
+
+
+async def test_a_click_elsewhere_during_the_activity_focus_retry_keeps_that_focus() -> (
+    None
+):
+    """P1-C final fix round, M2: ``_focus_library_activity`` re-attempts for up
+    to twenty refreshes while the heading it wants is being replaced. A click
+    made inside that window is the user's; a retry that then finds a live
+    heading must leave focus where the user put it."""
+    from Tests.UI.test_console_right_rail import make_console_pilot
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    heading_id = "console-selected-turn-library-activity-heading"
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = screen._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id is not None
+        user = store.append_message(
+            session_id, role=ConsoleMessageRole.USER, content="Question"
+        )
+        assistant = store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content="Answer"
+        )
+        store.admit_library_activity(session_id, user.id, _view().actions[0].event)
+        screen._library_activity.invalidate_projection()
+        await screen._sync_native_console_chat_ui()
+        await pilot.pause()
+
+        await pilot.click(f"#console-library-activity-{assistant.id}")
+        await pilot.pause(0.05)
+        await pilot.pause()
+        assert pilot.app.focused is not None
+        assert pilot.app.focused.id == heading_id
+
+        rail = screen._library_activity._inspector_rail()
+        assert rail is not None
+        selected_turn = screen.query_one(
+            "#console-selected-turn", ConsoleSelectedTurnActivity
+        )
+        old_heading = screen.query_one(f"#{heading_id}", Static)
+        # The composer bar takes focus itself on a click in its visible text
+        # (``ConsoleComposerBar.on_click``); its ``Input`` is a hidden carrier.
+        composer = screen.query_one("#console-native-composer")
+
+        # Open the window: the heading is being removed when the user asks.
+        removal = old_heading.remove()
+        assert old_heading._pruning is True
+        rail.request_library_activity_focus()
+        await removal
+        # The user clicks the composer inside the settle window...
+        await pilot.click("#console-command-visible-text")
+        await pilot.pause()
+        assert pilot.app.focused is composer, pilot.app.focused
+        # ...and a replacement heading then mounts while retries are pending.
+        selected_turn.sync_state(_view(), citation_count=5, flush_result=None)
+        for _ in range(60):
+            await pilot.pause()
+            live = [
+                h
+                for h in screen.query(f"#{heading_id}")
+                if h is not old_heading and h.is_attached and not h._pruning
+            ]
+            if live:
+                break
+        assert live, "the replacement heading never mounted"
+        await pilot.pause(0.5)
+        assert pilot.app.focused is composer, pilot.app.focused
+        # The retry chain runs one pass per refresh and may already be spent;
+        # this IS the pass that finds the live heading after the user's click.
+        rail._focus_library_activity()
+        await pilot.pause()
+        assert pilot.app.focused is composer, (
+            f"the activity-focus retry took focus from the composer: {pilot.app.focused!r}"
         )
 
 

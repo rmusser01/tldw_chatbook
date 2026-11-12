@@ -1,0 +1,11 @@
+...................................................                      [100%]
+============================= slowest 25 durations =============================
+1.51s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]
+1.40s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[77]
+1.26s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[78]
+1.15s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[79]
+1.04s call     Tests/Backup_Recovery/test_prompt_mixin_restore.py::test_recovery_candidate_retains_capture_off_attempt
+1.03s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[80]
+
+(19 durations < 1s hidden.)
+51 passed in 22.25s

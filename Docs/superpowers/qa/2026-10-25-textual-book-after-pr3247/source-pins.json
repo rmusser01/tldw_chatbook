@@ -1,0 +1,75 @@
+{
+  "head": "79da83a8dca98eab6ca854a7505b8abd264eb959",
+  "files": {
+    "tldw_chatbook/UI/Screens/study_screen.py": {
+      "blob": "a6427ae4d4b2860662d6be5070cd9fed6a377504",
+      "working_sha256": "f86984a25ef972e3fba63d9578b14c7c4abcf71ecda141f1440f5ee0b520aaf7",
+      "git_blob_sha256": "325028e63a018b763691dedceb627b89a2ac76d01290c8221cc8b4709059341c"
+    },
+    "tldw_chatbook/UI/Study_Window.py": {
+      "blob": "a2b217ffcafee9d8839a6906a5c40911df266744",
+      "working_sha256": "2e3ae3a7628f7e7a3eb93fb8f3ce01a38483069b271c17a7831fc81c13457b97",
+      "git_blob_sha256": "fd5ca1c23007b3a85f7a0add2576bbc50fe1f14826dd2d1f7635cedf45ea0977"
+    },
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": {
+      "blob": "de9c56a879b44a05252a362ff3eb805b4eecdd3a",
+      "working_sha256": "3b4e32827bab6948278d6215ff149b827e2b4a69417ccbd83646679aa3b2d84c",
+      "git_blob_sha256": "aff226a3778dfb2a529d89f3cbb061715f2cd39c81e04b6bfb92e8671ece94ec"
+    },
+    "tldw_chatbook/Study_Interop/quiz_scope_service.py": {
+      "blob": "cbb969cba0f9bf6d99a46742919205a2b807b687",
+      "working_sha256": "3332a64046415a1a1a7e3a4321ff1c82c19e643faa5b04fa83a9622a289c98c5",
+      "git_blob_sha256": "78910df671ae8ccd23598ca48c7170fbd7f691c4425f8525c2fd5188e83103dc"
+    },
+    "tldw_chatbook/Study_Interop/server_quiz_service.py": {
+      "blob": "c2f8a73721c46e4a6f184ced734a3a08c2d59378",
+      "working_sha256": "7369a0159d610c626a72de411ea039884123ab8d1944e11801c91583a38ec7b2",
+      "git_blob_sha256": "d2e6f3b8f1ef0109e2ec85252c3bcb9d60a886bd3c28804a21784ff8ebf3a5d4"
+    },
+    "tldw_chatbook/Study_Interop/local_quiz_service.py": {
+      "blob": "3038f7e7d30dd0553c910f2b464653912f6606bf",
+      "working_sha256": "4dbd00816ff342831e09058ae4a7ee966ab61afb31557be5b47edcdb0ea2df64",
+      "git_blob_sha256": "a5302d4b257a91028b39da4932b0c3b9ae49b00960b5652d2b0cc2f217c11546"
+    },
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": {
+      "blob": "7f9e8e23a99458dfd245e3901a1a1b165545d374",
+      "working_sha256": "4be11efe5a8ba59db466d2fb2d2c31f8e18e653b8eb06759e255232a09a0489f",
+      "git_blob_sha256": "d26b0e0f332d286a10664315a3d7cec2e014dc1bd3f66b0524790d65d8998243"
+    },
+    "tldw_chatbook/UI/Watchlists_Modules/article_list.py": {
+      "blob": "386df207b6faa66823f6c429daf8408aa868e2fd",
+      "working_sha256": "d3f99b70581be52c1b1366be1128a9aa3f6ae11ebf3223f6653dceade4b46ad3",
+      "git_blob_sha256": "d83fd3780e5ff40c3b7e5c5c29d14a1d84eff5b55ae0cb195b5a7d3220464ac2"
+    },
+    "tldw_chatbook/UI/Watchlists_Modules/sources_pane.py": {
+      "blob": "7a034222b10bd928cb89b9b33e9395a31c15f547",
+      "working_sha256": "f11310ba93fce2628029b3c4a38e4a0fcac56cb1b7590266e095a84e693908a3",
+      "git_blob_sha256": "622c125ae9cf6e8fe94ff8ba0e6f1f88a85cf8013d6f9c5c1e89f612b3ebd02b"
+    },
+    "tldw_chatbook/UI/Watchlists_Modules/watchlists_backend_controller.py": {
+      "blob": "641937c817b0f287deb92cc7fcc863b74068ae0a",
+      "working_sha256": "6fa127d5eb4966420200cb0479db04eed4793a2680b62a7c67e15a6bd4722c2e",
+      "git_blob_sha256": "4e9541308bd6ef9e7f5e2a1f9fd23d147cdd4b90a4f663434ebc78272633e1c3"
+    },
+    "tldw_chatbook/Subscriptions/watchlist_scope_service.py": {
+      "blob": "c968e51f58bfaabe62e57469b3bfa10390167260",
+      "working_sha256": "2e3f38423da43c5ded104f3f4a58177656b48ee02792f202affc07f5a81e592e",
+      "git_blob_sha256": "f93390236d38552a22dc835f3bb72e3878d75daf90f07d1c9497c6d22288ccd1"
+    },
+    "tldw_chatbook/Subscriptions/local_watchlists_service.py": {
+      "blob": "2eaeffb4c1bacf90f3c33bbf4635f503d318e6a8",
+      "working_sha256": "6af4de096728c4df3e2e18b46db7bc7608cd2dfdcbd6211d25a1d28e0a855dab",
+      "git_blob_sha256": "e2c58c1ef3eb4b349e589404e35f179897696da124d70f47da8716e4fecdb861"
+    },
+    "tldw_chatbook/Subscriptions/db_offload.py": {
+      "blob": "81f5e1e32fdb03cc92bc8e52441f6d46e5602093",
+      "working_sha256": "8ac9044d9010320eb6f92292d07eef0a449ce43374015699ee628890f3892837",
+      "git_blob_sha256": "ceff3a386e15830538c33de0cc82b6b0d6fc87a2ad1766c68cd557b281220139"
+    },
+    "tldw_chatbook/DB/Subscriptions_DB.py": {
+      "blob": "22abeea3b794746583a350c60bb2c08095f0b78c",
+      "working_sha256": "e0b81f0535798ea7fb8c7fec01b042a31048451af43951e6c53471477608c0bd",
+      "git_blob_sha256": "392d640ddcfffe1a439e813c9ed752f0f54f01804ea2c7516e74ce083859816f"
+    }
+  }
+}

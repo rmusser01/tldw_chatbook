@@ -172,9 +172,12 @@ def test_ready_failure_points_roll_back_the_whole_notes_transaction(tmp_path, st
         "notes_organization_sync_intents": 0,
         "note_organization_receipts": 0,
     }
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes'"
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM sync_log WHERE entity = 'notes'")
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_pending_receipt_failure_rolls_back_note_receipt_and_note_intent(tmp_path):
@@ -190,9 +193,12 @@ def test_pending_receipt_failure_rolls_back_note_receipt_and_note_intent(tmp_pat
 
     assert _counts(db)["notes"] == 0
     assert _counts(db)["note_organization_receipts"] == 0
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes'"
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM sync_log WHERE entity = 'notes'")
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_failed_atomic_save_rolls_back_without_logging_note_or_keyword_payloads(
@@ -227,7 +233,9 @@ def test_failed_atomic_save_rolls_back_without_logging_note_or_keyword_payloads(
         assert secret not in loguru_caplog.text
 
 
-def test_ready_save_is_additive_and_update_without_folder_preserves_memberships(tmp_path):
+def test_ready_save_is_additive_and_update_without_folder_preserves_memberships(
+    tmp_path,
+):
     service, db = _service(tmp_path)
     _checkpoint(db, ready=True)
     first = _save(service, ensure_keywords=("existing",), receipt_id="ready-create")
@@ -281,11 +289,15 @@ def test_ready_save_represents_server_portable_unicode_root_folder(tmp_path):
     assert saved["receipt_state"] is None
     assert saved["organization_state"] == "ready"
     assert saved["folders"][0]["name"] == "Study／Book"
-    row = db.get_connection().execute(
-        "SELECT parent_id, name, normalized_name, path, normalized_path "
-        "FROM note_folders WHERE sync_id = ?",
-        (saved["folders"][0]["id"],),
-    ).fetchone()
+    row = (
+        db.get_connection()
+        .execute(
+            "SELECT parent_id, name, normalized_name, path, normalized_path "
+            "FROM note_folders WHERE sync_id = ?",
+            (saved["folders"][0]["id"],),
+        )
+        .fetchone()
+    )
     assert tuple(row) == (
         None,
         "Study／Book",
@@ -327,10 +339,14 @@ def test_pending_save_preserves_trimmed_portable_unicode_folder_request(tmp_path
 
     assert saved["receipt_state"] == "pending_organization"
     assert saved["folders"] == []
-    receipt = db.get_connection().execute(
-        "SELECT requested_folder_name FROM note_organization_receipts "
-        "WHERE receipt_id = 'pending-portable-unicode'"
-    ).fetchone()
+    receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT requested_folder_name FROM note_organization_receipts "
+            "WHERE receipt_id = 'pending-portable-unicode'"
+        )
+        .fetchone()
+    )
     assert receipt["requested_folder_name"] == "Study／Book"
 
 
@@ -351,10 +367,14 @@ def test_portable_unicode_root_folder_local_path_collision_becomes_review(tmp_pa
     assert saved["receipt_state"] == "placement_review"
     assert saved["organization_state"] == "placement_review"
     assert saved["folders"] == []
-    receipt = db.get_connection().execute(
-        "SELECT collision_ids_json FROM note_organization_receipts "
-        "WHERE receipt_id = 'portable-unicode-review'"
-    ).fetchone()
+    receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT collision_ids_json FROM note_organization_receipts "
+            "WHERE receipt_id = 'portable-unicode-review'"
+        )
+        .fetchone()
+    )
     assert json.loads(receipt["collision_ids_json"]) == [collision.folder_id]
 
 
@@ -422,15 +442,24 @@ def test_concurrent_folder_and_keyword_ensure_converges_without_duplicates(tmp_p
     assert errors == []
     assert len(results) == 2
     connection = db.get_connection()
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_folders WHERE deleted = 0 AND name = 'Agent_Lessons'"
-    ).fetchone()[0] == 1
-    assert connection.execute(
-        "SELECT COUNT(*) FROM keywords WHERE deleted = 0 AND keyword = 'agent-lesson'"
-    ).fetchone()[0] == 1
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_folder_memberships WHERE deleted = 0"
-    ).fetchone()[0] == 2
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_folders WHERE deleted = 0 AND name = 'Agent_Lessons'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM keywords WHERE deleted = 0 AND keyword = 'agent-lesson'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_folder_memberships WHERE deleted = 0"
+        ).fetchone()[0]
+        == 2
+    )
     assert connection.execute("SELECT COUNT(*) FROM note_keywords").fetchone()[0] == 2
 
 
@@ -442,10 +471,14 @@ def test_new_resources_and_links_emit_ordinary_upserts_without_restore_metadata(
 
     _save(service, receipt_id="ordinary-upserts")
 
-    rows = db.get_connection().execute(
-        "SELECT domain, routing_metadata_json "
-        "FROM notes_organization_sync_intents ORDER BY intent_sequence"
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT domain, routing_metadata_json "
+            "FROM notes_organization_sync_intents ORDER BY intent_sequence"
+        )
+        .fetchall()
+    )
     assert {str(row["domain"]) for row in rows} == {
         "notes.folder",
         "notes.keyword",
@@ -459,9 +492,11 @@ def test_restored_keyword_resource_marks_only_its_exact_tombstone_successor(tmp_
     service, db = _service(tmp_path)
     _checkpoint(db, ready=True)
     keyword_id = db.add_keyword("agent-lesson")
-    keyword = db.get_connection().execute(
-        "SELECT sync_id FROM keywords WHERE id = ?", (keyword_id,)
-    ).fetchone()
+    keyword = (
+        db.get_connection()
+        .execute("SELECT sync_id FROM keywords WHERE id = ?", (keyword_id,))
+        .fetchone()
+    )
     _apply_remote_tombstone(
         db,
         domain="notes.keyword",
@@ -471,10 +506,14 @@ def test_restored_keyword_resource_marks_only_its_exact_tombstone_successor(tmp_
 
     _save(service, folder=None, receipt_id="resource-restore")
 
-    rows = db.get_connection().execute(
-        "SELECT domain, routing_metadata_json "
-        "FROM notes_organization_sync_intents ORDER BY intent_sequence"
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT domain, routing_metadata_json "
+            "FROM notes_organization_sync_intents ORDER BY intent_sequence"
+        )
+        .fetchall()
+    )
     assert [(row["domain"], row["routing_metadata_json"]) for row in rows] == [
         ("notes.keyword", '{"restore_intent":true}'),
         ("notes.keyword_link", "{}"),
@@ -486,9 +525,11 @@ def test_restored_keyword_link_marks_only_its_exact_tombstone_successor(tmp_path
     _checkpoint(db, ready=True)
     note_id = db.add_note("Existing note", "Existing body")
     keyword_id = db.add_keyword("agent-lesson")
-    keyword = db.get_connection().execute(
-        "SELECT sync_id FROM keywords WHERE id = ?", (keyword_id,)
-    ).fetchone()
+    keyword = (
+        db.get_connection()
+        .execute("SELECT sync_id FROM keywords WHERE id = ?", (keyword_id,))
+        .fetchone()
+    )
     db.link_note_to_keyword(str(note_id), int(keyword_id))
     payload = {
         "subject_type": "note",
@@ -515,11 +556,15 @@ def test_restored_keyword_link_marks_only_its_exact_tombstone_successor(tmp_path
         receipt_id="keyword-link-restore",
     )
 
-    row = db.get_connection().execute(
-        "SELECT routing_metadata_json FROM notes_organization_sync_intents "
-        "WHERE domain = 'notes.keyword_link' AND object_id = ?",
-        (object_id,),
-    ).fetchone()
+    row = (
+        db.get_connection()
+        .execute(
+            "SELECT routing_metadata_json FROM notes_organization_sync_intents "
+            "WHERE domain = 'notes.keyword_link' AND object_id = ?",
+            (object_id,),
+        )
+        .fetchone()
+    )
     assert row["routing_metadata_json"] == '{"restore_intent":true}'
 
 
@@ -529,9 +574,11 @@ def test_restored_folder_link_marks_only_its_exact_tombstone_successor(tmp_path)
     note_id = db.add_note("Existing note", "Existing body")
     folders = LocalNoteFolderRepository(db)
     folder = folders.create_folder(name="Agent_Lessons", parent_id=None)
-    folder_row = db.get_connection().execute(
-        "SELECT sync_id FROM note_folders WHERE id = ?", (folder.folder_id,)
-    ).fetchone()
+    folder_row = (
+        db.get_connection()
+        .execute("SELECT sync_id FROM note_folders WHERE id = ?", (folder.folder_id,))
+        .fetchone()
+    )
     folders.attach_manual(folder_id=folder.folder_id, note_id=str(note_id))
     payload = {
         "note_id": str(note_id),
@@ -556,11 +603,15 @@ def test_restored_folder_link_marks_only_its_exact_tombstone_successor(tmp_path)
         receipt_id="folder-link-restore",
     )
 
-    row = db.get_connection().execute(
-        "SELECT routing_metadata_json FROM notes_organization_sync_intents "
-        "WHERE domain = 'notes.folder_link' AND object_id = ?",
-        (object_id,),
-    ).fetchone()
+    row = (
+        db.get_connection()
+        .execute(
+            "SELECT routing_metadata_json FROM notes_organization_sync_intents "
+            "WHERE domain = 'notes.folder_link' AND object_id = ?",
+            (object_id,),
+        )
+        .fetchone()
+    )
     assert row["routing_metadata_json"] == '{"restore_intent":true}'
 
 
@@ -585,16 +636,23 @@ def test_pending_save_is_discoverable_without_links_or_publishable_intents(tmp_p
     assert "Atomic lesson" not in str(dict(receipt))
     assert "Verified body" not in str(dict(receipt))
     assert connection.execute("SELECT COUNT(*) FROM note_keywords").fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_folder_memberships"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM notes_organization_sync_intents"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT COUNT(*) FROM note_folder_memberships").fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM notes_organization_sync_intents"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        == 0
+    )
     search = service.search_library_notes(
         USER_ID, keyword="agent-lesson", limit=10, offset=0
     )
@@ -602,7 +660,9 @@ def test_pending_save_is_discoverable_without_links_or_publishable_intents(tmp_p
     assert search["items"][0]["organization_state"] == "pending"
 
 
-def test_reusing_pending_receipt_returns_the_same_note_without_duplicate_create(tmp_path):
+def test_reusing_pending_receipt_returns_the_same_note_without_duplicate_create(
+    tmp_path,
+):
     service, db = _service(tmp_path)
     _checkpoint(db, ready=False)
     first = _save(service, receipt_id="retry-receipt")
@@ -612,9 +672,12 @@ def test_reusing_pending_receipt_returns_the_same_note_without_duplicate_create(
     assert retried["id"] == first["id"]
     assert retried["version"] == first["version"] == 1
     assert db.get_connection().execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM note_organization_receipts"
-    ).fetchone()[0] == 1
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM note_organization_receipts")
+        .fetchone()[0]
+        == 1
+    )
 
 
 @pytest.mark.parametrize(
@@ -660,9 +723,7 @@ def test_receipt_replay_rejects_any_changed_request_identity(
     elif changed_field == "expected_version":
         retry_arguments["expected_version"] = 2
     elif changed_field == "expected_organization_version":
-        retry_arguments["expected_organization_version"] = first[
-            "organization_version"
-        ]
+        retry_arguments["expected_organization_version"] = first["organization_version"]
     elif changed_field == "profile":
         retry_arguments["server_profile_id"] = "profile-b"
     elif changed_field == "dataset":
@@ -676,9 +737,11 @@ def test_receipt_replay_rejects_any_changed_request_identity(
         _save(service, **retry_arguments)
 
     assert error.value.reason_code == "receipt_conflict"
-    persisted = db.get_connection().execute(
-        "SELECT title, content, version FROM notes WHERE id = ?", (note_id,)
-    ).fetchone()
+    persisted = (
+        db.get_connection()
+        .execute("SELECT title, content, version FROM notes WHERE id = ?", (note_id,))
+        .fetchone()
+    )
     assert tuple(persisted) == ("Atomic lesson", "Verified body", 2)
 
 
@@ -692,16 +755,18 @@ def test_pending_receipt_request_binding_is_content_free_and_exact_retry_is_stab
     retried = _save(service, receipt_id="content-free-binding")
 
     assert retried == first
-    receipt = db.get_connection().execute(
-        "SELECT * FROM note_organization_receipts "
-        "WHERE receipt_id = 'content-free-binding'"
-    ).fetchone()
+    receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT * FROM note_organization_receipts "
+            "WHERE receipt_id = 'content-free-binding'"
+        )
+        .fetchone()
+    )
     serialized = str(dict(receipt))
     assert "Atomic lesson" not in serialized
     assert "Verified body" not in serialized
-    request_data = json.loads(str(receipt["requested_keywords_json"]))[-1][
-        "_request"
-    ]
+    request_data = json.loads(str(receipt["requested_keywords_json"]))[-1]["_request"]
     assert request_data["server_profile_id"] == PROFILE_ID
     assert request_data["dataset_id"] == DATASET_ID
     assert request_data["fingerprint"] == request_data["fingerprint"].lower()
@@ -727,20 +792,26 @@ def _create_unresolved_note(
 
 
 def _folder_sync_id(db: CharactersRAGDB, folder_id: str) -> str:
-    row = db.get_connection().execute(
-        "SELECT sync_id FROM note_folders WHERE id = ?", (folder_id,)
-    ).fetchone()
+    row = (
+        db.get_connection()
+        .execute("SELECT sync_id FROM note_folders WHERE id = ?", (folder_id,))
+        .fetchone()
+    )
     assert row is not None and row["sync_id"]
     return str(row["sync_id"])
 
 
 def _review_rows(db: CharactersRAGDB) -> list[dict]:
-    rows = db.get_connection().execute(
-        "SELECT * FROM notes_organization_adoption_reviews "
-        "WHERE server_profile_id = ? AND dataset_id = ? "
-        "ORDER BY created_at, review_id",
-        (PROFILE_ID, DATASET_ID),
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT * FROM notes_organization_adoption_reviews "
+            "WHERE server_profile_id = ? AND dataset_id = ? "
+            "ORDER BY created_at, review_id",
+            (PROFILE_ID, DATASET_ID),
+        )
+        .fetchall()
+    )
     return [dict(row) for row in rows]
 
 
@@ -756,9 +827,7 @@ def test_pending_content_only_edit_inherits_desired_organization_and_replays(
     tmp_path,
 ) -> None:
     service, db = _service(tmp_path)
-    first = _create_unresolved_note(
-        service, db, receipt_state="pending_organization"
-    )
+    first = _create_unresolved_note(service, db, receipt_state="pending_organization")
     arguments = {
         "user_id": USER_ID,
         "title": "Pending content-only title",
@@ -777,30 +846,40 @@ def test_pending_content_only_edit_inherits_desired_organization_and_replays(
     assert updated["version"] == 2
     assert updated["receipt_state"] == "pending_organization"
     assert updated["organization_state"] == "pending"
-    receipt = db.get_connection().execute(
-        "SELECT * FROM note_organization_receipts WHERE note_id = ?",
-        (first["id"],),
-    ).fetchone()
+    receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT * FROM note_organization_receipts WHERE note_id = ?",
+            (first["id"],),
+        )
+        .fetchone()
+    )
     assert receipt["receipt_id"] == "original-pending_organization"
     assert receipt["note_version"] == 2
     assert receipt["requested_folder_name"] == "Agent_Lessons"
     assert _receipt_keywords(receipt) == ["agent-lesson"]
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
-        (first["id"],),
-    ).fetchone()[0] == 0
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM notes_organization_sync_intents"
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
+            (first["id"],),
+        )
+        .fetchone()[0]
+        == 0
+    )
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM notes_organization_sync_intents")
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_pending_keyword_only_edit_preserves_folder_and_adds_desired_keyword(
     tmp_path,
 ) -> None:
     service, db = _service(tmp_path)
-    first = _create_unresolved_note(
-        service, db, receipt_state="pending_organization"
-    )
+    first = _create_unresolved_note(service, db, receipt_state="pending_organization")
 
     updated = service.save_note_with_organization(
         USER_ID,
@@ -815,19 +894,31 @@ def test_pending_keyword_only_edit_preserves_folder_and_adds_desired_keyword(
     )
 
     assert updated["receipt_state"] == "pending_organization"
-    receipt = db.get_connection().execute(
-        "SELECT * FROM note_organization_receipts WHERE note_id = ?",
-        (first["id"],),
-    ).fetchone()
+    receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT * FROM note_organization_receipts WHERE note_id = ?",
+            (first["id"],),
+        )
+        .fetchone()
+    )
     assert receipt["requested_folder_name"] == "Agent_Lessons"
     assert _receipt_keywords(receipt) == ["agent-lesson", "second-keyword"]
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (first["id"],)
-    ).fetchone()[0] == 0
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
-        (first["id"],),
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (first["id"],))
+        .fetchone()[0]
+        == 0
+    )
+    assert (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
+            (first["id"],),
+        )
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_placement_content_only_edit_preserves_receipt_review_and_replays(
@@ -860,26 +951,32 @@ def test_placement_content_only_edit_preserves_receipt_review_and_replays(
     assert retried == updated
     assert updated["receipt_state"] == "placement_review"
     assert updated["organization_state"] == "placement_review"
-    receipt = db.get_connection().execute(
-        "SELECT * FROM note_organization_receipts WHERE note_id = ?",
-        (first["id"],),
-    ).fetchone()
+    receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT * FROM note_organization_receipts WHERE note_id = ?",
+            (first["id"],),
+        )
+        .fetchone()
+    )
     assert receipt["receipt_id"] == before["receipt_id"]
     assert receipt["review_id"] == before["review_id"]
     assert receipt["note_version"] == 2
     assert receipt["requested_folder_name"] == "Agent_Lessons"
     assert _receipt_keywords(receipt) == ["agent-lesson"]
-    review = db.get_connection().execute(
-        "SELECT state, resolution FROM notes_organization_adoption_reviews "
-        "WHERE review_id = ?",
-        (before["review_id"],),
-    ).fetchone()
+    review = (
+        db.get_connection()
+        .execute(
+            "SELECT state, resolution FROM notes_organization_adoption_reviews "
+            "WHERE review_id = ?",
+            (before["review_id"],),
+        )
+        .fetchone()
+    )
     assert tuple(review) == ("open", None)
 
 
-@pytest.mark.parametrize(
-    "receipt_state", ("pending_organization", "placement_review")
-)
+@pytest.mark.parametrize("receipt_state", ("pending_organization", "placement_review"))
 def test_omitted_organization_edit_failure_rolls_back_receipt_and_note(
     tmp_path, receipt_state: str
 ) -> None:
@@ -915,22 +1012,31 @@ def test_omitted_organization_edit_failure_rolls_back_receipt_and_note(
             dataset_id=DATASET_ID,
         )
 
-    assert tuple(
-        connection.execute(
-            "SELECT title, content, version FROM notes WHERE id = ?", (first["id"],)
-        ).fetchone()
-    ) == before_note
-    assert dict(
-        connection.execute(
-            "SELECT * FROM note_organization_receipts WHERE note_id = ?",
-            (first["id"],),
-        ).fetchone()
-    ) == before_receipt
+    assert (
+        tuple(
+            connection.execute(
+                "SELECT title, content, version FROM notes WHERE id = ?", (first["id"],)
+            ).fetchone()
+        )
+        == before_note
+    )
+    assert (
+        dict(
+            connection.execute(
+                "SELECT * FROM note_organization_receipts WHERE note_id = ?",
+                (first["id"],),
+            ).fetchone()
+        )
+        == before_receipt
+    )
     if receipt_state == "pending_organization":
-        assert connection.execute(
-            "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
-            (first["id"],),
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
+                (first["id"],),
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_placement_review_update_to_ready_retires_receipt_and_rejects_stale_replay(
@@ -985,10 +1091,13 @@ def test_placement_review_update_to_ready_retires_receipt_and_rejects_stale_repl
     assert updated["organization_state"] == "ready"
     assert [folder["id"] for folder in updated["folders"]] == [valid_folder_sync_id]
     connection = db.get_connection()
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
-        (first["id"],),
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
+            (first["id"],),
+        ).fetchone()[0]
+        == 0
+    )
     review = connection.execute(
         "SELECT * FROM notes_organization_adoption_reviews WHERE review_id = ?",
         (original_receipt["review_id"],),
@@ -999,16 +1108,22 @@ def test_placement_review_update_to_ready_retires_receipt_and_rejects_stale_repl
     serialized_review = json.dumps(dict(review), sort_keys=True)
     assert "Resolved placement title" not in serialized_review
     assert "Resolved placement body" not in serialized_review
-    assert connection.execute(
-        "SELECT COUNT(*) FROM notes_organization_adoption_reviews "
-        "WHERE server_profile_id = ? AND dataset_id = ? AND state = 'open'",
-        (PROFILE_ID, DATASET_ID),
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_folder_memberships "
-        "WHERE note_id = ? AND folder_id = ? AND deleted = 0",
-        (first["id"], valid_folder.folder_id),
-    ).fetchone()[0] == 1
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM notes_organization_adoption_reviews "
+            "WHERE server_profile_id = ? AND dataset_id = ? AND state = 'open'",
+            (PROFILE_ID, DATASET_ID),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_folder_memberships "
+            "WHERE note_id = ? AND folder_id = ? AND deleted = 0",
+            (first["id"], valid_folder.folder_id),
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def test_unrelated_historical_review_cannot_authorize_stale_matching_note_state(
@@ -1067,14 +1182,22 @@ def test_placement_review_update_keeps_review_open_when_another_receipt_uses_it(
     service, db = _service(tmp_path)
     first = _create_unresolved_note(service, db, receipt_state="placement_review")
     second = _save(service, receipt_id="second-placement-receipt")
-    first_receipt = db.get_connection().execute(
-        "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
-        (first["id"],),
-    ).fetchone()
-    second_receipt = db.get_connection().execute(
-        "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
-        (second["id"],),
-    ).fetchone()
+    first_receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
+            (first["id"],),
+        )
+        .fetchone()
+    )
+    second_receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
+            (second["id"],),
+        )
+        .fetchone()
+    )
     assert first_receipt["review_id"] == second_receipt["review_id"]
     valid_folder = LocalNoteFolderRepository(db).create_folder(
         name="Resolved_Lessons", parent_id=None
@@ -1092,11 +1215,15 @@ def test_placement_review_update_keeps_review_open_when_another_receipt_uses_it(
         receipt_id=None,
     )
 
-    review = db.get_connection().execute(
-        "SELECT state, resolution FROM notes_organization_adoption_reviews "
-        "WHERE review_id = ?",
-        (second_receipt["review_id"],),
-    ).fetchone()
+    review = (
+        db.get_connection()
+        .execute(
+            "SELECT state, resolution FROM notes_organization_adoption_reviews "
+            "WHERE review_id = ?",
+            (second_receipt["review_id"],),
+        )
+        .fetchone()
+    )
     assert tuple(review) == ("open", None)
     with db.transaction() as cursor:
         remaining = db._library_organization_for_notes(cursor, [second["id"]])[
@@ -1138,10 +1265,14 @@ def test_placement_review_update_to_new_collision_moves_single_open_review_and_r
     assert updated["version"] == 2
     assert updated["receipt_state"] == "placement_review"
     assert updated["organization_state"] == "placement_review"
-    receipt = db.get_connection().execute(
-        "SELECT * FROM note_organization_receipts WHERE note_id = ?",
-        (first["id"],),
-    ).fetchone()
+    receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT * FROM note_organization_receipts WHERE note_id = ?",
+            (first["id"],),
+        )
+        .fetchone()
+    )
     assert receipt["receipt_id"] == original_receipt["receipt_id"]
     assert receipt["review_id"] != original_receipt["review_id"]
     assert json.loads(receipt["collision_ids_json"]) == [collision_b.folder_id]
@@ -1210,23 +1341,27 @@ def test_placement_review_transition_failure_restores_receipt_note_and_reviews(
             **folder_arguments,
         )
 
-    assert tuple(
-        connection.execute(
-            "SELECT title, content, version FROM notes WHERE id = ?", (first["id"],)
-        ).fetchone()
-    ) == before_note
-    assert dict(
-        connection.execute(
-            "SELECT * FROM note_organization_receipts WHERE note_id = ?",
-            (first["id"],),
-        ).fetchone()
-    ) == before_receipt
+    assert (
+        tuple(
+            connection.execute(
+                "SELECT title, content, version FROM notes WHERE id = ?", (first["id"],)
+            ).fetchone()
+        )
+        == before_note
+    )
+    assert (
+        dict(
+            connection.execute(
+                "SELECT * FROM note_organization_receipts WHERE note_id = ?",
+                (first["id"],),
+            ).fetchone()
+        )
+        == before_receipt
+    )
     assert _review_rows(db) == before_reviews
 
 
-@pytest.mark.parametrize(
-    "receipt_state", ("pending_organization", "placement_review")
-)
+@pytest.mark.parametrize("receipt_state", ("pending_organization", "placement_review"))
 def test_fresh_update_reuses_unresolved_receipt_and_exact_retry_without_receipt_id(
     tmp_path, receipt_state: str
 ) -> None:
@@ -1248,26 +1383,31 @@ def test_fresh_update_reuses_unresolved_receipt_and_exact_retry_without_receipt_
     assert updated["id"] == first["id"]
     assert updated["version"] == 2
     assert updated["receipt_state"] == receipt_state
-    rows = db.get_connection().execute(
-        "SELECT receipt_id, note_version, state "
-        "FROM note_organization_receipts WHERE note_id = ?",
-        (first["id"],),
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT receipt_id, note_version, state "
+            "FROM note_organization_receipts WHERE note_id = ?",
+            (first["id"],),
+        )
+        .fetchall()
+    )
     assert [tuple(row) for row in rows] == [
         (f"original-{receipt_state}", 2, receipt_state)
     ]
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM notes WHERE id = ?", (first["id"],)
-    ).fetchone()[0] == 1
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM notes WHERE id = ?", (first["id"],))
+        .fetchone()[0]
+        == 1
+    )
 
 
 def test_pending_update_stays_dispatcher_excluded_until_explicit_finalization(
     tmp_path,
 ) -> None:
     service, db = _service(tmp_path)
-    first = _create_unresolved_note(
-        service, db, receipt_state="pending_organization"
-    )
+    first = _create_unresolved_note(service, db, receipt_state="pending_organization")
     with db.transaction() as cursor:
         cursor.execute(
             "UPDATE notes_organization_sync_checkpoints SET "
@@ -1288,20 +1428,32 @@ def test_pending_update_stays_dispatcher_excluded_until_explicit_finalization(
     assert updated["receipt_state"] == "pending_organization"
     assert updated["organization_state"] == "pending"
     connection = db.get_connection()
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (first["id"],)
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_folder_memberships WHERE note_id = ?",
-        (first["id"],),
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM notes_organization_sync_intents"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
-        (first["id"],),
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (first["id"],)
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_folder_memberships WHERE note_id = ?",
+            (first["id"],),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM notes_organization_sync_intents"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
+            (first["id"],),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.parametrize(
@@ -1358,26 +1510,30 @@ def test_unresolved_receipt_update_rejects_stale_preconditions_without_writes(
 
     if stale_precondition == "organization":
         assert error.value.reason_code == "organization_changed"
-    assert tuple(
-        db.get_connection()
-        .execute(
-            "SELECT title, content, version FROM notes WHERE id = ?", (first["id"],)
+    assert (
+        tuple(
+            db.get_connection()
+            .execute(
+                "SELECT title, content, version FROM notes WHERE id = ?", (first["id"],)
+            )
+            .fetchone()
         )
-        .fetchone()
-    ) == before_note
-    assert dict(
-        db.get_connection()
-        .execute(
-            "SELECT * FROM note_organization_receipts WHERE note_id = ?",
-            (first["id"],),
+        == before_note
+    )
+    assert (
+        dict(
+            db.get_connection()
+            .execute(
+                "SELECT * FROM note_organization_receipts WHERE note_id = ?",
+                (first["id"],),
+            )
+            .fetchone()
         )
-        .fetchone()
-    ) == before_receipt
+        == before_receipt
+    )
 
 
-@pytest.mark.parametrize(
-    "receipt_state", ("pending_organization", "placement_review")
-)
+@pytest.mark.parametrize("receipt_state", ("pending_organization", "placement_review"))
 def test_unresolved_receipt_update_failure_rolls_back_note_and_receipt(
     tmp_path, receipt_state: str
 ) -> None:
@@ -1415,24 +1571,32 @@ def test_unresolved_receipt_update_failure_rolls_back_note_and_receipt(
             receipt_id=None,
         )
 
-    assert tuple(
-        db.get_connection()
-        .execute(
-            "SELECT title, content, version FROM notes WHERE id = ?", (first["id"],)
+    assert (
+        tuple(
+            db.get_connection()
+            .execute(
+                "SELECT title, content, version FROM notes WHERE id = ?", (first["id"],)
+            )
+            .fetchone()
         )
-        .fetchone()
-    ) == before_note
-    assert dict(
-        db.get_connection()
-        .execute(
-            "SELECT * FROM note_organization_receipts WHERE note_id = ?",
-            (first["id"],),
+        == before_note
+    )
+    assert (
+        dict(
+            db.get_connection()
+            .execute(
+                "SELECT * FROM note_organization_receipts WHERE note_id = ?",
+                (first["id"],),
+            )
+            .fetchone()
         )
-        .fetchone()
-    ) == before_receipt
+        == before_receipt
+    )
 
 
-def test_exact_keyword_identity_conflict_stays_pending_even_when_group_is_ready(tmp_path):
+def test_exact_keyword_identity_conflict_stays_pending_even_when_group_is_ready(
+    tmp_path,
+):
     service, db = _service(tmp_path)
     _checkpoint(db, ready=True)
     db.add_keyword("Agent-Lesson")
@@ -1440,10 +1604,16 @@ def test_exact_keyword_identity_conflict_stays_pending_even_when_group_is_ready(
     saved = _save(service, folder=None, receipt_id="keyword-review")
 
     assert saved["receipt_state"] == "pending_organization"
-    assert db.get_connection().execute("SELECT COUNT(*) FROM note_keywords").fetchone()[0] == 0
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM notes_organization_sync_intents"
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection().execute("SELECT COUNT(*) FROM note_keywords").fetchone()[0]
+        == 0
+    )
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM notes_organization_sync_intents")
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_keyword_identity_review_from_another_profile_does_not_block_save(tmp_path):
@@ -1468,9 +1638,7 @@ def test_keyword_identity_review_from_another_profile_does_not_block_save(tmp_pa
 
     assert saved["receipt_state"] is None
     assert saved["organization_state"] == "ready"
-    assert {item["name"] for item in saved["keyword_metadata"]} == {
-        "agent-lesson"
-    }
+    assert {item["name"] for item in saved["keyword_metadata"]} == {"agent-lesson"}
 
 
 def test_folder_only_collision_records_nonblocking_placement_review(tmp_path):
@@ -1488,13 +1656,20 @@ def test_folder_only_collision_records_nonblocking_placement_review(tmp_path):
     assert saved["receipt_state"] == "placement_review"
     assert saved["organization_state"] == "placement_review"
     assert {item["name"] for item in saved["keyword_metadata"]} == {"agent-lesson"}
-    receipt = db.get_connection().execute(
-        "SELECT review_id, collision_ids_json FROM note_organization_receipts "
-        "WHERE receipt_id = 'folder-review'"
-    ).fetchone()
+    receipt = (
+        db.get_connection()
+        .execute(
+            "SELECT review_id, collision_ids_json FROM note_organization_receipts "
+            "WHERE receipt_id = 'folder-review'"
+        )
+        .fetchone()
+    )
     assert receipt["review_id"]
     assert existing.folder_id in receipt["collision_ids_json"]
-    assert db.get_connection().execute("SELECT COUNT(*) FROM note_keywords").fetchone()[0] == 1
+    assert (
+        db.get_connection().execute("SELECT COUNT(*) FROM note_keywords").fetchone()[0]
+        == 1
+    )
 
 
 def test_casefold_equivalent_folder_spelling_requires_placement_review(tmp_path):
@@ -1507,14 +1682,15 @@ def test_casefold_equivalent_folder_spelling_requires_placement_review(tmp_path)
 
     assert saved["receipt_state"] == "placement_review"
     assert saved["folders"] == []
-    assert {item["name"] for item in saved["keyword_metadata"]} == {
-        "agent-lesson"
-    }
+    assert {item["name"] for item in saved["keyword_metadata"]} == {"agent-lesson"}
     connection = db.get_connection()
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_folder_memberships WHERE note_id = ? AND deleted = 0",
-        (saved["id"],),
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_folder_memberships WHERE note_id = ? AND deleted = 0",
+            (saved["id"],),
+        ).fetchone()[0]
+        == 0
+    )
     assert connection.execute(
         "SELECT collision_ids_json FROM note_organization_receipts "
         "WHERE receipt_id = 'folder-spelling-review'"

@@ -21,6 +21,10 @@ from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
 
 CONSOLE_AUTHORITY_SUMMARY_ID = "console-send-authority-summary"
 
+#: TASK-33621.4: the Run fact (and the status strip's run chip) once the chat
+#: is over its Ask trigger; whole in the block's 29 columns after "Run: ".
+COMPACTION_PAUSE_RUN_COPY = "Pauses for compaction"
+
 _FACTS = (
     ("Where", "where", "console-send-authority-where"),
     ("Scope", "scope", "console-send-authority-scope"),
@@ -104,6 +108,21 @@ def project_console_send_authority(
     owned = classify_inspector_content(state, ownership_policy)
     rows = {entry.row.label: entry.row for entry in owned.rows}
 
+    if owned.pending_only:
+        live = rows.get("Live work")
+        return ConsoleSendAuthorityProjection(
+            where="Refreshing…",
+            scope="Refreshing…",
+            run="Inspector data incomplete"
+            if owned.incomplete
+            else str(live.value)
+            if live
+            else "Refreshing…",
+            sources="Refreshing…",
+            approvals=f"{state.pending_approval_count} pending"
+            + (" · action required" if state.pending_approval_count > 0 else ""),
+        )
+
     workspace_row = rows.get("Workspace")
     workspace = str(workspace_row.value).strip() if workspace_row else "Default"
     workspace = workspace or "Default"
@@ -130,9 +149,7 @@ def project_console_send_authority(
     # snapshots produced before the rename (persisted/replayed state), and
     # losing the lookup would leave Run reading "Ready" while retrieval is
     # blocked -- silently, and in the one line pinned above the fold.
-    source = (
-        rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
-    )
+    source = rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
     recovery_required = any(
         rows.get(label) is not None for label in ("Recovery action", "Next action")
     )
@@ -148,6 +165,14 @@ def project_console_send_authority(
         run = "Blocked"
     elif state.run_active:
         run = "Running"
+    elif state.run_blocked_reason:
+        # TASK-33621.2: an accepted turn paused before the provider was
+        # contacted is not "Ready"; the transcript callout holds its actions.
+        run = f"Blocked — {state.run_blocked_reason}"
+    elif state.compaction_pause_expected:
+        # TASK-33621.4: about the NEXT send, so above a past failure; whole
+        # in the 29-column block (the card and the chip tooltip say more).
+        run = COMPACTION_PAUSE_RUN_COPY
     elif state.run_failed:
         # TASK-24602. Ordered BELOW everything above it deliberately: a run in
         # flight, a pending approval and a blocked provider all describe what
@@ -157,6 +182,8 @@ def project_console_send_authority(
         # most misleading thing this line can say.
         reason = str(state.run_failure_reason or "").strip()
         run = f"Failed — {reason}" if reason else "Failed"
+    elif state.compaction_forecast_unavailable:
+        run = "Forecast unavailable"
     else:
         run = "Ready"
 
@@ -280,9 +307,7 @@ class ConsoleSendAuthoritySummary(Static):
         if not self.is_mounted:
             return
         try:
-            heading = self.query_one(
-                f"#{CONSOLE_AUTHORITY_SUMMARY_HEADING_ID}", Static
-            )
+            heading = self.query_one(f"#{CONSOLE_AUTHORITY_SUMMARY_HEADING_ID}", Static)
         except (NoMatches, QueryError):
             pass
         else:
@@ -333,7 +358,14 @@ class ConsoleSendAuthoritySummary(Static):
         self._projection = projection
         for label, attribute, row in rows:
             value = getattr(projection, attribute)
-            row.update(Text(f"{label}: {value}"))
+            copy = Text(f"{label}: {value}")
+            # TASK-33620.15.7: an Inspector snapshot change rarely changes
+            # every fact; an unchanged row must not request a screen layout.
+            # TASK-36012: nor does a changed one. Each fact row's box is fixed
+            # by `_row` and `.console-send-authority-row` (one row tall, full
+            # width, nowrap with an ellipsis), so its copy cannot resize it.
+            if not (isinstance(row.content, Text) and row.content == copy):
+                row.update(copy, layout=False)
         self._sync_compact_tooltip()
         self.recompute_tooltips()
         self.refresh()

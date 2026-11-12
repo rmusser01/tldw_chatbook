@@ -48,6 +48,7 @@ async def _open_prompt_list(host, pilot, prompt_id):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 async def test_switching_prompt_rows_while_dirty_says_why_it_refused(
     tmp_path,
 ) -> None:
@@ -80,6 +81,7 @@ async def test_switching_prompt_rows_while_dirty_says_why_it_refused(
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_entering_select_mode_while_dirty_says_why_it_refused(
     tmp_path,
 ) -> None:
@@ -112,6 +114,7 @@ async def test_entering_select_mode_while_dirty_says_why_it_refused(
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_deep_link_into_a_prompt_while_dirty_names_what_it_did_not_open(
     tmp_path,
 ) -> None:
@@ -175,6 +178,7 @@ async def test_a_deep_link_into_a_prompt_while_dirty_names_what_it_did_not_open(
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_navigating_into_library_while_dirty_says_why_it_refused(
     tmp_path,
 ) -> None:

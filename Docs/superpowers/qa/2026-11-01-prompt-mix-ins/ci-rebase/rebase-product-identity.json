@@ -1,0 +1,30 @@
+{
+  "tested_ci_fix_commit": "a09ecd115a",
+  "rebased_commit": "bc97a08102dd41fe35f382be75b07b6218a96017",
+  "dev": "42eab3c3c7770d2003688dfe2fa576b328ba2d90",
+  "unchanged_tested_files": {
+    "Tests/Backup_Recovery/test_canvas_recovery_validation.py": "d6f04f777cb8e4ed3165c120abcb25ebccdd38001c301b3ce82a238578f03e00",
+    "Tests/Backup_Recovery/test_profile_launch_environment.py": "8466a35e9656455e35eccfbc7c32a7d9503c8d60fab870de240584118218a8bb",
+    "Tests/Chat/test_console_prompt_mixin_admission.py": "bca9e16f962b449253edb4facb6814a7b3ffab29c1445cee4fdb3862901ec82e",
+    "Tests/QA/test_project_chat_uat.py": "fac12a11cf27ef3c2b2b40aa4542ffa73f194bbccf0e5df67607718848457e7a",
+    "Tests/UI/test_app_quit_under_modal.py": "871cde2190148bab035b81edad85eacd253e700ab72f3d03fad0e8edc698b412",
+    "Tests/UI/test_console_attachment_vision_block.py": "9de710f02e55c57d807481cf97aaf5e4c4668a4fa50ba076190e698b21e91485",
+    "Tests/UI/test_console_first_send_preimport.py": "15222d613f4af1a54d5d73190af66fedf57f9d3b0d77a09b739180b745cdec27",
+    "Tests/UI/test_console_runtime_ownership.py": "be3421be597431d5ce8684e99763ae1714b90413e4ce11fe81760faf4db5019a",
+    "Tests/UI/test_console_session_tab_close.py": "e5a77ba9200ad9d3dde1e9105dccad72894421daa951aa4da3511c1cdedd3e87",
+    "Tests/UI/test_console_setup_card_keyboard.py": "a0c98c44d40ad7a06c63806c4ac57249260f368e41dcc0760230fe28ee4d7693",
+    "Tests/UI/test_console_turn_resend_ui.py": "6aafa9d2e07dea57a8db4c20612ffe91057d4a80eef817e6f02a925fff0c1add",
+    "Tests/UI/test_library_notes_move_never_false_conflicts.py": "f0125822979e1d44dcd4eda41f16305e2b51def20632f738bb5d84726990b8b3",
+    "Tests/UI/test_screen_navigation.py": "dd91827f891556448fdcba269be4325e74bdb04d31d88779277f08e51ebb2f79",
+    "tldw_chatbook/Chat/console_first_send_modules.py": "03926063b1fd1c373a8420f950f0c37cbc229eae4f147c887ea79a48b713b006",
+    "tldw_chatbook/Chat/console_prompt_mixin_service.py": "40b8b7608e77b9c45d1b460fa8f2893dcc3bbd69d9bdf57f39562a10d7d30325",
+    "tldw_chatbook/DB/recovery_operations.py": "7983a3f47b12c41df90bf64c7736008409bf86a3ca569459006b0047bfb8b3ef",
+    "tldw_chatbook/UI/Screens/settings_screen.py": "dec0a83ac50b7e174f45b248d7e41661b5ce9b65816ea87f93f32f70700575fe"
+  },
+  "reviewed_upstream_overlaps": {
+    "Tests/UI/modal_wide_tier_registry.py": {
+      "reason": "Upstream Roleplay modal inventory entries preserved alongside CI classifications; fresh coverage/anchor tests pass.",
+      "sha256": "593b12eb4269ee507cdb40a674b7941c4495f0cee31667cb4e4b2047ba0d76e5"
+    }
+  }
+}

@@ -201,7 +201,6 @@ _PYPI_TO_IMPORT: dict[str, str] = {
     "ebooklib": "ebooklib",
     "faster-whisper": "faster_whisper",
     "html2text": "html2text",
-    "lightning-whisper-mlx": "lightning_whisper_mlx",
     "lxml": "lxml",
     "onnx-asr[cpu]": "onnx_asr",
     "parakeet_onnx": "onnx_asr",
@@ -224,7 +223,6 @@ _FEATURE_TO_EXTRA: dict[str, str] = {
     "ebooklib": "ebook",
     "faster_whisper": "transcription_faster_whisper",
     "html2text": "ebook",
-    "lightning_whisper_mlx": "transcription_lightning_whisper",
     "lxml": "ebook",
     "parakeet_onnx": "transcription_parakeet",
     "parakeet_mlx": "mlx_whisper",
@@ -276,7 +274,6 @@ _FEATURE_LABELS: dict[str, str] = {
     # (task-3307) Named so the image group's warning reads "OCR backend
     # isn't installed" rather than the ocr_docext extra's own label.
     "image_ocr": "OCR backend",
-    "lightning_whisper_mlx": "Lightning Whisper MLX",
     "lxml": "lxml",
     "parakeet_onnx": "Parakeet ONNX",
     "parakeet_mlx": "Parakeet MLX",
@@ -1054,7 +1051,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 name="generate_embeddings",
                 label="Generate embeddings",
                 type="checkbox",
-                # ADR-005 makes ingestion-time indexing the default. Keeping
+                # ADR-288 makes ingestion-time indexing the default. Keeping
                 # this on preserves retrieval for users who do not open this
                 # panel before importing.
                 default=True,
@@ -1309,9 +1306,7 @@ def generic_option_default(name: str, fallback: Any = None) -> Any:
 ANALYSIS_STATE_FIELD = "analyze"
 
 
-def type_group_state_summary(
-    cap: TypeGroupCapabilities, values: dict[str, Any]
-) -> str:
+def type_group_state_summary(cap: TypeGroupCapabilities, values: dict[str, Any]) -> str:
     """The group's collapsed-title label, carrying state the fold hides.
 
     task-28007 AC#6: "Import behavior" is collapsed by default and its
@@ -1521,6 +1516,7 @@ def selected_stt_warnings(
     Returns:
         Warnings for non-STT dependencies and the selected STT backend.
     """
+    warnings = [warning for warning in warnings if warning.get("feature") != "lightning_whisper_mlx"]
     try:
         selected_provider = validate_batch_transcription_provider(provider)
     except ValueError:
@@ -1538,8 +1534,7 @@ def selected_stt_warnings(
     return [
         warning
         for warning in warnings
-        if warning.get("feature") not in backends
-        or warning.get("feature") == selected
+        if warning.get("feature") not in backends or warning.get("feature") == selected
     ]
 
 
@@ -1571,9 +1566,7 @@ def get_tooling_warnings(group: str) -> list[dict[str, Any]]:
                 {
                     "feature": feature,
                     "label": _feature_label(feature, group),
-                    "hint": _GROUP_FEATURE_HINTS.get(
-                        (group, feature), hint["hint"]
-                    ),
+                    "hint": _GROUP_FEATURE_HINTS.get((group, feature), hint["hint"]),
                     "command": hint["command"],
                 }
             )

@@ -79,6 +79,7 @@ async def _focused(screen, host, pilot, selector, label):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -174,6 +175,7 @@ async def _confirm_restore(host, screen, pilot, *, confirm):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -272,6 +274,7 @@ async def test_history_restore_cancel_no_change_and_new_version_are_readable(
         assert history["items"][1:] == retained["items"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_history_page_completion_respects_newer_keyboard_focus(
     tmp_path, monkeypatch
@@ -317,6 +320,7 @@ async def test_history_page_completion_respects_newer_keyboard_focus(
         assert screen.focused is opener
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 async def test_history_keyboard_retry_and_dirty_gate_preserve_saved_content(

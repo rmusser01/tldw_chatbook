@@ -1,0 +1,12 @@
+[
+  "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+  "-m",
+  "pytest",
+  "Tests/CI/test_ui_pr_gate_census_checker.py",
+  "Tests/CI/test_ci_queue_pressure_contract.py",
+  "Tests/CI/test_backlog_task_id_uniqueness.py",
+  "-q",
+  "--tb=short",
+  "--basetemp=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-contracts-correct-path\\pytest",
+  "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-contracts-correct-path\\result.xml"
+]

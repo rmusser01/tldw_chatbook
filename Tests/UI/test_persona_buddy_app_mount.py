@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import threading
+from dataclasses import replace
 
 import pytest
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.test_persona_buddy_widget import _compositor_text, _FakeController
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Persona_Buddy import (
     PersonaBuddyController,
     PersonaBuddyPreferences,
@@ -21,7 +23,9 @@ from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
     PersonaBuddyWidget,
 )
-from tldw_chatbook.app import TldwCli
+
+# Real config readers retain the profile admitted at collection.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 async def _wait_until(predicate, *, timeout: float = 2.0) -> None:
@@ -172,18 +176,58 @@ async def test_disable_unmounts_without_navigation():
 
 
 @pytest.mark.asyncio
-async def test_close_removes_only_current_generation():
+async def test_close_removes_only_current_generation(monkeypatch):
     app = _BuddyApp(_enabled_preferences())
-    async with app.run_test(size=(100, 30)):
+    controller = app.persona_buddy_controller
+    persisted = []
+
+    def write(preferences):
+        persisted.append(preferences)
+        return True
+
+    monkeypatch.setattr(controller, "_preference_writer", write)
+    async with app.run_test(size=(100, 30)) as pilot:
         await _wait_until(lambda: len(list(app.screen.query(PersonaBuddyWidget))) == 1)
         stale = app.screen.query_one(PersonaBuddyWidget)
         await app.reconcile_persona_buddy_view()
         current = app.screen.query_one(PersonaBuddyWidget)
         assert current is stale
+        owner = app._persona_buddy_overlay
+        assert owner.is_current(current)
 
+        frame = current.query_one("#persona-buddy-frame", Static)
+        await _wait_until(lambda: frame.region.width > 8 and frame.region.height > 2)
+        x, y = frame.region.center[0], frame.region.y + 2
+        assert await pilot.mouse_down(frame, offset=(x - frame.region.x, 2))
+        assert app.mouse_captured is current
+        await _wait_until(lambda: app.focused is current)
+        assert current._interaction is not None and current._interaction[0] == "drag"
+        before = controller.current_preferences()
+        await pilot.hover(offset=(x - 4, y))
+        await _wait_until(lambda: current._interaction_moved)
+        assert app.mouse_captured is current
+        assert current._working_preferences.geometry != before.geometry
+        assert controller.current_preferences() == before
+        assert persisted == []
+
+        at_flush = []
+        flush = current.flush_pending_geometry_persist
+
+        async def observe_flush():
+            at_flush.append((current.is_attached, app.mouse_captured))
+            await flush()
+
+        monkeypatch.setattr(current, "flush_pending_geometry_persist", observe_flush)
         await stale.close_and_persist()
         await _wait_until(lambda: not list(app.screen.query(PersonaBuddyWidget)))
-        assert stale.view_generation < app._persona_buddy_overlay.generation
+        await _wait_until(lambda: owner.view is None)
+        assert stale.view_generation < owner.generation
+        assert at_flush == [(True, None)]
+        assert app.mouse_captured is None
+        assert current._interaction is None
+        assert not current.is_attached
+        assert controller.current_preferences() == replace(before, open=False)
+        assert persisted == [replace(before, open=False)]
 
 
 @pytest.mark.asyncio
@@ -228,14 +272,14 @@ async def test_navigation_replaces_screen_local_view_generation():
     async with app.run_test(size=(100, 30)):
         await _wait_until(lambda: len(list(app.screen.query(PersonaBuddyWidget))) == 1)
         first = app.screen.query_one(PersonaBuddyWidget)
+        before = app.persona_buddy_controller.current_preferences()
         replacement = _BuddyScreen(app, "replacement")
         await app.switch_screen(replacement)
         await _wait_until(lambda: len(list(replacement.query(PersonaBuddyWidget))) == 1)
         second = replacement.query_one(PersonaBuddyWidget)
         assert second is not first
         assert not first.is_attached
-
-        before = app.persona_buddy_controller.current_preferences()
+        assert app.persona_buddy_controller.current_preferences() == before
         stale_before = first._working_preferences
         await first.close_and_persist()
         first.action_toggle_collapse()
@@ -251,6 +295,8 @@ async def test_cancelled_delayed_mount_cleans_only_the_created_view(monkeypatch)
     app = _BuddyApp(PersonaBuddyPreferences())
     # This case controls/cancels the explicit reconcile caller, not the worker.
     app.persona_buddy_controller._on_change = None
+    # This case owns one explicit reconcile, excluding automatic screen requests.
+    monkeypatch.setattr(app, "_schedule_persona_buddy_overlay", lambda *_args: None)
     async with app.run_test(size=(100, 30)):
         screen = app.screen
         preferences = _enabled_preferences()
@@ -281,6 +327,8 @@ async def test_delayed_mount_with_superseded_generation_removes_stale_created_vi
 ):
     app = _BuddyApp(PersonaBuddyPreferences())
     app.persona_buddy_controller._on_change = None
+    # This case owns one explicit reconcile, excluding automatic screen requests.
+    monkeypatch.setattr(app, "_schedule_persona_buddy_overlay", lambda *_args: None)
     async with app.run_test(size=(100, 30)):
         screen = app.screen
         await app.persona_buddy_controller.update_preferences(_enabled_preferences())
@@ -491,27 +539,62 @@ async def test_app_owned_preference_write_drains_once_before_new_owner_starts():
 async def test_modal_dismiss_reconciles_same_screen_and_restarts_resolution():
     app = _BuddyApp(_enabled_preferences())
     controller = app.persona_buddy_controller
+    visual = _FakeController(
+        animate=True, frames=("MODAL-FRAME-A", "MODAL-FRAME-B"),
+        durations=(30_000, 30_000),
+    ).visual
     calls = 0
 
     async def counted_resolution(*, cols: int, lines: int):
         nonlocal calls
         calls += 1
-        return None
+        return visual
 
     controller.resolve_current_visual = counted_resolution
     async with app.run_test(size=(100, 30)):
         await _wait_until(lambda: calls == 1)
         screen = app.screen
         view = screen.query_one(PersonaBuddyWidget)
+        owner = app._persona_buddy_overlay
+        generation = view.view_generation
+        composer = Input(id="buddy-modal-focus-probe")
+        await screen.mount(composer)
+        composer.focus(scroll_visible=False)
+        await _wait_until(
+            lambda: screen.focused is composer
+            and "MODAL-FRAME-A" in _compositor_text(screen)
+        )
+        assert owner.is_current(view)
+        assert view._frame_timer is not None
+        view._next_frame_at = 0
+        view.advance_frame()
+        await _wait_until(lambda: "MODAL-FRAME-B" in _compositor_text(screen))
+        assert view.frame_index == 1
+        assert screen.focused is composer
+        before = controller.current_preferences()
+        revision = controller.snapshot().preferences_generation
 
-        await app.push_screen(_BuddyModal())
+        modal = _BuddyModal()
+        await app.push_screen(modal)
+        assert app.screen is modal
+        assert owner.view is view and view.is_attached
+        assert owner.generation == generation and not owner.is_current(view)
+        view._next_frame_at = 0
+        view.advance_frame()
+        view.action_close()
+        assert view.frame_index == 1
+        assert view._frame_timer is None
+        assert controller.current_preferences() == before
+        assert controller.snapshot().preferences_generation == revision
         await _wait_until(lambda: view._resolution_worker.is_finished)
         controller.invalidate_profile()
+        assert calls == 1
         app.pop_screen()
 
         await _wait_until(lambda: calls == 2)
         assert app.screen is screen
         assert screen.query_one(PersonaBuddyWidget) is view
+        assert owner.generation == generation and owner.is_current(view)
 
 
 @pytest.mark.asyncio

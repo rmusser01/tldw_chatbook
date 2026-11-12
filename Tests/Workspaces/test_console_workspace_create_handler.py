@@ -34,15 +34,16 @@ class _Stub:
         self.calls.append(f"worker:{work}")
 
 
-def _registry(tmp_path):
+def _registry(tmp_path, request):
     db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="console-handler-tests")
+    request.addfinalizer(db.close)
     service = LocalWorkspaceRegistryService(db)
     service.create_workspace(workspace_id="workspace-local-1", name="Workspace 1")
     return service
 
 
-def test_make_active_runs_full_console_sequence(tmp_path):
-    stub = _Stub(_registry(tmp_path))
+def test_make_active_runs_full_console_sequence(tmp_path, request):
+    stub = _Stub(_registry(tmp_path, request))
     result = WorkspaceCreateResult(
         workspace_id="workspace-local-1", name="Workspace 1", make_active=True
     )
@@ -56,8 +57,8 @@ def test_make_active_runs_full_console_sequence(tmp_path):
     assert any("switched Console" in n for n in stub.notifications)
 
 
-def test_not_active_only_resyncs_context(tmp_path):
-    stub = _Stub(_registry(tmp_path))
+def test_not_active_only_resyncs_context(tmp_path, request):
+    stub = _Stub(_registry(tmp_path, request))
     result = WorkspaceCreateResult(
         workspace_id="workspace-local-1", name="Workspace 1", make_active=False
     )
@@ -66,14 +67,14 @@ def test_not_active_only_resyncs_context(tmp_path):
     assert any("Created Workspace 1." in n for n in stub.notifications)
 
 
-def test_none_result_is_a_noop(tmp_path):
-    stub = _Stub(_registry(tmp_path))
+def test_none_result_is_a_noop(tmp_path, request):
+    stub = _Stub(_registry(tmp_path, request))
     ConsoleWorkspaceController._handle_workspace_create_result(stub, None)
     assert stub.calls == [] and stub.notifications == []
 
 
-def test_failed_folders_surface_as_warnings(tmp_path):
-    stub = _Stub(_registry(tmp_path))
+def test_failed_folders_surface_as_warnings(tmp_path, request):
+    stub = _Stub(_registry(tmp_path, request))
     result = WorkspaceCreateResult(
         workspace_id="workspace-local-1",
         name="Workspace 1",
@@ -98,14 +99,14 @@ class _RaisingActivateRegistry:
         return getattr(self._inner, name)
 
 
-def test_activation_failure_notifies_error_and_skips_sync(tmp_path):
+def test_activation_failure_notifies_error_and_skips_sync(tmp_path, request):
     """TASK-17962: ``set_active_workspace`` raising after a successful
     create must not crash the handler -- it notifies an error and must not
     run the post-activation sync sequence (core state / session activation
     / context sync / UI worker), mirroring the Library seam test
     (``test_create_workspace_recomposes_after_activation_failure``).
     """
-    stub = _Stub(_RaisingActivateRegistry(_registry(tmp_path)))
+    stub = _Stub(_RaisingActivateRegistry(_registry(tmp_path, request)))
     result = WorkspaceCreateResult(
         workspace_id="workspace-local-1", name="Workspace 1", make_active=True
     )
@@ -114,7 +115,7 @@ def test_activation_failure_notifies_error_and_skips_sync(tmp_path):
     assert any("could not be activated" in n for n in stub.notifications)
 
 
-def test_result_with_project_skills_offers_import(tmp_path, monkeypatch):
+def test_result_with_project_skills_offers_import(tmp_path, monkeypatch, request):
     offered = []
     import tldw_chatbook.UI.Console_Modules.workspace as ws_module
 
@@ -123,7 +124,7 @@ def test_result_with_project_skills_offers_import(tmp_path, monkeypatch):
         "maybe_offer_project_skills_import",
         lambda app, discoveries: offered.append(discoveries),
     )
-    stub = _Stub(_registry(tmp_path))
+    stub = _Stub(_registry(tmp_path, request))
     result = WorkspaceCreateResult(
         workspace_id="workspace-local-1",
         name="Workspace 1",

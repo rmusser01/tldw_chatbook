@@ -10,7 +10,7 @@ from pathlib import Path
 from Tests import network_guard
 network_guard.install()
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+from tldw_chatbook.RAG_Search.activation import RAGActivationRequired
 from tldw_chatbook.RAG_Search.simplified.vector_store import ChromaVectorStore
 from tldw_chatbook.RAG_Search.simplified import collection_indexes
 from chromadb.api.shared_system_client import SharedSystemClient
@@ -26,7 +26,7 @@ if route == 'paused':
     try:
         try:
             ChromaVectorStore(path)
-        except RecoveryRequired:
+        except RAGActivationRequired:
             pass
         else:
             raise AssertionError('paused constructor created root')

@@ -106,7 +106,9 @@ class _HTTPErrorRequests:
 
 
 def _set_key(monkeypatch, key, value):
-    monkeypatch.setitem(config.load_cli_config_and_ensure_existence()["SearchEngines"], key, value)
+    monkeypatch.setitem(
+        config.load_cli_config_and_ensure_existence()["SearchEngines"], key, value
+    )
 
 
 @pytest.fixture
@@ -121,7 +123,11 @@ def loguru_caplog(caplog):
         loguru_logger.remove(sink_id)
 
 
-_GOOGLE_PAYLOAD = {"items": [{"title": "G Title", "link": "https://g.example/", "snippet": "g snippet"}]}
+_GOOGLE_PAYLOAD = {
+    "items": [
+        {"title": "G Title", "link": "https://g.example/", "snippet": "g snippet"}
+    ]
+}
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +159,7 @@ def test_safe_search_params_for_log_drops_key_keeps_allowlisted_and_unknown():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_google_success_path_never_logs_the_key(monkeypatch, loguru_caplog):
     _set_key(monkeypatch, "google_search_api_key", SENTINEL_KEY)
     _set_key(monkeypatch, "google_search_engine_id", "cx123")
@@ -185,7 +192,10 @@ def test_google_success_path_never_logs_the_key(monkeypatch, loguru_caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_google_http_error_never_logs_the_key_via_exception_text(monkeypatch, loguru_caplog):
+@pytest.mark.bootstrap_profile
+def test_google_http_error_never_logs_the_key_via_exception_text(
+    monkeypatch, loguru_caplog
+):
     _set_key(monkeypatch, "google_search_api_key", SENTINEL_KEY)
     _set_key(monkeypatch, "google_search_engine_id", "cx123")
     fake = _HTTPErrorRequests()
@@ -211,7 +221,10 @@ def test_google_http_error_never_logs_the_key_via_exception_text(monkeypatch, lo
     assert "403" in error_lines[0] or "Forbidden" in error_lines[0]
 
 
-def test_google_value_error_never_logs_the_key_via_exception_text(monkeypatch, loguru_caplog):
+@pytest.mark.bootstrap_profile
+def test_google_value_error_never_logs_the_key_via_exception_text(
+    monkeypatch, loguru_caplog
+):
     """Defense in depth for the `except ValueError` branch.
 
     `response.json()` raises `requests.exceptions.JSONDecodeError` on
@@ -227,12 +240,7 @@ def test_google_value_error_never_logs_the_key_via_exception_text(monkeypatch, l
     _set_key(monkeypatch, "google_search_api_key", SENTINEL_KEY)
     _set_key(monkeypatch, "google_search_engine_id", "cx123")
 
-    class _BadJSONResponse:
-        status_code = 200
-
-        def raise_for_status(self):
-            return None
-
+    class _BadJSONResponse(_FakeResponse):
         def json(self):
             raise ValueError(f"synthetic decode failure embedding key={SENTINEL_KEY}")
 
@@ -240,7 +248,7 @@ def test_google_value_error_never_logs_the_key_via_exception_text(monkeypatch, l
         exceptions = real_requests.exceptions
 
         def get(self, url, params=None, **kwargs):
-            return _BadJSONResponse()
+            return _BadJSONResponse({})
 
     monkeypatch.setattr(WebSearch_APIs, "requests", _BadJSONRequests())
 

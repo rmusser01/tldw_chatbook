@@ -1,0 +1,77 @@
+.........................................F......F.F..................... [ 31%]
+........................................................................ [ 63%]
+........................................................................ [ 95%]
+..........                                                               [100%]
+=================================== FAILURES ===================================
+_____ test_queued_reconciliation_does_not_allocate_coroutine_before_start ______
+Tests/Chat/test_switcher_reuse_decisions.py:180: in test_queued_reconciliation_does_not_allocate_coroutine_before_start
+    ConsoleSessionSwitcherModal.reconcile_active_results(
+tldw_chatbook/Widgets/Console/console_session_switcher_modal.py:661: in reconcile_active_results
+    self._activation_phase is ConsoleActivationPhase.FAILURE_VISIBLE
+    ^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute '_activation_phase'
+_ test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[open-failure] _
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+Tests/UI/test_console_character_activation_presentation.py:282: in test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit
+    await asyncio.wait_for(entered.wait(), 3)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay] _
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+Tests/UI/test_console_character_activation_presentation.py:282: in test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit
+    await asyncio.wait_for(entered.wait(), 3)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+============================= slowest 25 durations =============================
+16.64s call     Tests/UI/test_console_character_activation_presentation.py::test_ordinary_caller_cannot_claim_underlay_and_source_consumes_once
+14.18s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_reopening_exact_conversation_reuses_runtime[character-character-other-tab]
+14.05s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_owner_opens_cold_reuses_warm_and_keeps_composer_focus
+12.03s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[open-failure]
+11.53s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_reopening_exact_conversation_reuses_runtime[character-history-other-tab]
+11.52s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_reopening_exact_conversation_reuses_runtime[character-character-current]
+11.26s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_history_reuse_refreshes_changed_workspace_scope
+10.81s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[transcript]
+10.42s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay]
+10.26s call     Tests/UI/test_console_character_activation_presentation.py::test_queued_switcher_acknowledges_only_its_own_commit[False]
+10.14s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_reopening_exact_conversation_reuses_runtime[history-character-other-tab]
+9.70s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_reopening_exact_conversation_reuses_runtime[character-history-current]
+9.46s call     Tests/UI/test_console_character_activation_presentation.py::test_queued_switcher_acknowledges_only_its_own_commit[True]
+9.28s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[away-back]
+9.08s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[generation]
+9.01s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_reopening_exact_conversation_reuses_runtime[history-history-other-tab]
+8.66s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_character_activation_publishes_target_during_coalesced_console_sync
+8.51s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_history_reuse_still_presents_chat_when_scope_refresh_fails
+8.05s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_reopening_exact_conversation_reuses_runtime[history-character-current]
+7.60s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_reopening_exact_conversation_reuses_runtime[history-history-current]
+7.21s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[cancel]
+6.26s call     Tests/UI/test_console_character_activation_presentation.py::test_token_preparation_is_off_loop_before_activation_and_fences_settings[none]
+6.23s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions
+6.02s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens
+5.86s call     Tests/UI/test_console_switcher_reuse_and_modes.py::test_history_reuse_preserves_exact_saved_identity[deleted]
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_switcher_reuse_decisions.py::test_queued_reconciliation_does_not_allocate_coroutine_before_start
+FAILED Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[open-failure]
+FAILED Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay]
+3 failed, 223 passed, 23 deselected in 510.97s (0:08:30)

@@ -25,6 +25,8 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 
+_ON_DEVICE_ENDPOINT = "http://127.0.0.1:9099"
+
 
 @dataclass(frozen=True, slots=True)
 class RecordedProviderCall:
@@ -107,7 +109,7 @@ class ToolBatchScript:
             provider="deepseek",
             protocol="chat_completions",
             model="qualification-model",
-            api_base_url="https://provider.example.invalid/v1",
+            api_base_url=_ON_DEVICE_ENDPOINT,
             state="active",
             rounds=(
                 ContinuationRound(
@@ -179,7 +181,7 @@ class RecordingConsoleProvider:
             or "qualification-model"
         )
         endpoint = (
-            "http://127.0.0.1:9099"
+            _ON_DEVICE_ENDPOINT
             if self.egress is ConsoleEgressClass.ON_DEVICE
             else "https://provider.example.invalid/v1"
         )

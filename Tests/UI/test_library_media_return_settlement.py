@@ -92,6 +92,7 @@ async def _open_compact_media(host, pilot) -> LibraryScreen:
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_frame_media_stage_projects_adaptive_compact_without_legacy_class(
     monkeypatch: pytest.MonkeyPatch,
@@ -115,6 +116,7 @@ async def test_first_frame_media_stage_projects_adaptive_compact_without_legacy_
         assert not stage.has_class("library-notes-compact")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_size_recompose_projects_media_stage_without_reconciliation(
     monkeypatch: pytest.MonkeyPatch,
@@ -142,6 +144,7 @@ async def test_same_size_recompose_projects_media_stage_without_reconciliation(
         assert not replacement_stage.has_class("library-notes-compact")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_shell_lifecycle_reconciles_current_stage_once(
     monkeypatch: pytest.MonkeyPatch,
@@ -243,6 +246,7 @@ def test_settlement_request_uses_concrete_current_tree_types() -> None:
     assert annotations["owner_identity"] is int
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
     monkeypatch: pytest.MonkeyPatch,
@@ -319,6 +323,7 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
             receipt.stable_id = "replacement"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_return_capture_is_frozen_control_receipt_from_normal_media(
     monkeypatch: pytest.MonkeyPatch,
@@ -438,6 +443,7 @@ async def test_media_row_geometry_publishes_distinct_resize_payloads() -> None:
         assert owner.latest_geometry is second.geometry
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
     monkeypatch: pytest.MonkeyPatch,
@@ -522,6 +528,7 @@ async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
         assert screen._media_state.last_exact_settlement is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_authoritative_recompose_rearms_before_replacement_geometry(
     monkeypatch: pytest.MonkeyPatch,
@@ -591,6 +598,7 @@ async def test_authoritative_recompose_rearms_before_replacement_geometry(
         assert getattr(screen.focused, "media_id", None) == media_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_post_exact_responsive_revision_renews_after_focus_guard_drains(
     monkeypatch: pytest.MonkeyPatch,
@@ -752,6 +760,7 @@ async def _mount_media_canvas_with_retained_owner(
         await owner.mount(row)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
     monkeypatch: pytest.MonkeyPatch,
@@ -880,6 +889,7 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
         assert (int(owner.scroll_x), int(owner.scroll_y)) == scroll_offset
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_compact_transition_floors_prechange_owner_geometry(
     monkeypatch: pytest.MonkeyPatch,
@@ -936,6 +946,7 @@ async def test_real_compact_transition_floors_prechange_owner_geometry(
         assert screen._media_state.last_exact_settlement is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_programmatic_focus_releases_guard_before_user_refocus() -> None:
     app = _build_media_test_app()
@@ -970,6 +981,7 @@ async def test_stale_programmatic_focus_releases_guard_before_user_refocus() -> 
         assert screen._notes_state.focus_intent_generation == before_user_focus + 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_live_user_row_focus_fences_earlier_queued_geometry(
     monkeypatch: pytest.MonkeyPatch,
@@ -1021,6 +1033,7 @@ async def test_live_user_row_focus_fences_earlier_queued_geometry(
         assert screen._media_state.return_settlement is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_foreign_control_focus_cancels_pending_return(
     monkeypatch: pytest.MonkeyPatch,
@@ -1054,6 +1067,7 @@ async def test_foreign_control_focus_cancels_pending_return(
         assert screen.focused is control
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_route_change_rejects_later_geometry_settlement(
     monkeypatch: pytest.MonkeyPatch,
@@ -1101,6 +1115,7 @@ async def test_route_change_rejects_later_geometry_settlement(
         assert getattr(screen.focused, "media_id", None) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_post_exact_direct_ingest_route_synchronously_disarms_lifecycle() -> None:
     """An admitted route change clears exact-return state without focus help."""
@@ -1180,6 +1195,7 @@ async def test_post_exact_direct_ingest_route_synchronously_disarms_lifecycle() 
         assert screen._media_state.last_settlement_outcome is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_old_media_deadline_cannot_cancel_new_prompts_list_focus_arm() -> None:
     """A stale Media timer cannot disarm a newer destination's focus arm."""
@@ -1284,6 +1300,7 @@ async def test_old_media_deadline_cannot_cancel_new_prompts_list_focus_arm() -> 
         assert screen._library_list_entry_focus_timer is destination_timer
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_post_exact_trash_entry_preserves_only_trash_return_receipt() -> None:
     """Trash captures its return before clearing old exact-settlement state."""
@@ -1332,6 +1349,7 @@ async def test_post_exact_trash_entry_preserves_only_trash_return_receipt() -> N
         assert screen._library_notes_programmatic_focus_target is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_detached_current_owner_rejects_later_geometry_settlement(
     monkeypatch: pytest.MonkeyPatch,
@@ -1361,6 +1379,7 @@ async def test_detached_current_owner_rejects_later_geometry_settlement(
         assert screen._media_state.last_exact_settlement is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_screen_unmount_revokes_complete_pending_return_authority(
     monkeypatch: pytest.MonkeyPatch,
@@ -1401,6 +1420,7 @@ async def test_screen_unmount_revokes_complete_pending_return_authority(
         assert screen._media_state.last_exact_settlement is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_screen_unmount_clears_retained_exact_settlement_proof() -> None:
     _require_return_protocol()
@@ -1427,6 +1447,7 @@ async def test_screen_unmount_clears_retained_exact_settlement_proof() -> None:
         assert screen._library_list_entry_focus_timer is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_old_owner_and_below_floor_geometry_cannot_settle(
     monkeypatch: pytest.MonkeyPatch,
@@ -1515,6 +1536,7 @@ async def test_old_owner_and_below_floor_geometry_cannot_settle(
         assert getattr(screen.focused, "media_id", None) != media_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_back_exact_scroll_precedes_captured_control_focus(
     monkeypatch: pytest.MonkeyPatch,
@@ -1580,6 +1602,7 @@ async def test_trash_back_exact_scroll_precedes_captured_control_focus(
         assert not hasattr(screen, "_restore_library_media_trash_return_focus")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
     monkeypatch: pytest.MonkeyPatch,
@@ -1657,6 +1680,7 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
         assert screen._media_state.selected_media_id == selected_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
     monkeypatch: pytest.MonkeyPatch,
@@ -1779,6 +1803,7 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
         assert clamped_commits == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("signature_kind", ("content", "layout"))
 async def test_existing_request_rejects_live_signature_drift(
@@ -1835,6 +1860,7 @@ async def test_existing_request_rejects_live_signature_drift(
         assert scroll_commits == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
     monkeypatch: pytest.MonkeyPatch,
@@ -1909,6 +1935,7 @@ async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
         assert screen._library_list_entry_focus_timer is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
     monkeypatch: pytest.MonkeyPatch,
@@ -1959,6 +1986,7 @@ async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
         assert screen._library_pending_list_entry_focus is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "stale_fence",
@@ -2028,6 +2056,7 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
         assert getattr(screen.focused, "media_id", None) != media_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometry(
     monkeypatch: pytest.MonkeyPatch,
@@ -2156,6 +2185,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
         assert successful_request.owner_identity == old_request.owner_identity
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry(
     monkeypatch: pytest.MonkeyPatch,
@@ -2268,6 +2298,7 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
         assert successful_request.owner_identity == old_request.owner_identity
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deadline_with_failed_nongeometry_fence_clears_silently(
     monkeypatch: pytest.MonkeyPatch,
@@ -2332,6 +2363,7 @@ async def test_deadline_with_failed_nongeometry_fence_clears_silently(
         assert notices == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_another_viewer_back_request_invalidates_prior_authority(
     monkeypatch: pytest.MonkeyPatch,
@@ -2388,6 +2420,7 @@ async def test_another_viewer_back_request_invalidates_prior_authority(
         assert screen._media_state.last_settlement_outcome is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_post_exact_user_takeover_prevents_recompose_renewal() -> None:
     """After exact success, real user focus ends the outer recompose authority."""
@@ -2435,6 +2468,7 @@ async def test_post_exact_user_takeover_prevents_recompose_renewal() -> None:
         assert screen._library_pending_list_entry_focus is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_capture_uses_opener_identity_without_prefocus() -> None:
     """Trash captures its semantic opener, never arbitrary current focus."""
@@ -2460,6 +2494,7 @@ async def test_trash_capture_uses_opener_identity_without_prefocus() -> None:
         assert receipt.final_focus_identity != unrelated.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("semantic_row_state", ("absent", "mismatched"))
 async def test_control_exact_return_requires_matching_semantic_row(

@@ -1,0 +1,198 @@
+{
+  "root": "/private/tmp/mixins-reader-root-final",
+  "files": [
+    {
+      "path": "/private/tmp/mixins-reader-root-final/architecture-0.log",
+      "bytes": 1191,
+      "sha256": "a2c9ec394359bde6e507d6d68ead395af3f2eba6f035f06cd5465d8e15ced062",
+      "role": "Intermediate run; superseded by frozen phase (overlap failure retained)"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/architecture-commands-results.json",
+      "bytes": 2106,
+      "sha256": "2005d596663e262e2f6a504a953d0ce3ecf23a0a98d21d7b3b4263e989ed7272",
+      "role": "Intermediate run; superseded by frozen phase (overlap failure retained)"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/census-proof.json",
+      "bytes": 444,
+      "sha256": "695670806e849a6b11da58a74635112e77b4e4b4544afdc1910b0f7195ada9ce",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/ci-contracts-0.log",
+      "bytes": 4045,
+      "sha256": "e0b7f31c426d57feb30f3c1cc22bf6e813bee814999c5a0e0996db1240552245",
+      "role": "Intermediate run; superseded by frozen phase (overlap failure retained)"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/ci-contracts-commands-results.json",
+      "bytes": 596,
+      "sha256": "56bfbde5f9d5bd28a1f44ef916f99c37333898217308322bc9de84f1901e2a14",
+      "role": "Intermediate run; superseded by frozen phase (overlap failure retained)"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/ci-enrollment-proof.json",
+      "bytes": 439,
+      "sha256": "d63bca86f117dd97520d756cdc85b95dba4c1ec1a28903956e50eaffbdc47f2c",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/final-five-proof.json",
+      "bytes": 553,
+      "sha256": "4e4315d8b37b9299f06f8735e7b86f6bd02813131581deb261ff7b13d83403f3",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/final-five.log",
+      "bytes": 2064,
+      "sha256": "340c4b913dd0154e656db2abe4a02175766a07f2c76fa55d9dbe5a378275be20",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/frozen-architecture-0.log",
+      "bytes": 1301,
+      "sha256": "bf3fc81ef3b28402ce8d2d2796109cc3647ac4d9a81d2a8f4dbe9abd981b4e6c",
+      "role": "Final frozen-source validation"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/frozen-architecture-commands-results.json",
+      "bytes": 2116,
+      "sha256": "27eb58bc4e4106f4431ecda84fb9e9c4328ba1cc8ab27a67a9ab0f7e401cbea8",
+      "role": "Final frozen-source validation"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/frozen-ci-contracts-0.log",
+      "bytes": 2194,
+      "sha256": "3c1c06e1e538708be65a07d8c265fbe231356e5cbf801f3b7b0b832f260a0870",
+      "role": "Final frozen-source validation"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/frozen-ci-contracts-commands-results.json",
+      "bytes": 606,
+      "sha256": "b3ec4ab94d34d556a7d094abb755dadddbc0c3206df47a6a533e680d02b8119e",
+      "role": "Final frozen-source validation"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/frozen-preflights-0.log",
+      "bytes": 266,
+      "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992",
+      "role": "Final frozen-source validation"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/frozen-preflights-1.log",
+      "bytes": 142,
+      "sha256": "682b34d7ae7d0c91dbe30d0f9f446387a6be3bde6a7f65c8b62d23e79b5b7a7d",
+      "role": "Final frozen-source validation"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/frozen-preflights-2.log",
+      "bytes": 120,
+      "sha256": "075805a59995a1687818af841a309653083fe8d4e126953943810d7c76dcb261",
+      "role": "Final frozen-source validation"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/frozen-preflights-3.log",
+      "bytes": 81,
+      "sha256": "f27eb098b7f865a8410e5b159d7fd73c353ce2fb2026846ccd8a18fb2fa1131b",
+      "role": "Final frozen-source validation"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/frozen-preflights-commands-results.json",
+      "bytes": 1410,
+      "sha256": "cfc6c54551ea8e7ed78cc64a8e32bf7473897ea9f017f7535384980dc2554bbb",
+      "role": "Final frozen-source validation"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/inherited-restore-source-proof.json",
+      "bytes": 909,
+      "sha256": "617b9bf345bc8e0c7247d46b4d79fa87d7d0d5a6e321b93b7e2560e8cd2ce5e0",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/perf-source-after.json",
+      "bytes": 562542,
+      "sha256": "1c089e6c4bd97260ed7f6df48c23ec972f4cc69b61aa3429ba633485f265d391",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/perf-source-before.json",
+      "bytes": 562543,
+      "sha256": "6861d12aef8569b3aa5067fdafc37139faf462e5621bfff0296d417a1434215b",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/planned-commands.json",
+      "bytes": 5828,
+      "sha256": "327c9228c1a76994afb79662d4f4f9077992e42a829274e8108fb0af4f97b71b",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/preflights-0.log",
+      "bytes": 266,
+      "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992",
+      "role": "Intermediate run; superseded by frozen phase (overlap failure retained)"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/preflights-1.log",
+      "bytes": 142,
+      "sha256": "682b34d7ae7d0c91dbe30d0f9f446387a6be3bde6a7f65c8b62d23e79b5b7a7d",
+      "role": "Intermediate run; superseded by frozen phase (overlap failure retained)"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/preflights-2.log",
+      "bytes": 120,
+      "sha256": "075805a59995a1687818af841a309653083fe8d4e126953943810d7c76dcb261",
+      "role": "Intermediate run; superseded by frozen phase (overlap failure retained)"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/preflights-3.log",
+      "bytes": 735,
+      "sha256": "8d8716d822807a5056d53fab4e0446961ad026673d7bd6b0232b47651a88e602",
+      "role": "Intermediate run; superseded by frozen phase (overlap failure retained)"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/preflights-commands-results.json",
+      "bytes": 1382,
+      "sha256": "ec52d239018b84a26e0492a7e50a2fb3b51e2f0e971b57bdfaef0688548bbbe8",
+      "role": "Intermediate run; superseded by frozen phase (overlap failure retained)"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/root-format.json",
+      "bytes": 1155,
+      "sha256": "02cffda618cfc1f7f112ecd5ac5790d403360c26a4a2fbf044dca12009f010f4",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/root-lint-baseline.json",
+      "bytes": 4321,
+      "sha256": "380ed0889eea3b9935eb7fea47854b1bf2f7a5ffcdd2501e3a0a2d3fbd9d413c",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/root-lint-current.json",
+      "bytes": 4321,
+      "sha256": "56e8d2d26c46cfe49ce3ae5ee0f7c66dbce7162957b936aa59a5b5bfd9292880",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/root-lint-delta.json",
+      "bytes": 485,
+      "sha256": "0ad546ea15909bf4aa33fc304005cb88ebaef00ade5a51565d10276adda411f6",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/run-checks.py",
+      "bytes": 702,
+      "sha256": "d30cb916d1f9f9599fe2488fde2653da45155f070a73343297760696ade588db",
+      "role": "Root command/provenance or final proof"
+    },
+    {
+      "path": "/private/tmp/mixins-reader-root-final/run-final-five.py",
+      "bytes": 2169,
+      "sha256": "3ff012aa07f50906cfd25c129d072cce4dda2f5f73972bbea5c8ffe68ccb78c8",
+      "role": "Root command/provenance or final proof"
+    }
+  ],
+  "self_exclusion": "Inventory excludes itself; only direct root-owned artifacts are enumerated."
+}

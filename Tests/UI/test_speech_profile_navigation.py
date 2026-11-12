@@ -139,7 +139,9 @@ class _OpenAIProfileTTSService:
         _provider_id: str,
         _exact_voice_model_ids: Iterable[str],
     ) -> TTSNativeCapabilitySnapshot:
-        raise AssertionError("OpenAI-compatible profile tests must not use native catalogs")
+        raise AssertionError(
+            "OpenAI-compatible profile tests must not use native catalogs"
+        )
 
     async def audio_cpp_guided_dependency_snapshot(
         self,
@@ -282,9 +284,9 @@ async def _deliver_profile_sample(
         await playground.workers.wait_for_complete()
         await _wait_until(
             pilot,
-            lambda: not playground.query_one(
-                "#audio-save-profile-btn", Button
-            ).disabled,
+            lambda: (
+                not playground.query_one("#audio-save-profile-btn", Button).disabled
+            ),
         )
     else:
         await pilot.pause()
@@ -311,6 +313,7 @@ def _track_live_reconciliations(
     return reconciled_rows
 
 
+@pytest.mark.bootstrap_profile
 def test_speech_screen_state_keeps_only_bounded_playground_axes() -> None:
     """Fresh-screen restore cannot retain text, unknown keys, or unsafe axes."""
 
@@ -337,6 +340,7 @@ def test_speech_screen_state_keeps_only_bounded_playground_axes() -> None:
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_library_navigation_waits_for_deferred_speech_body() -> None:
     app = _SpeechHost({"view": "profiles"})
@@ -353,6 +357,7 @@ async def test_profile_library_navigation_waits_for_deferred_speech_body() -> No
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_library_bundle_service_is_lazy_until_warning_acknowledged() -> (
     None
@@ -379,6 +384,7 @@ async def test_profile_library_bundle_service_is_lazy_until_warning_acknowledged
         app.screen.query_one("#bundle-warning-cancel", Button).press()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_profiles_returns_to_originating_studio_action() -> None:
     app = _SpeechHost({"view": "settings"})
@@ -417,6 +423,7 @@ async def test_voice_profiles_returns_to_originating_studio_action() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_blends_opens_kokoro_tool_and_returns_to_origin() -> None:
     app = _SpeechHost({"view": "settings"})
@@ -461,6 +468,7 @@ async def test_voice_blends_opens_kokoro_tool_and_returns_to_origin() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_main_navigation_clears_voice_tool_origin_before_reopen() -> None:
     app = _SpeechHost({"view": "settings"})
@@ -501,6 +509,7 @@ async def test_main_navigation_clears_voice_tool_origin_before_reopen() -> None:
         assert not screen.query("#speech-destination-back")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_tool_back_is_single_flight_and_recovers_after_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -564,6 +573,7 @@ async def test_voice_tool_back_is_single_flight_and_recovers_after_failure(
         assert back.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_profile_verification_reconciles_on_library_remount(
     tmp_path: Path,
@@ -613,7 +623,10 @@ async def test_real_profile_verification_reconciles_on_library_remount(
             )
 
             assert restored._selected_profile is not None
-            assert restored._selected_profile.profile.profile_id == target.profile.profile_id
+            assert (
+                restored._selected_profile.profile.profile_id
+                == target.profile.profile_id
+            )
             assert getattr(app.focused, "id", None) == "stts-profile-table"
             assert restored_table.scroll_offset.y == selected_scroll
             assert reconciled_rows == [str(target.profile.profile_id)]
@@ -622,6 +635,7 @@ async def test_real_profile_verification_reconciles_on_library_remount(
         await repository.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_return_does_not_steal_focus_after_user_input(
     tmp_path: Path,
@@ -672,6 +686,7 @@ async def test_profile_return_does_not_steal_focus_after_user_input(
         await repository.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edited_profile_cannot_publish_stale_verified_result(
     tmp_path: Path,
@@ -728,15 +743,23 @@ async def test_edited_profile_cannot_publish_stale_verified_result(
 
             assert restored._selected_profile is not None
             assert restored._selected_profile.profile.profile_id == profile.profile_id
-            assert restored._selected_profile.profile.revision == updated.profile.revision
-            assert str(
-                restored.query_one("#stts-profile-table", DataTable).get_row_at(row)[3]
-            ) == "Needs test"
+            assert (
+                restored._selected_profile.profile.revision == updated.profile.revision
+            )
+            assert (
+                str(
+                    restored.query_one("#stts-profile-table", DataTable).get_row_at(
+                        row
+                    )[3]
+                )
+                == "Needs test"
+            )
             assert reconciled_rows == []
     finally:
         await repository.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deleted_profile_discards_verified_result_and_selection(
     tmp_path: Path,
@@ -769,7 +792,8 @@ async def test_deleted_profile_discards_verified_result_and_selection(
                     len(screen.query(STTSProfileLibrary)) == 1
                     and str(target.profile.profile_id)
                     not in screen.query_one(STTSProfileLibrary)._rendered_profile_ids
-                    and len(screen.query_one(STTSProfileLibrary)._row_availability) == 31
+                    and len(screen.query_one(STTSProfileLibrary)._row_availability)
+                    == 31
                     and screen.stts_window._pending_profile_verification is None
                 ),
             )
@@ -827,16 +851,22 @@ async def test_mismatched_sample_never_updates_real_profile_row(
                 ),
             )
             restored = screen.query_one(STTSProfileLibrary)
-            row = restored._rendered_profile_ids.index(
-                str(target.profile.profile_id)
-            )
+            row = restored._rendered_profile_ids.index(str(target.profile.profile_id))
 
             assert screen.stts_window._pending_profile_verification is None
             assert restored._selected_profile is not None
-            assert restored._selected_profile.profile.profile_id == target.profile.profile_id
-            assert str(
-                restored.query_one("#stts-profile-table", DataTable).get_row_at(row)[3]
-            ) == "Needs test"
+            assert (
+                restored._selected_profile.profile.profile_id
+                == target.profile.profile_id
+            )
+            assert (
+                str(
+                    restored.query_one("#stts-profile-table", DataTable).get_row_at(
+                        row
+                    )[3]
+                )
+                == "Needs test"
+            )
             assert reconciled_rows == []
             assert profile_library_module._profile_test_context_count() == 0
     finally:
@@ -876,7 +906,10 @@ async def test_profile_test_cancel_retires_context_and_restores_library(
             )
 
             assert restored._selected_profile is not None
-            assert restored._selected_profile.profile.profile_id == target.profile.profile_id
+            assert (
+                restored._selected_profile.profile.profile_id
+                == target.profile.profile_id
+            )
     finally:
         await repository.close()
 
@@ -1015,14 +1048,20 @@ async def test_out_of_order_superseded_callback_cannot_consume_newer_context(
             assert profile_library_module._profile_test_context_count() == 1
             assert playground._profile_mount_generation == current_mount_generation
             assert playground._profile_test_context_token == registration.context_token
-            assert profile_library_module._consume_profile_test_context(
-                stale_token,
-                stale_preset,
-            ) is None
-            assert profile_library_module._resolve_profile_test_context(
-                registration.context_token,
-                registration.preset,
-            ) is not None
+            assert (
+                profile_library_module._consume_profile_test_context(
+                    stale_token,
+                    stale_preset,
+                )
+                is None
+            )
+            assert (
+                profile_library_module._resolve_profile_test_context(
+                    registration.context_token,
+                    registration.preset,
+                )
+                is not None
+            )
 
             screen.stts_window.select_view("profiles")
             await _wait_until(
@@ -1033,6 +1072,7 @@ async def test_out_of_order_superseded_callback_cannot_consume_newer_context(
         await repository.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_playground_preset_survives_deferred_speech_body_mount() -> None:
     preset = _preset()
@@ -1051,6 +1091,7 @@ async def test_exact_playground_preset_survives_deferred_speech_body_mount() -> 
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_preset_applies_to_an_already_open_playground() -> None:
     app = _SpeechHost()
@@ -1077,6 +1118,7 @@ async def test_exact_preset_applies_to_an_already_open_playground() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_preset_preserves_existing_playground_audio(tmp_path) -> None:
     app = _SpeechHost()
@@ -1113,6 +1155,7 @@ async def test_exact_preset_preserves_existing_playground_audio(tmp_path) -> Non
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_profile_handoff_keeps_mounted_clone_draft_until_cancel() -> None:
     """Browsing the existing library must not unmount or clear setup state."""
@@ -1140,6 +1183,7 @@ async def test_voice_profile_handoff_keeps_mounted_clone_draft_until_cancel() ->
         assert playground._clone_setup_canonical is retained_draft
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -> None:
     app = _SpeechHost()
@@ -1168,6 +1212,7 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
         assert playground.query_one("#audio-export-btn", Button).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("intent", "focused_id"),
@@ -1233,6 +1278,7 @@ async def test_bounded_lab_navigation_restores_provider_and_focus_without_action
     assert True not in catalog_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_test_connection_and_refresh_are_distinct_explicit_actions(
     monkeypatch,
@@ -1299,6 +1345,7 @@ async def test_test_connection_and_refresh_are_distinct_explicit_actions(
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "context",
     [

@@ -195,14 +195,16 @@ The manifest.json file contains:
 - Configuration settings
 - Statistics
 
-### Chatbook 3.0 Canvas extension
+### Chatbook 4.0 Canvas extension (legacy 3.0 supported)
 
-An archive uses Chatbook format `3.0` only when it contains Canvas records.
+New archives use Chatbook format `4.0` only when they contain Canvas records.
 Exports without Canvas records remain eligible for format `2.0`, preserving
 compatibility with readers that do not know about Canvas. The root manifest's
 `canvas` member has this source-free shape:
 
-- `extension_version`: exactly `1.0` for this contract.
+- `extension_version`: exactly `2.0` for format `4.0`. Legacy format `3.0`
+  requires extension `1.0`; unknown or mismatched pairings are refused before
+  extraction or database access.
 - `total_source_bytes`: the exact sum of every revision's UTF-8 byte count.
 - `documents`: stable Canvas identity records.
 - `reopen_hints`: at most one local, non-authoritative last-used Canvas hint
@@ -212,8 +214,11 @@ Each document records `canvas_id`, its owning `conversation_id`, `created_at`,
 optional `deleted_at`, and its complete `revisions` graph. Each revision
 records:
 
-- `revision_id`, optional `parent_revision_id`, and its positive, contiguous
-  per-Canvas `sequence`;
+- `revision_id`, optional `parent_revision_id`, and its positive per-Canvas
+  `sequence`. Distinct values are contiguous from 1; extension 2.0 permits sibling
+  ties, while legacy 1.0 still requires unique sequences. Every graph has one root
+  at 1 and strictly lower same-Canvas parent sequences. Canonical order is
+  `(sequence, revision_id)`;
 - revisioned `title` and `runtime_profile`;
 - canonical inert `source_path`, lowercase `content_sha256`, and exact
   `source_bytes` for the separate source entry;
@@ -229,7 +234,7 @@ strict UTF-8 text and remains an inert archive member: listing, previewing, or
 validating a Chatbook must never render, compile, or execute it. Manifest
 representations and errors contain metadata only, never source text.
 
-Format `3.0` applies these ceilings before database mutation:
+Formats `3.0` and `4.0` apply these ceilings before database mutation:
 
 - 1,000 Canvas documents and 100 revisions per Canvas (100,000 revisions in
   one archive);

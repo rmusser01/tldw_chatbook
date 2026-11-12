@@ -210,25 +210,10 @@ async def test_notes_selected_link_preconditions_reach_delete_without_refetch():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("family", ["Sharing", "Sharing_Interop"])
-async def test_sharing_service_families_preserve_clone_receipts_and_source_pages(
-    family,
-):
-    from importlib import import_module
+async def test_sharing_interop_preserves_clone_receipts_and_source_pages():
+    from tldw_chatbook.Sharing_Interop.server_sharing_service import ServerSharingService
+    from tldw_chatbook.Sharing_Interop.sharing_scope_service import SharingScopeService
 
-    module = import_module(f"tldw_chatbook.{family}.server_sharing_service")
-    scope_module = import_module(
-        f"tldw_chatbook.{family}."
-        + (
-            "server_sharing_scope_service"
-            if family == "Sharing"
-            else "sharing_scope_service"
-        )
-    )
-    scope_class = getattr(
-        scope_module,
-        "ServerSharingScopeService" if family == "Sharing" else "SharingScopeService",
-    )
     requests = []
 
     def handler(request):
@@ -241,7 +226,7 @@ async def test_sharing_service_families_preserve_clone_receipts_and_source_pages
         )
 
     async with http_client(handler) as client:
-        scope = scope_class(server_service=module.ServerSharingService(client))
+        scope = SharingScopeService(server_service=ServerSharingService(client))
         receipt = await scope.clone_shared_workspace(
             mode="server", share_id=7, new_name="Copy", idempotency_key=KEY
         )

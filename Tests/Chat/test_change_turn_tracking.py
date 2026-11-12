@@ -1576,6 +1576,7 @@ def _calc_fence() -> str:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_run_records_a_change_row_matching_disk(tmp_path, root, tracker):
     """The side effect fires on the SECOND provider call -- i.e. after the
     first tool batch has passed the await-B gate. Writing during the FIRST
@@ -1603,6 +1604,7 @@ def test_bridge_run_records_a_change_row_matching_disk(tmp_path, root, tracker):
     assert [c.path for c in changed] == ["made_by_run.txt"]
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_run_with_no_changes_records_no_row(tmp_path, root, tracker):
     gateway = _SideEffectGateway([["done."]])
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
@@ -1610,6 +1612,7 @@ def test_bridge_run_with_no_changes_records_no_row(tmp_path, root, tracker):
     assert db.change_snapshots_for_run(run_id) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_returns_before_coordinated_end_snapshot_finishes(tmp_path, root):
     end_entered = threading.Event()
     release_end = threading.Event()
@@ -1661,6 +1664,7 @@ def test_bridge_returns_before_coordinated_end_snapshot_finishes(tmp_path, root)
     coordinator.shutdown(timeout=1)
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_surfaces_capacity_error_when_error_channel_is_saturated(
     tmp_path, root, tracker
 ):
@@ -1709,6 +1713,7 @@ def test_bridge_surfaces_capacity_error_when_error_channel_is_saturated(
     assert str(root.resolve()) not in failures[0]
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_does_not_append_capacity_marker_after_coordinator_shutdown(
     tmp_path, root, tracker
 ):
@@ -1746,6 +1751,7 @@ def test_bridge_does_not_append_capacity_marker_after_coordinator_shutdown(
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_third_turn_starts_while_second_review_finalization_is_held(tmp_path, root):
     second_end_entered = threading.Event()
     release_second_end = threading.Event()
@@ -1835,6 +1841,7 @@ def test_third_turn_starts_while_second_review_finalization_is_held(tmp_path, ro
     coordinator.shutdown(timeout=1)
 
 
+@pytest.mark.bootstrap_profile
 def test_cancelled_turn_still_schedules_coordinated_finalization(tmp_path, root):
     tracker = ChangeTurnTracker(
         service=ShadowRepoService(data_dir=tmp_path / "appdata")
@@ -1873,6 +1880,7 @@ def test_cancelled_turn_still_schedules_coordinated_finalization(tmp_path, root)
     coordinator.shutdown(timeout=1)
 
 
+@pytest.mark.bootstrap_profile
 def test_failed_run_still_records_its_end_snapshot(tmp_path, root, tracker):
     """A run that died halfway through editing is when review matters MOST."""
     gateway = _SideEffectGateway(
@@ -1890,6 +1898,7 @@ def test_failed_run_still_records_its_end_snapshot(tmp_path, root, tracker):
     assert len(rows) == 1, "the failed run's half-finished edits are unreviewable"
 
 
+@pytest.mark.bootstrap_profile
 def test_tracking_never_blocks_the_reply(tmp_path, root):
     """Spec failure posture: git broken -> the agent reply still completes."""
     broken = ChangeTurnTracker(
@@ -1907,6 +1916,7 @@ def test_tracking_never_blocks_the_reply(tmp_path, root):
     assert len(rows) == 1 and rows[0]["tracking_error"] != ""
 
 
+@pytest.mark.bootstrap_profile
 def test_review_runs_before_baseline_gate_and_tool_dispatch_waits(tmp_path, root):
     """Permission review precedes the bounded B gate; invocation follows B."""
     events: list[str] = []
@@ -1955,6 +1965,7 @@ def test_review_runs_before_baseline_gate_and_tool_dispatch_waits(tmp_path, root
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_timeout_continues_dispatch_and_warns_with_root_alias(
     tmp_path, root, tracker
 ):
@@ -2043,6 +2054,7 @@ def test_folder_binding_roots_includes_ro_and_never_sandbox(tmp_path, monkeypatc
     assert wfr.folder_binding_roots(None) == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_app_owner_snapshots_an_enabled_folder_binding_in_background(tmp_path):
     """The attached bounded owner, not registry persistence, prepares roots."""
     import time as _time
@@ -2127,6 +2139,7 @@ def _tool_rows(store, session):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_a_change_turn_emits_the_summary_row_with_real_counts(tmp_path, root, tracker):
     gateway = _SideEffectGateway(
         [[_calc_fence()], ["done."]],
@@ -2146,6 +2159,7 @@ def test_a_change_turn_emits_the_summary_row_with_real_counts(tmp_path, root, tr
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_clean_turn_emits_no_summary_row(tmp_path, root, tracker):
     gateway = _SideEffectGateway([["done."]])
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
@@ -2153,6 +2167,7 @@ def test_a_clean_turn_emits_no_summary_row(tmp_path, root, tracker):
     assert not [m for m in _tool_rows(store, session) if m.content.startswith("✎")]
 
 
+@pytest.mark.bootstrap_profile
 def test_tracking_failure_emits_the_warning_row(tmp_path, root):
     broken = ChangeTurnTracker(
         service=ShadowRepoService(
@@ -2168,6 +2183,7 @@ def test_tracking_failure_emits_the_warning_row(tmp_path, root):
     assert len(warns) == 1, "a tracking failure must be DISCLOSED in the transcript"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("alias", "reason"),
     [
@@ -2204,6 +2220,7 @@ def test_skipped_review_root_emits_alias_only_warning_without_snapshot_state(
     assert db.roots_with_change_snapshots() == set()
 
 
+@pytest.mark.bootstrap_profile
 def test_summary_row_survives_the_next_message(tmp_path, root, tracker):
     """TASK-1842's whole arc: display-only rows must survive recompute."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -2220,6 +2237,7 @@ def test_summary_row_survives_the_next_message(tmp_path, root, tracker):
     assert len(rows) == 1, "the summary row was destroyed by the next message"
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_re_derives_the_summary_row_byte_identical(tmp_path, root, tracker):
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
@@ -2277,6 +2295,7 @@ def test_review_changes_action_offered_only_for_summary_rows():
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_exposes_a_provider_for_the_review_screen(tmp_path, root, tracker):
     gateway = _SideEffectGateway(
         [[_calc_fence()], ["done."]],
@@ -2300,6 +2319,7 @@ def test_bridge_exposes_a_provider_for_the_review_screen(tmp_path, root, tracker
     assert no_tracker.change_review_provider("conv-1") is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_opener_pushes_the_screen_and_selects_the_turn(
     tmp_path, root, tracker
@@ -2380,6 +2400,7 @@ async def test_the_opener_pushes_the_screen_and_selects_the_turn(
         assert [t.run_id for t in turns] == [run_id]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_summary_rows_own_review_action_opens_the_screen(
     tmp_path, root, tracker
@@ -2508,6 +2529,7 @@ async def _wait_for_screen(harness, pilot, screen_type, timeout: float = 8.0):
     return None
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_re_derives_the_failure_row_too(tmp_path, root):
     """Review finding: live emitted the ⚠ tracking-failed row but resume
     did not -- a resumed transcript silently hid that a turn's tracking
@@ -3356,6 +3378,7 @@ def test_scratch_root_normalization_failure_keeps_child_step_processing(
     assert child_states[0].touched_paths == {target.name}
 
 
+@pytest.mark.bootstrap_profile
 def test_a_survivors_write_after_its_turn_lands_in_a_change_record(
     tmp_path, root, tracker
 ):
@@ -3403,6 +3426,7 @@ def test_a_survivors_write_after_its_turn_lands_in_a_change_record(
     assert marker[0].change_review_run_id == run_id
 
 
+@pytest.mark.bootstrap_profile
 def test_a_survivors_write_during_the_next_turn_is_disclosed_on_it(
     tmp_path, root, tracker
 ):
@@ -3466,6 +3490,7 @@ def test_a_survivors_write_during_the_next_turn_is_disclosed_on_it(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_survivors_write_racing_the_next_baseline_is_still_reviewable(tmp_path, root):
     """The audit's second half: a survivor's tool dispatch passes turn 1's
     ALREADY-SATISFIED `await_baseline()`, so it is gated on nothing while
@@ -3551,6 +3576,7 @@ def test_a_survivors_write_racing_the_next_baseline_is_still_reviewable(tmp_path
     assert [c.path for c in changed] == ["raced.txt"], changed
 
 
+@pytest.mark.bootstrap_profile
 def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(tmp_path, root):
     """CHARACTERISATION (green before and after this task's fix): the
     mechanism behind the test above.
@@ -3639,6 +3665,7 @@ def test_a_survivors_tool_dispatch_is_gated_on_nothing_across_turns(tmp_path, ro
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_the_survivor_window_ends_exactly_where_the_next_turn_begins(
     tmp_path, root, tracker
 ):
@@ -3740,6 +3767,7 @@ def test_the_survivor_window_ends_exactly_where_the_next_turn_begins(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_child_that_finishes_inside_its_turn_opens_no_survivor_window(
     tmp_path, root, tracker
 ):
@@ -3769,6 +3797,7 @@ def test_a_child_that_finishes_inside_its_turn_opens_no_survivor_window(
     ], "a survivor row was emitted for a child that never survived"
 
 
+@pytest.mark.bootstrap_profile
 def test_a_turn_without_a_foreign_survivor_is_not_stamped_concurrent(
     tmp_path, root, tracker
 ):
@@ -3793,6 +3822,7 @@ def test_a_turn_without_a_foreign_survivor_is_not_stamped_concurrent(
     assert not [m for m in _tool_rows(store, session) if "earlier turn" in m.content]
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_re_derives_the_survivor_rows_byte_identical(tmp_path, root, tracker):
     """Both new transcript rows are re-derived from the stored `kind`.
 
@@ -3977,6 +4007,7 @@ def test_final_settle_cleanup_keeps_window_for_other_pending_state(
     assert closes == ["conv-1"]
 
 
+@pytest.mark.bootstrap_profile
 def test_a_survivor_finishing_mid_turn_is_counted_in_exactly_one_window(
     tmp_path, root, tracker
 ):
@@ -4031,6 +4062,7 @@ def test_a_survivor_finishing_mid_turn_is_counted_in_exactly_one_window(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_successor_claim_uses_window_paths_after_live_state_cleanup(
     tmp_path, root, tracker, monkeypatch
 ):

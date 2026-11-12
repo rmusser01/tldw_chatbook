@@ -16,7 +16,16 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
-from tldw_chatbook.Chat.rag_scope import SOURCE_TYPE_MEDIA, RagScope, ScopeItem
+from tldw_chatbook.Chat.rag_scope import (
+    SORT_TITLE,
+    SORT_TYPE,
+    SOURCE_TYPE_MEDIA,
+    RagScope,
+    ScopeItem,
+    ScopeListItem,
+    ScopeListPage,
+    TagCount,
+)
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     CANCEL_BTN_ID,
     CLEAR_SCOPE_BTN_ID,
@@ -34,16 +43,11 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     SAVE_BTN_ID,
     SELECT_ALL_BTN_ID,
     SORT_SELECT_ID,
-    SORT_TITLE,
-    SORT_TYPE,
     TAB_MEDIA_BTN_ID,
     TEXT_FILTER_ID,
     VIEW_ALL_BTN_ID,
     VIEW_SELECTED_BTN_ID,
     ConsoleScopePickerModal,
-    ScopeListItem,
-    ScopeListPage,
-    TagCount,
 )
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 
@@ -111,12 +115,20 @@ class FakeTagLister:
         return tuple(tc for tc in self.counts if q in tc.tag.lower())
 
 
-def _media(source_id: str, title: str, updated_at: str = "2026-01-01", tags=()) -> ScopeListItem:
-    return ScopeListItem(source_id=source_id, title=title, updated_at=updated_at, tags=tuple(tags))
+def _media(
+    source_id: str, title: str, updated_at: str = "2026-01-01", tags=()
+) -> ScopeListItem:
+    return ScopeListItem(
+        source_id=source_id, title=title, updated_at=updated_at, tags=tuple(tags)
+    )
 
 
-def _note(source_id: str, title: str, updated_at: str = "2026-01-01", tags=()) -> ScopeListItem:
-    return ScopeListItem(source_id=source_id, title=title, updated_at=updated_at, tags=tuple(tags))
+def _note(
+    source_id: str, title: str, updated_at: str = "2026-01-01", tags=()
+) -> ScopeListItem:
+    return ScopeListItem(
+        source_id=source_id, title=title, updated_at=updated_at, tags=tuple(tags)
+    )
 
 
 # -- harness --------------------------------------------------------------------
@@ -517,7 +529,11 @@ async def test_tag_multi_select_is_or_and_ands_with_text_filter() -> None:
                 _media("m2", "Marketing plan", tags=["marketing"]),
                 _media("m3", "Sales Q2", tags=["sales", "finance"]),
             ],
-            tags=[TagCount("sales", 2), TagCount("marketing", 1), TagCount("finance", 1)],
+            tags=[
+                TagCount("sales", 2),
+                TagCount("marketing", 1),
+                TagCount("finance", 1),
+            ],
         )
         # Top tag chips loaded.
         chips = app.screen.query(".console-scope-picker-tag-chip")
@@ -607,7 +623,11 @@ async def test_sort_recent_orders_by_updated_at_descending() -> None:
             ],
         )
         labels = _row_labels(app)  # default sort is "recent"
-        assert [label.split(" ", 1)[1] for label in labels] == ["Newest", "Middle", "Oldest"]
+        assert [label.split(" ", 1)[1] for label in labels] == [
+            "Newest",
+            "Middle",
+            "Oldest",
+        ]
 
 
 @pytest.mark.asyncio
@@ -659,7 +679,11 @@ async def test_pagination_respects_universe_size_not_raw_total() -> None:
         # Create 50-item media store, but universe restricts to just 3 items.
         media_items = [_media(f"m{i:02d}", f"Item {i}") for i in range(50)]
         universe = frozenset(
-            {(SOURCE_TYPE_MEDIA, "m00"), (SOURCE_TYPE_MEDIA, "m01"), (SOURCE_TYPE_MEDIA, "m02")}
+            {
+                (SOURCE_TYPE_MEDIA, "m00"),
+                (SOURCE_TYPE_MEDIA, "m01"),
+                (SOURCE_TYPE_MEDIA, "m02"),
+            }
         )
         await _open(app, pilot, media=media_items, universe=universe, page_size=10)
         # With universe-aware pagination, "1 of 1" page (3 items < 10 page_size).

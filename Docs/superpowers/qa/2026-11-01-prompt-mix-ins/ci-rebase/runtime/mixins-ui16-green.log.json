@@ -1,0 +1,4 @@
+{
+  "sha256": "0f3a17fddc016a626903bd5f4cfa9fc64b2045def9372d23260554bf749db2b4",
+  "raw_text": ".............                                                            [100%]\n============================= slowest 25 durations =============================\n6.64s call     Tests/UI/test_console_first_send_preimport.py::test_a_harness_send_imports_nothing_lazy_beyond_the_list\n3.52s setup    Tests/UI/test_console_first_send_preimport.py::test_the_idle_pass_imports_the_first_send_modules\n2.95s setup    Tests/UI/test_console_first_send_import_cycles.py::test_the_warm_up_imports_no_module_level_cycle\n\n(22 durations < 1s hidden.)\n13 passed in 15.41s\n"
+}

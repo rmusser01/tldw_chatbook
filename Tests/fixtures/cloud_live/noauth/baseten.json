@@ -1,0 +1,22 @@
+{
+  "server": "baseten",
+  "base_url": "https://inference.baseten.co/v1",
+  "probe_model": "probe-model",
+  "listing": {
+    "status": 401,
+    "body": "No Authorization header provided\n"
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": "please check the api-key you provided"
+    }
+  },
+  "chat_bad_key": {
+    "status": 403,
+    "body": {
+      "error": "please check the api-key you provided"
+    }
+  },
+  "probed_at": "2026-09-30T04:19:54+00:00"
+}

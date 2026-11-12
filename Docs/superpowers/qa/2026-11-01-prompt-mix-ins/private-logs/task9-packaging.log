@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+14.90s setup    Tests/Packaging/test_installed_distribution.py::test_built_artifacts_match_distribution_contract
+
+(2 durations < 1s hidden.)
+1 passed in 15.28s

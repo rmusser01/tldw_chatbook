@@ -1,0 +1,309 @@
+[
+  {
+    "owner": "console_chat_controller",
+    "helper": "console_agent_reply",
+    "name": "_run_agent_reply",
+    "normalized_equal": false,
+    "original_decorators": "Module(body=[Name(id='checked_generation', ctx=Load()), Name(id='_close_remote_sessions_at_run_end', ctx=Load()), Name(id='_retire_generation_before_agent_handoff', ctx=Load())], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "@checked_generation\n@_close_remote_sessions_at_run_end\n@_retire_generation_before_agent_handoff\nasync def _run_agent_reply(self, *, resolution: Any, provider_messages: list[dict[str, Any]], assistant_message_id: str, prepare_retry: bool, variant_mode: bool, skill_bindings: tuple[str, ...]=(), skill_bundle_block: str='', citation_repair_session: ConsoleCitationRepairSession | None=None, stream_signals: ConsoleProviderStreamSignals | None=None, turn_context: ConsoleTurnExecutionContext | None=None, restore_provider_continuation: ProviderContinuationCheckpoint | None=None, restore_provider_target: ContinuationRestoreTarget | None=None, expand_provider_continuation: Callable[[ProviderContinuationCheckpoint], list[dict]] | None=None, resume_provider_continuation: bool=False, restore_provider_message_version: int | None=None, continuation_sidecar: tuple[ProviderContinuationSidecar, ...]=(), continuation_history_target: ContinuationRestoreTarget | None=None, thinking_sidecar: tuple[ProviderThinkingSidecar, ...]=(), thinking_policy: ThinkingHistoryPolicy='auto', preparation_id: str | None=None, generation_token: int | None=None, before_provider_dispatch: Callable[[], Awaitable[None]] | None=None, capture_mode_override: ConsoleTraceCaptureMode | None=None, trace_request: PreparedConsoleRequest | None=None, propagate_trace_call_persistence_errors: bool=False, _generation_handoff: _GenerationTokenHandoff | None=None, _remote_session_key: str | None=None, trusted_profile_user_message_id: str | None=None, work_origin: WorkOrigin=WorkOrigin.MANUAL, work_chain_id: str | None=None, wake_authorization: AgentWakeAuthorization | None=None, chat_start_authorization: AgentChatStartAuthorization | None=None) -> ConsoleSubmitResult:\n    \"\"\"Run the agent loop as the reply engine, streaming into the target row.\"\"\"\n    from . import console_agent_reply\n    return await console_agent_reply._run_agent_reply(self, resolution=resolution, provider_messages=provider_messages, assistant_message_id=assistant_message_id, prepare_retry=prepare_retry, variant_mode=variant_mode, skill_bindings=skill_bindings, skill_bundle_block=skill_bundle_block, citation_repair_session=citation_repair_session, stream_signals=stream_signals, turn_context=turn_context, restore_provider_continuation=restore_provider_continuation, restore_provider_target=restore_provider_target, expand_provider_continuation=expand_provider_continuation, resume_provider_continuation=resume_provider_continuation, restore_provider_message_version=restore_provider_message_version, continuation_sidecar=continuation_sidecar, continuation_history_target=continuation_history_target, thinking_sidecar=thinking_sidecar, thinking_policy=thinking_policy, preparation_id=preparation_id, generation_token=generation_token, before_provider_dispatch=before_provider_dispatch, capture_mode_override=capture_mode_override, trace_request=trace_request, propagate_trace_call_persistence_errors=propagate_trace_call_persistence_errors, _generation_handoff=_generation_handoff, _remote_session_key=_remote_session_key, trusted_profile_user_message_id=trusted_profile_user_message_id, work_origin=work_origin, work_chain_id=work_chain_id, wake_authorization=wake_authorization, chat_start_authorization=chat_start_authorization)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "persist_console_settings_commit_serialized",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "async def persist_console_settings_commit_serialized(self, commit: ConsoleSettingsLiveCommit, *, policy_failure_label: ConsoleSettingsPolicyFailureLabel | None=None) -> ConsoleSettingsPersistenceOutcome:\n    \"\"\"Join one session drain that converges durability to newest live state.\"\"\"\n    from . import console_settings_persistence\n    return await console_settings_persistence.persist_console_settings_commit_serialized(self, commit, policy_failure_label=policy_failure_label)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "_console_settings_policy_failure_label",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[Name(id='staticmethod', ctx=Load())], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "@staticmethod\ndef _console_settings_policy_failure_label(surface: ConsoleSettingsSurface | None) -> ConsoleSettingsPolicyFailureLabel:\n    \"\"\"Map an exact typed submission surface to durable failure copy.\"\"\"\n    from . import console_settings_persistence\n    return console_settings_persistence._console_settings_policy_failure_label(surface)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "retry_console_settings_persistence",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "async def retry_console_settings_persistence(self, *, session_id: str, component: ConsoleSettingsComponent, revision: int, _expected_failure: ConsoleSettingsPersistenceFailure | None=None) -> bool:\n    \"\"\"Retry one still-current failed component without advancing revisions.\"\"\"\n    from . import console_settings_persistence\n    return await console_settings_persistence.retry_console_settings_persistence(self, session_id=session_id, component=component, revision=revision, _expected_failure=_expected_failure)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "_join_console_settings_persistence_drain",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "async def _join_console_settings_persistence_drain(self, *, session_id: str, persisted_conversation_id: str | None, conversation_binding_revision: int, generation_revision: int, context_policy_revision: int, generation_snapshot: ConsoleGenerationSettingsSnapshot | None, context_policy_overrides: ConsoleContextPolicyOverrides | None, policy_failure_label: ConsoleSettingsPolicyFailureLabel, components: frozenset[ConsoleSettingsComponent], retry_components: frozenset[ConsoleSettingsComponent]=frozenset()) -> ConsoleSettingsPersistenceOutcome:\n    \"\"\"Start or join the one in-flight durability drain for a live slot.\"\"\"\n    from . import console_settings_persistence\n    return await console_settings_persistence._join_console_settings_persistence_drain(self, session_id=session_id, persisted_conversation_id=persisted_conversation_id, conversation_binding_revision=conversation_binding_revision, generation_revision=generation_revision, context_policy_revision=context_policy_revision, generation_snapshot=generation_snapshot, context_policy_overrides=context_policy_overrides, policy_failure_label=policy_failure_label, components=components, retry_components=retry_components)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "_retire_console_settings_persistence_drain",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "def _retire_console_settings_persistence_drain(self, session_id: str, drain: _ConsoleSettingsPersistenceDrain, lifecycle: _ConsoleSettingsPersistenceLifecycle, task: asyncio.Task[ConsoleSettingsPersistenceOutcome]) -> None:\n    \"\"\"Forget a completed drain only when it still owns the live registry.\"\"\"\n    from . import console_settings_persistence\n    return console_settings_persistence._retire_console_settings_persistence_drain(self, session_id, drain, lifecycle, task)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "_run_console_settings_persistence_drain",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "async def _run_console_settings_persistence_drain(self, session_id: str, drain: _ConsoleSettingsPersistenceDrain, lifecycle: _ConsoleSettingsPersistenceLifecycle) -> ConsoleSettingsPersistenceOutcome:\n    from . import console_settings_persistence\n    return await console_settings_persistence._run_console_settings_persistence_drain(self, session_id, drain, lifecycle)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "_persist_console_settings_components_locked",
+    "normalized_equal": false,
+    "original_decorators": "Module(body=[], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "async def _persist_console_settings_components_locked(self, *, session_id: str, drain: _ConsoleSettingsPersistenceDrain, lifecycle: _ConsoleSettingsPersistenceLifecycle) -> ConsoleSettingsPersistenceOutcome:\n    \"\"\"Drain selected components to their newest live revisions.\n\n        A transaction already executing in ``to_thread`` cannot be recalled. If\n        Apply advances while that transaction is in flight, its successful CAS\n        result becomes only the private base for the next CAS. It is never\n        published into the session, and this coroutine keeps reconciling until\n        the newest live revision is durable (or fails) before any joined waiter\n        returns.\n        \"\"\"\n    from . import console_settings_persistence\n    return await console_settings_persistence._persist_console_settings_components_locked(self, session_id=session_id, drain=drain, lifecycle=lifecycle)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "_context_write_result",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[Name(id='staticmethod', ctx=Load())], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "@staticmethod\ndef _context_write_result(result: object) -> tuple[bool, int | None]:\n    from . import console_settings_persistence\n    return console_settings_persistence._context_write_result(result)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "_console_settings_drain_identity_matches",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "def _console_settings_drain_identity_matches(self, session_id: str, session: ConsoleChatSession | None, drain: _ConsoleSettingsPersistenceDrain) -> bool:\n    \"\"\"Require both scalar origin identity and store-private incarnation.\"\"\"\n    from . import console_settings_persistence\n    return console_settings_persistence._console_settings_drain_identity_matches(self, session_id, session, drain)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "_console_settings_identity_matches",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[Name(id='staticmethod', ctx=Load())], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "@staticmethod\ndef _console_settings_identity_matches(session: ConsoleChatSession | None, *, persisted_conversation_id: str | None, conversation_binding_revision: int) -> bool:\n    from . import console_settings_persistence\n    return console_settings_persistence._console_settings_identity_matches(session, persisted_conversation_id=persisted_conversation_id, conversation_binding_revision=conversation_binding_revision)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "_record_console_settings_failure",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[Name(id='staticmethod', ctx=Load())], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "@staticmethod\ndef _record_console_settings_failure(session: ConsoleChatSession, *, component: ConsoleSettingsComponent, revision: int, generation_snapshot: ConsoleGenerationSettingsSnapshot | None=None, context_policy_overrides: ConsoleContextPolicyOverrides | None=None, policy_failure_label: ConsoleSettingsPolicyFailureLabel | None=None) -> None:\n    from . import console_settings_persistence\n    return console_settings_persistence._record_console_settings_failure(session, component=component, revision=revision, generation_snapshot=generation_snapshot, context_policy_overrides=context_policy_overrides, policy_failure_label=policy_failure_label)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "schedule_prompt_mixin_preferences_save",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "def schedule_prompt_mixin_preferences_save(self, session_id: str, *, owner=None, lease=None) -> None:\n    \"\"\"Retain an exact-origin save in the existing settings lifecycle.\"\"\"\n    from . import console_settings_persistence\n    return console_settings_persistence.schedule_prompt_mixin_preferences_save(self, session_id, owner=owner, lease=lease)"
+  },
+  {
+    "owner": "console_chat_store",
+    "helper": "console_settings_persistence",
+    "name": "persist_prompt_mixin_preferences",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "async def persist_prompt_mixin_preferences(self, session_id: str, *, _session=None, _origin=None) -> ConsoleSettingsPersistenceOutcome:\n    \"\"\"Join the existing bounded per-session settings drain.\"\"\"\n    from . import console_settings_persistence\n    return await console_settings_persistence.persist_prompt_mixin_preferences(self, session_id, _session=_session, _origin=_origin)"
+  },
+  {
+    "owner": "chat_persistence_service",
+    "helper": "console_chat_fork",
+    "name": "_fork_conversation_kwargs",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[Name(id='staticmethod', ctx=Load())], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "@staticmethod\ndef _fork_conversation_kwargs(snapshot: ConsoleChatForkSnapshot, conversation_kwargs: Mapping[str, object]) -> dict[str, object]:\n    from . import console_chat_fork\n    return console_chat_fork._fork_conversation_kwargs(snapshot, conversation_kwargs)"
+  },
+  {
+    "owner": "chat_persistence_service",
+    "helper": "console_chat_fork",
+    "name": "_validate_console_fork_persistence_input",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[Name(id='staticmethod', ctx=Load())], type_ignores=[])",
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "wrapper_body": "@staticmethod\ndef _validate_console_fork_persistence_input(snapshot: ConsoleChatForkSnapshot, *, policy_candidate: ConsoleLibraryPolicyCandidate, project_context_json: str) -> None:\n    from . import console_chat_fork\n    return console_chat_fork._validate_console_fork_persistence_input(snapshot, policy_candidate=policy_candidate, project_context_json=project_context_json)"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_SequenceNode",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_sequence_priority",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_sequence_size",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_sequence_pull",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_sequence_merge",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_sequence_split",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_sequence_rank",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_sequence_delete",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_sequence_insert",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_sequence_entries",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_PersistentSequenceNode",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[Call(func=Name(id='dataclass', ctx=Load()), args=[], keywords=[keyword(arg='frozen', value=Constant(value=True)), keyword(arg='slots', value=Constant(value=True))])], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_persistent_size",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_persistent_merge",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_persistent_split",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_persistent_first_position_in_range",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_persistent_without_sequence_range",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_persistent_insert_entries",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_persistent_iter",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_trace_service",
+    "helper": "console_trace_models",
+    "name": "_persistent_domain_count_before",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  },
+  {
+    "owner": "console_display_state",
+    "helper": "console_memory_banner",
+    "name": "ConsoleMemoryBannerPresentation",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[Call(func=Name(id='dataclass', ctx=Load()), args=[], keywords=[keyword(arg='frozen', value=Constant(value=True)), keyword(arg='slots', value=Constant(value=True))])], type_ignores=[])"
+  },
+  {
+    "owner": "console_display_state",
+    "helper": "console_memory_banner",
+    "name": "derive_console_memory_banner_presentation",
+    "normalized_equal": true,
+    "original_decorators": "Module(body=[], type_ignores=[])"
+  }
+]

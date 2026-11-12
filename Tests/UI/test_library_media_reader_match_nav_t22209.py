@@ -133,7 +133,9 @@ def _seed_row_document(screen, service, index: int, content: str):
 
 async def _load_row_with_document(screen, pilot, service, index: int, content: str):
     """Seed row ``index`` with ``content`` and open it from the Items list."""
-    canonical_id, backing_id, title = _seed_row_document(screen, service, index, content)
+    canonical_id, backing_id, title = _seed_row_document(
+        screen, service, index, content
+    )
     screen.query_one(f"#library-media-row-{index}", Button).press()
     await _wait_for_detail_call(service, backing_id)
     service.release(backing_id)
@@ -201,9 +203,7 @@ def _raw_static(screen) -> VirtualizedRawContent:
     through ``render_line`` instead (see ``_highlighted_words_in_raw``).
     """
     body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
-    return body.query_one(
-        "#library-media-viewer-content-text", VirtualizedRawContent
-    )
+    return body.query_one("#library-media-viewer-content-text", VirtualizedRawContent)
 
 
 def _status_text(screen) -> str:
@@ -238,6 +238,7 @@ def _highlighted_words_in_raw(raw: VirtualizedRawContent) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_match_navigation_takes_no_document_pass_per_click():
     """Six Prev/Next clicks after a submitted query re-read nothing."""
@@ -265,6 +266,7 @@ async def test_match_navigation_takes_no_document_pass_per_click():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_match_navigation_patches_the_highlight_instead_of_rebuilding_it():
     """The mounted Raw view keeps its identity; only its search state moves.
@@ -295,8 +297,7 @@ async def test_match_navigation_patches_the_highlight_instead_of_rebuilding_it()
 
         second = _raw_static(screen)
         assert second is raw, (
-            "A match click rebuilt the Raw view instead of patching its "
-            "search state."
+            "A match click rebuilt the Raw view instead of patching its search state."
         )
         assert second._match_index == 1
         assert _highlighted_words_in_raw(second) == {NEEDLE}
@@ -307,6 +308,7 @@ async def test_match_navigation_patches_the_highlight_instead_of_rebuilding_it()
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_new_query_rehighlights_the_document():
     """A second query must not reuse the first query's cached match list."""
@@ -335,6 +337,7 @@ async def test_a_new_query_rehighlights_the_document():
         assert _status_text(screen) == "Match 2 of 20"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_new_document_rescans_for_the_same_query():
     """Traversing to another item with a live query must rescan the document."""
@@ -365,6 +368,7 @@ async def test_a_new_document_rescans_for_the_same_query():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_the_search_mid_navigation_drops_every_highlight():
     """Submitting an empty query mid-navigation restores the plain document."""
@@ -401,6 +405,7 @@ async def test_clearing_the_search_mid_navigation_drops_every_highlight():
         assert _highlighted_words_in_raw(_raw_static(screen)) == set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_cleared_detail_releases_the_cached_match_list():
     """The memo must not pin a document the reader has already let go of.
@@ -427,6 +432,7 @@ async def test_a_cleared_detail_releases_the_cached_match_list():
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.timeout(600)
 async def test_multi_megabyte_document_match_navigation_timings():

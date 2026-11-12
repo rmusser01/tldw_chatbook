@@ -102,6 +102,7 @@ async def test_scope_service_list_conversations_never_threads_server_mode():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_persisted_console_browser_rows_threads_raw_file_backed_service():
     app = _build_test_app()
@@ -117,6 +118,7 @@ async def test_persisted_console_browser_rows_threads_raw_file_backed_service():
     assert all(ident != caller_thread for ident in raw_service.thread_idents)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_persisted_console_browser_rows_stays_inline_for_memory_backed_service():
     app = _build_test_app()
@@ -132,6 +134,7 @@ async def test_persisted_console_browser_rows_stays_inline_for_memory_backed_ser
     assert all(ident == caller_thread for ident in raw_service.thread_idents)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_console_conversation_browser_search_discards_result_when_token_changes_in_flight():
     """AC#2: the existing cancellation-token guard still protects correctness.

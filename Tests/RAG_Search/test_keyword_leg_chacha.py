@@ -21,6 +21,7 @@ rank-fairly. Two properties these tests exist to hold down:
   reverting this fix's whole purpose, with every test above still green.
   `test_cross_leg_merge_per_source_type` is the pin for that.
 """
+
 import asyncio
 import sqlite3
 from pathlib import Path
@@ -37,6 +38,12 @@ from tldw_chatbook.RAG_Search.ingestion_indexing import (
 from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
 from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult
+
+# TASK-38111: RAGConfig() resolves its default Chroma directory through the
+# guarded get_user_data_dir, which the per-test TLDW_CONFIG_PATH redirect
+# refuses (RecoveryRequired raw_source_selection_changed). Keep the
+# collection-time sandbox profile, like the other RAG_Search suites.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _make_service(media_db_path=None, chachanotes_db_path=None):
@@ -129,7 +136,9 @@ def test_keyword_leg_returns_note_and_conversation_rows(tmp_path):
     )
     db.close_connection()
 
-    service = _make_service(media_db_path=media_path, chachanotes_db_path=tmp_path / "chacha.db")
+    service = _make_service(
+        media_db_path=media_path, chachanotes_db_path=tmp_path / "chacha.db"
+    )
     results = asyncio.run(service._keyword_search("wombat", top_k=10))
 
     by_type = _rows_by_type(results)
@@ -172,7 +181,9 @@ def test_sub_legs_interleave_rank_fairly(tmp_path):
     )
     db.close_connection()
 
-    service = _make_service(media_db_path=media_path, chachanotes_db_path=tmp_path / "chacha.db")
+    service = _make_service(
+        media_db_path=media_path, chachanotes_db_path=tmp_path / "chacha.db"
+    )
     results = asyncio.run(service._keyword_search("pelican", top_k=3))
 
     assert len(results) == 3

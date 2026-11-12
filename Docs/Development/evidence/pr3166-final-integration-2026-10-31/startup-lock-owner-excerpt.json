@@ -1,0 +1,330 @@
+{
+  "held_tasks": true,
+  "gate": {
+    "held_last_source_line": 228,
+    "held_frame_is_original": true,
+    "entered": true,
+    "released": false,
+    "reader_returned": false,
+    "return_callback_seen": false,
+    "native_calls_exact_held_ancestry": 0,
+    "future_capture": "qualified_original_work_item",
+    "future_source_current": true,
+    "future_done": false,
+    "future_running": true,
+    "future_cancelled": false,
+    "held_entry_wait": {
+      "qualified": true,
+      "captured_actual_Thread_object_id": 2348705486160,
+      "thread_ident": 154956,
+      "observing_UI_Thread_ident": 241868,
+      "only_exact_held_thread_ancestry_saved": true,
+      "no_locals_or_values_saved_except_builtin_lock_metadata": true,
+      "no_permission_or_deadlock_verdict": true,
+      "defining_source_hashes": {
+        "threading": "feb12e11fd550b71869a8960d6e8c0151e3b1fdc7a2df08a4bf5900affc11c8a",
+        "Tests.UI.test_console_tab_publication_read_barrier": "e2f8f34e0cf8e98aa23f64eca55f28ad50b74d4e524cb58924b6dda7c536b60c",
+        "tldw_chatbook.UI.Console_Modules.console_spend_projection": "5319bd0ff771427753715fa75e133c4a1cf7ffe25ee425041a4581dc92afea8b"
+      },
+      "frames": [
+        {
+          "module": "threading",
+          "qualname": "Condition.wait",
+          "definition_line": 323,
+          "current_line": 359,
+          "instruction_offset": 278,
+          "matches_defining_source": true,
+          "is_exact_held_reader": false,
+          "is_original_gate_callback": false
+        },
+        {
+          "module": "threading",
+          "qualname": "Event.wait",
+          "definition_line": 637,
+          "current_line": 655,
+          "instruction_offset": 106,
+          "matches_defining_source": true,
+          "is_exact_held_reader": false,
+          "is_original_gate_callback": false
+        },
+        {
+          "module": "Tests.UI.test_console_tab_publication_read_barrier",
+          "qualname": "_OriginalReadGate._start",
+          "definition_line": 255,
+          "current_line": 274,
+          "instruction_offset": 1780,
+          "matches_defining_source": false,
+          "is_exact_held_reader": false,
+          "is_original_gate_callback": true
+        },
+        {
+          "module": "tldw_chatbook.UI.Console_Modules.console_spend_projection",
+          "qualname": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+          "definition_line": 228,
+          "current_line": 228,
+          "instruction_offset": 2,
+          "matches_defining_source": true,
+          "is_exact_held_reader": true,
+          "is_original_gate_callback": false
+        }
+      ]
+    }
+  },
+  "tasks": [
+    {
+      "name": "message pump ChatScreen()",
+      "chain": [
+        {
+          "function": "MessagePump._process_messages",
+          "line": 571,
+          "module": "textual.message_pump",
+          "owner": "ChatScreen"
+        },
+        {
+          "function": "MessagePump._process_messages_loop",
+          "line": 663,
+          "module": "textual.message_pump",
+          "owner": "ChatScreen"
+        },
+        {
+          "function": "MessagePump._dispatch_message",
+          "line": 741,
+          "module": "textual.message_pump",
+          "owner": "ChatScreen"
+        },
+        {
+          "function": "MessagePump._flush_next_callbacks",
+          "line": 702,
+          "module": "textual.message_pump",
+          "owner": "ChatScreen"
+        },
+        {
+          "function": "invoke",
+          "line": 96,
+          "module": "textual._callback",
+          "owner": "NoneType"
+        },
+        {
+          "function": "_invoke",
+          "line": 58,
+          "module": "textual._callback",
+          "owner": "NoneType"
+        },
+        {
+          "function": "Screen._invoke_and_clear_callbacks",
+          "line": 1272,
+          "module": "textual.screen",
+          "owner": "ChatScreen"
+        },
+        {
+          "function": "invoke",
+          "line": 96,
+          "module": "textual._callback",
+          "owner": "NoneType"
+        },
+        {
+          "function": "_invoke",
+          "line": 58,
+          "module": "textual._callback",
+          "owner": "NoneType"
+        },
+        {
+          "function": "ChatScreen._sync_native_console_chat_ui",
+          "line": 17505,
+          "module": "tldw_chatbook.UI.Screens.chat_screen",
+          "owner": "ChatScreen",
+          "original_source": true
+        },
+        {
+          "function": "ChatScreen._sync_console_native_session_tabs",
+          "line": 17730,
+          "module": "tldw_chatbook.UI.Screens.chat_screen",
+          "owner": "ChatScreen",
+          "original_source": true
+        },
+        {
+          "function": "_ContextManagerMixin.__aenter__",
+          "line": 14,
+          "module": "asyncio.locks",
+          "owner": "Lock"
+        },
+        {
+          "function": "Lock.acquire",
+          "line": 113,
+          "module": "asyncio.locks",
+          "owner": "Lock"
+        }
+      ]
+    },
+    {
+      "name": "Task-1977",
+      "chain": [
+        {
+          "function": "Worker._run",
+          "line": 370,
+          "module": "textual.worker",
+          "owner": "Worker"
+        },
+        {
+          "function": "Worker.run",
+          "line": 354,
+          "module": "textual.worker",
+          "owner": "Worker"
+        },
+        {
+          "function": "Worker._run_async",
+          "line": 341,
+          "module": "textual.worker",
+          "owner": "Worker"
+        },
+        {
+          "function": "ConsoleReadinessConfigProjection._refresh",
+          "line": 450,
+          "module": "tldw_chatbook.UI.Console_Modules.console_spend_projection",
+          "owner": "ConsoleReadinessConfigProjection",
+          "original_source": true
+        },
+        {
+          "function": "run_preparation_read",
+          "line": 226,
+          "module": "tldw_chatbook.Chat.console_preparation_reads",
+          "owner": "NoneType",
+          "original_source": false
+        }
+      ]
+    },
+    {
+      "name": "Task-1972",
+      "chain": [
+        {
+          "function": "ConsoleReadinessConfigProjection.warm",
+          "line": 429,
+          "module": "tldw_chatbook.UI.Console_Modules.console_spend_projection",
+          "owner": "ConsoleReadinessConfigProjection",
+          "original_source": true
+        },
+        {
+          "function": "Event.wait",
+          "line": 212,
+          "module": "asyncio.locks",
+          "owner": "Event"
+        }
+      ]
+    },
+    {
+      "name": "Task-2",
+      "chain": [
+        {
+          "function": "private_profile_test.<locals>.wrapped",
+          "line": 243,
+          "module": "Tests.private_profile",
+          "owner": "NoneType"
+        },
+        {
+          "function": "test_actual_close_publishes_real_tabs_before_stock_read_release",
+          "line": 736,
+          "module": "Tests.UI.test_console_tab_publication_read_barrier",
+          "owner": "NoneType"
+        },
+        {
+          "function": "_click",
+          "line": 189,
+          "module": "Tests.UI.test_console_session_tab_close",
+          "owner": "NoneType"
+        },
+        {
+          "function": "Pilot.click",
+          "line": 238,
+          "module": "textual.pilot",
+          "owner": "Pilot"
+        },
+        {
+          "function": "Pilot._post_mouse_events",
+          "line": 449,
+          "module": "textual.pilot",
+          "owner": "Pilot"
+        },
+        {
+          "function": "Pilot.pause",
+          "line": 542,
+          "module": "textual.pilot",
+          "owner": "Pilot"
+        },
+        {
+          "function": "Pilot._wait_for_screen",
+          "line": 513,
+          "module": "textual.pilot",
+          "owner": "Pilot"
+        },
+        {
+          "function": "wait",
+          "line": 464,
+          "module": "asyncio.tasks",
+          "owner": "NoneType"
+        },
+        {
+          "function": "_wait",
+          "line": 550,
+          "module": "asyncio.tasks",
+          "owner": "NoneType"
+        }
+      ]
+    },
+    {
+      "name": "console-canvas-policy-watch",
+      "chain": [
+        {
+          "function": "ConsoleRuntime._watch_canvas_policy",
+          "line": 4499,
+          "module": "tldw_chatbook.Chat.console_runtime",
+          "owner": "ConsoleRuntime",
+          "original_source": true
+        },
+        {
+          "function": "sleep",
+          "line": 665,
+          "module": "asyncio.tasks",
+          "owner": "NoneType"
+        }
+      ]
+    },
+    {
+      "name": "Task-1971",
+      "chain": [
+        {
+          "function": "ChatScreen._sync_native_console_chat_ui",
+          "line": 17546,
+          "module": "tldw_chatbook.UI.Screens.chat_screen",
+          "owner": "ChatScreen",
+          "original_source": true
+        },
+        {
+          "function": "ChatScreen._sync_console_native_session_tabs",
+          "line": 17790,
+          "module": "tldw_chatbook.UI.Screens.chat_screen",
+          "owner": "ChatScreen",
+          "original_source": true
+        },
+        {
+          "function": "ConsoleSessionSurface.sync_sessions",
+          "line": 855,
+          "module": "tldw_chatbook.Widgets.Console.console_session_surface",
+          "owner": "ConsoleSessionSurface",
+          "original_source": true
+        },
+        {
+          "function": "_ContextManagerMixin.__aenter__",
+          "line": 14,
+          "module": "asyncio.locks",
+          "owner": "Lock"
+        },
+        {
+          "function": "Lock.acquire",
+          "line": 113,
+          "module": "asyncio.locks",
+          "owner": "Lock"
+        }
+      ]
+    }
+  ]
+}

@@ -207,14 +207,17 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
         if available < 1:
             return
         above = trash_list.region.y - self.content_region.y
-        below = max(
-            (
-                child.region.bottom
-                for child in self.children
-                if child.display and child.region.y >= trash_list.region.bottom
-            ),
-            default=trash_list.region.bottom,
-        ) - trash_list.region.bottom
+        below = (
+            max(
+                (
+                    child.region.bottom
+                    for child in self.children
+                    if child.display and child.region.y >= trash_list.region.bottom
+                ),
+                default=trash_list.region.bottom,
+            )
+            - trash_list.region.bottom
+        )
         # Floor: never collapse the list to nothing when the chrome alone
         # fills the pane -- one row of items stays visible and scrollable.
         cap = max(2, available - above - below)
@@ -457,9 +460,7 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
             # + two dead controls for a one-item page. The single-page rule
             # (task-28016/31237/32104) is ``library_pager_layout``'s; when it
             # hides the controls this block is one row, not two.
-            layout = library_pager_layout(
-                self.pager, retry_visible=self.retry_visible
-            )
+            layout = library_pager_layout(self.pager, retry_visible=self.retry_visible)
             pager_rows = 1 if layout.controls_hidden else 2
             pager = Vertical(id="library-media-trash-pager")
             pager.add_class("h-1" if layout.controls_hidden else "h-2")
@@ -499,7 +500,9 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                             self.pager.previous_disabled or controls_disabled
                         )
                         previous = Button(
-                            library_disabled_action_label("Previous", previous_disabled),
+                            library_disabled_action_label(
+                                "Previous", previous_disabled
+                            ),
                             id="library-media-trash-previous",
                             classes="library-canvas-action",
                             compact=True,
@@ -515,7 +518,9 @@ class LibraryMediaTrashCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vert
                         yield previous
                         if self.retry_visible:
                             retry = Button(
-                                library_disabled_action_label("Retry", controls_disabled),
+                                library_disabled_action_label(
+                                    "Retry", controls_disabled
+                                ),
                                 id="library-media-trash-retry",
                                 classes="library-canvas-action",
                                 compact=True,

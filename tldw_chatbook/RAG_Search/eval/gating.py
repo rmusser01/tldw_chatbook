@@ -28,12 +28,14 @@ from pydantic import BaseModel, Field
 
 class MetricCategory(str, Enum):
     """Category of metric for gating purposes."""
+
     STABLE = "stable"
     UNSTABLE = "unstable"
 
 
 class GatingResult(str, Enum):
     """Result of gating evaluation."""
+
     PASS = "pass"
     WARN = "warn"
     FAIL = "fail"
@@ -120,7 +122,9 @@ class GatingConfig(BaseModel):
         try:
             import yaml
         except ImportError:
-            raise ImportError("PyYAML is required for YAML config loading: pip install pyyaml") from None
+            raise ImportError(
+                "PyYAML is required for YAML config loading: pip install pyyaml"
+            ) from None
 
         path = Path(path)
         if not path.exists():
@@ -137,7 +141,9 @@ class GatingConfig(BaseModel):
         return cls(
             stable=gating_data.get("stable", {}),
             unstable=gating_data.get("unstable", {}),
-            lower_is_better=gating_data.get("lower_is_better", ["hallucination", "latency_p99_ms"]),
+            lower_is_better=gating_data.get(
+                "lower_is_better", ["hallucination", "latency_p99_ms"]
+            ),
         )
 
     def to_yaml(self, path: Path | str) -> None:
@@ -149,7 +155,9 @@ class GatingConfig(BaseModel):
         try:
             import yaml
         except ImportError:
-            raise ImportError("PyYAML is required for YAML config saving: pip install pyyaml") from None
+            raise ImportError(
+                "PyYAML is required for YAML config saving: pip install pyyaml"
+            ) from None
 
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +187,9 @@ class GatingEvaluationResult(BaseModel):
 
     overall_result: GatingResult = Field(..., description="Overall result")
     exit_code: int = Field(..., ge=0, le=2, description="Exit code for CI")
-    metrics: list[MetricResult] = Field(default_factory=list, description="Metric results")
+    metrics: list[MetricResult] = Field(
+        default_factory=list, description="Metric results"
+    )
     summary: str = Field(..., description="Human-readable summary")
 
     def to_dict(self) -> dict[str, Any]:
@@ -247,7 +257,11 @@ class GatingEvaluator:
         for name, threshold in self.config.stable.items():
             if name in metrics:
                 value = metrics[name]
-                passed = value <= threshold if name in lower_is_better else value >= threshold
+                passed = (
+                    value <= threshold
+                    if name in lower_is_better
+                    else value >= threshold
+                )
                 result = GatingResult.PASS if passed else GatingResult.FAIL
 
                 if not passed:
@@ -267,7 +281,11 @@ class GatingEvaluator:
         for name, threshold in self.config.unstable.items():
             if name in metrics:
                 value = metrics[name]
-                passed = value <= threshold if name in lower_is_better else value >= threshold
+                passed = (
+                    value <= threshold
+                    if name in lower_is_better
+                    else value >= threshold
+                )
                 result = GatingResult.PASS if passed else GatingResult.WARN
 
                 if not passed:
@@ -295,7 +313,9 @@ class GatingEvaluator:
             exit_code = 2
             warned = [r for r in results if r.result == GatingResult.WARN]
             warned_names = ", ".join(r.name for r in warned)
-            summary = f"Gating WARNING: Unstable metrics below threshold: {warned_names}"
+            summary = (
+                f"Gating WARNING: Unstable metrics below threshold: {warned_names}"
+            )
         else:
             overall_result = GatingResult.PASS
             exit_code = 0

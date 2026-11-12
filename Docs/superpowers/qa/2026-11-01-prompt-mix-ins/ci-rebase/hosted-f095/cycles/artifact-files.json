@@ -1,0 +1,49 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/mixins-f095-cycles/report.md",
+      "bytes": 3013,
+      "sha256": "452d14511db5bf8d943d0b679f96205548321c469af54950de18316a251b9e88"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-cycles/tests.log",
+      "bytes": 547,
+      "sha256": "179491cd6a86e7c4cb0bbddc34bd0be9d5d594bb65edc40dee1463e2dbc7b60a"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-cycles/tests.xml",
+      "bytes": 2017,
+      "sha256": "84b1425669c0a820449b8d1bb9cfd0658f912e3b790e1c83e584479f305f2438"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-cycles/patch.diff",
+      "bytes": 5172,
+      "sha256": "c3614de2d214e4d6e21c578a9c0c270871ecc576c0f5ba40827e3f7835688ae7"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-cycles/source-proof.json",
+      "bytes": 852,
+      "sha256": "a41fe671d6730062aeef344cdab74f5d8c5fa25ae7ad57018e1622209a77dfed"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-cycles/lint-current.json",
+      "bytes": 1128,
+      "sha256": "bd3eb1127a3e318bf9f0e8024b68d6a3d4de9ee62f9873e57950ce89abd3a42c"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-cycles/format-check.log",
+      "bytes": 25,
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-cycles/write_report.py",
+      "bytes": 5131,
+      "sha256": "e9c8bfd862c98ecd394517f950e50c32690b2ab2807659d6624edefae41c9534"
+    },
+    {
+      "path": "/private/tmp/mixins-ci-f095-ui29-red.log",
+      "bytes": 153784,
+      "sha256": "42cde29b01a56205d66534874c3fdb70856b67fc0eba2a4c8ca106f36c2366ff"
+    }
+  ]
+}

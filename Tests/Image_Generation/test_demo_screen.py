@@ -10,6 +10,7 @@ widgets to build and query successfully. The worker-thread generate path is
 exercised directly (off the Textual event loop, like the real `@work(thread=True)`
 callable is) with `run_generation` monkeypatched, so no backend is required.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -32,6 +33,7 @@ def _tiny_png_bytes() -> bytes:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_demo_screen_lists_backends_and_generates(monkeypatch):
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenResult
     import tldw_chatbook.UI.Screens.image_gen_demo_screen as scr

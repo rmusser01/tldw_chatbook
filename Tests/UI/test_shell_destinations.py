@@ -1,3 +1,5 @@
+import pytest
+
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.shell_destinations import (
@@ -17,13 +19,14 @@ def test_master_shell_destination_order_matches_spec(request):
         "Watchlists",
         "Schedules",
         "Workflows",
-        "MCP",
         "ACP",
         "Lab",
         "Logs",
         "Settings",
         "Research",
         "Meetings",
+        "Plugins",
+        "Kanban",
     ]
 
 
@@ -69,6 +72,8 @@ def test_tab_display_labels_use_roleplay_for_personas_and_ccp_tabs():
 
 @private_profile_test
 def test_legacy_routes_resolve_to_master_destinations(request):
+    from tldw_chatbook.UI.Navigation.shell_destinations import LEGACY_ROUTE_NAV_CONTEXTS
+
     expectations = {
         "chat": ("console", "chat"),
         "home": ("home", "home"),
@@ -89,7 +94,8 @@ def test_legacy_routes_resolve_to_master_destinations(request):
         "conversations_characters_prompts": ("personas", "personas"),
         "roleplay": ("personas", "personas"),
         "subscriptions": ("watchlists_collections", "subscriptions"),
-        "tools_settings": ("mcp", "tools_settings"),
+        "mcp": ("settings", "settings"),
+        "tools_settings": ("settings", "settings"),
         "settings": ("settings", "settings"),
         # Logs is a top-level destination again; its route resolves to itself.
         "logs": ("logs", "logs"),
@@ -106,6 +112,8 @@ def test_legacy_routes_resolve_to_master_destinations(request):
     for route, expected in expectations.items():
         resolved = resolve_shell_route(route)
         assert (resolved.destination_id, resolved.canonical_route) == expected
+    for route in ("mcp", "tools_settings"):
+        assert LEGACY_ROUTE_NAV_CONTEXTS[route] == {"category": "tools"}
 
 
 def test_research_destination_owns_workspace_and_preserves_runs_route():
@@ -182,6 +190,7 @@ def test_lab_legacy_routes_resolve_to_their_lab_screens():
         assert screen_class.__name__ == expected_class, route
 
 
+@pytest.mark.bootstrap_profile
 def test_every_shell_destination_id_resolves_to_its_primary_screen():
     """Destination-id resolution: a destination id lands on the same screen
     as the destination's primary route (covers "lab" and "console", whose
@@ -213,6 +222,7 @@ def test_each_shell_destination_has_recovery_tooltip_copy():
         assert destination.purpose
 
 
+@pytest.mark.bootstrap_profile
 def test_every_shell_destination_has_readable_purpose_and_mounted_route():
     app = _build_test_app()
 

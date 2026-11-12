@@ -33,7 +33,9 @@ _SNAPSHOT_FIELDS = (
 )
 
 
-def snapshot_cards(chacha_db: Any, character_ids: Sequence[int]) -> tuple[CardSnapshot, ...]:
+def snapshot_cards(
+    chacha_db: Any, character_ids: Sequence[int]
+) -> tuple[CardSnapshot, ...]:
     """Copy each requested card's prompting text, in the requested order.
 
     Args:

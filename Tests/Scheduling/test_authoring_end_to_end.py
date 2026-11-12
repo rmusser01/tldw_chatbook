@@ -87,7 +87,10 @@ class _FakeApp:
         self.notify_calls = []
         self.library_rag_search_service = object()
 
-    def notify(self, message, severity="information", timeout=None):
+    def notify(self, message, severity="information", timeout=None,
+               markup=True):
+        # ``markup`` mirrors Textual's ``App.notify``; the notification
+        # helper passes False for runtime text (TASK-34803).
         self.notify_calls.append(
             {"message": message, "severity": severity, "timeout": timeout}
         )
@@ -130,6 +133,7 @@ def _local_definition_payload(**overrides) -> dict:
     return payload
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_authoring_saved_row_is_picked_up_by_a_scheduler_tick(
     db, monkeypatch
@@ -174,7 +178,10 @@ async def test_local_authoring_saved_row_is_picked_up_by_a_scheduler_tick(
         db=db, app_getter=lambda: app, dispatch_service=dispatch_service
     )
     loop = SchedulerLoop(
-        db, handlers={"automation_definition": handler}, clock=lambda: due_at
+        db,
+        handlers={"automation_definition": handler},
+        clock=lambda: due_at,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     loop.queue.load()
 

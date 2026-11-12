@@ -6,24 +6,23 @@ import os
 import subprocess
 import sys
 import threading
+from contextlib import closing
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_chunking_lab_screen import (
+    attach_lab_media as attach_lab_media,  # noqa: PLC0414 - re-export shared pytest fixture
+)
+from Tests.UI.test_chunking_lab_screen import (
+    lab_app as lab_app,  # noqa: PLC0414 - re-export shared pytest fixture
+)
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
 
 
-@pytest.fixture
-def lab_app(tmp_path, monkeypatch):
-    monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: tmp_path)
-    app = _build_test_app()
-    # This fixture mounts its own initial Lab screen during each test.
-    app._initial_screen_pushed = True
-    return app
-
-
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_manually_mounted_lab_owns_deferred_initial_screen(lab_app):
     async with lab_app.run_test():
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
@@ -47,6 +46,7 @@ async def wait_for_dialog(app, pilot):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 40), (160, 50)])
+@pytest.mark.bootstrap_profile
 async def test_recovery_preview_requires_explicit_replace_and_cancel_keeps_epoch(
     lab_app, tmp_path, size
 ):
@@ -111,6 +111,7 @@ async def test_recovery_preview_requires_explicit_replace_and_cancel_keeps_epoch
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_failed_local_load_allows_read_only_recovery_inspection(
     lab_app, tmp_path
 ):
@@ -118,8 +119,9 @@ async def test_failed_local_load_allows_read_only_recovery_inspection(
 
     from Tests.DB.test_chunking_lab_db import completed_session
     from tldw_chatbook.Chunking.lab_recovery import export_recovery
+    from tldw_chatbook.config import get_user_data_dir
 
-    store_path = tmp_path / "chunking_lab.sqlite3"
+    store_path = get_user_data_dir() / "chunking_lab.sqlite3"
     store_path.write_bytes(b"unreadable existing recovery")
     incoming = tmp_path / "known-good.json"
     incoming.write_bytes(export_recovery(completed_session()))
@@ -149,6 +151,7 @@ async def test_failed_local_load_allows_read_only_recovery_inspection(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_malformed_recovery_does_not_cancel_pending_work_or_change_state(
     lab_app, tmp_path
 ):
@@ -178,6 +181,7 @@ async def test_malformed_recovery_does_not_cancel_pending_work_or_change_state(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("boundary", ["export", "navigation"])
+@pytest.mark.bootstrap_profile
 async def test_final_render_edit_is_in_action_snapshot(lab_app, tmp_path, boundary):
     from Tests.UI.test_chunking_lab_screen import hold_final_edit_render, settle_lab
     from tldw_chatbook.Chunking import lab_state
@@ -221,10 +225,11 @@ async def test_final_render_edit_is_in_action_snapshot(lab_app, tmp_path, bounda
             )
         else:
             assert result is True
+            profile = Path(screen.coordinator.session.profile_key)
 
             def read_checkpoint():
                 store = CheckpointStore(
-                    tmp_path / "chunking_lab.sqlite3", str(tmp_path)
+                    profile / "chunking_lab.sqlite3", str(profile)
                 )
                 try:
                     return store.load()[0]
@@ -239,30 +244,34 @@ async def test_final_render_edit_is_in_action_snapshot(lab_app, tmp_path, bounda
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("corruption", ["json", "view", "draft"])
+@pytest.mark.bootstrap_profile
 async def test_recovery_fallback_explains_rollback_without_private_content(
-    lab_app, tmp_path, corruption
+    lab_app, corruption
 ):
     import sqlite3
 
     from tldw_chatbook.Chunking import lab_state
+    from tldw_chatbook.config import get_user_data_dir
     from tldw_chatbook.DB.Chunking_Lab_DB import CheckpointStore
 
+    profile = get_user_data_dir()
+    store_path = profile / "chunking_lab.sqlite3"
+
     def seed():
-        store = CheckpointStore(tmp_path / "chunking_lab.sqlite3", str(tmp_path))
-        older = lab_state.replace_sample(
-            lab_state.new_session(str(tmp_path)),
-            "private older sample",
-            {"kind": "paste"},
-        )
-        token = store.save(older, expected=None)
-        newer = lab_state.replace_sample(
-            older, "private newer sample", {"kind": "paste"}
-        )
-        store.save(newer, expected=token)
-        store.close()
+        with closing(CheckpointStore(store_path, str(profile))) as store:
+            older = lab_state.replace_sample(
+                lab_state.new_session(str(profile)),
+                "private older sample",
+                {"kind": "paste"},
+            )
+            token = store.save(older, expected=None)
+            newer = lab_state.replace_sample(
+                older, "private newer sample", {"kind": "paste"}
+            )
+            store.save(newer, expected=token)
 
     await asyncio.to_thread(seed)
-    with sqlite3.connect(tmp_path / "chunking_lab.sqlite3") as connection:
+    with closing(sqlite3.connect(store_path)) as connection, connection:
         document = "broken"
         if corruption != "json":
             document = json.loads(
@@ -297,6 +306,7 @@ async def test_recovery_fallback_explains_rollback_without_private_content(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_saved_result_is_not_unsaved_when_only_view_checkpoint_fails(lab_app):
     from Tests.UI.test_chunking_lab_screen import settle_lab
     from tldw_chatbook.Chunking import lab_state
@@ -356,16 +366,14 @@ async def test_saved_result_is_not_unsaved_when_only_view_checkpoint_fails(lab_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_save_capture_cannot_associate_an_import_during_preparation(
-    lab_app, tmp_path
+    lab_app, attach_lab_media
 ):
     from tldw_chatbook.Chunking import lab_state
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.UI.Screens import chunking_lab_screen as module
 
-    lab_app.media_db = MediaDatabase(
-        str(tmp_path / "media.sqlite3"), client_id="save-race"
-    )
+    attach_lab_media("media.sqlite3", "save-race")
     async with lab_app.run_test(size=(80, 24)):
         screen = module.ChunkingLabScreen(lab_app)
         await lab_app.push_screen(screen)
@@ -419,6 +427,7 @@ async def test_save_capture_cannot_associate_an_import_during_preparation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_missing_library_source_does_not_mislabel_loaded_recovery(lab_app):
     screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
     screen.apply_navigation_context({"local_media_id": 42})
@@ -434,6 +443,7 @@ async def test_missing_library_source_does_not_mislabel_loaded_recovery(lab_app)
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_failed_initial_load_is_read_only_and_retry_reads_again(lab_app):
     from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
 
@@ -456,6 +466,7 @@ async def test_failed_initial_load_is_read_only_and_retry_reads_again(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_typing_during_delayed_edit_and_completion_preserves_inputs(lab_app):
     from Tests.Chunking.test_lab_coordinator import outcome
     from tldw_chatbook.Chunking import lab_state
@@ -504,10 +515,19 @@ async def test_typing_during_delayed_edit_and_completion_preserves_inputs(lab_ap
         assert requests[0].run_id in screen.coordinator.session.results
 
 
+def _select_recovery_profile(data_dir: Path) -> Path:
+    from tldw_chatbook import config
+
+    data_dir.mkdir(mode=0o700)
+    assert config.save_setting_to_cli_config("paths", "data_dir", str(data_dir))
+    profile = config.get_user_data_dir()
+    assert profile.parent == data_dir
+    return profile
+
+
 @pytest.mark.asyncio
-async def test_failed_checkpoint_blocks_navigation_export_survives(
-    lab_app, tmp_path, monkeypatch
-):
+@pytest.mark.bootstrap_profile
+async def test_failed_checkpoint_blocks_navigation_export_survives(lab_app, tmp_path):
     from Tests.UI.test_chunking_lab_screen import settle_lab
 
     route = resolve_screen_route("chunking_lab")
@@ -539,11 +559,7 @@ async def test_failed_checkpoint_blocks_navigation_export_survives(
         await screen._action("lab-retry")
         assert await screen.confirm_navigation()
         await lab_app.pop_screen()
-        fresh_path = tmp_path / "transfer-profile"
-        fresh_path.mkdir(mode=0o700)
-        monkeypatch.setattr(
-            "tldw_chatbook.config.get_user_data_dir", lambda: fresh_path
-        )
+        fresh_path = _select_recovery_profile(tmp_path / "transfer-profile")
         destination = route.load_screen_class()(lab_app)
         await lab_app.push_screen(destination)
         await destination.wait_until_ready()
@@ -566,11 +582,10 @@ async def test_failed_checkpoint_blocks_navigation_export_survives(
 
 
 @pytest.mark.asyncio
-async def test_profile_switch_failure_retains_old_owner(lab_app, tmp_path, monkeypatch):
+@pytest.mark.bootstrap_profile
+async def test_profile_switch_failure_retains_old_owner(lab_app, tmp_path):
     owner = await lab_app.get_chunking_lab_coordinator()
-    other = tmp_path / "other"
-    other.mkdir(mode=0o700)
-    monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: other)
+    other = _select_recovery_profile(tmp_path / "other")
     with patch.object(owner, "close", side_effect=OSError("injected failure")):
         with pytest.raises(OSError):
             await lab_app.get_chunking_lab_coordinator()
@@ -583,6 +598,7 @@ async def test_profile_switch_failure_retains_old_owner(lab_app, tmp_path, monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cancel_button_reaps_real_noncooperative_child(
     lab_app, tmp_path, monkeypatch
 ):
@@ -623,11 +639,11 @@ async def test_cancel_button_reaps_real_noncooperative_child(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_forced_app_crash_recovers_committed_invalid_draft_and_result(
-    lab_app, tmp_path, monkeypatch
+    lab_app, tmp_path
 ):
-    profile = tmp_path / "crash-profile"
-    profile.mkdir(mode=0o700)
+    profile = _select_recovery_profile(tmp_path / "crash-profile")
     config_root = tmp_path / "subprocess-isolation"
     config_root.mkdir(mode=0o700)
     marker = tmp_path / "checkpoint-committed"
@@ -638,9 +654,12 @@ from pathlib import Path
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook import config
 from tldw_chatbook.UI.Screens.chunking_lab_screen import ChunkingLabScreen
-config.get_user_data_dir = lambda: Path(os.environ["LAB_CRASH_PROFILE"])
+profile = Path(os.environ["LAB_CRASH_PROFILE"])
+assert config.save_setting_to_cli_config("paths", "data_dir", str(profile.parent))
+assert config.get_user_data_dir() == profile
 async def main():
     app = _build_test_app()
+    app._initial_screen_pushed = True
     async with app.run_test(size=(80,24)) as pilot:
         screen = ChunkingLabScreen(app)
         await app.push_screen(screen)
@@ -683,8 +702,8 @@ asyncio.run(main())
         if process.poll() is None:
             process.kill()
             await asyncio.to_thread(process.wait, 5)
-    monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: profile)
     coordinator = await lab_app.get_chunking_lab_coordinator()
+    assert coordinator.session.profile_key == str(profile)
     draft = next(
         c["draft"] for c in coordinator.session.candidates.values() if c["role"] == "B"
     )
@@ -696,6 +715,7 @@ asyncio.run(main())
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_completed_preview_and_invalid_json_survive_reopen(lab_app):
     route = resolve_screen_route("chunking_lab")
     assert route is not None

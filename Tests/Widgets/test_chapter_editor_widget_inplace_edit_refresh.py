@@ -50,7 +50,9 @@ def _chapters(n: int, *, words_per_chapter: int = 10) -> list[Chapter]:
     ]
 
 
-async def _mount_editor(pilot, app: App, chapters: list[Chapter]) -> ChapterEditorWidget:
+async def _mount_editor(
+    pilot, app: App, chapters: list[Chapter]
+) -> ChapterEditorWidget:
     slot = app.query_one("#slot", Container)
     editor = ChapterEditorWidget(id="chapter-editor-widget")
     await slot.mount(editor)

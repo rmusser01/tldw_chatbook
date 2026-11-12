@@ -1,0 +1,13 @@
+{
+  "HEAD": "749e7540affab2b543f472fcf6fae6bff34d8122",
+  "argv": [
+    "git",
+    "diff",
+    "--check",
+    "6cd44c72ffef6d19fca21eab3a05bdcade7c1811",
+    "HEAD"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "environment_overrides": {},
+  "source_sha256": {}
+}

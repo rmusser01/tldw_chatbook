@@ -51,6 +51,7 @@ def test_facade_refuses_dual_executor_and_buffer_owner_before_construction(monke
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_facade_does_not_create_a_buffer_owner_by_default(monkeypatch):
     from tldw_chatbook.STT import executor_worker
 
@@ -122,6 +123,7 @@ def test_public_method_signatures_match_the_legacy_contract() -> None:
         assert _signature_shape(getattr(TranscriptionService, method_name)) == signature
 
 
+@pytest.mark.bootstrap_profile
 def test_public_service_can_still_be_constructed_without_arguments() -> None:
     with (
         patch(
@@ -136,7 +138,10 @@ def test_public_service_can_still_be_constructed_without_arguments() -> None:
     ):
         service = TranscriptionService()
 
-    assert service.config["default_language"] == "en"
+    try:
+        assert service.config["default_language"] == "en"
+    finally:
+        service.cleanup()
 
 
 class _Bridge:
@@ -208,7 +213,7 @@ def facade(monkeypatch: pytest.MonkeyPatch) -> tuple[TranscriptionService, _Brid
         lambda _backend_factory: bridge,
         raising=False,
     )
-    return service_module.TranscriptionService(), bridge
+    return service_module.TranscriptionService(parakeet_source_service=_SourceService()), bridge
 
 
 def test_facade_preserves_omitted_provider_and_language(
@@ -237,6 +242,52 @@ def test_facade_does_not_activate_semantic_default_routing(
 
     assert bridge.calls[0][1][1] == "default"
     assert bridge.calls[0][1][3] == "en"
+
+
+@pytest.mark.parametrize("provider", ["lightning-whisper-mlx", "lightning-whisper"])
+@pytest.mark.parametrize("method", ["file", "buffer", "stream", "models"])
+def test_facade_refuses_explicit_deferred_provider_before_bridge_effects(
+    facade: tuple[TranscriptionService, _Bridge], provider: str, method: str,
+) -> None:
+    service, bridge = facade
+    before = dict(bridge.config)
+    with pytest.raises(TranscriptionError, match="Lightning Whisper MLX is deferred"):
+        if method == "file":
+            service.transcribe("not-a-real-file.wav", provider=provider)
+        elif method == "buffer":
+            service.transcribe_buffer(b"pcm", 16000, provider=provider)
+        elif method == "stream":
+            service.create_streaming_transcriber(provider=provider)
+        else:
+            service.list_available_models(provider=provider)
+    assert bridge.calls == []
+    assert bridge.config == before
+
+
+@pytest.mark.parametrize("method", ["file", "buffer", "stream"])
+def test_facade_refuses_configured_deferred_alias_without_rewriting_it(
+    facade: tuple[TranscriptionService, _Bridge], method: str,
+) -> None:
+    service, bridge = facade
+    bridge.config["default_provider"] = "lightning-whisper"
+    before = dict(bridge.config)
+    with pytest.raises(TranscriptionError, match="Your saved settings have not been changed"):
+        if method == "file":
+            service.transcribe("not-a-real-file.wav")
+        elif method == "buffer":
+            service.transcribe_buffer(b"pcm", 16000)
+        else:
+            service.create_streaming_transcriber()
+    assert bridge.calls == []
+    assert bridge.config == before
+
+
+def test_facade_discovery_filters_stale_deferred_provider_and_model_results(facade) -> None:
+    service, bridge = facade
+    bridge.result = ["faster-whisper", "lightning-whisper-mlx", "lightning-whisper"]
+    assert service.get_available_providers() == ["faster-whisper"]
+    bridge.result = {"faster-whisper": ["base"], "lightning-whisper-mlx": ["tiny"]}
+    assert service.list_available_models() == {"faster-whisper": ["base"]}
 
 
 def test_facade_preserves_buffer_arguments_and_provider_specific_kwargs(
@@ -363,6 +414,7 @@ class _SourceService:
         pytest.param(None, "parakeet-onnx", id="configured-default"),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_parakeet_buffer_uses_the_shared_dispatcher_and_compatibility_result(
     monkeypatch: pytest.MonkeyPatch,
     provider: str | None,
@@ -557,6 +609,7 @@ def test_facade_cleanup_closes_only_its_download_free_default_source_service(
     assert owned.closed is True
 
 
+@pytest.mark.bootstrap_profile
 def test_begin_dictation_capture_forwards_the_resolved_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -600,6 +653,7 @@ def test_begin_dictation_capture_forwards_the_resolved_dispatch(
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_begin_dictation_uses_persistent_service_resolution_not_bridge_directory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -634,6 +688,7 @@ def test_begin_dictation_uses_persistent_service_resolution_not_bridge_directory
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_source_failure_is_structured_path_private_and_never_uses_legacy_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -706,10 +761,17 @@ def test_facade_explicitly_forwards_each_public_helper(
     bridge_method: str,
 ) -> None:
     service, bridge = facade
+    if method_name == "get_available_providers":
+        bridge.result = ["faster-whisper"]
+    elif method_name == "list_available_models":
+        bridge.result = {"faster-whisper": ["base"]}
 
     result = getattr(service, method_name)(*arguments, **keywords)
 
-    assert result is bridge.result
+    if method_name in {"get_available_providers", "list_available_models"}:
+        assert result == bridge.result
+    else:
+        assert result is bridge.result
     assert bridge.calls[0] == (bridge_method, arguments, keywords)
 
 
@@ -775,6 +837,7 @@ def test_facade_preserves_backend_exception_identity(
         pytest.param("non_existent_file.wav", "Path does not exist", id="missing"),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_real_facade_rejects_invalid_audio_path_before_provider_dispatch(
     audio_path: str,
     cause_text: str,
@@ -813,6 +876,7 @@ def test_real_facade_rejects_invalid_audio_path_before_provider_dispatch(
     transcribe.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_real_facade_keeps_configured_legacy_provider_and_language(
     tmp_path: Path,
 ) -> None:
@@ -831,6 +895,7 @@ def test_real_facade_keeps_configured_legacy_provider_and_language(
             "tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting",
             side_effect=lambda key, default=None: settings.get(key, default),
         ),
+        patch.object(service_module, "FASTER_WHISPER_AVAILABLE", True),
         patch.object(
             _LegacyTranscriptionBackend,
             "get_available_providers",

@@ -1,0 +1,1162 @@
+{
+  "inventory": {
+    "sha256": "d41c34d9ca32e85911b78021e49332472d60cefb8f297fb7dbe7b235cf909df5",
+    "count": 30,
+    "locators": [
+      {
+        "table": "canvas_revisions",
+        "column": "origin_message_id"
+      },
+      {
+        "table": "console_dispatch_checkpoints",
+        "column": "assistant_message_id"
+      },
+      {
+        "table": "console_dispatch_checkpoints",
+        "column": "user_message_id"
+      },
+      {
+        "table": "console_hook_continuation_receipts",
+        "column": "assistant_message_id"
+      },
+      {
+        "table": "console_hook_continuation_receipts",
+        "column": "parent_assistant_message_id"
+      },
+      {
+        "table": "console_machine_followup_receipts",
+        "column": "assistant_message_id"
+      },
+      {
+        "table": "console_machine_followup_receipts",
+        "column": "parent_assistant_message_id"
+      },
+      {
+        "table": "console_prompt_mixin_attempts",
+        "column": "assistant_message_id"
+      },
+      {
+        "table": "console_prompt_mixin_attempts",
+        "column": "user_message_id"
+      },
+      {
+        "table": "console_response_rule_assessments",
+        "column": "message_id"
+      },
+      {
+        "table": "console_response_rule_drafts",
+        "column": "message_id"
+      },
+      {
+        "table": "console_response_rule_fixtures",
+        "column": "message_id"
+      },
+      {
+        "table": "console_response_rule_validations",
+        "column": "message_id"
+      },
+      {
+        "table": "console_trace_events",
+        "column": "semantic_revision_id"
+      },
+      {
+        "table": "console_trace_redaction_spans",
+        "column": "semantic_revision_id"
+      },
+      {
+        "table": "console_trace_response_links",
+        "column": "semantic_revision_id"
+      },
+      {
+        "table": "console_trace_revision_bindings",
+        "column": "revision_id"
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "live_message_id"
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "predecessor_revision_id"
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "revision_id"
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "source_message_id"
+      },
+      {
+        "table": "console_trace_surface_nodes",
+        "column": "semantic_revision_id"
+      },
+      {
+        "table": "fleet_progress_messages",
+        "column": "message_id"
+      },
+      {
+        "table": "message_attachments",
+        "column": "message_id"
+      },
+      {
+        "table": "message_exchanges",
+        "column": "message_id"
+      },
+      {
+        "table": "message_generation_metadata",
+        "column": "message_id"
+      },
+      {
+        "table": "message_trajectory_metadata",
+        "column": "message_id"
+      },
+      {
+        "table": "rag_citation_traces",
+        "column": "legacy_message_id"
+      },
+      {
+        "table": "rag_message_trace_owners",
+        "column": "message_id"
+      },
+      {
+        "table": "transcript_annotations",
+        "column": "message_id"
+      }
+    ]
+  },
+  "query_plans": {
+    "baseline": [
+      {
+        "table": "canvas_revisions",
+        "column": "origin_message_id",
+        "details": [
+          "SEARCH canvas_revisions USING COVERING INDEX idx_canvas_revisions_origin_message (origin_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_dispatch_checkpoints",
+        "column": "assistant_message_id",
+        "details": [
+          "SEARCH console_dispatch_checkpoints USING COVERING INDEX sqlite_autoindex_console_dispatch_checkpoints_1 (assistant_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_dispatch_checkpoints",
+        "column": "user_message_id",
+        "details": [
+          "SEARCH console_dispatch_checkpoints USING COVERING INDEX idx_console_dispatch_checkpoints_user_message (user_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_hook_continuation_receipts",
+        "column": "assistant_message_id",
+        "details": [
+          "SCAN console_hook_continuation_receipts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_hook_continuation_receipts",
+        "column": "parent_assistant_message_id",
+        "details": [
+          "SCAN console_hook_continuation_receipts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_machine_followup_receipts",
+        "column": "assistant_message_id",
+        "details": [
+          "SCAN console_machine_followup_receipts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_machine_followup_receipts",
+        "column": "parent_assistant_message_id",
+        "details": [
+          "SCAN console_machine_followup_receipts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_prompt_mixin_attempts",
+        "column": "assistant_message_id",
+        "details": [
+          "SEARCH console_prompt_mixin_attempts USING COVERING INDEX idx_console_mixin_attempt_assistant (assistant_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_prompt_mixin_attempts",
+        "column": "user_message_id",
+        "details": [
+          "SEARCH console_prompt_mixin_attempts USING COVERING INDEX idx_console_mixin_attempt_user (user_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_response_rule_assessments",
+        "column": "message_id",
+        "details": [
+          "SEARCH console_response_rule_assessments USING COVERING INDEX idx_response_rule_assessments_source (ANY(conversation_id) AND message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_response_rule_drafts",
+        "column": "message_id",
+        "details": [
+          "SCAN console_response_rule_drafts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_response_rule_fixtures",
+        "column": "message_id",
+        "details": [
+          "SCAN console_response_rule_fixtures"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_response_rule_validations",
+        "column": "message_id",
+        "details": [
+          "SCAN console_response_rule_validations"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_trace_events",
+        "column": "semantic_revision_id",
+        "details": [
+          "SEARCH console_trace_events USING COVERING INDEX idx_console_trace_events_semantic_revision_exact (semantic_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_redaction_spans",
+        "column": "semantic_revision_id",
+        "details": [
+          "SEARCH console_trace_redaction_spans USING COVERING INDEX idx_console_trace_redaction_spans_semantic_revision_exact (semantic_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_response_links",
+        "column": "semantic_revision_id",
+        "details": [
+          "SEARCH console_trace_response_links USING COVERING INDEX idx_console_trace_response_links_semantic_revision_exact (semantic_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_revision_bindings",
+        "column": "revision_id",
+        "details": [
+          "SEARCH console_trace_revision_bindings USING COVERING INDEX sqlite_autoindex_console_trace_revision_bindings_1 (revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "live_message_id",
+        "details": [
+          "SEARCH console_trace_semantic_revisions USING COVERING INDEX uq_console_trace_semantic_revisions_live_message (live_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "predecessor_revision_id",
+        "details": [
+          "SEARCH console_trace_semantic_revisions USING COVERING INDEX idx_console_trace_semantic_revisions_predecessor_exact (predecessor_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "revision_id",
+        "details": [
+          "SEARCH console_trace_semantic_revisions USING COVERING INDEX sqlite_autoindex_console_trace_semantic_revisions_1 (revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "source_message_id",
+        "details": [
+          "SEARCH console_trace_semantic_revisions USING COVERING INDEX idx_console_trace_semantic_revisions_source_message_exact (source_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_surface_nodes",
+        "column": "semantic_revision_id",
+        "details": [
+          "SEARCH console_trace_surface_nodes USING COVERING INDEX idx_console_trace_surface_nodes_semantic_revision_exact (semantic_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "fleet_progress_messages",
+        "column": "message_id",
+        "details": [
+          "SEARCH fleet_progress_messages USING COVERING INDEX sqlite_autoindex_fleet_progress_messages_1 (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "message_attachments",
+        "column": "message_id",
+        "details": [
+          "SEARCH message_attachments USING COVERING INDEX idx_message_attachments_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "message_exchanges",
+        "column": "message_id",
+        "details": [
+          "SEARCH message_exchanges USING COVERING INDEX idx_message_exchanges_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "message_generation_metadata",
+        "column": "message_id",
+        "details": [
+          "SEARCH message_generation_metadata USING COVERING INDEX idx_message_generation_metadata_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "message_trajectory_metadata",
+        "column": "message_id",
+        "details": [
+          "SEARCH message_trajectory_metadata USING COVERING INDEX idx_message_trajectory_metadata_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "rag_citation_traces",
+        "column": "legacy_message_id",
+        "details": [
+          "SEARCH rag_citation_traces USING COVERING INDEX idx_rag_citation_traces_legacy_message (legacy_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "rag_message_trace_owners",
+        "column": "message_id",
+        "details": [
+          "SEARCH rag_message_trace_owners USING COVERING INDEX idx_rag_message_trace_owners_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "transcript_annotations",
+        "column": "message_id",
+        "details": [
+          "SEARCH transcript_annotations USING COVERING INDEX idx_transcript_annotations_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      }
+    ],
+    "large": [
+      {
+        "table": "canvas_revisions",
+        "column": "origin_message_id",
+        "details": [
+          "SEARCH canvas_revisions USING COVERING INDEX idx_canvas_revisions_origin_message (origin_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_dispatch_checkpoints",
+        "column": "assistant_message_id",
+        "details": [
+          "SEARCH console_dispatch_checkpoints USING COVERING INDEX sqlite_autoindex_console_dispatch_checkpoints_1 (assistant_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_dispatch_checkpoints",
+        "column": "user_message_id",
+        "details": [
+          "SEARCH console_dispatch_checkpoints USING COVERING INDEX idx_console_dispatch_checkpoints_user_message (user_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_hook_continuation_receipts",
+        "column": "assistant_message_id",
+        "details": [
+          "SCAN console_hook_continuation_receipts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_hook_continuation_receipts",
+        "column": "parent_assistant_message_id",
+        "details": [
+          "SCAN console_hook_continuation_receipts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_machine_followup_receipts",
+        "column": "assistant_message_id",
+        "details": [
+          "SCAN console_machine_followup_receipts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_machine_followup_receipts",
+        "column": "parent_assistant_message_id",
+        "details": [
+          "SCAN console_machine_followup_receipts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_prompt_mixin_attempts",
+        "column": "assistant_message_id",
+        "details": [
+          "SEARCH console_prompt_mixin_attempts USING COVERING INDEX idx_console_mixin_attempt_assistant (assistant_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_prompt_mixin_attempts",
+        "column": "user_message_id",
+        "details": [
+          "SEARCH console_prompt_mixin_attempts USING COVERING INDEX idx_console_mixin_attempt_user (user_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_response_rule_assessments",
+        "column": "message_id",
+        "details": [
+          "SEARCH console_response_rule_assessments USING COVERING INDEX idx_response_rule_assessments_source (ANY(conversation_id) AND message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_response_rule_drafts",
+        "column": "message_id",
+        "details": [
+          "SCAN console_response_rule_drafts"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_response_rule_fixtures",
+        "column": "message_id",
+        "details": [
+          "SCAN console_response_rule_fixtures"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_response_rule_validations",
+        "column": "message_id",
+        "details": [
+          "SCAN console_response_rule_validations"
+        ],
+        "uses_search": false,
+        "uses_scan": true
+      },
+      {
+        "table": "console_trace_events",
+        "column": "semantic_revision_id",
+        "details": [
+          "SEARCH console_trace_events USING COVERING INDEX idx_console_trace_events_semantic_revision_exact (semantic_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_redaction_spans",
+        "column": "semantic_revision_id",
+        "details": [
+          "SEARCH console_trace_redaction_spans USING COVERING INDEX idx_console_trace_redaction_spans_semantic_revision_exact (semantic_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_response_links",
+        "column": "semantic_revision_id",
+        "details": [
+          "SEARCH console_trace_response_links USING COVERING INDEX idx_console_trace_response_links_semantic_revision_exact (semantic_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_revision_bindings",
+        "column": "revision_id",
+        "details": [
+          "SEARCH console_trace_revision_bindings USING COVERING INDEX sqlite_autoindex_console_trace_revision_bindings_1 (revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "live_message_id",
+        "details": [
+          "SEARCH console_trace_semantic_revisions USING COVERING INDEX uq_console_trace_semantic_revisions_live_message (live_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "predecessor_revision_id",
+        "details": [
+          "SEARCH console_trace_semantic_revisions USING COVERING INDEX idx_console_trace_semantic_revisions_predecessor_exact (predecessor_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "revision_id",
+        "details": [
+          "SEARCH console_trace_semantic_revisions USING COVERING INDEX sqlite_autoindex_console_trace_semantic_revisions_1 (revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_semantic_revisions",
+        "column": "source_message_id",
+        "details": [
+          "SEARCH console_trace_semantic_revisions USING COVERING INDEX idx_console_trace_semantic_revisions_source_message_exact (source_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "console_trace_surface_nodes",
+        "column": "semantic_revision_id",
+        "details": [
+          "SEARCH console_trace_surface_nodes USING COVERING INDEX idx_console_trace_surface_nodes_semantic_revision_exact (semantic_revision_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "fleet_progress_messages",
+        "column": "message_id",
+        "details": [
+          "SEARCH fleet_progress_messages USING COVERING INDEX sqlite_autoindex_fleet_progress_messages_1 (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "message_attachments",
+        "column": "message_id",
+        "details": [
+          "SEARCH message_attachments USING COVERING INDEX idx_message_attachments_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "message_exchanges",
+        "column": "message_id",
+        "details": [
+          "SEARCH message_exchanges USING COVERING INDEX idx_message_exchanges_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "message_generation_metadata",
+        "column": "message_id",
+        "details": [
+          "SEARCH message_generation_metadata USING COVERING INDEX idx_message_generation_metadata_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "message_trajectory_metadata",
+        "column": "message_id",
+        "details": [
+          "SEARCH message_trajectory_metadata USING COVERING INDEX idx_message_trajectory_metadata_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "rag_citation_traces",
+        "column": "legacy_message_id",
+        "details": [
+          "SEARCH rag_citation_traces USING COVERING INDEX idx_rag_citation_traces_legacy_message (legacy_message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "rag_message_trace_owners",
+        "column": "message_id",
+        "details": [
+          "SEARCH rag_message_trace_owners USING COVERING INDEX idx_rag_message_trace_owners_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      },
+      {
+        "table": "transcript_annotations",
+        "column": "message_id",
+        "details": [
+          "SEARCH transcript_annotations USING COVERING INDEX idx_transcript_annotations_message (message_id=?)"
+        ],
+        "uses_search": true,
+        "uses_scan": false
+      }
+    ]
+  },
+  "scan_count": 14,
+  "row_counts": {
+    "baseline": 1000,
+    "large": 100000
+  },
+  "physical_forbidden_rows": {
+    "baseline": 842,
+    "large": 84200
+  },
+  "distribution": [
+    {
+      "table": "canvas_revisions",
+      "column": "origin_message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_dispatch_checkpoints",
+      "column": "assistant_message_id",
+      "baseline_rows": 44,
+      "large_rows": 4400
+    },
+    {
+      "table": "console_dispatch_checkpoints",
+      "column": "user_message_id",
+      "baseline_rows": 44,
+      "large_rows": 4400
+    },
+    {
+      "table": "console_hook_continuation_receipts",
+      "column": "assistant_message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_hook_continuation_receipts",
+      "column": "parent_assistant_message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_machine_followup_receipts",
+      "column": "assistant_message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_machine_followup_receipts",
+      "column": "parent_assistant_message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_prompt_mixin_attempts",
+      "column": "assistant_message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_prompt_mixin_attempts",
+      "column": "user_message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_response_rule_assessments",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_response_rule_drafts",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_response_rule_fixtures",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_response_rule_validations",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_trace_events",
+      "column": "semantic_revision_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_trace_redaction_spans",
+      "column": "semantic_revision_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_trace_response_links",
+      "column": "semantic_revision_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_trace_revision_bindings",
+      "column": "revision_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "console_trace_surface_nodes",
+      "column": "semantic_revision_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "fleet_progress_messages",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "message_attachments",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "message_exchanges",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "message_generation_metadata",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "message_trajectory_metadata",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "rag_citation_traces",
+      "column": "legacy_message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "rag_message_trace_owners",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    },
+    {
+      "table": "transcript_annotations",
+      "column": "message_id",
+      "baseline_rows": 38,
+      "large_rows": 3800
+    }
+  ],
+  "distribution_sha256": "9e5586954ed807c9e96861e227397d4d02866a4e7d03330b5e215f6065d37475",
+  "warmup_count": 10,
+  "trial_count": 40,
+  "measurement_order": "ABBA",
+  "sqlite": {
+    "version": "3.49.1",
+    "pragmas_match": true,
+    "baseline_pragmas": {
+      "journal_mode": "wal",
+      "synchronous": 1,
+      "foreign_keys": 1,
+      "busy_timeout": 15000,
+      "cache_size": -2000,
+      "temp_store": 0,
+      "page_size": 4096,
+      "auto_vacuum": 0
+    },
+    "large_pragmas": {
+      "journal_mode": "wal",
+      "synchronous": 1,
+      "foreign_keys": 1,
+      "busy_timeout": 15000,
+      "cache_size": -2000,
+      "temp_store": 0,
+      "page_size": 4096,
+      "auto_vacuum": 0
+    }
+  },
+  "fresh_commit": {
+    "baseline": {
+      "samples_ms": [
+        2.813083,
+        2.492292,
+        3.184334,
+        2.878333,
+        2.671334,
+        2.544792,
+        2.818875,
+        2.589,
+        2.493792,
+        2.789083,
+        2.777458,
+        2.636167,
+        2.944958,
+        2.627667,
+        2.993917,
+        2.7195,
+        6.574083,
+        2.625375,
+        2.932584,
+        2.821959,
+        3.498959,
+        2.763834,
+        2.786792,
+        2.650375,
+        2.823833,
+        2.804542,
+        2.798708,
+        3.453167,
+        2.746292,
+        2.858292,
+        3.186375,
+        2.550667,
+        2.543875,
+        2.82275,
+        2.737583,
+        2.610667,
+        2.689042,
+        2.816625,
+        2.907416,
+        2.952
+      ],
+      "median_ms": 2.793896,
+      "p95_ms": 3.453167
+    },
+    "large": {
+      "samples_ms": [
+        6.967542,
+        6.893583,
+        7.044,
+        7.112917,
+        6.85,
+        6.839875,
+        7.139708,
+        6.656792,
+        6.847917,
+        6.8495,
+        6.933667,
+        6.796792,
+        7.211416,
+        7.212083,
+        6.91275,
+        7.210791,
+        9.230166,
+        6.468916,
+        6.962125,
+        6.85025,
+        7.118791,
+        7.178167,
+        6.971417,
+        6.910834,
+        6.890916,
+        6.513292,
+        7.12875,
+        6.644583,
+        7.282292,
+        6.590125,
+        7.428584,
+        6.52875,
+        7.13825,
+        7.079583,
+        6.987833,
+        6.538542,
+        6.877,
+        7.147125,
+        7.251125,
+        7.208625
+      ],
+      "median_ms": 6.964834,
+      "p95_ms": 7.282292
+    },
+    "paired_delta": {
+      "samples_ms": [
+        4.154459,
+        4.401291,
+        3.859666,
+        4.234584,
+        4.178666,
+        4.295083,
+        4.320833,
+        4.067792,
+        4.354125,
+        4.060417,
+        4.156209,
+        4.160625,
+        4.266458,
+        4.584416,
+        3.918833,
+        4.491291,
+        2.656083,
+        3.843541,
+        4.029541,
+        4.028291,
+        3.619832,
+        4.414333,
+        4.184625,
+        4.260459,
+        4.067083,
+        3.70875,
+        4.330042,
+        3.191416,
+        4.536,
+        3.731833,
+        4.242209,
+        3.978083,
+        4.594375,
+        4.256833,
+        4.25025,
+        3.927875,
+        4.187958,
+        4.3305,
+        4.343709,
+        4.256625
+      ],
+      "median_ms": 4.186291,
+      "p95_ms": 4.536
+    },
+    "thresholds": {
+      "large_p95_ms": 100.0,
+      "median_paired_delta_ms": 2.0,
+      "p95_paired_delta_ms": 10.0
+    },
+    "passed": false
+  },
+  "uncertain_retry": {
+    "baseline": {
+      "samples_ms": [
+        0.567541,
+        0.520625,
+        0.551375,
+        0.510166,
+        0.535166,
+        0.56325,
+        0.55675,
+        0.52325,
+        0.539917,
+        0.528625,
+        0.568625,
+        0.5105,
+        0.598417,
+        0.536375,
+        0.532958,
+        0.530833,
+        0.5485,
+        0.545625,
+        0.587208,
+        0.574291,
+        0.587875,
+        0.556375,
+        0.619375,
+        0.569083,
+        0.54425,
+        0.543833,
+        0.568833,
+        0.597958,
+        0.571958,
+        0.602125,
+        0.603375,
+        0.536417,
+        0.623208,
+        0.52725,
+        0.567792,
+        0.658042,
+        0.538375,
+        0.53925,
+        0.573875,
+        0.536583
+      ],
+      "median_ms": 0.553875,
+      "p95_ms": 0.619375
+    },
+    "large": {
+      "samples_ms": [
+        4.759334,
+        4.590958,
+        4.607834,
+        4.766291,
+        4.618042,
+        4.907458,
+        4.702,
+        4.794084,
+        4.73,
+        4.849958,
+        4.697041,
+        4.720125,
+        4.815167,
+        4.818125,
+        4.611209,
+        4.722083,
+        4.753208,
+        4.414417,
+        4.672417,
+        4.426542,
+        4.542292,
+        4.612042,
+        4.752917,
+        4.712167,
+        4.651959,
+        4.685625,
+        4.713875,
+        4.678,
+        4.654125,
+        4.576084,
+        4.682167,
+        4.708708,
+        4.904333,
+        4.851791,
+        4.686708,
+        4.667125,
+        4.580083,
+        4.733,
+        4.80775,
+        4.658542
+      ],
+      "median_ms": 4.699521,
+      "p95_ms": 4.851791
+    },
+    "paired_delta": {
+      "samples_ms": [
+        4.191793,
+        4.070333,
+        4.056459,
+        4.256125,
+        4.082876,
+        4.344208,
+        4.14525,
+        4.270834,
+        4.190083,
+        4.321333,
+        4.128416,
+        4.209625,
+        4.21675,
+        4.28175,
+        4.078251,
+        4.19125,
+        4.204708,
+        3.868792,
+        4.085209,
+        3.852251,
+        3.954417,
+        4.055667,
+        4.133542,
+        4.143084,
+        4.107709,
+        4.141792,
+        4.145042,
+        4.080042,
+        4.082167,
+        3.973959,
+        4.078792,
+        4.172291,
+        4.281125,
+        4.324541,
+        4.118916,
+        4.009083,
+        4.041708,
+        4.19375,
+        4.233875,
+        4.121959
+      ],
+      "median_ms": 4.137667,
+      "p95_ms": 4.321333
+    },
+    "thresholds": {
+      "large_p95_ms": 100.0,
+      "median_paired_delta_ms": 2.0,
+      "p95_paired_delta_ms": 10.0
+    },
+    "passed": false
+  },
+  "passed": false
+}

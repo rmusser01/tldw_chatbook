@@ -1,0 +1,53 @@
+from pathlib import Path
+p=Path('tldw_chatbook/DB/automatic_work.py');s=p.read_text();a=s.index('    def _restriction_database(self) -> str:');b=s.index('    def _clear_chat_start_restriction',a)
+s=s[:a]+'''        # Establish the existing canonical key before this ledger can authorize
+        # work. Cleanup must never need a fresh filesystem observation.
+        if not db.is_memory_db:
+            self._restriction_database_id = str(db.db_path.resolve())
+        else:
+            # Independent memory stores retain private UUIDs; ledgers for the
+            # same store share the identity even if the property is rebuilt.
+            with _UNCONFIRMED_STARTS_LOCK:
+                identity = getattr(db, "_automatic_work_restriction_id", None)
+                if identity is None:
+                    identity = "memory:" + uuid4().hex
+                    db._automatic_work_restriction_id = identity
+                self._restriction_database_id = identity
+
+    def _restriction_database(self) -> str:
+        return self._restriction_database_id
+
+    def _restrict_chat_start(
+        self, attempt_id: str, *, owner_id: str, chain_id: str | None
+    ) -> None:
+        """Retain uncertain authority before settlement I/O, without reading DB."""
+        self._retain_chat_start_restriction(
+            attempt_id, owner_id=owner_id, chain_id=chain_id
+        )
+
+    def _retain_chat_start_restriction(
+        self, attempt_id: str, *, owner_id: str, chain_id: str | None
+    ) -> None:
+        """Insert denial using only captured identity and the existing registry."""
+        with _UNCONFIRMED_STARTS_LOCK:
+            _UNCONFIRMED_STARTS[
+                (self._restriction_database_id, owner_id, attempt_id)
+            ] = (chain_id, object())
+
+'''+s[b:];p.write_text(s)
+p=Path('tldw_chatbook/Chat/console_chat_start.py');s=p.read_text();a=s.index('    def _restrict_cleanup(');b=s.index('    async def _run(',a);body=s[a:b];needle='''                type(exc).__name__,
+            )
+''';assert body.count(needle)==1;body=body.replace(needle,needle+'''            try:
+                # Ordinary registration may fail repeatedly. Preserve denial
+                # with the same pre-established key, without filesystem or SQL.
+                item.ledger._retain_chat_start_restriction(
+                    item.request.attempt_id,
+                    owner_id=item.runtime_owner_id,
+                    chain_id=item.context.chain_id if item.context is not None else None,
+                )
+            except BaseException as retain_error:
+                logger.warning(
+                    "Chat start failed (phase=restriction_fallback, exception_type={})",
+                    type(retain_error).__name__,
+                )
+''');s=s[:a]+body+s[b:];p.write_text(s)

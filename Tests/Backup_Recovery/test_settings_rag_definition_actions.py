@@ -135,7 +135,7 @@ network_guard.install()
 from tldw_chatbook.Backup_Recovery.rag_definition_participant import participant
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import load_rag_defaults_from_active_profile
 values = load_rag_defaults_from_active_profile()
 def unexpected(*args, **kwargs):
@@ -199,8 +199,8 @@ from tldw_chatbook.Backup_Recovery.rag_definition_participant import participant
 from tldw_chatbook.RAG_Search.config_profiles import get_profile_manager
 from tldw_chatbook.RAG_Search.simplified import active_config as active
 from tldw_chatbook.UI.Screens import settings_screen as module
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens import settings_rag_profile_adapter as adapter
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 

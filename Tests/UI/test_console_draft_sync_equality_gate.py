@@ -128,6 +128,7 @@ class _WorkbenchWriteCounter:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_repeat_keystroke_writes_nothing_into_the_workbench():
     """Typing the second letter of a word must not touch the Workbench.
@@ -155,6 +156,7 @@ async def test_a_repeat_keystroke_writes_nothing_into_the_workbench():
         assert counter.sorts == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_state_changing_keystroke_still_repaints_the_workbench():
     """Control for the test above: the counter can still see a real write.
@@ -181,11 +183,12 @@ async def test_the_state_changing_keystroke_still_repaints_the_workbench():
         assert send_action.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_genuinely_new_workbench_state_still_repaints_every_static():
     """Mutation control for the widget early-outs: not a blanket mute.
 
-    Pushes a state whose header subtitle and every mode label differ, and
+    Pushes a state whose three header fields and every mode label differ, and
     requires the Statics to be rewritten. A `sync_*` that returned early on
     a state it had never seen would pass every "zero writes" assertion above
     and fail here.
@@ -200,7 +203,12 @@ async def test_a_genuinely_new_workbench_state_still_repaints_every_static():
         state = console._build_console_workbench_state(control_state)
         changed = replace(
             state,
-            header=replace(state.header, subtitle="Changed subtitle"),
+            header=replace(
+                state.header,
+                title="Changed title",
+                subtitle="Changed subtitle",
+                status_label="Changed status",
+            ),
             modes=tuple(replace(mode, label=f"{mode.label}!") for mode in state.modes),
         )
 
@@ -209,10 +217,20 @@ async def test_a_genuinely_new_workbench_state_still_repaints_every_static():
                 control_state, workbench_state=changed
             )
 
-        # Three header Statics plus one per mode chip.
-        assert counter.static_updates >= 3 + len(state.modes)
+        assert counter.static_updates == 3 + len(changed.modes)
+        for field, value in (
+            ("title", changed.header.title),
+            ("subtitle", changed.header.subtitle),
+            ("status", changed.header.status_label),
+        ):
+            assert console.query_one(f"#workbench-header-{field}", Static).content == value
+        mode_strip = console.query_one("#console-workbench-mode-strip")
+        assert [chip.content for chip in mode_strip.query(Static)] == [
+            mode.label for mode in changed.modes
+        ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_repeat_keystroke_leaves_the_screen_query_cache_intact():
     """An idle keystroke must not evict the screen-wide `query_one` cache.
@@ -249,6 +267,7 @@ async def test_a_repeat_keystroke_leaves_the_screen_query_cache_intact():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_gated_keystroke_still_refilters_the_command_popup():
     """The slash popup filters on the draft, which moves every keystroke.
@@ -294,6 +313,7 @@ async def test_a_gated_keystroke_still_refilters_the_command_popup():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_draft_edit_keeps_the_control_bar_in_step_with_last_state():
     """Recording `_last_console_*` obliges the recorder to push everything.
@@ -326,6 +346,7 @@ async def test_a_draft_edit_keeps_the_control_bar_in_step_with_last_state():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_draft_sync_derives_the_provider_selection_once():
     """One draft-edit sync used to build the provider selection 7 times."""
@@ -349,6 +370,7 @@ async def test_the_draft_sync_derives_the_provider_selection_once():
         assert len(calls) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_derivation_memo_is_torn_down_even_when_a_leg_raises():
     """A raising leg must not leave a stale selection cached for later."""
@@ -365,6 +387,7 @@ async def test_the_derivation_memo_is_torn_down_even_when_a_leg_raises():
         assert console._console_derivation_memo is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_derivation_memo_is_off_outside_a_scope():
     """Outside a scope every provider lookup is live, exactly as before."""

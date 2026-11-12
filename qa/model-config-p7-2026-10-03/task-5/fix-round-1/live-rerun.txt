@@ -1,0 +1,47 @@
+# Live re-take of the ../README.md procedure at 88e08f2f74, 2026-10-04 06:47-06:59 (findings 1 and 8)
+
+Followed ../README.md step by step from the Task 5 worktree at 88e08f2f74 (git status clean before and
+after), with my own scratch driver (not committed):
+- Two scratch profiles written from the shipped template by seed processes whose HOME/XDG_* pointed at
+  separate scratch dirs; users_name = "verify_p7t5fix1_live" and the README's [first_run],
+  [splash_screen], [model_catalog], [console.onboarding], [chat_defaults] and per-provider values.
+  'grep -c /Users' over each config.toml printed 0.
+- tmux server '-L p7t5fix1live' at 211x44; the app under env -i with HOME, XDG_CONFIG_HOME,
+  XDG_DATA_HOME and TLDW_CONFIG_PATH in the scratch dir, the null keyring, PYTHONPATH=<worktree>,
+  TERM=xterm-256color, COLORTERM=truecolor.
+- Steps 01-06 as listed in the README. For 04: an SGR press/release on the rail's Console Behavior at
+  column 12, row 21, then SGR wheel-down events over the detail pane (column 100, row 25) until the
+  global Streaming row was the first row under the State line.
+
+A first pass without COLORTERM produced the same .txt files but 256-colour .ansi.txt files; it was
+discarded and the profiles re-seeded from scratch for the pass below.
+
+## Captures vs the committed ones (cmp, both the .txt and the .ansi.txt of each)
+- 01-anthropic-connect-through-model-defaults-211x44: .txt identical, .ansi.txt identical
+- 02-anthropic-streaming-select-focused-one-row-211x44: .txt identical, .ansi.txt identical
+- 03-anthropic-sampling-opened-lists-hidden-fields-211x44: .txt identical, .ansi.txt identical
+- 04-console-behavior-fallback-select-rows-one-row-211x44: one line differs in each file, the Max
+  tokens fallback row:
+  -  Max tokens              │ optional whole number
+  +  Max tokens              │ tokens
+  This is the stale capture finding 1 named. The new 04 replaces the committed one.
+- 05-llamacpp-connect-through-model-defaults-211x44: .txt identical, .ansi.txt identical
+- 06-llamacpp-resized-to-235x52: .txt identical, .ansi.txt identical
+
+Whatever changed in the code between the first set and the commit, the re-take at the commit
+differs from the first set on this one line only. So AC#9 (01 and 05: Connect through Model
+defaults without scrolling at 211x44) holds at the commit. Each copy claim in ../README.md was
+then checked against the re-taken .txt files by substring, 29 checks in all, and every one was
+found. The checks covered the titles and the inherits/Source words. They also confirmed that
+Reasoning effort, summary and Verbosity are absent from 01's card, and that Prompt-cache
+snapshots sits above Connect in 05.
+
+## The real profile was not written
+- While each app ran, lsof on its PID listed 0 open files under ~/.config/tldw_cli or
+  ~/.local/share/tldw_cli; its databases were under <scratch>/live/home-<profile>/.local/share/tldw_cli/
+  verify_p7t5fix1_live/.
+- A marker file touched at 06:47 (before the first seed): after the last app quit,
+  'find ~/.config/tldw_cli ~/.local/share/tldw_cli ( -newer marker -o -cnewer marker )' printed 0
+  entries. ~/.config/tldw_cli/config.toml is dated 2026-09-26 07:01.
+- Each app was quit with Ctrl+Q and the tmux server killed; the scratch profiles and data dirs were
+  deleted afterwards.

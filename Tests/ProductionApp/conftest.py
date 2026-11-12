@@ -1,4 +1,12 @@
-"""Collection-time privacy boundary for production-application tests."""
+"""Collection-time privacy boundary for production-application tests.
+
+HOME, the XDG roots and TLDW_CONFIG_PATH are Tests/conftest.py's: it points
+them at its sandbox before anything imports the app. This file used to point
+them somewhere else again at import (TASK-33001.11). An app import after that
+raised RecoveryRequired('raw_source_selection_changed'), so a run that named
+a file here collected nothing, and a private-profile child could not collect
+its own test.
+"""
 
 from __future__ import annotations
 
@@ -11,24 +19,9 @@ import pytest
 
 
 _PRIVATE_TEST_ROOT = Path(tempfile.mkdtemp(prefix="tldw_production_app_")).resolve()
-_PRIVATE_HOME = _PRIVATE_TEST_ROOT / "home"
-_PRIVATE_DATA = _PRIVATE_TEST_ROOT / "data"
-_PRIVATE_CONFIG = _PRIVATE_TEST_ROOT / "config"
 _PRIVATE_TEMP = _PRIVATE_TEST_ROOT / "tmp"
-
-for _directory in (_PRIVATE_HOME, _PRIVATE_DATA, _PRIVATE_CONFIG, _PRIVATE_TEMP):
-    _directory.mkdir(parents=True, mode=0o700)
-
-os.environ.update(
-    {
-        "HOME": str(_PRIVATE_HOME),
-        "USERPROFILE": str(_PRIVATE_HOME),
-        "XDG_DATA_HOME": str(_PRIVATE_DATA),
-        "XDG_CONFIG_HOME": str(_PRIVATE_CONFIG),
-        "TLDW_CONFIG_PATH": str(_PRIVATE_CONFIG / "config.toml"),
-        "TMPDIR": str(_PRIVATE_TEMP),
-    }
-)
+_PRIVATE_TEMP.mkdir(mode=0o700)
+os.environ["TMPDIR"] = str(_PRIVATE_TEMP)
 
 
 @pytest.fixture(autouse=True)

@@ -853,7 +853,7 @@ def test_complete_validation_rejects_actual_frame_count_before_iteration(
     monkeypatch.setattr(
         visual_identity,
         "_image_duration_ms",
-        lambda image, frame_count: (_ for _ in ()).throw(
+        lambda image, frame_count, retention=None: (_ for _ in ()).throw(
             AssertionError("iterated over-limit frames")
         ),
     )
@@ -877,7 +877,7 @@ def test_complete_validation_rejects_actual_decoded_work_before_iteration(
     monkeypatch.setattr(
         visual_identity,
         "_image_duration_ms",
-        lambda image, frame_count: (_ for _ in ()).throw(
+        lambda image, frame_count, retention=None: (_ for _ in ()).throw(
             AssertionError("iterated over decoded-work limit")
         ),
     )
@@ -912,9 +912,11 @@ def test_complete_validation_rechecks_cumulative_actual_decoded_work(
     original_duration = visual_identity._image_duration_ms
     iterations: list[int] = []
 
-    def record_iteration(image: Image.Image, frame_count: int) -> int:
+    def record_iteration(
+        image: Image.Image, frame_count: int, retention=None
+    ) -> int:
         iterations.append(frame_count)
-        return original_duration(image, frame_count)
+        return original_duration(image, frame_count, retention=retention)
 
     monkeypatch.setattr(visual_identity, "_image_duration_ms", record_iteration)
 

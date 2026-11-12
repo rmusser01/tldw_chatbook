@@ -37,8 +37,12 @@ def stub_settings(monkeypatch):
     """Neutralize config so the params assembly is the only variable."""
     from tldw_chatbook.Tools import web_tool_impls
 
-    monkeypatch.setattr(web_tool_impls, "_deep_search_settings", lambda: dict(_LLM_SETTINGS))
-    monkeypatch.setattr(web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": True})
+    monkeypatch.setattr(
+        web_tool_impls, "_deep_search_settings", lambda: dict(_LLM_SETTINGS)
+    )
+    monkeypatch.setattr(
+        web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": True}
+    )
     return _LLM_SETTINGS
 
 
@@ -51,7 +55,9 @@ def test_default_params_stay_spend_bounded(stub_settings):
 
 
 def test_max_queries_above_one_enables_decomposition(stub_settings):
-    params = recorder._build_search_params(5, engine_override="duckduckgo", max_queries=4)
+    params = recorder._build_search_params(
+        5, engine_override="duckduckgo", max_queries=4
+    )
 
     assert params["subquery_generation"] is True
     assert params["search_default_max_queries"] == 4
@@ -60,7 +66,9 @@ def test_max_queries_above_one_enables_decomposition(stub_settings):
 def test_max_queries_of_one_keeps_fan_out_off(stub_settings):
     """1 total query means zero sub-queries -- generating them would be spend
     with nowhere to go, so the flag must not half-enable the feature."""
-    params = recorder._build_search_params(5, engine_override="duckduckgo", max_queries=1)
+    params = recorder._build_search_params(
+        5, engine_override="duckduckgo", max_queries=1
+    )
 
     assert params["subquery_generation"] is False
     assert params["search_default_max_queries"] == 1
@@ -76,7 +84,9 @@ def test_default_leaves_the_configured_deadline_untouched(stub_settings):
 def test_deadline_override_reaches_both_budget_keys(stub_settings):
     """A deadline calibrated for one-query runs would truncate a fan-out run
     mid-gate, measuring the deadline instead of the gate."""
-    params = recorder._build_search_params(5, engine_override="duckduckgo", deadline_s=1800)
+    params = recorder._build_search_params(
+        5, engine_override="duckduckgo", deadline_s=1800
+    )
 
     assert params["deep_search_timeout_s"] == 1800
     assert params["phase1_time_budget_s"] == 1800
@@ -91,7 +101,11 @@ class _FakeService:
         return {"id": "run-1"}
 
     def get_artifact(self, _run_id, _name):
-        return {"content": {"citation_verification": {"markers_total": 1, "markers_resolved": 1}}}
+        return {
+            "content": {
+                "citation_verification": {"markers_total": 1, "markers_resolved": 1}
+            }
+        }
 
 
 class _FakeEngine:

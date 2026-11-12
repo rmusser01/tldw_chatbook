@@ -25,6 +25,7 @@ from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
 
 
 @pytest.mark.parametrize("lose_proof", [False, True], ids=["send", "refusal"])
+@pytest.mark.bootstrap_profile
 async def test_first_trace_factory_failure_has_actionable_uncaptured_recovery(
     monkeypatch,
     tmp_path,
@@ -92,7 +93,19 @@ async def test_first_trace_factory_failure_has_actionable_uncaptured_recovery(
             await console._sync_native_console_chat_ui()
             await pilot.pause()
             card = console.query_one(TraceCallRecoveryCallout)
-            assert card.display
+            # A requested sync can coalesce behind an existing UI worker.
+            # Await its publication under the existing ten-second action bound.
+            async def recovery_visible():
+                while not card.display:
+                    await pilot.pause(0.1)
+
+            await asyncio.wait_for(recovery_visible(), 10)
+            assert card.display, (
+                controller.run_state,
+                controller.trace_call_recovery_preparation(),
+                controller.store.active_session_id,
+                session.id,
+            )
             assert adapter_calls == []
             assert len(factory_attempts) == 1
             preparation = controller.trace_call_recovery_preparation()
@@ -133,8 +146,16 @@ async def test_first_trace_factory_failure_has_actionable_uncaptured_recovery(
                     (ConsoleMessageRole.ASSISTANT, "Recovered reply"),
                 ]
                 assert len(factory_attempts) == 1, "Capture Off must not retry capture"
+            # Completion precedes the timer's next normal self-stop tick.
+            async def polling_retired():
+                while console._console_transcript_sync_timer is not None:
+                    await pilot.pause(0.1)
+
+            await asyncio.wait_for(polling_retired(), 10)
             assert console._console_transcript_sync_timer is None
     finally:
         if console is not None:
-            await console._console_runtime().dispose()
+            from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
+
+            await dispose_console_runtime(app)
         database.close()

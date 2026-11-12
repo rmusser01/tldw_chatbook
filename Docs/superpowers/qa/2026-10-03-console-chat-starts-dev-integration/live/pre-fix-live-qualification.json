@@ -1,0 +1,67 @@
+{
+  "qualified_sha": "78ff106faca1626faf74bb86029764475568df92",
+  "cases": [
+    {
+      "case": "DEV_WS_DRAFT",
+      "result": "saved pending draft, no messages/checkpoints/start attempts",
+      "conversation_id": "cc985d98-ead5-487a-a37e-8b64fdfb8f12"
+    },
+    {
+      "case": "DEV_CASUAL_DRAFT",
+      "result": "saved pending draft, no messages/checkpoints/start attempts",
+      "conversation_id": "8233f009-361e-4632-80ea-8fddba05844a"
+    },
+    {
+      "case": "DEV_WS_START",
+      "result": "one completed native turn with machine provenance and original allowance root",
+      "conversation_id": "e20d6ed4-7574-4830-9da7-eb35b3bbdfcc",
+      "attempt_id": "6f4cf35e-768e-44ac-9da6-d615c2c4b158",
+      "source_chain_id": "6a015577bc974f788724b24d2033ff47",
+      "target_chain_id": "685650cc6e24411baddb0944a1b999c1"
+    },
+    {
+      "case": "DEV_CASUAL_START",
+      "result": "one completed native turn with machine provenance and original allowance root",
+      "conversation_id": "4124c0e6-4c16-42e5-ace4-049040924163",
+      "attempt_id": "0569b669-58f0-4645-98f7-4f3d6a8f1b2f",
+      "source_chain_id": "16cc17f3dac84386bd792616ec5d82da",
+      "target_chain_id": "995e878bc2d24590a1a772c99ccd920c"
+    }
+  ],
+  "additional_cases": [
+    "pending edit/clear revision persisted and UI reopen",
+    "automatic-disabled refusal draft, no attempt/provider send",
+    "enabled restart/reopen no automatic replay",
+    "explicit manual Send normal provenance and completed provider reply"
+  ],
+  "clean_boots": [
+    {
+      "boot": "boot1",
+      "sha": "78ff106faca1626faf74bb86029764475568df92",
+      "app_pid": 11791,
+      "returncode": 0,
+      "pid_absent": true
+    },
+    {
+      "boot": "boot2",
+      "sha": "78ff106faca1626faf74bb86029764475568df92",
+      "app_pid": 96377,
+      "returncode": 0,
+      "pid_absent": true
+    },
+    {
+      "boot": "boot3",
+      "sha": "78ff106faca1626faf74bb86029764475568df92",
+      "app_pid": 6210,
+      "returncode": 0,
+      "pid_absent": true
+    }
+  ],
+  "real_config_unchanged": true,
+  "limits": [
+    "Pre-fix live source, final repairs need scoped qualification.",
+    "Automated mounted controls, not PTY observations, qualify held preparation/physical drain.",
+    "First casual request staging opened Trace due missing composer focus and dispatched no case. Preserved failed automation captures.",
+    "Workspace tree first click selected a row without activating; Enter subsequently opened the intended saved draft."
+  ]
+}

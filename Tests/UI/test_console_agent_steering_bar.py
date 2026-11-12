@@ -27,6 +27,7 @@ import time
 import pytest
 from textual.widgets import Input, Static
 
+from Tests.UI.test_console_fleet_history_navigation import _until_painted
 from Tests.UI.test_console_fleet_panel import (
     _real_fleet_recovery_database,
     _SECTION_ID,
@@ -64,6 +65,7 @@ _NOTE = "#console-agent-steering-note"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("retain", [True, False])
+@pytest.mark.bootstrap_profile
 async def test_terminal_unread_steering_paints_recovery_state(retain):
     coordinator, handle_id = _fleet_with_live_child()
     coordinator.set_retention_caps(5 if retain else 0, 200000)
@@ -96,6 +98,7 @@ async def test_terminal_unread_steering_paints_recovery_state(retain):
         assert expected in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_full_queue_refusal_keeps_draft_and_explains_the_failure():
     coordinator, handle_id = _fleet_with_live_child()
@@ -110,7 +113,7 @@ async def test_full_queue_refusal_keeps_draft_and_explains_the_failure():
         field.value = "keep this draft"
         field.focus()
         await pilot.press("enter")
-        await pilot.pause()
+        await _until_painted(pilot, host, console, _NOTE, scroll=False)
         assert field.value == "keep this draft"
         note = console.query_one(_NOTE, Static)
         _assert_painted_at_own_region(host, note)
@@ -122,8 +125,7 @@ async def test_full_queue_refusal_keeps_draft_and_explains_the_failure():
                 ]
             ).split()
         )
-        assert "queue is full" in painted
-        assert "Your draft was kept." in painted
+        assert "Queue is full or agent unavailable. Draft kept." in painted
 
 
 class _SteeringFleetBridge:
@@ -142,7 +144,6 @@ class _SteeringFleetBridge:
         if conversation_id != self._conversation_id:
             return []
         return self.coordinator.snapshot()
-
 
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         if conversation_id != self._conversation_id:
@@ -205,6 +206,7 @@ async def _drill_out(pilot, console) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_steering_input_paints_in_a_live_childs_drill_in():
     """Drilled into a RUNNING child, the input is genuinely painted at its
     own region — not merely present in the DOM."""
@@ -224,6 +226,7 @@ async def test_steering_input_paints_in_a_live_childs_drill_in():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_steering_input_does_not_paint_for_a_finished_childs_drill_in():
     """A finished child takes no more model turns — drilling into it must
     never offer a steering input (spec section 1: the panel watches/steers,
@@ -247,6 +250,7 @@ async def test_steering_input_does_not_paint_for_a_finished_childs_drill_in():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_steering_input_does_not_paint_in_the_overview():
     """Not drilled in at all: even with a LIVE child on the fleet list,
     the overview offers no steering input (the input belongs to one
@@ -267,6 +271,7 @@ async def test_steering_input_does_not_paint_in_the_overview():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_submitting_steering_lands_an_exact_user_labeled_mailbox_entry():
     """A REAL Enter keypress in the input reaches the REAL
     ``steer_subagent`` and the REAL coordinator mailbox — which must hold
@@ -298,6 +303,7 @@ async def test_submitting_steering_lands_an_exact_user_labeled_mailbox_entry():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_draft_typed_for_one_child_never_reaches_another():
     """Qodo audit S3 (PR 1793): the draft belongs to the child it was
     typed for.
@@ -353,6 +359,7 @@ async def test_a_draft_typed_for_one_child_never_reaches_another():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_draft_survives_a_routine_sync_tick_for_the_same_target():
     """The other direction, pinned: a sync for the SAME target (a queued-
     count change, an elapsed-time repaint) must NOT eat a draft the user
@@ -388,6 +395,7 @@ async def test_a_draft_survives_a_routine_sync_tick_for_the_same_target():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_queued_count_paints_on_the_fleet_row_and_clears_after_a_drain():
     """Spec section 6 latency honesty on the OVERVIEW: a row with queued
     steering says so (`· steering queued (N)`), painted; after the child
@@ -428,6 +436,7 @@ async def test_queued_count_paints_on_the_fleet_row_and_clears_after_a_drain():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_queued_count_line_paints_in_the_drill_in_and_clears_after_a_drain():
     """The bar's own queued line: painted with the honest count while
     entries wait, gone once the child drained them."""
@@ -457,6 +466,7 @@ async def test_queued_count_line_paints_in_the_drill_in_and_clears_after_a_drain
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_empty_input_submit_is_inert():
     """Whitespace-only submit: nothing reaches the bridge, nothing is
     queued, and no refusal copy appears (in particular never an unknown-id
@@ -486,6 +496,7 @@ async def test_empty_input_submit_is_inert():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_submit_with_an_empty_target_never_posts_a_message_at_all():
     """The WIDGET's empty-target guard itself: a bar whose state carries
     no target (a race the sync can produce) swallows the submit — no
@@ -509,9 +520,7 @@ async def test_submit_with_an_empty_target_never_posts_a_message_at_all():
         await _scroll_into_view(pilot, console, _BAR)
 
         bar = console.query_one(_BAR, ConsoleAgentSteeringBar)
-        bar.sync_state(
-            ConsoleAgentSteeringState(visible=True, target_id="", queued=0)
-        )
+        bar.sync_state(ConsoleAgentSteeringState(visible=True, target_id="", queued=0))
         await pilot.pause()
 
         posted: list[object] = []
@@ -540,6 +549,7 @@ async def test_submit_with_an_empty_target_never_posts_a_message_at_all():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_oversize_submit_refused_with_own_painted_copy():
     """One char over ``MAX_STEERING_CHARS``: refused at the input with the
     bar's OWN copy (painted), nothing posted anywhere, and the draft kept
@@ -570,9 +580,7 @@ async def test_oversize_submit_refused_with_own_painted_copy():
         text = str(note.renderable)
         assert "too long" in text and str(MAX_STEERING_CHARS) in text
         # The draft is kept for shortening, not discarded.
-        assert console.query_one(_INPUT, Input).value == "x" * (
-            MAX_STEERING_CHARS + 1
-        )
+        assert console.query_one(_INPUT, Input).value == "x" * (MAX_STEERING_CHARS + 1)
 
 
 class _RefusingBridge(_SteeringFleetBridge):
@@ -585,6 +593,7 @@ class _RefusingBridge(_SteeringFleetBridge):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_refused_submit_keeps_the_draft_in_the_input():
     """Qodo audit minor batch: the input cleared at POST time, so a submit
     the bridge then refused (unknown/terminal target, dead coordinator)
@@ -651,6 +660,7 @@ def test_a_terminal_rows_secondary_drops_the_steering_queued_segment():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_at_cap_submit_is_accepted():
     """Exactly at the cap is legal — the refusal boundary is `>`type, not
     `>=` (mirrors the bridge-level boundary test)."""

@@ -35,6 +35,7 @@ def test_composer_help_documents_newline_attach_and_cap():
     assert str(MAX_PENDING_ATTACHMENTS) in flat
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_j_inserts_a_newline_in_the_composer():
     """AC#1: Ctrl+J inserts a newline (Shift+Enter is swallowed as CR by terminals)."""

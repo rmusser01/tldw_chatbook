@@ -344,7 +344,7 @@ def test_audio_dependency_inventory_does_not_import_native_mlx_backends(monkeypa
 
     assert "parakeet_mlx" not in checked_dependencies
     assert "lightning_whisper_mlx" not in checked_dependencies
-    assert probed_dependencies == ["lightning_whisper_mlx", "parakeet_mlx"]
+    assert probed_dependencies == ["parakeet_mlx"]
     assert dependency_registry["parakeet_mlx"] is True
     assert dependency_registry["lightning_whisper_mlx"] is False
 
@@ -626,3 +626,18 @@ def test_book_ingestion_lib_import_handling():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_apply_config_eager_flags_propagates_recovery_required(monkeypatch):
+    """TASK-36945.3: a recovery-state signal is not logged away at start-up."""
+    import pytest
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Utils import optional_deps
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(optional_deps, "_initialized", False)
+    # Real accessor: the per-test sandbox re-selects the config source, so the
+    # guarded read raises raw_source_selection_changed.
+    with pytest.raises(RecoveryRequired, match="raw_source_selection_changed"):
+        optional_deps.apply_config_eager_flags()

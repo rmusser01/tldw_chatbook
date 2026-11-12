@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N    I   Conversation reader
+  a    t      Read    Info
+  v    e      Resume conversation
+       m      Use as source
+       s     This conversation is not in this workspace. Pressing this adds
+             it to the active workspace first, and you can undo that.
+--->          Archive conversation
+              Link to workspace
+
+     --->  Conversations (6) · Sourdough troubleshooting · Refactor the
+           ingest pipeline · Loaded Sourdough troubleshooting · 2 of 2
+           messages · complete.
+--->
+           ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+           ▊ Find in complete transcript…                                   ▎
+           ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▇▇
+
+             Find previous     Find next
+
+  F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

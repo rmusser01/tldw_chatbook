@@ -1,0 +1,42 @@
+[
+  {
+    "method": "_study_source_items",
+    "equal": true
+  },
+  {
+    "method": "_source_study_context",
+    "equal": true
+  },
+  {
+    "method": "_source_study_handoff_titles",
+    "equal": true
+  },
+  {
+    "method": "_has_source_study_context",
+    "redundant_predicate": true
+  },
+  {
+    "method": "_study_handoff_copy",
+    "equal": true
+  },
+  {
+    "method": "_study_handoff_ready_copy",
+    "equal": true
+  },
+  {
+    "method": "_console_unknown_command_hint",
+    "equal": true
+  },
+  {
+    "method": "_record_console_command_dispatch",
+    "equal": true
+  },
+  {
+    "method": "_console_suggestion_usage_counts",
+    "equal": true
+  },
+  {
+    "method": "_rank_console_command_suggestions",
+    "equal": true
+  }
+]

@@ -20,7 +20,7 @@ from Tests.UI.test_product_maturity_gate16_library_search_rag import _rag_result
 from tldw_chatbook.Library.library_rag_answer_service import LibraryRagProviderGate
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 QUERY = "draft [/archive] résumé"
 
@@ -55,6 +55,7 @@ def _assert_no_submissions(app, service):
     app.submit_library_ingest_job.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -92,6 +93,7 @@ async def test_empty_library_recovery_opens_import_and_retains_draft(theme, size
         _assert_no_submissions(app, service)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -156,6 +158,7 @@ async def test_provider_recovery_routes_and_restores_draft_with_current_readines
             _assert_no_submissions(app, service)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deselecting_existing_sources_does_not_offer_import_recovery():
     host, app, service = _host("textual-dark", populated=True)
@@ -171,6 +174,7 @@ async def test_deselecting_existing_sources_does_not_offer_import_recovery():
         _assert_no_submissions(app, service)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])

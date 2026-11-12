@@ -14,14 +14,23 @@ tokenize exactly that one row. The chip's SEMANTICS (mid-stream freeze, staged
 evidence, ``~`` prefix, TTL states, fingerprint gating) are pinned unchanged by
 Tests/UI/test_console_cost_chip_screen.py, which this file deliberately does
 not modify.
+
+TASK-35160: the cost chip is the status strip's "cost" SEGMENT on one text
+line now; the mount waits below settle on the line (#console-status-text).
 """
 
 from __future__ import annotations
+
+from Tests.UI.console_controller_stubs import context_spend_for_test
 
 import time
 from unittest.mock import Mock
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from Tests.private_profile import private_profile_test
 
 from Tests.UI.test_console_cost_chip_screen import (
@@ -86,18 +95,18 @@ async def test_second_identical_tick_does_not_retokenize_the_transcript(
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         _seed_usageless_transcript(console)
 
         spy = _spy_on_estimator(monkeypatch)
 
-        first = console._build_console_cost_state()
+        first = context_spend_for_test(console)._build_console_cost_state()
         first_calls = spy.call_count
         assert (
             first_calls == _TRANSCRIPT_ROWS
         ), "test setup: every seeded row must be an estimated row"
 
-        second = console._build_console_cost_state()
+        second = context_spend_for_test(console)._build_console_cost_state()
 
         assert spy.call_count == first_calls, (
             "the cost chip re-tokenized an unchanged transcript on the next "
@@ -116,15 +125,15 @@ async def test_editing_one_row_retokenizes_only_that_row(monkeypatch, request):
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         store, session_id = _seed_usageless_transcript(console)
 
-        console._build_console_cost_state()
+        context_spend_for_test(console)._build_console_cost_state()
         spy = _spy_on_estimator(monkeypatch)
 
         target = store.messages_for_session(session_id)[-1]
         store.update_message_content(target.id, "a different, much shorter row")
-        state = console._build_console_cost_state()
+        state = context_spend_for_test(console)._build_console_cost_state()
 
         assert spy.call_count == 1, (
             "editing one row re-tokenized "
@@ -145,7 +154,7 @@ async def test_late_terminal_usage_replaces_settled_cost_without_payload_edit(
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
         store.append_message(
@@ -154,7 +163,7 @@ async def test_late_terminal_usage_replaces_settled_cost_without_payload_edit(
         answer = store.append_message(
             session_id, role=ConsoleMessageRole.ASSISTANT, content="answer"
         )
-        before = console._build_console_cost_state()
+        before = context_spend_for_test(console)._build_console_cost_state()
         payload_revision = store.payload_revision(session_id)
         store.set_message_usage(
             answer.id,
@@ -165,7 +174,7 @@ async def test_late_terminal_usage_replaces_settled_cost_without_payload_edit(
                 model="claude-sonnet-4-6",
             ),
         )
-        after = console._build_console_cost_state()
+        after = context_spend_for_test(console)._build_console_cost_state()
 
         assert store.payload_revision(session_id) == payload_revision
         assert before is not None and after is not None
@@ -184,20 +193,20 @@ async def test_edited_row_is_repriced_not_served_stale(monkeypatch, request):
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         store, session_id = _seed_usageless_transcript(console)
 
-        before = console._build_console_cost_state()
+        before = context_spend_for_test(console)._build_console_cost_state()
         target = store.messages_for_session(session_id)[-1]
         original_content = target.content
         store.update_message_content(target.id, "tiny")
-        after = console._build_console_cost_state()
+        after = context_spend_for_test(console)._build_console_cost_state()
 
         assert before is not None and after is not None
         assert after.tooltip != before.tooltip
         # And restoring the original text restores the original reading.
         store.update_message_content(target.id, original_content)
-        restored = console._build_console_cost_state()
+        restored = context_spend_for_test(console)._build_console_cost_state()
         assert restored is not None
         assert restored.tooltip == before.tooltip
 
@@ -212,8 +221,8 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch, re
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
-        before_used = console._active_console_settings_context_estimate().used_tokens
+        await _wait_for_selector(console, pilot, "#console-status-text")
+        before_used = context_spend_for_test(console)._active_console_settings_context_estimate().used_tokens
 
         reference = EvidenceReference(
             evidence_id="S1",
@@ -246,16 +255,16 @@ async def test_staged_evidence_row_is_not_retokenized_every_tick(monkeypatch, re
         )
         await pilot.pause()
 
-        first = console._build_console_cost_state()
+        first = context_spend_for_test(console)._build_console_cost_state()
         settled_calls = spy.call_count
         assert settled_calls >= 1, "test setup: staged text must be estimated"
         assert first is not None
         assert (
-            console._active_console_settings_context_estimate().used_tokens
+            context_spend_for_test(console)._active_console_settings_context_estimate().used_tokens
             > before_used
         )
 
-        second = console._build_console_cost_state()
+        second = context_spend_for_test(console)._build_console_cost_state()
 
         assert (
             spy.call_count == settled_calls
@@ -275,7 +284,7 @@ async def test_projected_delta_estimate_is_not_recomputed_every_tick(request):
 
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-cost-chip")
+        await _wait_for_selector(console, pilot, "#console-status-text")
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
         user_message = store.append_message(
@@ -296,11 +305,11 @@ async def test_projected_delta_estimate_is_not_recomputed_every_tick(request):
         original = chat_screen_module._estimate_tokens_locally
         chat_screen_module._estimate_tokens_locally = spy
         try:
-            alert_state = console._build_console_cost_state()
+            alert_state = context_spend_for_test(console)._build_console_cost_state()
             assert alert_state is not None and alert_state.alert is True
             assert spy.call_count == 1, "test setup: the projection must run once"
 
-            repeat_state = console._build_console_cost_state()
+            repeat_state = context_spend_for_test(console)._build_console_cost_state()
 
             assert spy.call_count == 1, (
                 "the projected cache-break delta re-tokenized the whole "

@@ -101,9 +101,7 @@ def _wire_failing_navigation(
 
     # `_current_runtime_identity` is one of the genuinely unguarded steps the
     # incident's exception class could have escaped from.
-    monkeypatch.setattr(
-        type(app), "_current_runtime_identity", maybe_failing_identity
-    )
+    monkeypatch.setattr(type(app), "_current_runtime_identity", maybe_failing_identity)
     monkeypatch.setattr(
         type(app), "screen", property(lambda self: outgoing_screen_cls(bar))
     )
@@ -111,6 +109,7 @@ def _wire_failing_navigation(
     return switched
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escaped_navigation_exception_notifies_and_rolls_back_nav_bar(
     monkeypatch,
@@ -136,6 +135,7 @@ async def test_escaped_navigation_exception_notifies_and_rolls_back_nav_bar(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_failure_while_study_screen_on_top_does_not_box_library(
     monkeypatch,
@@ -172,6 +172,7 @@ async def test_navigation_failure_while_study_screen_on_top_does_not_box_library
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dispatched_navigation_failure_still_records_worker_failed(
     monkeypatch,
@@ -181,7 +182,9 @@ async def test_dispatched_navigation_failure_still_records_worker_failed(
     from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
-    set_app_global(monkeypatch, "persist_event",
+    set_app_global(
+        monkeypatch,
+        "persist_event",
         lambda component, event, **fields: recorded.append(
             {"component": component, "event": event, **fields}
         ),

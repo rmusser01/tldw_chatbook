@@ -1,0 +1,18 @@
+Auto-merging Docs/Architecture/console.md
+CONFLICT (content): Merge conflict in Docs/Architecture/console.md
+
+STDERR
+Rebasing (1/31)
+Rebasing (2/31)
+Rebasing (3/31)
+Rebasing (4/31)
+Rebasing (5/31)
+Rebasing (6/31)
+Rebasing (7/31)
+error: could not apply 196b0d3a8e... test(console): qualify workspace guidance with preserved Library policy
+hint: Resolve all conflicts manually, mark them as resolved with
+hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
+hint: You can instead skip this commit: run "git rebase --skip".
+hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+hint: Disable this message with "git config advice.mergeConflict false"
+Could not apply 196b0d3a8e... test(console): qualify workspace guidance with preserved Library policy

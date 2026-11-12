@@ -9,10 +9,21 @@ def test_request_defaults_and_frozen():
     from tldw_chatbook.Video_Generation.adapters.base import VideoGenRequest
 
     req = VideoGenRequest(
-        backend="minimax", prompt="a kite over the harbor", negative_prompt=None,
-        duration_seconds=None, fps=None, width=None, height=None, ratio=None,
-        steps=None, cfg_scale=None, seed=None, sampler=None, model=None,
-        format="mp4", extra_params={},
+        backend="minimax",
+        prompt="a kite over the harbor",
+        negative_prompt=None,
+        duration_seconds=None,
+        fps=None,
+        width=None,
+        height=None,
+        ratio=None,
+        steps=None,
+        cfg_scale=None,
+        seed=None,
+        sampler=None,
+        model=None,
+        format="mp4",
+        extra_params={},
     )
     assert req.request_id is None
     assert req.reference_assets == ()
@@ -47,11 +58,16 @@ def test_reference_asset_shape():
     from tldw_chatbook.Video_Generation.adapters.base import ResolvedReferenceAsset
 
     asset = ResolvedReferenceAsset(
-        kind="first_frame", content=b"\x89PNG", mime_type="image/png", source_name="kept variant 1",
+        kind="first_frame",
+        content=b"\x89PNG",
+        mime_type="image/png",
+        source_name="kept variant 1",
     )
     assert asset.kind == "first_frame"
     assert asset.source_name == "kept variant 1"
-    default_named = ResolvedReferenceAsset(kind="reference_video", content=b"x", mime_type="video/mp4")
+    default_named = ResolvedReferenceAsset(
+        kind="reference_video", content=b"x", mime_type="video/mp4"
+    )
     assert default_named.source_name == ""
 
 
@@ -73,9 +89,21 @@ def test_adapter_protocol_conformance():
 
     adapter: VideoGenerationAdapter = FakeAdapter()
     req = VideoGenRequest(
-        backend="fake", prompt="p", negative_prompt=None, duration_seconds=5,
-        fps=24, width=1280, height=720, ratio="16:9", steps=None, cfg_scale=None,
-        seed=-1, sampler=None, model=None, format="mp4", extra_params={},
+        backend="fake",
+        prompt="p",
+        negative_prompt=None,
+        duration_seconds=5,
+        fps=24,
+        width=1280,
+        height=720,
+        ratio="16:9",
+        steps=None,
+        cfg_scale=None,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="mp4",
+        extra_params={},
     )
     result = adapter.generate(req)
     assert result.content == b"vid"

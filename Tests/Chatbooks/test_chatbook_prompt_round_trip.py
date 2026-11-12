@@ -29,6 +29,9 @@ from tldw_chatbook.Prompt_Management.prompt_chatbook_record import (
 )
 from tldw_chatbook.Prompt_Management.prompt_scope_service import LocalPromptService
 
+# Real Chatbook constructors read the collection-bound private config source.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _creator(database_path: Path, runtime_root: Path) -> ChatbookCreator:
     creator = ChatbookCreator({"Prompts": str(database_path)})
@@ -177,6 +180,16 @@ def test_real_chatbook_round_trip_preserves_portable_prompt_records_only(
             prompt_definition=foreign_definition,
             artifact_type="prompt",
         )
+        _add_prompt(
+            source,
+            name="Literal mix-in",
+            system_prompt="",
+            user_prompt="\n{style}\n### TITLE ###\n",
+            artifact_type="mixin",
+            prompt_format="structured",
+            prompt_schema_version=3,
+            prompt_definition='{ "kind": "text_mixin", "schema_version": 3, "body": "\\n{style}\\n### TITLE ###\\n", "placement": "before" }',
+        )
         for index in range(50):
             _add_prompt(source, name=f"Paged {index:02d}", keywords=[f"tag-{index}"])
         deleted_id, _ = _add_prompt(source, name="Deleted control")
@@ -192,7 +205,7 @@ def test_real_chatbook_round_trip_preserves_portable_prompt_records_only(
             source.fetch_prompt_chatbook_snapshot(prompt_id)
             for prompt_id in selected_ids
         ]
-        assert len(source_snapshots) == 53
+        assert len(source_snapshots) == 54
         assert all(snapshot is not None for snapshot in source_snapshots)
 
         archive_path = tmp_path / "prompts.zip"
@@ -222,7 +235,7 @@ def test_real_chatbook_round_trip_preserves_portable_prompt_records_only(
             assert all(item["updated_at"] is None for item in items)
             assert items[0]["title"] == "Legacy [bold]研究🙂"
             assert items[0]["description"] == "Final details"
-            assert manifest["statistics"]["total_prompts"] == 53
+            assert manifest["statistics"]["total_prompts"] == 54
             assert not any("history" in name.lower() for name in names)
             assert not any("collection" in name.lower() for name in names)
             payloads = [
@@ -252,13 +265,15 @@ def test_real_chatbook_round_trip_preserves_portable_prompt_records_only(
         ] == source_snapshots
         assert payloads[1]["prompt_definition"] == recipe_definition
         assert payloads[2]["prompt_definition"] == foreign_definition
+        assert payloads[3]["record_version"] == 2
+        assert payloads[3]["artifact_type"] == "mixin"
 
         status = ImportStatus()
         imported, import_message = _importer(
             destination_path, tmp_path
         ).import_chatbook(archive_path, import_status=status)
         assert imported is True, import_message
-        assert status.successful_items == 53
+        assert status.successful_items == 54
         assert status.failed_items == 0
         destination = PromptsDatabase(destination_path, client_id="destination-reader")
         try:
@@ -305,16 +320,22 @@ def test_prompt_export_failure_is_atomic_bounded_and_private(
 ) -> None:
     source_path = tmp_path / "source.db"
     source = PromptsDatabase(source_path, client_id="source-client")
-    source.get_connection().execute(
-        "INSERT OR REPLACE INTO sqlite_sequence(name, seq) VALUES ('Prompts', ?)",
-        (971971970,),
+    changed = (
+        source.get_connection()
+        .execute("UPDATE sqlite_sequence SET seq=? WHERE name='Prompts'", (971971970,))
+        .rowcount
     )
+    if not changed:
+        source.get_connection().execute(
+            "INSERT INTO sqlite_sequence(name, seq) VALUES ('Prompts', ?)", (971971970,)
+        )
     source.get_connection().commit()
     prompt_id, _ = _add_prompt(
         source,
         name="TASK197_PROMPT_NAME_MUST_NOT_LEAK",
         system_prompt="TASK197_PROMPT_BODY_MUST_NOT_LEAK",
     )
+    assert prompt_id == 971971971
     selected_id = prompt_id
     if failure_kind == "missing":
         assert source.soft_delete_prompt(prompt_id) is True
@@ -591,7 +612,7 @@ def test_prompt_keyword_failures_log_only_fixed_category(
     def fail_keyword_update(*_args: Any, **_kwargs: Any) -> None:
         raise sqlite3.OperationalError(sentinel)
 
-    monkeypatch.setattr(database, "_add_keyword_full", fail_keyword_update)
+    monkeypatch.setattr(database._keywords, "add_keyword_full", fail_keyword_update)
     messages: list[str] = []
     sink = logger.add(messages.append, format="{message}")
     try:
@@ -690,6 +711,20 @@ def test_malformed_prompt_manifest_id_is_rejected_before_path_or_log_use(
             "unknown": "TASK197_EXTRA_VALUE_MUST_NOT_LEAK",
         },
         ["not", "an", "object"],
+        {
+            "record_schema": "tldw-chatbook-prompt",
+            "record_version": 2,
+            "name": "Invalid mix-in",
+            "author": None,
+            "details": None,
+            "system_prompt": "",
+            "user_prompt": "TASK197_INVALID_BODY_MUST_NOT_LEAK",
+            "keywords": [],
+            "artifact_type": "mixin",
+            "prompt_format": "structured",
+            "prompt_schema_version": 4,
+            "prompt_definition": '{"kind":"text_mixin","schema_version":4,"body":"TASK197_INVALID_BODY_MUST_NOT_LEAK","placement":"before"}',
+        },
     ],
 )
 def test_invalid_prompt_archive_fails_before_database_mutation_with_fixed_copy(
@@ -730,3 +765,62 @@ def test_invalid_prompt_archive_fails_before_database_mutation_with_fixed_copy(
     ):
         assert sentinel not in rendered
         assert sentinel not in "\n".join(status.errors)
+
+
+def test_mixin_archive_roundtrip_never_logs_literal_body_even_when_reused_as_keyword(
+    tmp_path,
+):
+    body = "task38537_literal_body_must_not_leak"
+    source_path = tmp_path / "mixin-source.db"
+    destination_path = tmp_path / "mixin-destination.db"
+    source = PromptsDatabase(source_path, client_id="mixin-export")
+    definition = json.dumps(
+        {"kind": "text_mixin", "schema_version": 3, "body": body, "placement": "after"}
+    )
+    try:
+        ids = [
+            _add_prompt(
+                source,
+                name=f"Mix-in {index}",
+                system_prompt="",
+                user_prompt=body,
+                keywords=[body],
+                artifact_type="mixin",
+                prompt_format="structured",
+                prompt_schema_version=3,
+                prompt_definition=definition,
+            )[0]
+            for index in (1, 2)
+        ]
+        archive_path = tmp_path / "mixins.zip"
+        messages = []
+        sink = logger.add(messages.append, format="{message}")
+        try:
+            exported, message, _ = _creator(source_path, tmp_path).create_chatbook(
+                name="Mix-in backup",
+                description="Portable mix-ins",
+                content_selections={ContentType.PROMPT: [str(value) for value in ids]},
+                output_path=archive_path,
+            )
+            assert exported, message
+            status = ImportStatus()
+            imported, message = _importer(destination_path, tmp_path).import_chatbook(
+                archive_path, import_status=status
+            )
+            assert imported, message
+        finally:
+            logger.remove(sink)
+        assert body not in "".join(messages)
+        destination = PromptsDatabase(destination_path, client_id="mixin-reader")
+        try:
+            assert status.successful_items == 2
+            for prompt_id in destination.get_all_active_prompt_ids():
+                record = destination.fetch_prompt_chatbook_snapshot(prompt_id)
+                assert record["artifact_type"] == "mixin"
+                assert record["prompt_definition"] == definition
+                assert record["user_prompt"] == body
+                assert not any("enabled" in key or "selection" in key for key in record)
+        finally:
+            destination.close_connection()
+    finally:
+        source.close_connection()

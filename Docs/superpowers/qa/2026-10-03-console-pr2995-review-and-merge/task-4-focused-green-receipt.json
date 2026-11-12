@@ -1,0 +1,30 @@
+{
+  "name": "focused-green",
+  "revision": "fc1627e99b8722a0a69812530d950410e8356ba0",
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/DB/test_automatic_chat_starts.py",
+    "Tests/Chat/test_console_chat_start.py",
+    "-k",
+    "same_owner_uncertain or review_settlement or ledger_cutoff or native_commit_keeps_exact or unexpected_start_failure or native_acceptance_refuses_real",
+    "-rP",
+    "--basetemp=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-focused-green-profile-eds5om8h/pytest",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-focused-green.xml"
+  ],
+  "environment": {
+    "TLDW_TEST_CONFIG_ROOT": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-focused-green-profile-eds5om8h"
+  },
+  "sha256": {
+    "tldw_chatbook/Chat/console_chat_start.py": "d13e70b89e39fb1c54b2ebc1c6c1e82639cd631e42b16c7c34dfdedcb5bdbb33",
+    "tldw_chatbook/Chat/console_chat_controller.py": "67f6a3ea7f5dfa217b9f62535f016b305d451e6e020dead811d90cf5b2d2f5ba",
+    "tldw_chatbook/Chat/message_metadata.py": "c8aa1bdf33d9297dce415cc0332460f89f3720bdb3cedab6c872171ca61a99a0",
+    "tldw_chatbook/DB/automatic_work.py": "557282131c21d4af59e458112efbc134adbb99c7707206248436d738fee4b7f7",
+    "Tests/Chat/test_console_chat_start.py": "691b2a18f03fb156e4a3cc16816726283d8999d5824e1db7e7e8ad884a33ab8b",
+    "Tests/DB/test_automatic_chat_starts.py": "ef0bbbdd942426f6c076e97622209c14517db3f967743abcbd27469bbdadec5d"
+  },
+  "exit": 1
+}

@@ -150,9 +150,7 @@ async def test_edit_round_trip_calls_on_edit_and_rerenders() -> None:
 
         edit_area = modal.query_one("#console-review-notes-edit-ann-1", TextArea)
         assert edit_area.display is True
-        comment_static = modal.query_one(
-            "#console-review-notes-comment-ann-1", Static
-        )
+        comment_static = modal.query_one("#console-review-notes-comment-ann-1", Static)
         assert comment_static.display is False
         edit_area.text = "updated comment text"
 
