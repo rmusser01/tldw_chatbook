@@ -35,13 +35,13 @@ def _race_for_root(
         Path(root),
         private_conflict=_no_private_conflict,
     )
-    results.put((admission.state.value, admission.reason_code))
     try:
         admission.require_authority("write")
     except module.RootAuthorityError:
         pass
     else:
         Path(mutation_log).write_text("owner\n", encoding="utf-8")
+    results.put((admission.state.value, admission.reason_code))
     if admission.state is module.RootAdmissionState.OWNER:
         release_owner.wait(10.0)
         coordinator.release(admission.lease)
@@ -80,6 +80,8 @@ def test_two_spawned_processes_racing_one_root_have_exactly_one_owner(
     root = tmp_path / "root"
     root.mkdir()
     lock_directory = tmp_path / "locks"
+    # Race the root lease after the private lock directory is established.
+    module.NotesSyncRootCoordinator(lock_directory)
     mutation_log = tmp_path / "mutations.txt"
     start = context.Event()
     release_owner = context.Event()
