@@ -134,8 +134,9 @@ Enable **F4 Settings → Console behavior → Goal runs**, save, then open
 `/goal Fix the failing tests in this project` opens the same setup form with that
 objective filled in. Bare `/goal` opens the form without a supplied objective;
 the slash popup also offers `/goal` completion. Review the launch, then choose
-**Start** to begin. Cancel or a setup refusal keeps your composer draft, and the
-command is never sent as an ordinary chat message. Pasted text keeps the
+**Start** to begin. Starting takes the command out of the composer; Cancel or a
+setup refusal keeps your composer draft, and the command is never sent as an
+ordinary chat message. Pasted text keeps the
 composer's existing literal-text behavior.
 
 Goal enablement is independent of fleet wakes. The current conversation supplies the provider/model selection;
