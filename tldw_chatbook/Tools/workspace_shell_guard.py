@@ -46,20 +46,22 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
     wildcards: list[int] = []
     quote = ""
     nesting = 0
-    dynamic = starts_quoted = opaque = started = False
+    dynamic = starts_quoted = quoted_word = opaque = started = redirecting = False
     escape = {"bash": "\\", "powershell": chr(96), "cmd": "^"}[dialect]
     quotes = '"' if dialect == "cmd" else "\"'"
     separators = "&|\n" if dialect == "cmd" else ";&|\n"
 
     def finish_word() -> None:
-        nonlocal dynamic, starts_quoted, started
+        nonlocal dynamic, starts_quoted, quoted_word, started, redirecting
         if started:
-            words.append(
-                _Word("".join(chars), tuple(wildcards), dynamic, starts_quoted)
-            )
+            if not redirecting:
+                words.append(
+                    _Word("".join(chars), tuple(wildcards), dynamic, starts_quoted)
+                )
+            redirecting = False
         chars.clear()
         wildcards.clear()
-        dynamic = starts_quoted = started = False
+        dynamic = starts_quoted = quoted_word = started = False
 
     i = 0
     while i < len(command):
@@ -79,6 +81,13 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
             )
         ):
             return segments
+        if dialect == "powershell" and not quote and char == "<" and following == "#":
+            finish_word()
+            end = command.find("#>", i + 1)
+            if end < 0:
+                return segments
+            i = end + 2
+            continue
         if (
             not quote
             and not nesting
@@ -105,7 +114,7 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
             i += 1
             if following != "\n":
                 chars.append(following)
-                started = True
+                quoted_word = started = True
             continue
         if char == quote:
             if dialect == "powershell" and following == quote:
@@ -116,8 +125,8 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
             continue
         if not quote and char in quotes:
             quote = char
-            starts_quoted = not started
-            started = True
+            starts_quoted = starts_quoted or not started
+            quoted_word = started = True
             continue
         if dialect == "bash" and char == chr(96) and quote != "'":
             opaque = True
@@ -127,22 +136,48 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
             i = end + 1
             continue
         if not quote:
+            if not nesting and (
+                char in "<>" or (dialect == "bash" and char == "&" and following == ">")
+            ):
+                # An adjacent descriptor (or PowerShell's all-streams *)
+                # and the following redirect target are not command operands.
+                if (
+                    not redirecting
+                    and not quoted_word
+                    and (
+                        "".join(chars).isdecimal()
+                        or (dialect == "powershell" and chars == ["*"])
+                    )
+                ):
+                    started = False
+                finish_word()
+                opaque |= redirecting
+                redirecting = True
+                if char == "&":
+                    char = ">"
+                    i += 1
+                suffix = command[i : i + 1]
+                if suffix == char or (
+                    dialect == "bash" and char + suffix in {">|", "<>"}
+                ):
+                    i += 1
+                if command[i : i + 1] == "&":
+                    i += 1
+                continue
             if char in "({":
                 nesting += 1
                 opaque = True
             elif char in ")}":
                 nesting = max(nesting - 1, 0)
                 opaque = True
-            elif char in "<>":
-                opaque = True
             if not nesting and char in separators:
                 finish_word()
                 if char in "&|" and following == char:
                     char += following
                     i += 1
-                segments.append(([] if opaque else words, char))
+                segments.append(([] if opaque or redirecting else words, char))
                 words = []
-                opaque = False
+                opaque = redirecting = False
                 continue
             if char.isspace() or (dialect == "powershell" and char == ","):
                 finish_word()
@@ -158,7 +193,7 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
         chars.append(char)
         started = True
     finish_word()
-    segments.append(([] if quote or nesting or opaque else words, ""))
+    segments.append(([] if quote or nesting or opaque or redirecting else words, ""))
     return segments
 
 
@@ -251,22 +286,20 @@ def _ps_arguments(
     args_iter = iter(args)
     for word in args_iter:
         flag = word.text.casefold()
-        if flag in {"-literalpath", "-pspath", "-lp"}:
+        switch, colon, value = flag.partition(":")
+        if switch in {"-recurse", "-r", "-force", "-verbose", "-confirm", "-whatif"}:
+            if colon and value not in {"$true", "$false"}:
+                return None
+            enabled = value != "$false"
+            if switch in {"-recurse", "-r"}:
+                recursive = enabled
+            elif switch == "-whatif" and enabled:
+                return None
+        elif flag in {"-literalpath", "-pspath", "-lp"}:
             literal = True
-        elif flag in {"-recurse", "-r", "-recurse:$true"}:
-            recursive = True
         elif flag in _PS_VALUE_OPTIONS:
             next(args_iter, None)
-        elif flag in {
-            "-path",
-            "-force",
-            "-verbose",
-            "-confirm",
-            "-confirm:$false",
-            "-confirm:$true",
-            "-recurse:$false",
-            "-whatif:$false",
-        }:
+        elif flag == "-path":
             continue
         elif flag.startswith("-"):
             # Filters, type/depth restrictions, previews and unsupported
@@ -369,6 +402,10 @@ def _entry_path(path: Path) -> Path:
     # Resolve traversal through links but leave a final link as the entry
     # that rm/Remove-Item/rd can remove without deleting its destination.
     if not path.name or path.name == "..":
+        return path.resolve()
+    # Let Windows canonicalize alternate spellings of ordinary entries,
+    # including short names and trailing dots. Preserve a final link.
+    if os.name == "nt" and not path.is_symlink() and not path.is_junction():
         return path.resolve()
     return path.parent.resolve() / path.name
 
@@ -485,6 +522,20 @@ def workspace_deletion_violation(
             )
             if children:
                 entry = path.resolve()
+            # rmdir -p names the parents in its operand, stopping before the
+            # implicit cwd of a relative path. It does not prune every
+            # ancestor of the resolved path.
+            named_parents = (
+                tuple(
+                    _entry_path(parent_path)
+                    for parent in Path(deletion.path).parents
+                    if parent.name
+                    and (parent_path := _path(str(parent), directory, dialect))
+                    is not None
+                )
+                if deletion.prune_parents
+                else ()
+            )
             for root, aliases in roots.items():
                 if any(_same_entry(entry, alias) for alias in aliases):
                     return (
@@ -508,8 +559,10 @@ def workspace_deletion_violation(
                         return "workspace-folder-delete"
                 if children:
                     continue
-                if deletion.prune_parents and any(
-                    _same_entry(root, parent) for parent in entry.parents
+                if any(
+                    _same_entry(parent, alias)
+                    for parent in named_parents
+                    for alias in aliases
                 ):
                     return "workspace-folder-delete"
                 if _same_entry(entry.parent, root) and _removes_child(entry, deletion):
