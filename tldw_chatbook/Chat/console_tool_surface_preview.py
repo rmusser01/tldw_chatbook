@@ -178,11 +178,14 @@ async def owned_preflight_tool_surface(
     from functools import partial
     import inspect
 
+    from tldw_chatbook.Agents import plain_chat_tool_surface
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
     from tldw_chatbook.MCP import console_snapshot
     from .console_agent_bridge import (
         _CONSOLE_TOOL_PREVIEW_METHODS,
         _CONSOLE_PREVIEW_KILL_SOURCE,
+        _CONSOLE_PREVIEW_APP_KILL_SOURCE,
+        _PreviewAppToolKillSwitch,
     )
     from .console_change_review_read import _function_current
     from .console_received_dispatch import (
@@ -209,16 +212,33 @@ async def owned_preflight_tool_surface(
     except TypeError:
         return preflight_tool_surface(bridge, resolution, **kwargs)
     service = app_sources.get("unified_mcp_service")
+
+    def stock_switch():
+        if not _function_current(_CONSOLE_PREVIEW_KILL_SOURCE):
+            return False
+        if type(callback) is partial:
+            return (
+                callback.func is tool_kill_switch_engaged
+                and callback.func is _CONSOLE_PREVIEW_KILL_SOURCE[0]
+                and len(callback.args) == 1
+                and callback.args[0] is app
+                and not callback.keywords
+            )
+        return (
+            type(callback) is _PreviewAppToolKillSwitch
+            and plain_chat_tool_surface.AppToolKillSwitch is _PreviewAppToolKillSwitch
+            and callback.app is app
+            and inspect.getattr_static(callback, "__call__", None)
+            is _CONSOLE_PREVIEW_APP_KILL_SOURCE[0]
+            and _function_current(_CONSOLE_PREVIEW_APP_KILL_SOURCE)
+            and plain_chat_tool_surface.tool_kill_switch_engaged
+            is _CONSOLE_PREVIEW_KILL_SOURCE[0]
+        )
+
     if not (
         bridge is not None
         and stock_native_methods(bridge, _CONSOLE_TOOL_PREVIEW_METHODS)
-        and type(callback) is partial
-        and callback.func is tool_kill_switch_engaged
-        and callback.func is _CONSOLE_PREVIEW_KILL_SOURCE[0]
-        and _function_current(_CONSOLE_PREVIEW_KILL_SOURCE)
-        and len(callback.args) == 1
-        and callback.args[0] is app
-        and not callback.keywords
+        and stock_switch()
         and console_snapshot.controller_precheck_pipeline_current()
         and console_snapshot.standard_console_sources(service)
     ):
@@ -245,10 +265,7 @@ async def owned_preflight_tool_surface(
             if (
                 controller._agent_bridge is not bridge
                 or bridge._tool_kill_switch is not callback
-                or callback.func is not _CONSOLE_PREVIEW_KILL_SOURCE[0]
-                or callback.args != (app,)
-                or callback.keywords
-                or not _function_current(_CONSOLE_PREVIEW_KILL_SOURCE)
+                or not stock_switch()
                 or vars(app).get("unified_mcp_service") is not service
                 or controller.provider_gateway is not gateway
                 or inspect.getattr_static(gateway, "prepare_chat_request", None)

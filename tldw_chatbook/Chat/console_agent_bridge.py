@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 from tldw_chatbook.Agents.plain_chat_tool_surface import (
+    AppToolKillSwitch as _PreviewAppToolKillSwitch,
     tool_kill_switch_engaged as _preview_kill_reader,
 )
 
@@ -10034,7 +10035,12 @@ _CONSOLE_PRESENTATION_HELPER_SOURCES = tuple(
         function.__kwdefaults__,
         tuple((function.__kwdefaults__ or {}).items()),
     )
-    for function in (_read_change_review_markers, _preview_kill_reader)
+    for function in (
+        _read_change_review_markers,
+        _preview_kill_reader,
+        _PreviewAppToolKillSwitch.__call__,
+    )
 )
 _CHANGE_REVIEW_MARKER_HELPER_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[0]
 _CONSOLE_PREVIEW_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[1]
+_CONSOLE_PREVIEW_APP_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[2]

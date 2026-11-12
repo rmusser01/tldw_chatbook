@@ -92,6 +92,22 @@ configuration metadata investigation; no replay suppression, readiness warm-up,
 new cache, permission shortcut or increased deadline is selected. OPT102 retains
 the narrowly scoped lookup alternative without claiming it fixes the delay.
 
+
+### PR3496 current-dev integration (2026-11-12)
+
+Rebasing onto dev e10ce63fe8 required recognizing its exact AppToolKillSwitch
+constructor through the existing finite preparation owner. The original held-read
+regression failed on the UI thread before correction; all28 preparation controls
+then passed. No additional native reads are omitted. The final integrated run was
+71pass/1fail; final Windows qualification was12pass/6fail, with actual current and
+detached native shutdown passing and source fixed within each run. Enter/button
+submitted text appeared at489/206ms and Sending at492/208ms; both100ms CPU budgets
+and both15s provider-entry bounds remain unqualified. Held-read input frames were
+18.5/23.0ms. Three original MCP completion-wait failures remain retained; OPT-103
+records the separate cost observed by the subsequent diagnostic without claiming
+that its passes explain those failures. These are headless observations, not a
+quiet comparison, physical terminal flush or a whole-Send speed improvement.
+
 ## Latest bounded cleanup and quiet comparison (2026-10-08)
 
 Integration commit `fa3dad2d82d31920bd18fdb8db2b7abf74565faf` implements
@@ -301,6 +317,7 @@ Source: `chat_screen.py` d221 lines 17507-17842, 18219, 20682-20743;
 | OPT-100 / Deferred; startup config-lock consumer identified | **Review scheduler heartbeat default-path naming's full config admission within its existing finite worker.** The original failure-time trace identifies `default_heartbeat_path` holding both config RLocks through recovery metadata observation while Console FULL retries. Explicit `heartbeat_path` skips default naming, but no elapsed saving is measured. | Latency shrink is paused. The producer/default route pre-exists dev; no matched dev contention measurement proves unchanged cost or permits cached/constructor-path substitution. Heartbeat is already off-loop. Revisit only after establishing live profile/source currentness and a compatible existing destination owner; preserve selected-root changes, cold establishment/refusal, native recovery/pause evidence, atomic durable heartbeat write and awaited shutdown retirement. Any chosen change needs causal correctness and separate timing evidence; no geometry, timer, executor, TTL or budget shortcut. See archived `pr3050-closeout/geometry-readiness-consumer-evidence/evidence-note.md` (SHA17358203) and `final-geometry-consumer-evidence-2`. |
 | OPT-101 / Selected; final qualification pending | **Prepare the stock light-preview kill-switch observation off the input loop.** Capacity and history preflights currently perform real permission admission synchronously despite the preview's former no-I/O description. | Reuse the existing finite preparation owner and one-pass result, preserve fresh kill-state representation, original custom callback routes, source/session checks and physical retirement. This is distinct from OPT-98's composition ceiling. Initial original-body RED and candidate ownership controls are retained above; no reduction in admission work or whole-Send latency is claimed. |
 | OPT-102 / Deferred; benefit unqualified | **Use the portrait radio's existing typed ID lookup instead of a class-selector scan.** A slow first-feedback diagnostic sampled `update_portrait_radio` during a queued full Console sync. Stock construction fixes the ID to `console-character-radio`; Textual can use its ID lookup while retaining type checking and per-call replacement handling. | No application widget cache is proposed. A later cold phase trace measured this call at only 0.09 ms, so no material saving or cause of the 828/969 ms loop-CPU misses is established. Preserve custom/absent widget behavior and prove a reached cost before choosing this change. |
+| OPT-103 / Deferred; native approval-read cost observed | **Review synchronous guarded approval polling in live MCP elicitation.** The current-dev path uses a one-second poll and reads the approval store again in final cleanup. Two original Windows typed-ID cancellation cases missed their existing two-second completion wait; a passive follow-up passed and measured two reads totaling0.739/0.802s, almost all of the final-wait wall interval. | The relevant MCP production files match dev; no failed-run completion timestamp proves which interval caused the deadline misses. Preserve typed IDs, authoritative approval state, cancellation/disconnect cleanup and physical native retirement. Investigate an existing owned I/O or notification boundary only after causal evidence; no cache, polling-policy change, relaxed deadline or new scheduler is selected in this PR. Diagnostic passes do not establish consistent latency. |
 
 ## Architecture alternatives retained with their decision
 

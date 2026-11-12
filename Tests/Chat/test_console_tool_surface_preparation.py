@@ -18,6 +18,7 @@ from Tests.Chat.test_console_configuration_worker_lifetime import _until
 from Tests.Chat.test_console_light_surface_context_meter import _Captured, _openai
 from Tests.Chat.test_console_light_tool_surface import LIGHT, fresh_profile_gates
 from tldw_chatbook.Agents.plain_chat_tool_surface import (
+    AppToolKillSwitch,
     light_surface_configured,
     tool_kill_switch_engaged,
 )
@@ -117,7 +118,8 @@ async def preview_case(runtime_case, monkeypatch):
         provider_gateway=case.controller.provider_gateway,
         native_tools_enabled=partial(_native_tools_enabled_for_app, case.app),
         light_tool_surface=light_surface_configured,
-        tool_kill_switch=partial(tool_kill_switch_engaged, case.app),
+        # Exact stock construction in ConsoleRuntime.ensure_agent_bridge.
+        tool_kill_switch=AppToolKillSwitch(case.app),
     )
     case.bridge = bridge
     case.resolution = _openai(ContextWindowResolution(1_047_576, "model catalog", True))
@@ -205,9 +207,9 @@ async def test_original_preflight_permission_read_preserves_loop_progress_and_su
                 await _preflight(case, phase)
             await asyncio.sleep(0)
         assert probe.entered.is_set()
-        assert probe.thread is not loop_thread, (
-            "permission admission still blocks the input loop"
-        )
+        assert (
+            probe.thread is not loop_thread
+        ), "permission admission still blocks the input loop"
         assert while_held == [True]
         probe.assert_retired()
         assert (
@@ -239,9 +241,9 @@ async def test_preflight_permission_read_retires_before_interruption(
         try:
             task = asyncio.create_task(_preflight(case, "history"))
             assert await _until(lambda: probe.entered.is_set() or task.done())
-            assert probe.thread is not threading.current_thread(), (
-                "native read must leave the loop"
-            )
+            assert (
+                probe.thread is not threading.current_thread()
+            ), "native read must leave the loop"
             assert (
                 case.controller._preparation_reads and case.runtime._preparation_reads
             )
@@ -357,6 +359,54 @@ async def test_each_preflight_reads_the_switch_again_off_on_off(preview_case):
         assert probe.calls == 1 and probe.thread is not threading.current_thread()
         observations.append({row["function"]["name"] for row in case.prepared.pop()[1]})
     assert observations == [LIGHT, LIGHT - {"ask_user"}, LIGHT]
+
+
+async def test_legacy_partial_switch_keeps_owned_permission_read(preview_case):
+    case = preview_case
+    case.bridge._tool_kill_switch = partial(tool_kill_switch_engaged, case.app)
+    probe = _OriginalPermissionRead(case.permissions)
+    probe.release.set()
+    with probe.installed(), pytest.raises(_Captured):
+        await _preflight(case)
+    assert probe.calls == 1 and probe.thread is not threading.current_thread()
+    probe.assert_retired()
+
+
+async def test_changed_runtime_switch_sources_keep_original_loop_affinity(
+    preview_case, monkeypatch
+):
+    from tldw_chatbook.Agents import plain_chat_tool_surface
+
+    case = preview_case
+    case.app.preview_callback_threads = []
+
+    def changed_call(self):
+        self.app.preview_callback_threads.append(
+            __import__("threading").current_thread()
+        )
+        return True
+
+    def changed_reader(app):
+        app.preview_callback_threads.append(__import__("threading").current_thread())
+        return True
+
+    for changed in ("call-body", "reader-binding"):
+        case.app.preview_callback_threads.clear()
+        with monkeypatch.context() as patch:
+            if changed == "call-body":
+                patch.setattr(
+                    AppToolKillSwitch.__call__, "__code__", changed_call.__code__
+                )
+            else:
+                patch.setattr(
+                    plain_chat_tool_surface, "tool_kill_switch_engaged", changed_reader
+                )
+            with pytest.raises(_Captured):
+                await _preflight(case)
+        assert case.app.preview_callback_threads == [threading.current_thread()]
+        assert {row["function"]["name"] for row in case.prepared.pop()[1]} == LIGHT - {
+            "ask_user"
+        }
 
 
 async def test_full_surface_preflight_does_not_read_light_kill_switch(
@@ -529,16 +579,22 @@ async def test_preflight_never_passes_its_surface_to_another_assessor(binding):
         assert second_seen == [{"name": "second"}]
 
 
-@pytest.mark.parametrize("changed", ["assessor", "gateway", "prepare"])
+@pytest.mark.parametrize(
+    "changed",
+    ["assessor", "gateway", "prepare", "switch-owner", "switch-body", "switch-reader"],
+)
 async def test_preflight_refuses_callback_replacement_during_native_read(
-    preview_case, changed
+    preview_case, changed, monkeypatch
 ):
+    from tldw_chatbook.Agents import plain_chat_tool_surface
+
     case = preview_case
     probe = _OriginalPermissionRead(case.permissions)
     task = None
     old_gateway = case.controller.provider_gateway
     old_prepare = old_gateway.prepare_chat_request
     old_assessor = case.controller._assess_request_capacity_only
+    switch = case.bridge._tool_kill_switch
 
     def unexpected(*args, **kwargs):
         raise AssertionError("changed callback was used")
@@ -554,8 +610,24 @@ async def test_preflight_refuses_callback_replacement_during_native_read(
                 case.controller.provider_gateway = SimpleNamespace(
                     prepare_chat_request=unexpected
                 )
-            else:
+            elif changed == "prepare":
                 old_gateway.prepare_chat_request = unexpected
+            elif changed == "switch-owner":
+                object.__setattr__(switch, "app", SimpleNamespace())
+            elif changed == "switch-body":
+
+                def changed_call(self):
+                    return False
+
+                monkeypatch.setattr(
+                    AppToolKillSwitch.__call__, "__code__", changed_call.__code__
+                )
+            else:
+                monkeypatch.setattr(
+                    plain_chat_tool_surface,
+                    "tool_kill_switch_engaged",
+                    lambda app: False,
+                )
             probe.release.set()
             with pytest.raises(RecoveryRequired):
                 await task
@@ -566,6 +638,7 @@ async def test_preflight_refuses_callback_replacement_during_native_read(
             case.controller.provider_gateway = old_gateway
             old_gateway.prepare_chat_request = old_prepare
             case.controller._assess_request_capacity_only = old_assessor
+            object.__setattr__(switch, "app", case.app)
             if task is not None:
                 with contextlib.suppress(RecoveryRequired, _Captured):
                     await task
