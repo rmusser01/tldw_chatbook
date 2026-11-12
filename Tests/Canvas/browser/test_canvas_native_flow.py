@@ -20,6 +20,7 @@ from Tests.UI.test_console_native_chat_flow import _configure_native_ready_conso
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Agents.plain_chat_tool_surface import FULL_AGENT_TOOLS_GATE_KEY
 from tldw_chatbook.Canvas.compiler import compile_canvas_document
 from tldw_chatbook.Canvas.gateway import (
     BridgeConfirmationRequest,
@@ -47,6 +48,7 @@ from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
+from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
@@ -547,6 +549,7 @@ async def test_native_console_create_publication_automatically_opens_browser(
     app = _build_test_app(configured_default="chat")
     database = CharactersRAGDB(tmp_path / "native-create.sqlite", "native-create")
     app.chachanotes_db = database
+    assert save_setting_to_cli_config("tools", FULL_AGENT_TOOLS_GATE_KEY, True)
     _configure_native_ready_console(app, model="gpt-4o")
     provider = _ScriptedCanvasGateway()
     app.console_provider_gateway_factory = lambda: provider
