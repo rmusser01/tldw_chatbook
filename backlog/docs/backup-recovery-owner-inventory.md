@@ -3035,7 +3035,7 @@ subprocess writer is the owner review's job, not the census's.
 | tldw_chatbook/Backup_Recovery/crypto.py | transform | mkstemp | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/native_platform.py | rename_noreplace | renameat2 | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | mkdtemp | 1 | generic_boundary | backup_recovery_publication |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | mkdtemp | 1 | disposable | private preview SQLite copy |
+| tldw_chatbook/Backup_Recovery/storage_sqlite_copies.py | _preview_sqlite_target | mkdtemp | 1 | disposable | private preview SQLite copy |
 | tldw_chatbook/Character_Chat/buddy_conversion.py | publish_buddy_character | mkdtemp | 1 | unsupported | assets |
 | tldw_chatbook/Chat/console_generate_video.py | _stage_pending_video | TemporaryFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/console_scratch_space.py | ConsoleScratchSpaceManager.snapshot | mkdtemp | 1 | process_artifact | process |

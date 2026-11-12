@@ -237,7 +237,8 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
 
         controller.submit_draft = recorded_submit
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
-        replacement(rig).on_fleet_drained(  # Wired on the test's loop.
+        wake = replacement(rig)
+        wake.on_fleet_drained(  # Wired on the test's loop.
             _drain(session.id, _survivor(run_id, session_id=session.id))
         )
         try:
@@ -248,6 +249,10 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
             elif move == "persistence":
                 store.persistence = ChatPersistenceService(chacha)
             else:
+                # The close fence removes this task from the delivery registry.
+                (delivery,) = (
+                    task for task, cid in wake._delivery_tasks.items() if cid == session.id
+                )
                 ticket = controller.begin_session_close(
                     session.id,
                     expected_revision=controller.lifecycle_impact(
@@ -260,7 +265,9 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
             release.set()
 
         if move == "close":
-            assert await _settle(lambda: outcomes, 10), "the wake turn never ended"
+            assert await _settle(lambda: outcomes and delivery.done(), 10), (
+                "the wake turn and its delivery did not settle"
+            )
             assert adopted_at_entry == [] and gateway.payloads == []
             (outcome,) = outcomes
             assert getattr(outcome, "visible_copy", outcome) == "Session closed.", outcome

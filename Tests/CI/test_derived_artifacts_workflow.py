@@ -676,9 +676,9 @@ def test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required():
         assert flag in run and flag in ui_run
     assert "-n" not in shlex.split(run.replace("\\\n", " "), comments=True)
     # TASK-38948 (owner decision 2026-11-10, "Off the gate, reorder next"): the
-    # 100 ms Send-feedback nodes keep running on dev pushes, once (the first
-    # shard) and whatever that shard's own result, as the job's last step with
-    # the UI lane's flags, and stay off the PR gate until CI shows them passing.
+    # 100 ms Send-feedback nodes run on dev pushes once, on the first shard,
+    # whatever that shard's result. PR #3345 also retains both original
+    # exact cases in its PR census.
     watch = job["steps"][-1]
     assert watch["name"] == "Watch the 100 ms Send-feedback nodes"
     assert watch["if"] == "${{ !cancelled() && strategy.job-index == 0 }}"
@@ -698,7 +698,7 @@ def test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required():
     census = (PROJECT_ROOT / "scripts" / "ui_pr_gate_census.txt").read_text(
         encoding="utf-8"
     )
-    assert not any(node in census for node in watched)
+    assert all(census.splitlines().count(node) == 1 for node in watched)
     assert "Tests/UI/test_console_received_intent_feedback.py\n" not in census
 
 
