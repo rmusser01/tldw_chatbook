@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import stat
 from dataclasses import dataclass, field
@@ -32,13 +31,6 @@ class DirectoryChain:
 
     canonical_root: Path = field(repr=False)
     identities: tuple[DirectoryIdentity, ...] = field(repr=False)
-
-
-def stat_identity_digest(value: os.stat_result) -> str:
-    """Fingerprint a filesystem object's device, inode, and kind."""
-    return hashlib.sha256(
-        f"{value.st_dev}:{value.st_ino}:{stat.S_IFMT(value.st_mode)}".encode()
-    ).hexdigest()
 
 
 def directory_identity_from_stat(value: object) -> DirectoryIdentity:

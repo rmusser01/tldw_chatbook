@@ -15,7 +15,7 @@ from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
 from tldw_chatbook.Workspaces.project_index.lifetime import BindingLifetime
 from tldw_chatbook.DB.project_index_vectors import encode_vector
-from tldw_chatbook.Workspaces.project_index.models import IndexCandidate
+from tldw_chatbook.Workspaces.project_index.models import IndexCandidate, stat_identity_digest
 
 
 def test_rrf_deduplicates_metadata_before_live_validation():
@@ -126,7 +126,6 @@ async def test_service_search_fuses_synonym_hit_then_live_validates(
 ):
     from Tests.Workspaces.test_project_index_service import Rig
     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
-    from tldw_chatbook.Utils.filesystem_identity import stat_identity_digest
     from tldw_chatbook.Workspaces.project_index import semantic
     from tldw_chatbook.Workspaces.project_index.models import (
         FileCapture,

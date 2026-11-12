@@ -26,10 +26,7 @@ from tldw_chatbook.DB.project_index_allocation import (
     register_owned_lifetime,
     verify_settlement,
 )
-from tldw_chatbook.Utils.filesystem_identity import (
-    capture_directory_chain,
-    stat_identity_digest,
-)
+from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 from .lifetime import BindingLifetime, LifetimeBusy
 from .models import (
     MAX_CACHE_BYTES,
@@ -45,6 +42,7 @@ from .models import (
     ProjectIndexHit,
     ProjectSearchResult,
     ProjectIndexRetirementUnproven,
+    stat_identity_digest,
 )
 
 from .scanner import ProjectScanner

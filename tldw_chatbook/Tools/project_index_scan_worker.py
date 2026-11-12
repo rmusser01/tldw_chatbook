@@ -30,7 +30,6 @@ from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryChain,
     DirectoryIdentity,
     capture_directory_chain,
-    stat_identity_digest as _identity,
 )
 from tldw_chatbook.Utils.sensitive_paths import (
     SensitiveExclusion,
@@ -44,6 +43,7 @@ from tldw_chatbook.Workspaces.project_index.models import (
     ProjectIndexPolicy,
     ScanEntry,
     relative_path,
+    stat_identity_digest as _identity,
 )
 
 PROCESSING_EXCLUSIONS = frozenset(

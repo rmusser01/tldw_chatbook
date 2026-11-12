@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ContextManager
 
@@ -55,6 +56,13 @@ def root_identity_fingerprint(chain: DirectoryChain) -> str:
     values = [(i.device, i.inode, i.mode, i.reparse) for i in chain.identities]
     return hashlib.sha256(
         json.dumps(values, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def stat_identity_digest(value: os.stat_result) -> str:
+    """Fingerprint a filesystem object's device, inode, and kind."""
+    return hashlib.sha256(
+        f"{value.st_dev}:{value.st_ino}:{stat.S_IFMT(value.st_mode)}".encode()
     ).hexdigest()
 
 
