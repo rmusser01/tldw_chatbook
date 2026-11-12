@@ -250,11 +250,19 @@ async def test_binding_search_uses_the_real_registry_fence(tmp_path, request):
             expected_scope=enabled.scope,
             expected_job_revision=enabled.job_revision,
         )
-        for _ in range(300):
-            if service.status(key).state == "Ready":
-                break
+        deadline = time.monotonic() + 30
+        observed = None
+        while time.monotonic() < deadline:
+            try:
+                observed = await asyncio.to_thread(service.status, key)
+            except LifetimeBusy as error:
+                observed = error
+            else:
+                if observed.state == "Ready":
+                    break
             await asyncio.sleep(0.1)
-        assert service.status(key).state == "Ready"
+        else:
+            pytest.fail(f"Expected the project index to become Ready, got {observed!r}")
 
         search = service.search_binding(key, "booking")
         assert [hit.excerpt for hit in search.result.hits] == ["room booking policy"]
