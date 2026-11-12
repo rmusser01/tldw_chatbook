@@ -57,14 +57,14 @@ _HOLD_SECONDS = 60.0
 _BLOCKED_LOOP_SECONDS = 10.0
 
 
-async def _until(predicate, what, step=None):
+async def _until(predicate, what, step=None, *, timeout=_STATE_SECONDS):
     """Wait, bounded, until ``predicate()``; fail naming ``what`` (TASK-39166)."""
     try:
-        async with asyncio.timeout(_STATE_SECONDS):
+        async with asyncio.timeout(timeout):
             while not predicate():
                 await (step() if step is not None else asyncio.sleep(0.01))
     except TimeoutError:
-        pytest.fail(f"{what}: not within {_STATE_SECONDS:g} s")
+        pytest.fail(f"{what}: not within {timeout:g} s")
 
 
 async def _until_set(event, what):
@@ -83,10 +83,11 @@ class _UiLoopWatch:
     it records the loop thread's stack, sets ``fired`` and calls ``on_block``.
     """
 
-    def __init__(self, on_block):
+    def __init__(self, on_block, *, blocked_seconds=_BLOCKED_LOOP_SECONDS):
         self._loop = asyncio.get_running_loop()
         self._loop_thread = threading.get_ident()
         self._on_block = on_block
+        self._blocked_seconds = blocked_seconds
         self._done = threading.Event()
         self.fired = threading.Event()
         self.stack: list[str] = []
@@ -110,7 +111,7 @@ class _UiLoopWatch:
                 self._loop.call_soon_threadsafe(ran.set)
             except RuntimeError:  # the loop closed with the test
                 return
-            deadline = time.monotonic() + _BLOCKED_LOOP_SECONDS
+            deadline = time.monotonic() + self._blocked_seconds
             while not ran.wait(0.05):
                 if self._done.is_set():
                     return
@@ -124,7 +125,7 @@ class _UiLoopWatch:
 
     def failure(self, what: str) -> str:
         return (
-            f"{what}: the UI loop ran no callback for {_BLOCKED_LOOP_SECONDS:g} s"
+            f"{what}: the UI loop ran no callback for {self._blocked_seconds:g} s"
             " while the rebuild held config:\n" + "".join(self.stack[-14:])
         )
 
@@ -652,7 +653,8 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             complaint = "/omfg Include evidence in the answer"
             case.composer.load_draft(complaint)
             case.console.query_one("#console-send-message", Button).press()
-            await _until_set(case.helper_entered, "the /omfg helper's request")
+            async with asyncio.timeout(5):
+                await case.helper_entered.wait()
             await case.pilot.pause()
             async with asyncio.timeout(2):
                 # The attach flag can precede its startup worker dispatch.
@@ -675,7 +677,7 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                     with config._settings_rebuild_lock():
                         config._invalidate_config_caches()
                         held.set()
-                        assert release.wait(_HOLD_SECONDS), "config holder was not released"
+                        assert release.wait(5), "config holder was not released"
                 except BaseException as error:  # noqa: BLE001 - asserted after thread retirement.
                     errors.append(error)
 
@@ -688,13 +690,13 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 return result
 
             holder = threading.Thread(target=hold_rebuild)
-            watch = _UiLoopWatch(release.set)
+            watch = _UiLoopWatch(release.set, blocked_seconds=2)
             expired = watch.fired
             if deferral == "maintenance":
                 case.console._console_sync_maintenance_close_admission()
             try:
                 holder.start()
-                assert held.wait(_STATE_SECONDS), "the holder never took the rebuild lock"
+                assert held.wait(3), "the holder never took the rebuild lock"
                 watch.start()
                 with monkeypatch.context() as observer:
                     observer.setattr(case.console, "_sync_console_control_bar", observed_sync)
@@ -746,6 +748,7 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                         and "Testing rule" in _run_text(case.console)
                     ),
                     "Stop returning the rule phase to idle and clearing 'Testing rule'",
+                    timeout=1,
                 )
                 assert not expired.is_set(), watch.failure("Stop")
                 assert not release.is_set()
@@ -768,12 +771,11 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                     print("Blocked UI stack:\n" + "".join(watch.stack))
                 case.helper_release.set()
                 try:
-                    async with asyncio.timeout(_STATE_SECONDS):
+                    async with asyncio.timeout(5):
                         await case.rules.helpers.wait_for_cleanup()
                 except TimeoutError:
                     pytest.fail(
-                        "the response-rule helpers did not clean up within "
-                        f"{_STATE_SECONDS:g} s"
+                        "the response-rule helpers did not clean up within 5 s"
                     )
                 from textual.worker import WorkerCancelled
 

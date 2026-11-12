@@ -271,7 +271,8 @@ _BUDGETS: dict[str, int] = {
     # 28,734 plus TASK-39159's +8, measured.
     # 2026-11-10, TASK-39155 (owner size waiver): 29183 -> 29184 (+1, exact),
     # a session close in progress counts as an explicit cancellation.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28504,
+    # PR #3345 source-size waiver, dev 4b90eb8. Exact integrated line count.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28513,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -1023,7 +1024,8 @@ _BUDGETS: dict[str, int] = {
     # measurement. The focus watcher drops the other descendants' cached
     # visual style when the bar's background moves.
     # PR3345 integration retains its pre-rebase ceiling; upstream waivers above are historical.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7189,
+    # PR #3345 source-size waiver, dev 4b90eb8. Exact integrated line count.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7196,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.

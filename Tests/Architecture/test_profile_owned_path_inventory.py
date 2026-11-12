@@ -560,8 +560,15 @@ def test_runtime_constant_guard_does_not_swallow_runtime_parse_failure(
 ) -> None:
     path = runtime_source_tree / "scripts" / "broken.py"
     path.parent.mkdir(parents=True)
-    path.write_text("    def broken(): pass\n", encoding="utf-8")
+    path.write_text("    DEFAULT_RUNTIME_POLICY_PATH = None\n", encoding="utf-8")
     monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", runtime_source_tree)
 
     with pytest.raises(IndentationError):
         test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
+
+    path.write_text("    def broken(): pass\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "--", "scripts/broken.py"], cwd=runtime_source_tree, check=True
+    )
+    with pytest.raises(AssertionError, match=r"scripts/broken\.py:1: unexpected indent"):
+        test_python_outside_the_package_and_tests_parses()

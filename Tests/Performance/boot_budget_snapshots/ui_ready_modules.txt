@@ -484,17 +484,14 @@ tldw_chatbook.Notes.note_folder_models
 tldw_chatbook.Notes.note_folder_repository
 tldw_chatbook.Notes.note_import_discovery
 tldw_chatbook.Notes.note_import_plan_models
-tldw_chatbook.Notes.note_import_windows_fs
 tldw_chatbook.Notes.notes_device_state_schema
 tldw_chatbook.Notes.notes_device_state_store
 tldw_chatbook.Notes.notes_scope_service
 tldw_chatbook.Notes.notes_sync_conflicts
-tldw_chatbook.Notes.notes_sync_filesystem
 tldw_chatbook.Notes.notes_sync_legacy
 tldw_chatbook.Notes.notes_sync_models
 tldw_chatbook.Notes.notes_sync_reconciler
 tldw_chatbook.Notes.server_notes_workspace_service
-tldw_chatbook.Notes.sync_paths
 tldw_chatbook.Notifications
 tldw_chatbook.Notifications.client_notifications_db
 tldw_chatbook.Notifications.client_notifications_service

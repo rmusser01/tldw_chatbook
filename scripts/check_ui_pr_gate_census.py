@@ -1012,6 +1012,8 @@ MINIMUM_FILES = 2100
 MINIMUM_FILES = 2107
 # Current dev rebase: the whole preparation file owns the redundant node.
 MINIMUM_FILES = 2199
+# PR #3345 on dev 4b90eb8 retains all 117 incoming entries and the prior census.
+MINIMUM_FILES = 2316
 
 
 def read_census(path: Path) -> list[str]:

@@ -56,7 +56,6 @@ class _CoreAdapter:
                         "recovery.core.chachanotes", path, read_only=True
                     )
                 ) as connection:
-                    scalar_cost(connection, 5)
                     optional_groups = {
                         "notes.file_notes": "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",
                         "persona.assets": "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) <> 'actor_packs/' LIMIT 1",
@@ -65,6 +64,7 @@ class _CoreAdapter:
                         "persona.visual_identity_builtin": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind = 'builtin' LIMIT 1",
                         "chat.dictionaries": "SELECT 1 FROM chat_dictionaries WHERE file_path IS NOT NULL LIMIT 1",
                     }
+                    scalar_cost(connection, len(optional_groups))
                     absent = {
                         owner
                         for owner, query in optional_groups.items()

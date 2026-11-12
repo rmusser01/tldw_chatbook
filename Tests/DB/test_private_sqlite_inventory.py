@@ -572,12 +572,12 @@ def _assert_detached_normalization_source(source: str, module: str) -> None:
     expected = {
         "detached_layout": {
             "_normalize_sqlite": "eff395f259323b2638e538ee166142c727c6256368c53e8d9230fe99c0496d61",
-            "_owner_items": "596498f745a036e8b9a2d7e2ccb995173d65b97930745f635ee52bad8826cf1e",
+            "_owner_items": "20d53c491c4cd3b357686705830adb580bbb0168fefd0789ef219f9e45f071c3",
             "produce_detached_archive": "6aaa5ba9c691944a740445aae8d2299e12ad09a4c0ecb55e7204adf2a29c2d7c",
         },
         "sqlite_validation": {
             "normalize_detached_candidate": "0958fde34420ac25689ef1b9162c3dc1e3e3401ad71b2b3a4de924c8a0d3093b",
-            "_validate_candidate": "a2d5d789df77f826fecd18f33d472624233135a3a958ecfee1f4afa5f8aa9890",
+            "_validate_candidate": "8d8263701cda519b85383c28cf84fd07eeaae0746e4fa8bac8a7746a51c5fcb7",
             "_write_normalized_candidate": "29ee683bec2883fa9d4bb1b962819308b9630efb6c0c5b880373bda3a6bd3ed6",
         },
         "private_sqlite": {
@@ -1703,6 +1703,11 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             (
                 "tldw_chatbook/Backup_Recovery/core_adapters",
                 "_CoreAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Plugins/backup",
+                "_Plugins.capture",
                 "copy_private_sqlite",
             ): 1,
             (
