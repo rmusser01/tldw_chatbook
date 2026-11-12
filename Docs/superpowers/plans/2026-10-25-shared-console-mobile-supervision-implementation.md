@@ -1484,7 +1484,7 @@ Only four publication metadata paths change; all 9,742 executable/test/script ha
 ### Current-head Windows qualification correction (2026-11-04)
 
 ADR required: yes
-ADR path: backlog/decisions/358-windows-textual-timer-waits-use-the-event-loop.md
+ADR path: backlog/decisions/359-windows-textual-timer-waits-use-the-event-loop.md
 Reason: Choose the Windows framework timer wait policy at the existing App compatibility seam, including its process-global scope and clock-resolution tradeoff.
 
 The current published-head startup failure reproduces the existing TASK-38462 executor-starvation mechanism. Implement that task within this PR's check correction: finish/physically reap active migration qualification before any source change; preserve the current source/evidence. Add a real-Textual Timer regression under a controlled eight-worker Windows sleeper proxy, keeping the original three-second bound and releasing/awaiting every owned job. Select standard-library asyncio.sleep only for Windows Textual timers in the existing on_load guard, before the already-installed executor return. Preserve all default-executor/context, replacement cleanup, Timer callback/interval/repeat/pause/reset/stop and non-Windows behavior; no worker increase, timer fleet, deadline widening or DB-specific dispatch. Run the new mechanism and unchanged context/startup/timer controls, then fresh mounted manual and whole served-browser UAT. Record actual hosted Windows evidence and final independent exact-head review before readiness/auto-merge; no real-profile or full-repository sweep.

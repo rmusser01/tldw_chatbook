@@ -1,4 +1,4 @@
-# ADR-358: Windows Textual timer waits use the event loop
+# ADR-359: Windows Textual timer waits use the event loop
 
 Status: Accepted
 Date: 2026-11-04

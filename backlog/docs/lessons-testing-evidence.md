@@ -872,7 +872,7 @@ had never entered. Its 0.1-second timer was 2.75 seconds late and its retained
 executor source Future was still pending. Five of six sampled workers were
 Textual waiters, with two workers omitted; this did not prove all eight were
 sleepers or that DB calculation was slow. Keep that distinction when diagnosing.
-ADR-358 / TASK-38462 fixes the shared timer seam with Windows-only
+ADR-359 / TASK-38462 fixes the shared timer seam with Windows-only
 `textual.timer.sleep = asyncio.sleep`, before the already-installed executor
 return. A real-Timer/eight-held-worker proxy failed at the unchanged deadline,
 then delivered and retired a long timer after the correction; every owned
