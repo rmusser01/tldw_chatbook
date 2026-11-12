@@ -4750,9 +4750,14 @@ class TldwCli(
 
     def _run_full_agent_tools_upgrade(self) -> None:
         """Run the one-time light-surface upgrade check (TASK-34100.5.3.2)."""
-        from tldw_chatbook.Agents.full_agent_tools_upgrade import run_for_app
+        from tldw_chatbook.Agents.full_agent_tools_upgrade import run_for_profile
 
-        run_for_app(self)
+        run_for_profile(
+            workspace_db=self.local_workspace_db,
+            chachanotes_db=self.chachanotes_db,
+            app_config=self.app_config,
+            call_from_thread=self.call_from_thread,
+        )
 
     def _start_boot_worker(self, key: str) -> Optional[Worker]:
         """Start one staggered boot worker.

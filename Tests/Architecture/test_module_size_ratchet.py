@@ -145,9 +145,11 @@ _BUDGETS: dict[str, int] = {
     # the TUI opens ChaChaNotes and Media through the shared openers (+8).
     # the TUI opens ChaChaNotes and Media through the shared openers (+8);
     # review fix: a failed notes service reuses the startup-opened DB (+9).
-    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +19 (the
-    # one-time Full agent tools upgrade's boot-worker starter and body).
-    "tldw_chatbook/app.py": 5724,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +24 (the
+    # one-time Full agent tools upgrade's boot-worker starter and body, which
+    # hands the module the app's services explicitly, per the app-lookup
+    # census).
+    "tldw_chatbook/app.py": 5729,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
