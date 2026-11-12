@@ -239,6 +239,144 @@ def test_a_profile_that_uses_agent_features_gets_full_agent_tools_written_once(
     assert profile.config_path.read_bytes() == written
 
 
+#: A hand-kept config: comments everywhere, tables in the user's own order
+#: (``[tools]`` before ``[general]``), odd spacing, a trailing comment on the
+#: header, a multi-line string that mentions ``[tools]`` itself, and no final
+#: newline. A whole-file re-serialisation would change nearly every line.
+HAND_KEPT_CONFIG = (
+    "# ~/.config/tldw_cli/config.toml -- edited by hand, keep my notes!\n"
+    "\n"
+    "[first_run]   # wizard state\n"
+    "setup_started=true\n"
+    "setup_completed   =   true\n"
+    "\n"
+    "[tools] # my tool switches\n"
+    "\t# read_file is fine on this machine\n"
+    "read_file_enabled    = true   # yes\n"
+    "\n"
+    "[general]\n"
+    'notes = """\n'
+    "[tools]\n"
+    'this line is inside a string"""\n'
+    "default_tab = 'chat'"
+)
+
+
+def _added_and_removed(before: str, after: str) -> tuple[list[str], list[str]]:
+    import difflib
+
+    diff = list(
+        difflib.unified_diff(
+            before.splitlines(keepends=True), after.splitlines(keepends=True), n=0
+        )
+    )
+    added = [line[1:] for line in diff if line.startswith("+") and not line.startswith("+++")]
+    removed = [line[1:] for line in diff if line.startswith("-") and not line.startswith("---")]
+    return added, removed
+
+
+def test_the_upgrade_write_adds_one_line_and_keeps_every_other_byte(profile) -> None:
+    """Coordinator, review round 1 (F1-10/F6-7): an automatic first-launch
+    write must never delete a user's comments, reorder tables or reformat
+    config.toml -- it changes exactly that one key."""
+    profile.config_path.write_text(HAND_KEPT_CONFIG, encoding="utf-8")
+    before = profile.config_path.read_text(encoding="utf-8")
+    _bind_folder(profile)
+
+    result = _run(profile)
+
+    assert result.outcome is UpgradeOutcome.KEPT_ON
+    after = profile.config_path.read_text(encoding="utf-8")
+    added, removed = _added_and_removed(before, after)
+    assert removed == []
+    assert added == ["full_agent_tools_enabled = true\n"]
+    # Right under the real [tools] header, not the one inside the string.
+    lines = after.splitlines()
+    assert lines[lines.index("[tools] # my tool switches") + 1] == (
+        "full_agent_tools_enabled = true"
+    )
+    assert tomllib.loads(after) == {
+        **tomllib.loads(before),
+        "tools": {"read_file_enabled": True, "full_agent_tools_enabled": True},
+    }
+    assert light_surface_configured() is False
+
+
+def test_a_config_without_a_tools_table_gets_one_appended_after_its_own_bytes(
+    profile,
+) -> None:
+    hand_kept = "# mine\n[general]\ndefault_tab = 'chat'   # inline\n"
+    profile.config_path.write_text(hand_kept, encoding="utf-8")
+    _bind_folder(profile)
+
+    assert _run(profile).outcome is UpgradeOutcome.KEPT_ON
+
+    after = profile.config_path.read_text(encoding="utf-8")
+    assert after == hand_kept + "\n[tools]\nfull_agent_tools_enabled = true\n"
+
+
+def test_a_crlf_config_keeps_its_line_endings(profile) -> None:
+    hand_kept = b"# mine\r\n[tools]\r\nread_file_enabled = true\r\n"
+    profile.config_path.write_bytes(hand_kept)
+    _bind_folder(profile)
+
+    assert _run(profile).outcome is UpgradeOutcome.KEPT_ON
+
+    assert profile.config_path.read_bytes() == (
+        b"# mine\r\n[tools]\r\nfull_agent_tools_enabled = true\r\n"
+        b"read_file_enabled = true\r\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("hand_kept", "expected"),
+    [
+        # Only a sub-table: TOML allows the super-table header after it.
+        (
+            "[tools.limits]\nmax = 3\n",
+            "[tools.limits]\nmax = 3\n\n[tools]\nfull_agent_tools_enabled = true\n",
+        ),
+        # A quoted header, last line, no final newline.
+        (
+            "# mine\n[ \"tools\" ]",
+            "# mine\n[ \"tools\" ]\nfull_agent_tools_enabled = true\n",
+        ),
+    ],
+    ids=["sub-table-only", "quoted-header-at-eof"],
+)
+def test_the_one_line_writer_handles_other_table_shapes(
+    profile, hand_kept, expected
+) -> None:
+    from tldw_chatbook.config import insert_absent_cli_config_bool
+
+    profile.config_path.write_text(hand_kept, encoding="utf-8")
+
+    assert insert_absent_cli_config_bool("tools", "full_agent_tools_enabled", True)
+
+    assert profile.config_path.read_text(encoding="utf-8") == expected
+    assert light_surface_configured() is False
+
+
+def test_a_tools_table_that_cannot_take_a_line_fails_closed_untouched(
+    profile,
+) -> None:
+    """An inline ``tools = {...}`` table cannot take a new line or a new
+    header without rewriting the user's text, so nothing is written, no
+    marker is recorded, and the next launch tries again."""
+    profile.config_path.write_text(
+        "# mine\ntools = { read_file_enabled = true }\n", encoding="utf-8"
+    )
+    before = profile.config_path.read_bytes()
+    _bind_folder(profile)
+
+    result = _run(profile)
+
+    assert result.outcome is UpgradeOutcome.FAILED
+    assert profile.config_path.read_bytes() == before
+    assert not _marker_recorded(profile)
+    assert light_surface_configured() is True
+
+
 def test_a_pre_v13_run_whose_steps_live_in_the_json_blob_counts(profile) -> None:
     """Runs from before task-18601 kept every step in ``agent_runs.steps``."""
     run_id = _record_run(profile)
@@ -497,13 +635,10 @@ def test_a_config_write_that_does_not_land_records_no_marker(
 
     _bind_folder(profile)
     before = profile.config_path.read_bytes()
-    monkeypatch.setattr(
-        config_module,
-        "apply_literal_settings_transaction_to_cli_config",
-        lambda builder: config_module.LiteralConfigMutationResult(
-            False, False, None, "before_replace"
-        ),
-    )
+    def refused(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(config_module, "insert_absent_cli_config_bool", refused)
 
     result = _run(profile)
 
