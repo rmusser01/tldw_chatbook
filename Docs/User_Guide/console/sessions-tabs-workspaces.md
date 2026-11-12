@@ -677,8 +677,10 @@ staged attachment and unsent turn as it was. With nothing to lose, Ctrl+Q quits
 without asking. Command output such as `/help` or `/doctor`, and error notices,
 are not counted in either dialog and never make one appear on their own: a
 saved chat holding only those rows closes and quits without a question once
-its composer is empty. Text a command leaves in the composer after it runs,
-such as `/help`, still counts as an unsent draft until you clear it (Ctrl+U).
+its composer is empty. A command that ran, such as `/help`, takes its own
+text out of the composer, so Ctrl+Q right after it quits without asking. A
+refused or unknown command keeps its text for you to correct, and that text
+counts as an unsent draft until you send or clear it (Ctrl+U).
 
 ## Assistant recovery choices
 

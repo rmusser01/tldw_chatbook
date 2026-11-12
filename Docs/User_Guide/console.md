@@ -1438,6 +1438,13 @@ command that only reports (`/doctor`, `/skills`,
 the chat you sent it from. Anything you type while a command runs stays in
 the composer.
 
+**A command that ran leaves an empty composer**, the same as a sent message.
+`/help`, `/doctor`, `/skills`, `/research`, `/rules`, `/stream-video`,
+`/workflow` and `/rewind` take their own text out once they answer or open;
+`/system`, `/goal` and `/workflow new` take it once you apply or start what
+they open, and Cancel there keeps it. A refused or unknown command keeps its
+text so you can correct it.
+
 **Learning a response rule.** After a completed answer, `/omfg <what was wrong>` drafts and tests a structured check for this Chat, then attempts to repair the answer while retaining completed work. `/rules` opens its manager; Workspace and current-profile promotion are explicit. See [Response rules](../../backlog/docs/console-response-rules.md) for testing, limits and local recovery behavior.
 
 **Steering a running turn.** `/steer <guidance>` delivers text into the
