@@ -421,12 +421,15 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
             timer.pause()
             owner = asyncio.current_task()
             calls: list[bool] = []
+            projected_requests: list[int] = []
             real_project = console._sync_console_rail_and_controls
 
             def counting_project():
+                requested = config_sync._cadence(console).requested
                 result = real_project()
                 if asyncio.current_task() is owner:
                     calls.append(result)
+                    projected_requests.append(requested)
                 return result
 
             monkeypatch.setattr(
@@ -464,7 +467,9 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 # The next tick projects them, once.
                 await tick()
                 assert len(calls) == before + 1
-                assert cadence.requested == cadence.served
+                # FULL can receive newer requests after its synchronous projection.
+                assert calls[-1] is True
+                assert cadence.served >= projected_requests[-1]
 
                 # Freshness: a request with no projection for a poll interval
                 # projects at once, and so does one left waiting that long.
@@ -474,9 +479,33 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 await settled_sync()  # Within the interval again: it waits...
                 assert len(calls) == before + 2
                 clock.now += config_sync.RUN_COALESCE_SECONDS
-                await settled_sync()  # ...a poll interval at most.
+                real_transcript = console._sync_native_console_transcript
+                late_requests: list[tuple[int, int]] = []
+
+                async def transcript_with_late_request(*args, **kwargs):
+                    result = await real_transcript(*args, **kwargs)
+                    if asyncio.current_task() is owner:
+                        requested = cadence.requested
+                        await asyncio.create_task(
+                            console._sync_native_console_chat_ui()
+                        )
+                        late_requests.append((requested, cadence.requested))
+                    return result
+
+                # A real overlapping FULL arrives after this projection. It is
+                # owed to a later tick, not retroactively to the completed one.
+                with monkeypatch.context() as patch:
+                    patch.setattr(
+                        console,
+                        "_sync_native_console_transcript",
+                        transcript_with_late_request,
+                    )
+                    await settled_sync()  # ...a poll interval at most.
+                assert late_requests and late_requests[-1][1] > late_requests[-1][0]
                 assert len(calls) == before + 3
-                assert cadence.requested == cadence.served
+                # FULL can receive newer requests after its synchronous projection.
+                assert calls[-1] is True
+                assert cadence.served >= projected_requests[-1]
             finally:
                 gateway.validation_release.set()
                 timer.resume()
