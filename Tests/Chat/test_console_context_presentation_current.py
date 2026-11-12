@@ -94,7 +94,86 @@ async def test_context_display_retains_exact_native_handle_through_cancel(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_custom_context_reader_keeps_issuing_thread_and_live_result(tmp_path, monkeypatch):
+async def test_session_close_drains_context_display_and_refuses_a_new_read(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Chat import console_preparation_reads
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    database, store, controller, _screen_owner, tasks = _screen(tmp_path)
+    _memory_owner(store, controller)
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    session_id = "session-1"
+    code = store.persistence.get_message_versions.__func__.__code__
+    entered, drain_entered = asyncio.Event(), asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    previous, previous_thread = sys.getprofile(), threading.getprofile()
+    original_drain = console_preparation_reads.drain_preparation_reads
+
+    async def observe_drain(reads, selected_session=None):
+        if reads is runtime._preparation_reads and selected_session == session_id:
+            drain_entered.set()
+        return await original_drain(reads, selected_session)
+
+    def hold_read(frame, event, _argument):
+        if frame.f_code is code and event == "return":
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(20)
+
+    monkeypatch.setattr(
+        console_preparation_reads, "drain_preparation_reads", observe_drain
+    )
+    threading.setprofile_all_threads(hold_read)
+    presentation = asyncio.create_task(
+        controller.context_control_presentation_inputs(session_id)
+    )
+    close = None
+    try:
+        async with asyncio.timeout(15):
+            await entered.wait()
+            (read,) = controller._preparation_reads
+            assert read in runtime._preparation_reads
+            close = asyncio.create_task(
+                runtime.close_session(
+                    session_id,
+                    expected_revision=controller.lifecycle_impact(
+                        session_id=session_id
+                    ).revision,
+                    timeout_seconds=0.01,
+                )
+            )
+            await drain_entered.wait()
+            assert not close.done() and not read.retired.done()
+            assert any(session.id == session_id for session in store.sessions())
+            with pytest.raises(
+                RuntimeError, match="Console context display owner changed"
+            ):
+                await controller.context_control_presentation_inputs(session_id)
+            assert controller._preparation_reads == {read}
+            release.set()
+            await close
+            with pytest.raises(asyncio.CancelledError):
+                await presentation
+        assert all(session.id != session_id for session in store.sessions())
+        assert not controller._preparation_reads and not runtime._preparation_reads
+    finally:
+        release.set()
+        await asyncio.gather(presentation, *tasks, return_exceptions=True)
+        if close is not None:
+            await asyncio.gather(close, return_exceptions=True)
+        threading.setprofile_all_threads(previous_thread)
+        sys.setprofile(previous)
+        await runtime.dispose()
+        database.close()
+
+
+@pytest.mark.asyncio
+async def test_custom_context_reader_keeps_issuing_thread_and_live_result(
+    tmp_path, monkeypatch
+):
     database, _store, controller, _screen_owner, tasks = _screen(tmp_path)
     calls = []
     result = object()
