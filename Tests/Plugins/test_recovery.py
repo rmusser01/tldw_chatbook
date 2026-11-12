@@ -1157,6 +1157,64 @@ def test_restored_registry_must_name_its_own_plugin_root(tmp_path):
                 adapter.relocate_restore(item, candidate, {})
 
 @platform_support.package_capture
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo"])
+def test_odd_staging_member_is_excluded_not_blocking(tmp_path, kind):
+    """I-3 (r13g-rev3): whatever a fetch folder member is, it is never copied, so
+    a link, a hard-linked file or a FIFO there is excluded and blocks nothing."""
+    import os
+
+    config, root = _plugin_root(tmp_path)
+    member = root / "staging/op/odd-member"
+    if kind == "symlink":
+        member.symlink_to(root / "staging/op/snapshot")
+    elif kind == "hardlink":
+        os.link(root / "staging/op/host-git-config", member)
+    else:
+        os.mkfifo(member, 0o600)
+    _, rows = _plugin_rows(config, root)
+    assert rows[member].status == "intentionally_excluded", rows[member].status
+    blocking = {"unsupported", "unavailable", "missing_required"}
+    assert not [(path, item.status) for path, item in rows.items() if item.status in blocking]
+
+
+@platform_support.package_capture
+@pytest.mark.parametrize("planted", ["fetched", "snapshot-only"])
+def test_replace_restore_refuses_a_fetch_folder_added_since_the_backup(tmp_path, planted):
+    """I-1 (owner decision 2026-11-12, refuse early): a replace restore retires a
+    fetch folder the backup lacks, which it cannot do while the folder holds
+    members no backup captures. The preview refuses with a plugin reason that
+    says what to do; a folder holding only its snapshot restores."""
+    from tldw_chatbook.Backup_Recovery.recovery_service import issue_code, issue_message
+    from tldw_chatbook.Plugins import backup
+
+    config, root = _plugin_root(tmp_path)
+    refuse = getattr(backup, "refuse_added_fetch_folders", None)
+    assert refuse is not None, "no plugin-specific restore preview check"
+    backed_up = _plugin_rows(config, root)[0].items
+    archived = {item.logical_id: item for item in backed_up}
+    refuse(backed_up, archived)  # the backup's own fetch folders never refuse
+    added = root / "staging" / "zz-new"
+    members = {"snapshot/plugin.json": b"{}"}
+    if planted == "fetched":
+        members.update({"repository.git/HEAD": b"ref", "host-git-config": b"x"})
+    for relative, payload in members.items():
+        (added / relative).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (added / relative).write_bytes(payload)
+        (added / relative).chmod(0o600)
+    target = _plugin_rows(config, root)[0]
+    if planted == "snapshot-only":
+        refuse(target.items, archived)
+        return
+    with pytest.raises(ValueError) as refused:
+        refuse(target.items, archived)
+    code = issue_code(refused.value)
+    assert code == "plugin_fetch_added_since_backup"
+    message = issue_message(code)
+    assert "since this backup" in message and "without the Tools and skills group" in message
+    assert "except the snapshot folder" in message and "Uninstall" not in message
+
+
+@platform_support.package_capture
 def test_restored_registry_matches_its_root_through_a_symlinked_data_dir(tmp_path):
     """M8: the registry names its root as the runtime owner resolves it, so a
     restore onto the same root reached through a linked data folder is in place,
@@ -1550,7 +1608,7 @@ print('PLUGIN_SEED_COMPLETE',flush=True)
 # Only the Tools group (MCP, skills and plugins): whole-profile replacement is
 # far slower and adds nothing to the plugin owner's evidence.
 _PLUGIN_BACKUP_RESTORE = r"""
-import json,os,sys,threading,time,zipfile
+import json,os,shutil,sys,threading,time,zipfile
 from pathlib import Path
 started=time.monotonic()
 def phase(name):print('PHASE',name,round(time.monotonic()-started),flush=True)
@@ -1615,7 +1673,6 @@ try:
   moved=home/'moved-data';moved.mkdir(mode=0o700)
   source.write_text(original.decode().replace(json.dumps(str(home/'data')),json.dumps(str(moved))))
   # A plain copy of the other stores: opening them here would hold leases.
-  import shutil
   shutil.copytree(home/'data'/'default_user',moved/'default_user',ignore=shutil.ignore_patterns('plugins'))
   try:result=restore()
   except ValueError as error:assert str(error).startswith('owner_relocation_unverified'),str(error)
@@ -1623,6 +1680,20 @@ try:
   assert not (moved/'default_user'/'plugins'/'registry.sqlite3').exists()
   source.write_bytes(original)
   phase('moved data refused')
+  # I-1 (owner decision 2026-11-12, refuse early): a plugin fetched since the
+  # backup leaves a fetch folder the archive lacks. While it holds members no
+  # backup captures, the review refuses with the plugin reason, before Start.
+  plugin_root=next(item.path for item in plugins if item.metadata and item.metadata.relative_path=='')
+  added=plugin_root/'staging'/'zz-new'
+  for name,payload in (('snapshot/plugin.json',b'{}'),('repository.git/HEAD',b'ref'),('host-git-config',b'x')):
+   (added/name).parent.mkdir(parents=True,exist_ok=True,mode=0o700);(added/name).write_bytes(payload);(added/name).chmod(0o600)
+  try:restore()
+  except ValueError as error:
+   assert service.issue_code(error)=='plugin_fetch_added_since_backup',str(error)
+  else:raise AssertionError('restore planned over a fetch folder added since the backup')
+  # The copy's step: keep only snapshot/ there. The restore then retires it.
+  shutil.rmtree(added/'repository.git');(added/'host-git-config').unlink()
+  phase('newer fetch refused')
   next(item.path for item in preview.items if item.owner=='plugins' and item.path is not None and item.path.name=='notes.txt').write_bytes(b'changed after the backup')
  # The first attempt stops at the rollback snapshot's credential review (about
  # 10 s) for the restored skill trust; the user acknowledges and restores again.
@@ -1636,6 +1707,7 @@ try:
   phase('aborted')
   result=restore(acknowledged_credential_issues=issues)
  assert result['state']=='succeeded',dict(result)
+ if first:assert not added.exists(),'the newer fetch folder was not retired'
  phase('restored')
 finally:
  service.close()
@@ -1737,7 +1809,7 @@ def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_pa
 
     # A child's limit names the child that hung; the test's limit bounds the sum.
     assert "PLUGIN_SEED_COMPLETE" in run(_PLUGIN_SEED, "plugins", timeout=60)
-    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "first", timeout=300)
+    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "first", timeout=360)
     unchanged = run(_PLUGIN_REOPEN, "unchanged", timeout=60)
     assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in unchanged
     # M4: the excluded fetch members survived the in-place restore (preserved,

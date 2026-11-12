@@ -1175,6 +1175,10 @@ def plan_restore(
             producer[key].owner_id for key in selected if key in producer
         }
         selected_owners.update(item.owner for item in target.items if item.logical_id in absent_ids)
+        if mode == "replace" and "plugins" in selected_owners:
+            from tldw_chatbook.Plugins.backup import refuse_added_fetch_folders
+
+            refuse_added_fetch_folders(target.items, producer)
         by_target_id = {item.logical_id: item for item in target.items}
         for item in target.items:
             if item.path is None:
@@ -1308,9 +1312,15 @@ def plan_restore(
             if path.exists() and path not in declared:
                 raise ValueError("target_unverified")
         # Unknown children are never inferred garbage inside a managed directory.
-        # A preserved directory (an owner's whole excluded subtree, never listed:
-        # TASK-40132) is left as it is, so its children are left with it.
-        kept = {path for _, path in preserve}
+        # A directory both the target and the archive exclude (an owner's whole
+        # excluded subtree, never listed: TASK-40132) is left as it is, so its
+        # children are left with it. One the archive lacks stays refused here.
+        kept = {
+            path
+            for key, path in preserve
+            if by_target_id[key].status == "intentionally_excluded"
+            and getattr(producer.get(key), "status", None) == "intentionally_excluded"
+        }
         for item in target.items:
             if (
                 item.path

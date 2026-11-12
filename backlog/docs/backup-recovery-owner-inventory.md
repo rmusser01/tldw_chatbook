@@ -2928,8 +2928,18 @@ check compares with the destination root resolved as the runtime owner names it
 into a separate profile refuses the owner (`owner_relocation_unverified:plugins`);
 a registry whose data-root paths, or installed and fetched package paths
 (`materialized_identity` in `revisions.inspection_json`), name another root is
-refused the same way at staging. Detached import refuses a plugin root by name
-(`detached_owner_unavailable:plugins`). The owner is activation-required: the
+refused the same way at staging. A replace restore whose target holds a fetch
+folder the archive lacks, with excluded members inside, is refused at review
+with `plugin_fetch_added_since_backup` (`Plugins/backup.refuse_added_fetch_folders`,
+called from `restore_plan.plan_restore` when the plugins owner is selected; owner
+decision 2026-11-12, "Refuse early, feature next"): retiring that folder would
+have to keep members it never captured, which Start cannot do
+(`rollback_dependency_selection_required`, `publication_preserved_overlap`). The
+copy says to restore without Tools and skills, or to delete everything but
+`snapshot/` in those folders first; a snapshot-only folder restores and is
+retired. `restore_plan`'s unknown-children rule keeps a directory whole only when
+both the target and the archive exclude it. Detached import refuses a plugin root
+by name (`detached_owner_unavailable:plugins`). The owner is activation-required: the
 plugin service refuses to run plugins for a restored generation until its own
 authority recovery completes (no `recovery_required` receipt, posture ready),
 which approves it.

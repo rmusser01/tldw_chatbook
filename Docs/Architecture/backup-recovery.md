@@ -152,8 +152,12 @@ inside each `staging/<name>/`, every member but `snapshot/` (an allow-list: only
 `snapshot/` and the custody record serve recovery). The owner passes
 `_staging_excluded` to the tree walk as `prune`, so each excluded member is one
 row whose contents are never listed (a local-source `repository.git` can hold
-tens of thousands of files), and replace restore keeps a preserved directory
-whole (`restore_plan`'s unknown-children rule skips it). Capture refuses rather than waits: an unsettled `processes` row or a
+tens of thousands of files), and replace restore keeps such a directory whole
+when the archive excluded it too (`restore_plan`'s unknown-children rule skips
+it). A fetch folder the archive lacks that holds excluded members cannot be
+retired around them, so `plan_restore` calls `refuse_added_fetch_folders` and the
+review refuses with `plugin_fetch_added_since_backup` (owner decision
+2026-11-12: refuse early; automatic handling is a follow-up). Capture refuses rather than waits: an unsettled `processes` row or a
 held runtime lock reduces the owner to one unavailable root plus a
 `writers_active` row, and the inventory adds `plugin_writers_active` after group
 selection; each item's copy creates if needed and holds the lock. Restore is in

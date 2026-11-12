@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 16:15
-updated_date: 2026-11-12 15:12
+updated_date: 2026-11-12 16:47
 labels:
 - follow-up
 - backup
@@ -46,6 +46,7 @@ Today every one of these producers sits in the backup review's conservative `uns
 - [x] #6 The owner inventory doc's Plugins rows and the backup User Guide page describe the new behaviour
 - [x] #7 After a restore, the plugin service refuses to run plugins until plugin authority recovery completes, which approves them; a test shows both
 - [x] #8 A restore into a separate profile refuses the plugins owner with the reason owner_relocation_unverified, and a same-profile restore is unaffected; a test shows both
+- [x] #9 A replace restore over a plugin fetch folder added since the backup that holds members a backup never captures is refused when the restore is reviewed, with a plugin-specific reason whose copy (shown on the Backup screen) says what to do; a fetch folder holding only its snapshot still restores; a test shows both
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -101,6 +102,8 @@ Review r13g-rev1 (2026-11-10) owner decisions, via the coordinator's AskUserQues
 
 Review r13g-rev2 (2026-11-10), coordinator ruling I1, consistent with D1's option text "Capture snapshot/ and the custody records": the staging rule becomes an allow-list. Inside `staging/<name>/` only `snapshot/` is captured; every other member, including ones a future version adds and lockfile residue such as `host-git-config.lock`, is excluded at the directory level without walking it, so a local-source `repository.git` of tens of thousands of files neither counts toward the tree's entry limit nor produces preview rows. AC#2 rewritten again to match.
 
+Review r13g-rev3 owner decision (2026-11-12, via the coordinator's AskUserQuestion), recorded verbatim: "Refuse early, feature next (Recommended)" — "The restore preview refuses up front with a plugin-specific reason that says what to do (for example, remove the plugin installed since the backup, then restore). File a follow-up for handling it automatically. Same pattern as your 'truthful copy now, feature next' ruling." AC#9 added for it; the coordinator files the automatic-handling follow-up. The copy does not say "uninstall": uninstalling a plugin never touches its fetch folder (the coordinator's uninstall path has no acquisition code, and an installed fetch stays `recovery_referenced`, which cleanup never sweeps), so that step would not unblock the restore. It gives the two steps that do: restore without Tools and skills, or delete everything but `snapshot/` in each newer fetch folder.
+
 **Questions as asked (kept for the record):**
 
 - **Q1: staging and acquisition custody.** The description calls `staging/` and `acquisition-custody/*.json` in-flight state, but they are not only that. For every git-acquired installation, `acquisition.verify_reference` needs the terminal, `recovery_referenced` custody record and the retained `staging/<sha>/snapshot` bytes. That call is used by plugin recovery (`recovery.retained_inspections`, through `retained_inspection._verify_retained_source`) and by `source_service.validate_inspection_source`. These entries are never swept. Excluding them makes those installations unrecoverable after a restore. Options:
@@ -155,7 +158,8 @@ Implemented on dev ae9f9e8d21 plus the filing commit, 2026-11-10. Owner decision
   - Inventory adds `plugin_writers_active` after group selection, from that row only. A backup without `tools` is therefore unaffected, and a partial backup omits plugins. The Backup screen explains the issue: quit and reopen; Console plugin use starts the service too; and for a process row left by an earlier session, open Plugins → Authority… to unlock or recover authority (whose runtime recovery settles the row with a clean checkpoint, else after the plugin's reboot reconciliation review), then quit and reopen before backing up (M4, M7).
   - Capture creates `runtime.lock` if it is absent and holds it while copying each item (M3).
   - A plugin service that found the lock busy retries on its next use instead of caching `plugin_owner_busy` (M3).
-- **Restore (AC8, M1, M2).**
+- **Restore (AC8, AC9, M1, M2, I-1).**
+  - `plan_restore` (replace, plugins selected) calls `Plugins/backup.refuse_added_fetch_folders`: a target fetch folder the archive lacks that holds an excluded member refuses with `plugin_fetch_added_since_backup`, whose copy the Backup screen shows ("Restore review refused: …"). Retiring such a folder would have to keep what was never captured, which Start could not do (`rollback_dependency_selection_required`, and `publication_preserved_overlap` in `_prepare`). A snapshot-only folder restores and is retired. `restore_plan`'s unknown-children rule now keeps a directory whole only when the target and the archive both exclude it (M-2).
   - `staging._config_targets` refuses `owner_relocation_unverified:plugins` when the target selector's profile id differs.
   - `relocate_restore` also refuses a registry whose data-root paths, or whose `materialized_identity` paths in `revisions.inspection_json` (installed and fetched packages), are outside the destination root. This catches a same-profile restore after `data_dir` moved. The destination root is resolved as `PluginRuntimeOwner` names it (parent links resolved), like the stored paths, so a linked data folder is still in place (M8).
   - Detached import refuses a plugin root by name (`detached_owner_unavailable:plugins`).
@@ -191,7 +195,13 @@ Implemented on dev ae9f9e8d21 plus the filing commit, 2026-11-10. Owner decision
   - M6 `test_authority_recovery_copy_is_truthful_without_a_reset_step` (M10 rename): red on the old "computer or profile" text.
   - M7 `test_live_writer_reason_gives_the_way_out_of_a_stale_process_record`: red on the missing "Console".
   - M8 `test_restored_registry_matches_its_root_through_a_symlinked_data_dir`: red with `owner_relocation_unverified:plugins` for the linked in-place destination; another root still refuses.
-- E2e `test_plugin_backup_restores_in_place_and_waits_for_authority_recovery`: 1 passed in 4.0 min at load 15–20 (5.4–6.9 min in three runs at load 25–40). It now runs under `@pytest.mark.timeout(480)`, with child limits of 60 s (seed and reopen) and 300 s (each backup-and-restore child), so a hang fails inside the macOS lane's job limit with JUnit output (M12). Per child at load 15–20: seed 5 s, first 102 s, unchanged reopen 3 s, second restore 131 s, changed reopen 2 s. Each restore spends about 10 s reaching the rollback snapshot's credential review (the restored skill trust items), then the acknowledged restore takes 80–140 s, mostly in the restore journal revalidating every record on each flush (`journal._records`, sampled with `faulthandler`). That is pre-existing and not split here: one restore per part would add a seed and a backup and still leave two restores in the lane. It covers:
+- Review r13g-rev3, each new test red first (load 15–25):
+  - I-1 `test_replace_restore_refuses_a_fetch_folder_added_since_the_backup[fetched|snapshot-only]`: red on the missing check. Its copy assertions and `test_backup_data_groups.py::test_restore_review_explains_refused_newer_plugin_fetches` were red on the generic "Review the recovery status…" text.
+  - I-1 in the e2e: with the planner's call removed, red with `target_owner_unclassified` instead of `plugin_fetch_added_since_backup`; the M-2 narrowing alone moves the refusal to review, but without the plugin reason.
+  - M-2 `test_replace_keeps_an_excluded_directory_whole_without_listing_it[added]`: "DID NOT RAISE" with the old rule (any preserved directory kept).
+  - I-3 `test_odd_staging_member_is_excluded_not_blocking[symlink|hardlink|fifo]`: all three red (`unsupported`) with discover reverted to the included-only filter.
+  - M-1 is a comment change only.
+- E2e `test_plugin_backup_restores_in_place_and_waits_for_authority_recovery`: r13g-rev3 run 1 passed in 4.0 min at load 15–22 (seed 4 s, first 116 s, unchanged 3 s, again 112 s, changed 2 s). The first child now plants `staging/zz-new/` (snapshot, `repository.git/HEAD`, `host-git-config`) after the backup: the review refuses with `plugin_fetch_added_since_backup`; after deleting all but `snapshot/` (the copy's step) the in-place restore succeeds and retires the folder. Earlier rev2 runs: 1 passed in 4.0 min at load 15–20 (5.4–6.9 min in three runs at load 25–40). It now runs under `@pytest.mark.timeout(480)`, with child limits of 60 s (seed and reopen), 360 s for the first backup-and-restore child (r13g-rev3: it reached 258 s at load ~30) and 300 s for the second, so a hang fails inside the macOS lane's job limit with JUnit output (M12). Per child at load 15–20: seed 5 s, first 102 s, unchanged reopen 3 s, second restore 131 s, changed reopen 2 s. Each restore spends about 10 s reaching the rollback snapshot's credential review (the restored skill trust items), then the acknowledged restore takes 80–140 s, mostly in the restore journal revalidating every record on each flush (`journal._records`, sampled with `faulthandler`). That is pre-existing and not split here: one restore per part would add a seed and a backup and still leave two restores in the lane. It covers:
   - a repository install through `acquire_snapshot` + `SourceService.review_acquired`;
   - the staged host files, `repository.git` and `content/` excluded and absent from the archive, with no credential bytes in any payload;
   - an isolated plan refused;
@@ -204,10 +214,11 @@ Implemented on dev ae9f9e8d21 plus the filing commit, 2026-11-10. Owner decision
 
 **Tests.**
 - `Tests/Plugins/test_recovery.py` (plugin-qualification lane):
-  - the preview, never-walked, catalog, live-writer, held-lock, registry-root, linked-root, excluded-capture, capture-lock, busy-retry, approval-condition, reason-copy and unlock-copy tests;
+  - the preview, odd-member, added-fetch-refusal, never-walked, catalog, live-writer, held-lock, registry-root, linked-root, excluded-capture, capture-lock, busy-retry, approval-condition, reason-copy and unlock-copy tests;
   - the e2e test.
-- The lane's path filter (M11) names the Backup_Recovery files that dispatch on the plugins owner or that only it uses (`capture`, `data_groups`, `file_inventory`, `inventory`, `owner_registry`, `recovery_files`, `staging`) and the four Backup_Recovery test helper modules `test_recovery.py` imports directly or through them, instead of `Backup_Recovery/**`. Of the last 25 dev merges touching `Backup_Recovery`, the glob matched all of them and the list matches 7. `restore_plan.py` stays off the list: its preserved-directory rule has its own test on the backup-recovery lane.
-- `Tests/Backup_Recovery/test_detached_layout.py::test_detached_import_refuses_a_plugin_root_by_name` and `test_restore_plan.py::test_replace_keeps_an_excluded_directory_whole_without_listing_it`.
+- The lane's path filter (M11) names the Backup_Recovery files that dispatch on the plugins owner or that only it uses (`capture`, `data_groups`, `file_inventory`, `inventory`, `owner_registry`, `recovery_files`, `staging`) and the four Backup_Recovery test helper modules `test_recovery.py` imports directly or through them, instead of `Backup_Recovery/**`. Of the last 25 dev merges touching `Backup_Recovery`, the glob matched all of them and the list matches 7. Review r13g-rev3 (I-2) added `restore_plan.py` back, since it now calls the plugin refusal; an earlier line here said its rule had a test on the backup-recovery lane, but that lane is dispatch-only. The rule's test now runs on the Architecture guard lane (below).
+- `Tests/Backup_Recovery/test_detached_layout.py::test_detached_import_refuses_a_plugin_root_by_name`.
+- `Tests/Backup_Recovery/test_restore_plan_excluded_directories.py::test_replace_keeps_an_excluded_directory_whole_without_listing_it[archived|added]`, a new Hypothesis-free module (`test_restore_plan.py` imports Hypothesis, which the PR lanes do not install), run by `derived-artifacts.yml`'s Architecture guard job and pinned in `ARCHITECTURE_GUARD_TARGETS` (I-2).
 - UI: `test_backup_data_groups.py::test_backup_review_explains_refused_live_plugins`, `test_plugins_browse.py::test_authority_recovery_copy_is_truthful_without_a_reset_step` and `test_plugin_review.py::test_unlock_mismatch_shows_restore_copy_not_passphrase_advice`, all on the UI census (the last appended at the tail in this round). The shard replay was not run, so the coordinator rebalances if needed.
 
 **Covering runs (review r13g-rev2, at 43bcdccfd1, load 15–40).**

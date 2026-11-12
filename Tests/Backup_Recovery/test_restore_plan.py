@@ -552,33 +552,6 @@ def test_replace_unknown_current_child_is_not_retired(tmp_path):
     assert unknown.read_text() == "do not delete"
 
 
-def test_replace_keeps_an_excluded_directory_whole_without_listing_it(tmp_path):
-    """TASK-40132: an owner can exclude a directory as one row without listing it
-    (the plugin fetch folder's repository.git). Replace preserves it whole, so its
-    unlisted children are kept with it, not refused as unknown."""
-    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
-
-    archive = sealed(tmp_path, mutate=producer)
-    destination = tmp_path / "live"
-    kept = destination / "kept"
-    kept.mkdir(parents=True)
-    (kept / "object").write_text("never listed")
-    target = Inventory(
-        (
-            StorageItem("ui.state", "root", destination, "included_directory", ()),
-            StorageItem("ui.state", "kept", kept, "intentionally_excluded", ("root",)),
-        ),
-        True,
-        "local",
-        (),
-    )
-    plan = plan_restore(
-        archive, mode="replace", destinations={"root": destination}, target=target
-    )
-    assert ("kept", kept) in plan.preserve
-    assert (kept / "object").read_text() == "never listed"
-
-
 def test_partial_complete_group_can_stage_and_incomplete_group_refuses(tmp_path):
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 

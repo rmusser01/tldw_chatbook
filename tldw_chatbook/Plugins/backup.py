@@ -37,6 +37,7 @@ OWNER = "plugins"
 REGISTRY = "registry.sqlite3"
 LOCK = "runtime.lock"
 WRITERS_ACTIVE = "plugin_writers_active"
+FETCH_ADDED = "plugin_fetch_added_since_backup"
 
 # Exact installed v5 catalog, measured from PluginRegistry._reference_schema()
 # (migrations 001-005). A new migration must add its catalog here; the pinning
@@ -77,6 +78,37 @@ def _staging_excluded(relative: str) -> bool:
     """Whether a root-relative path is a fetch folder member other than snapshot/."""
     parts = Path(relative).parts
     return len(parts) > 2 and parts[0] == "staging" and parts[2] != "snapshot"
+
+
+def refuse_added_fetch_folders(items, archived) -> None:
+    """Refuse a replace restore over a fetch folder the archive lacks that holds
+    excluded members: restore would retire the folder but must keep what it never
+    captured, so Start could not finish (owner decision 2026-11-12: refuse early
+    with a reason that says what to do; automatic handling is a follow-up).
+
+    ``items`` is the target inventory, ``archived`` the archive's producer rows
+    by logical id. A folder holding only ``snapshot/`` restores normally.
+    """
+    paths = {item.path: item for item in items if item.path is not None}
+    roots = [
+        item.path
+        for item in items
+        if item.owner == OWNER
+        and item.metadata is not None
+        and item.metadata.relative_path == ""
+    ]
+    for item in items:
+        if item.owner != OWNER or item.status != "intentionally_excluded":
+            continue
+        for root in roots:
+            if item.path is None or root not in item.path.parents:
+                continue
+            parts = item.path.relative_to(root).parts
+            if not _staging_excluded("/".join(parts)):
+                continue
+            folder = paths.get(root.joinpath(*parts[:2]))
+            if folder is None or folder.logical_id not in archived:
+                raise ValueError(FETCH_ADDED)
 
 
 @contextmanager

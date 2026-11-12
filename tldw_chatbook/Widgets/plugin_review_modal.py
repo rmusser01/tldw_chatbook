@@ -425,7 +425,9 @@ class PluginAuthorityDialog(PasswordDialog):
 
     @on(Input.Submitted)
     async def on_input_submitted(self, event):
-        event.prevent_default()  # the base handler would submit a second time
+        # PasswordDialog's handler would call self.on_submit(), which is this
+        # class's coroutine, and never await it.
+        event.prevent_default()
         if self.mode == "setup" and event.input.id == "password-input":
             self.query_one("#confirm-input", Input).focus()
         else:

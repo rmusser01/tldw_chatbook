@@ -254,7 +254,14 @@ Plugins restore only onto the profile and data folder they came from: their
 registry and authority record those folder paths, so restoring them into a
 separate profile, or after the profile's data folder moved, is refused with
 `owner_relocation_unverified`. Choose groups without **Tools and skills** to
-restore the rest of such a backup. After a restore, plugins stay off until plugin
+restore the rest of such a backup. A restore over plugins installed or updated
+from a repository since the backup is refused too, at review, with
+`plugin_fetch_added_since_backup`: each such install leaves a download folder the
+backup does not have, holding files a backup never includes, and Chatbook cannot
+yet restore around them. Restore without **Tools and skills**, or open the plugin
+folder's `staging` folder and, inside each folder created after the backup,
+delete everything except `snapshot` (those plugins keep working; uninstalling
+them does not remove these folders), then review the restore again. After a restore, plugins stay off until plugin
 authority recovery completes. What works today: restoring onto the same profile,
 on the same computer, with plugins unchanged since the backup. Then
 **Plugins → Authority…** asks for the plugin passphrase, and unlocking recovers
