@@ -106,7 +106,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-17, TASK-41308 (owner rule: raise by the change's own lines):
     # 2875 -> 2884 (+9), the MCP row says off, and why, for an unbound store.
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 +22
-    # (rebased onto dev 29592ecc9b, measured 2,875 -> 2,897).
+    # (rebased 2026-11-12 onto dev 4b90eb860b, measured 2,874 -> 2,896).
     "tldw_chatbook/Chat/console_display_state.py": 2906,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
@@ -716,7 +716,11 @@ _BUDGETS: dict[str, int] = {
     # guidance names its /api/v1/generate address (+3): 2,398 -> 2,401.
     # 2026-11-06, TASK-38964 (owner waiver): the Endpoint row says koboldcpp's
     # route refusal as it is typed (+4): 2,401 -> 2,405.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2405,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +10 -- review
+    # IV-2: the Key check row's untested word passes the Test path's reply
+    # maximum, so it reads the one capacity blocker (rebased 2026-11-12 onto
+    # dev 4b90eb860b, measured 2,405 -> 2,415).
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2415,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
@@ -791,7 +795,9 @@ _BUDGETS: dict[str, int] = {
     # carries the chat's values (unsaved_committed). Exact measurement.
     # 2026-11-06, TASK-38964 (owner waiver): 6176 -> 6191, a koboldcpp default
     # off its native route is refused with its copy before it is submitted.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6194,  # 2026-11-06: +3, a schemeless loopback draft endpoint restores (TASK-39042 review C1, owner waiver)
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +1 (rebased
+    # 2026-11-12 onto dev 4b90eb860b, measured 6,194 -> 6,195).
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6195,  # 2026-11-06: +3, a schemeless loopback draft endpoint restores (TASK-39042 review C1, owner waiver)
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-41630, 2026-11-18 (owner rule: a fix raises the row by its own
     # lines): 7010 -> 7012, the rail gets the Console's MCP off reason.
@@ -958,6 +964,8 @@ _BUDGETS: dict[str, int] = {
     # DB/ChaChaNotes_DB, and config.py loads it lazily from there (types stay
     # under TYPE_CHECKING, per #3470); dev 4a9c4c1132 (#3480) shrank the file,
     # so this branch measures 8,837 (dev 8,835, +2); exact measurement.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +148 (rebased
+    # 2026-11-12 onto dev 4b90eb860b, measured 8,835 -> 8,983).
     "tldw_chatbook/config.py": 8837,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -967,6 +975,8 @@ _BUDGETS: dict[str, int] = {
     # The factory verifies a child route names its spawning turn.
     # 2026-11-18, PR #3536 rebase: 10111 -> 10110; its +3 handle-retiring
     # lines are offset by a shorter subagent_counts docstring.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +60 (rebased
+    # 2026-11-12 onto dev 4b90eb860b, measured 10,042 -> 10,102).
     "tldw_chatbook/Chat/console_agent_bridge.py": 10110,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
@@ -1063,7 +1073,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-16: re-measured after rebasing onto dev 1a1f00c052 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8345 -> 8371.
     # TASK-41636, 2026-11-18: +5, a generic reply that arrived whole keeps its
     # usage when a stop interrupts the wait for its worker (8371 -> 8376).
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8376,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +53 (rebased
+    # 2026-11-12 onto dev 4b90eb860b, measured 8,337 -> 8,390).
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8390,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
@@ -1210,7 +1222,9 @@ _BUDGETS: dict[str, int] = {
     # 5167 -> 5189 (+22), TASK-38589 decodes legacy SSE streams as UTF-8 at four sites.
     # 2026-11-18, TASK-41522 (owner rule: raise by the change's own lines): +13,
     # OpenAI, Anthropic, Cohere, Google and Hugging Face check their base URL.
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5202,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +26 (rebased
+    # 2026-11-12 onto dev 4b90eb860b, measured 5,189 -> 5,215).
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5215,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
@@ -1296,7 +1310,9 @@ _BUDGETS: dict[str, int] = {
     # owner's 2026-11-05 "Values decide" ruling (AC#9): the template-sample
     # helpers' docstrings say a marked table is a sample only while it still
     # holds the shipped endpoint and model: 4,202.
-    "tldw_chatbook/Chat/console_session_settings.py": 4202,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +762 in all
+    # (rebased 2026-11-12 onto dev 4b90eb860b, measured 3,502 -> 4,264).
+    "tldw_chatbook/Chat/console_session_settings.py": 4264,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that
