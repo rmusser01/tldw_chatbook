@@ -1,6 +1,8 @@
 # Tests/RAG/simplified/test_collection_fingerprint.py
 import re
 
+import pytest
+
 from tldw_chatbook.RAG_Search.simplified.config import (
     RAGConfig,
     EmbeddingConfig,
@@ -155,6 +157,7 @@ def test_provenance_tolerates_non_numeric_chunk_fields():
     assert p["chunk_overlap"] == "also-not-a-number"
 
 
+@pytest.mark.bootstrap_profile
 def test_hybrid_basic_builtin_profile_fingerprint_is_stable_across_the_hf_model_id_fix(
     tmp_path,
 ):

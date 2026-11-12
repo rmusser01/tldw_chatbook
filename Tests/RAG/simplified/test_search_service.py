@@ -366,10 +366,14 @@ class TestSemanticSearchEnhancedMapping:
         ]
 
     @pytest.mark.asyncio
-    async def test_end_to_end_perform_rag_search_default_semantic_path(self, media_db):
+    @pytest.mark.bootstrap_profile
+    async def test_end_to_end_perform_rag_search_default_semantic_path(
+        self, media_db, monkeypatch
+    ):
         """AC: the tool's DEFAULT path (use_semantic=True, the value
         perform_rag_search actually defaults to) returns real results, not
         the previously-crashing-then-swallowed empty list."""
+        monkeypatch.setenv("RAG_SEARCH_MODE", "semantic")
         real_result = SearchResultWithCitations(
             id="chunk-9",
             score=0.5,

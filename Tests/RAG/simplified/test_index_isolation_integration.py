@@ -54,13 +54,17 @@ def test_query_only_diff_shares_collection(chroma_persist_dir):
 
 
 @pytest.mark.requires_chromadb
+@pytest.mark.bootstrap_profile
 def test_metric_and_model_diffs_fork_collection(chroma_persist_dir):
-    base = RAGService(_chroma_cfg(chroma_persist_dir)).vector_store.collection_name
+    with RAGService(_chroma_cfg(chroma_persist_dir)) as service:
+        base = service.vector_store.collection_name
     metric = _chroma_cfg(chroma_persist_dir, vector_store={"distance_metric": "l2"})
     model = _chroma_cfg(chroma_persist_dir)
     model.embedding.model = "mock/other-model"
-    assert RAGService(metric).vector_store.collection_name != base
-    assert RAGService(model).vector_store.collection_name != base
+    with RAGService(metric) as service:
+        assert service.vector_store.collection_name != base
+    with RAGService(model) as service:
+        assert service.vector_store.collection_name != base
 
 
 @pytest.mark.requires_chromadb

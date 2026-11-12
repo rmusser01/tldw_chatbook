@@ -18,11 +18,11 @@ from unittest.mock import patch
 
 import pytest
 
-from tldw_chatbook.RAG_Search.simplified.vector_store import ChromaVectorStore
 from tldw_chatbook.RAG_Search.simplified import collection_indexes
 from tldw_chatbook.RAG_Search.simplified.config import (
     validate_chroma_persist_directory,
 )
+from tldw_chatbook.RAG_Search.simplified.vector_store import ChromaVectorStore
 
 
 @pytest.mark.requires_chromadb
@@ -121,10 +121,14 @@ def test_env_var_persist_directory_expands_tilde_like_client_sites(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("RAG_PERSIST_DIR", "~/x")
 
-    from tldw_chatbook.RAG_Search.simplified.active_config import _apply_env_overrides
-    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.RAG_Search.simplified import active_config
+    from tldw_chatbook.RAG_Search.simplified import config as rag_config
 
-    config = _apply_env_overrides(RAGConfig())
+    select_config_source(
+        monkeypatch, tmp_path / "config.toml", vars(active_config), vars(rag_config)
+    )
+    config = active_config._apply_env_overrides(rag_config.RAGConfig())
 
     assert config.vector_store.persist_directory == validate_chroma_persist_directory(
         "~/x"

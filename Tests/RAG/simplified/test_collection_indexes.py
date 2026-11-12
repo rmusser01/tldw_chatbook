@@ -143,7 +143,8 @@ def test_target_exists_is_noop(chroma_persist_dir):
 
 
 @pytest.mark.requires_chromadb
-def test_create_rag_service_adopts_legacy_collection_e2e(chroma_persist_dir):
+@pytest.mark.bootstrap_profile
+def test_create_rag_service_adopts_legacy_collection_e2e(chroma_persist_dir, request):
     """Regression lock for the client-Settings-collision landmine.
 
     ``maybe_adopt_legacy_collection``'s own Chroma client
@@ -167,6 +168,7 @@ def test_create_rag_service_adopts_legacy_collection_e2e(chroma_persist_dir):
     from tldw_chatbook.RAG_Search.simplified.rag_factory import create_rag_service
 
     svc = create_rag_service("hybrid_basic", config=cfg)
+    request.addfinalizer(svc.close)
 
     # Force the real service's own lazy Chroma client + collection at the
     # same persist_directory -- this is the Settings-collision path. Must
