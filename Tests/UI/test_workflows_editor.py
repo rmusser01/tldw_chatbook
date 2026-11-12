@@ -1217,6 +1217,26 @@ async def test_historical_inspection_keeps_dirty_current_draft_and_edit_guard(tm
 
 
 @pytest.mark.bootstrap_profile
+async def test_authoring_refresh_skips_a_pruning_screen(tmp_path, monkeypatch):
+    harness = WorkflowEditorHarness(tmp_path)
+    async with harness.run_test(size=(110, 36)) as pilot:
+        await pilot.pause()
+        screen = harness.screen
+        assert screen.is_mounted and screen.is_attached
+        assert screen.controller is not None
+
+        def query_retired_child(*_args, **_kwargs):
+            pytest.fail("Authoring refresh queried a pruning screen.")
+
+        with monkeypatch.context() as retiring:
+            retiring.setattr(screen, "_pruning", True)
+            retiring.setattr(screen, "query_one", query_retired_child)
+            await screen._refresh_authoring()
+            await screen._show_library()
+            screen._layout_panes()
+
+
+@pytest.mark.bootstrap_profile
 async def test_overlapping_overview_refresh_keeps_one_complete_form(tmp_path):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=(110, 36)) as pilot:

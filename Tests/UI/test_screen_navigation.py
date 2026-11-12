@@ -1297,18 +1297,10 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
     froze on a stale frame and dead pumps swallowed every click.
     """
     app = _build_test_app()
+    app._cli_no_splash = True
 
     async with app.run_test(size=(160, 40)) as pilot:
-        # Wait for the app's own initial navigation screen before storming --
-        # in production the nav bar only exists once that screen is mounted,
-        # so a pre-boot NavigateToScreen is unreachable by real input.
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
-        assert type(app.screen).__name__ != "Screen", (
-            "app never mounted its initial screen"
-        )
+        await _wait_for_initial_screen(pilot)
         routes = ("home", "library", "workflows", "schedules")
         for _round in range(3):
             for route in routes:
