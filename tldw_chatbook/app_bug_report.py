@@ -20,12 +20,12 @@ class BugReportActions:
 
     def action_report_bug(self) -> None:
         """Open one memory-only report after the command palette has dismissed."""
-        current = self._bug_report_dialog
+        current = getattr(self, "_bug_report_dialog", None)
         if current is not None and current in self.screen_stack:
             if self.screen is current:
                 current.request_description_focus()
             return
-        if self._bug_report_open_pending:
+        if getattr(self, "_bug_report_open_pending", False):
             return
         self._bug_report_open_pending = True
 
@@ -36,6 +36,10 @@ class BugReportActions:
             from tldw_chatbook.UI.bug_report_capture import capture_bug_report_context
             from tldw_chatbook.Widgets.bug_report_dialog import BugReportDialog
 
+            if not hasattr(self, "_persistent_log_handler"):
+                self._persistent_log_handler = None
+            if not hasattr(self, "_bug_report_collectors"):
+                self._bug_report_collectors = None
             dialog = BugReportDialog(self, capture_bug_report_context(self))
             self._bug_report_dialog = dialog
 

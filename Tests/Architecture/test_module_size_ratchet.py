@@ -835,6 +835,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-36949.2: 25870 -> 23519; the 63 learning methods moved
     # to DB/learning_repository.py.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 23517,
+    # TASK-39147: the rebased report reader and workflow migrations cross 4000.
+    "tldw_chatbook/DB/AgentRuns_DB.py": 4004,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

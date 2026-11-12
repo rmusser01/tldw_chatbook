@@ -23571,8 +23571,7 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row("Version", get_app_version())
                 yield self._detail_row("License", "AGPLv3+")
                 yield Button("Report a bug…", id="settings-about-report-bug", action="app.report_bug")
-                # open_links=False: clicks go through _handle_about_link so
-                # the policy (browser + notify) is explicit and testable.
+                # _handle_about_link keeps browser and notification policy testable.
                 yield Markdown(
                     ABOUT_MARKDOWN,
                     id="settings-about-markdown",
