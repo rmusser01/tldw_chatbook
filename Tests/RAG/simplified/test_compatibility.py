@@ -32,6 +32,7 @@ from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import (  # noq
 class TestBackwardCompatibility:
     """Test backward compatibility with old configurations."""
 
+    @pytest.mark.bootstrap_profile
     def test_old_config_format(self, temp_dir):
         """Test that old config format still works."""
         # Old format might have had service_level instead of profile
@@ -43,10 +44,12 @@ class TestBackwardCompatibility:
         with create_rag_service_from_config(config) as service:
             assert isinstance(service, EnhancedRAGServiceV2)
 
-    def test_default_behavior_unchanged(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_default_behavior_unchanged(self, memory_rag_config, request):
         """Test that default behavior is unchanged."""
         # Creating service without any parameters should give hybrid_basic
         service = create_rag_service(config=memory_rag_config)
+        request.addfinalizer(service.close)
 
         # Verify it's V2 with basic features
         assert isinstance(service, EnhancedRAGServiceV2)
@@ -56,9 +59,11 @@ class TestBackwardCompatibility:
         )  # hybrid_basic doesn't have parent retrieval
 
     @pytest.mark.asyncio
-    async def test_old_search_patterns(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_old_search_patterns(self, test_rag_config, request):
         """Test that old search patterns still work."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Index a document
         await service.index_document(
@@ -78,7 +83,8 @@ class TestBackwardCompatibility:
 
         assert isinstance(results, list)
 
-    def test_config_migration(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_config_migration(self, memory_rag_config, request):
         """Test migration from old config to new profile-based config."""
         # Simulate old config with service level
         old_config = {
@@ -98,16 +104,19 @@ class TestBackwardCompatibility:
 
         # Create service with mapped profile and memory config
         service = create_rag_service(profile_name=profile, config=memory_rag_config)
+        request.addfinalizer(service.close)
 
         # Should create enhanced service
         assert isinstance(service, EnhancedRAGServiceV2)
         assert service.enable_parent_retrieval  # enhanced has parent retrieval
 
-    def test_feature_flags_compatibility(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_feature_flags_compatibility(self, memory_rag_config, request):
         """Test that old feature flags still work."""
         # Old code might have used feature flags directly
         # Create service and manually set feature flags (old pattern)
         service = create_rag_service_from_config(memory_rag_config)
+        request.addfinalizer(service.close)
 
         # These attributes should still exist and be settable
         assert hasattr(service, "enable_parent_retrieval")
@@ -119,9 +128,11 @@ class TestBackwardCompatibility:
         assert service.enable_reranking
 
     @pytest.mark.asyncio
-    async def test_old_indexing_patterns(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_old_indexing_patterns(self, test_rag_config, request):
         """Test that old indexing patterns still work."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Old pattern: index without metadata
         result1 = await service.index_document(
@@ -138,9 +149,11 @@ class TestBackwardCompatibility:
         )
         assert result2.success
 
-    def test_api_surface_unchanged(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_api_surface_unchanged(self, memory_rag_config, request):
         """Test that the public API surface is unchanged."""
         service = create_rag_service(config=memory_rag_config)
+        request.addfinalizer(service.close)
 
         # Check all expected methods exist
         expected_methods = [
@@ -155,9 +168,11 @@ class TestBackwardCompatibility:
             assert hasattr(service, method), f"Missing method: {method}"
 
     @pytest.mark.asyncio
-    async def test_error_handling_compatibility(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_error_handling_compatibility(self, test_rag_config, request):
         """Test that error handling behavior is unchanged."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Old behavior: empty content should raise ValueError
         with pytest.raises(ValueError) as exc_info:
@@ -177,7 +192,8 @@ class TestBackwardCompatibility:
 class TestConfigCompatibility:
     """Test configuration compatibility."""
 
-    def test_toml_config_compatibility(self, temp_dir):
+    @pytest.mark.bootstrap_profile
+    def test_toml_config_compatibility(self, temp_dir, request):
         """Test that TOML config format is compatible."""
         # Simulate config from TOML
         toml_config = {
@@ -203,10 +219,12 @@ class TestConfigCompatibility:
         memory_config.embedding.model = "mock"
         memory_config.vector_store.type = "memory"
         service = create_rag_service(profile_name=profile, config=memory_config)
+        request.addfinalizer(service.close)
         assert isinstance(service, EnhancedRAGServiceV2)
         assert service.enable_parent_retrieval  # enhanced feature
 
-    def test_env_var_compatibility(self):
+    @pytest.mark.bootstrap_profile
+    def test_env_var_compatibility(self, request):
         """Test that environment variable configuration still works."""
         import os
 
@@ -229,4 +247,5 @@ class TestConfigCompatibility:
             # These should be overridden by env vars if implemented
             # (This is a placeholder - actual env var support may vary)
             service = create_rag_service_from_config(config)
+            request.addfinalizer(service.close)
             assert isinstance(service, EnhancedRAGServiceV2)
