@@ -193,6 +193,34 @@ EXPECTED_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "deleted",
         }
     ),
+    "character_portrait_performance_frames": frozenset(
+        {"performance_id", "role", "png", "width", "height", "sha256"}
+    ),
+    "character_portrait_performances": frozenset(
+        {
+            "id",
+            "character_id",
+            "expression_key",
+            "source_sha256",
+            "source_kind",
+            "source_ref_json",
+            "schema_version",
+            "revision",
+            "active",
+            "composition_recipe_json",
+        }
+    ),
+    "character_portrait_regions": frozenset(
+        {
+            "character_id",
+            "expression_key",
+            "source_sha256",
+            "source_kind",
+            "source_ref_json",
+            "recipe_json",
+            "revision",
+        }
+    ),
     "chat_dictionaries": frozenset(
         {
             "id",
@@ -318,6 +346,7 @@ EXPECTED_TABLE_COLUMNS: dict[str, frozenset[str]] = {
     "console_dispatch_checkpoints": frozenset(
         {
             "assistant_message_id",
+            "mixin_snapshot_schema_version",
             "user_message_id",
             "conversation_id",
             "schema_version",
@@ -347,6 +376,114 @@ EXPECTED_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "chain_id",
             "admitted_turns",
             "initiator",
+        }
+    ),
+    "console_machine_followup_receipts": frozenset(
+        {
+            "operation_id",
+            "parent_turn_id",
+            "settlement_id",
+            "conversation_id",
+            "parent_assistant_message_id",
+            "assistant_message_id",
+            "chain_id",
+            "admitted_turns",
+            "native_turns",
+            "contributors_json",
+        }
+    ),
+    "console_prompt_mixin_attempt_items": frozenset(
+        {"conversation_id", "attempt_id", "ordinal", "snapshot_id"}
+    ),
+    "console_prompt_mixin_attempts": frozenset(
+        {
+            "conversation_id",
+            "attempt_id",
+            "schema_version",
+            "user_message_id",
+            "assistant_message_id",
+            "retry_of_attempt_id",
+            "replaces_attempt_id",
+            "result_revision_id",
+            "trace_call_id",
+            "expected_item_count",
+        }
+    ),
+    "console_prompt_mixin_preferences": frozenset(
+        {"conversation_id", "schema_version", "revision", "selection_json"}
+    ),
+    "console_prompt_mixin_revisions": frozenset(
+        {
+            "conversation_id",
+            "snapshot_id",
+            "digest",
+            "authority_key",
+            "backend",
+            "record_uuid",
+            "record_version",
+            "name",
+            "placement",
+            "body",
+        }
+    ),
+    "console_response_rule_assessments": frozenset(
+        {"assessment_id", "conversation_id", "message_id", "state", "assessment_json"}
+    ),
+    "console_response_rule_bindings": frozenset(
+        {
+            "scope_kind",
+            "scope_id",
+            "rule_id",
+            "revision",
+            "state",
+            "binding_revision",
+            "conversation_id",
+        }
+    ),
+    "console_response_rule_drafts": frozenset(
+        {
+            "draft_id",
+            "scope_kind",
+            "scope_id",
+            "rule_id",
+            "revision",
+            "source_json",
+            "result_json",
+            "complaint",
+            "conversation_id",
+            "message_id",
+        }
+    ),
+    "console_response_rule_fixtures": frozenset(
+        {
+            "rule_id",
+            "revision",
+            "case_id",
+            "case_type",
+            "conversation_id",
+            "message_id",
+            "message_version",
+            "input_json",
+        }
+    ),
+    "console_response_rule_revisions": frozenset(
+        {
+            "rule_id",
+            "revision",
+            "definition_json",
+            "schema_version",
+            "origin_json",
+            "created_at",
+        }
+    ),
+    "console_response_rule_validations": frozenset(
+        {
+            "rule_id",
+            "revision",
+            "validation_json",
+            "conversation_id",
+            "message_id",
+            "message_version",
         }
     ),
     "console_trace_artifacts": frozenset(
@@ -660,6 +797,7 @@ EXPECTED_TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "thinking_history_policy",
             "active_leaf_before_message_id",
             "archived",
+            "archived_at",
         }
     ),
     "conversations_fts": frozenset({"title"}),
