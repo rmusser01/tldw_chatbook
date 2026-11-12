@@ -840,6 +840,118 @@ def test_the_cloud_choice_never_sends_a_retained_key_to_openai(tmp_path, monkeyp
     assert "tok-" not in str(headers)
 
 
+# -- pre-merge review (2026-11-12): a gateway key is not an OpenAI key ---------
+
+_GATEWAY_PROVIDER = (
+    '[api_settings.openai]\napi_key = "sk-gateway-NOT-OPENAI"\n'
+    'api_base_url = "https://llm-gateway.corp.example/v1"\n'
+)
+
+
+def test_the_cloud_choice_never_sends_a_gateway_key_to_openai(tmp_path, monkeypatch) -> None:
+    """Pre-merge review (2026-11-12): ``[api_settings.openai]`` can point at
+    another host (``api_base_url``, which chat_with_openai honours), and then
+    its key belongs to that host. Setup offered Cloud on it, and the request to
+    api.openai.com carried it. Neither the offer nor the send treats it as an
+    OpenAI key now."""
+    import os
+    import sys
+
+    from tldw_chatbook.Local_Ingestion import transcription_service as ts
+
+    toml_text = _GATEWAY_PROVIDER + (
+        '[transcription]\ndefault_provider = "faster-whisper"\n'
+        "[transcription.remote_whisper]\nenabled = false\n"
+        f'api_endpoint = "{engines.OPENAI_TRANSCRIPTIONS_URL}"\n'
+    )
+    settings = _real_config(tmp_path, monkeypatch, toml_text, {})
+    assert engines.openai_key_configured(settings, os.environ) is False
+    fresh = sys.modules["tldw_chatbook.config"]
+    saved = fresh.load_cli_config_and_ensure_existence()["transcription"]
+    # A Cloud choice saved earlier (or by hand) still must not spend it.
+    commit = engines.build_engine_commit(
+        engines.ENGINE_CLOUD, facts=FACTS, transcription=saved
+    )
+    assert fresh.save_settings_to_cli_config(commit)
+    fresh.load_cli_config_and_ensure_existence(force_reload=True)
+    fresh.load_settings(force_reload=True)
+
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"RIFF0000WAVE")
+    sent: list[dict] = []
+
+    class _Sent(Exception):
+        pass
+
+    def _post(url, **kwargs):
+        sent.append(dict(kwargs.get("headers") or {}))
+        raise _Sent()
+
+    monkeypatch.setattr(ts.requests, "post", _post)
+    with pytest.raises(Exception):
+        ts._LegacyTranscriptionBackend._transcribe_with_remote_whisper(
+            SimpleNamespace(), str(audio)
+        )
+    assert len(sent) == 1
+    assert "sk-gateway" not in str(sent[0])
+    assert "Authorization" not in sent[0]
+
+
+@pytest.mark.parametrize(
+    ("openai_table", "expected"),
+    [
+        ({}, True),
+        ({"api_base_url": ""}, True),
+        ({"api_base_url": "   "}, True),
+        ({"api_base_url": "https://api.openai.com/v1"}, True),
+        ({"api_base_url": "https://API.OpenAI.com/v1/"}, True),
+        ({"api_base_url": "https://llm-gateway.corp.example/v1"}, False),
+        ({"api_base": "https://llm-gateway.corp.example/v1"}, False),
+        ({"base_url": "https://llm-gateway.corp.example/v1"}, False),
+        ({"api_url": "https://llm-gateway.corp.example/v1"}, False),
+        ({"endpoint": "https://llm-gateway.corp.example/v1"}, False),
+        ({"api_base_url": "http://api.openai.com/v1"}, False),
+        ({"api_base_url": "api.openai.com/v1"}, False),
+        ({"api_base_url": "https://api.openai.com.evil.example/v1"}, False),
+        ({"api_base_url": "https://evil.example/api.openai.com"}, False),
+        # Every endpoint set must be OpenAI's, whichever one a caller reads.
+        (
+            {
+                "api_base_url": "https://api.openai.com/v1",
+                "base_url": "https://llm-gateway.corp.example/v1",
+            },
+            False,
+        ),
+    ],
+)
+def test_the_openai_provider_key_is_openais_only_for_openais_endpoint(
+    openai_table, expected
+) -> None:
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        openai_settings_send_to_openai,
+    )
+
+    assert openai_settings_send_to_openai(openai_table) is expected
+    app_config = {"api_settings": {"openai": {"api_key": "sk-table-key", **openai_table}}}
+    assert engines.openai_key_configured(app_config, {}) is expected
+    env_only = {"api_settings": {"openai": dict(openai_table)}}
+    assert engines.openai_key_configured(env_only, {"OPENAI_API_KEY": "sk-env"}) is expected
+
+
+def test_saved_openai_whisper_on_a_gateway_key_is_no_tick_on_the_summary() -> None:
+    gateway = {
+        "openai": {
+            "api_key": "sk-gateway-NOT-OPENAI",
+            "api_base_url": "https://llm-gateway.corp.example/v1",
+        }
+    }
+    row = _summary({"transcription": _SAVED_OPENAI, "api_settings": gateway}, {})[
+        "Speech transcription"
+    ]
+    assert row.state == wizard_state.ROW_ATTENTION
+    assert "no OpenAI key is available" in row.detail
+
+
 def test_summary_names_openai_only_for_openais_endpoint() -> None:
     row = _speech_row({"transcription": SELF_HOSTED})
     assert row.state == wizard_state.ROW_CONFIGURED
@@ -926,6 +1038,20 @@ _REAL_TOML_CASES = [
         '[api_settings.openai]\napi_key_env_var = "MY_OPENAI"\n',
         {"OPENAI_API_KEY": "sk-env-key", "MY_OPENAI": "sk-named-key"},
         "sk-named-key",
+    ),
+    # Pre-merge review (2026-11-12): the provider points at another host, so
+    # neither its key nor the environment's is an OpenAI key.
+    (
+        '[api_settings.openai]\napi_key = "sk-gateway-NOT-OPENAI"\n'
+        'api_base_url = "https://llm-gateway.corp.example/v1"\n',
+        {"OPENAI_API_KEY": "sk-env-key"},
+        "",
+    ),
+    (
+        '[api_settings.openai]\napi_base_url = "https://api.openai.com/v1"\n'
+        'api_key = "sk-provider-key"\n',
+        {},
+        "sk-provider-key",
     ),
 ]
 

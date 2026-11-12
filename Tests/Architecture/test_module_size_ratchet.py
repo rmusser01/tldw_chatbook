@@ -1140,7 +1140,10 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.13 +42 -- remote
     # Whisper reuses the OpenAI provider key for api.openai.com over https,
     # resolved by provider_readiness (measured on the rebase onto 29592ecc9b).
-    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4538,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.13 +3 -- pre-merge
+    # review 2026-11-12: the OpenAI provider's key is withheld when its own
+    # endpoint is another host (a gateway key never reaches api.openai.com).
+    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4541,
     # 2026-10-29 (TASK-33620.3, owner decision: a fix over a size ratchet
     # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
     # a legacy/imported chat's missing Library-policy row (the safe

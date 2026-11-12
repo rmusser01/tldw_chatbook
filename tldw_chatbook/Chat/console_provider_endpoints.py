@@ -98,6 +98,43 @@ def first_configured_endpoint(provider_settings: Mapping[str, object]) -> str | 
     return None
 
 
+def is_openai_https_url(url: object) -> bool:
+    """Whether ``url`` is https on OpenAI's own API host (api.openai.com)."""
+    try:
+        parts = urlparse(str(url or "").strip())
+    except ValueError:
+        return False
+    return parts.scheme.lower() == "https" and (
+        (parts.hostname or "").lower() == "api.openai.com"
+    )
+
+
+def openai_settings_send_to_openai(provider_settings: Mapping[str, object]) -> bool:
+    """Whether ``[api_settings.openai]`` sends its credential to OpenAI itself.
+
+    TASK-34100.13 pre-merge review (2026-11-12): the table can point the
+    OpenAI provider at another host (``api_base_url`` and its aliases), and
+    then its key -- or the ``OPENAI_API_KEY`` it falls back to -- was issued
+    for that host. A caller reusing the provider's key for an OpenAI-only
+    service (remote Whisper's Cloud choice) asks this first, so the key never
+    reaches api.openai.com when it belongs elsewhere.
+
+    Args:
+        provider_settings: The ``[api_settings.openai]`` table.
+
+    Returns:
+        True when no endpoint alias is set (the adapter's built-in
+        https://api.openai.com/v1) or every one set is https on
+        api.openai.com; False otherwise, whichever alias a caller reads.
+    """
+    configured = [
+        value.strip()
+        for key in _ENDPOINT_SETTING_KEYS
+        if isinstance(value := provider_settings.get(key), str) and value.strip()
+    ]
+    return all(is_openai_https_url(value) for value in configured)
+
+
 def with_provider_endpoint(
     app_config: Mapping[str, object], provider_key: str, endpoint: str
 ) -> dict[str, object]:

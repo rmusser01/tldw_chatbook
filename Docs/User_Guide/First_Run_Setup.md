@@ -378,8 +378,11 @@ download now; it fetches its speech model the first time you dictate),
 set up, **Cloud — OpenAI Whisper (audio is sent to OpenAI)**. Cloud Whisper is
 used when you transcribe audio and video files and reuses your OpenAI provider
 key — the key Console itself would use, so it is not offered when the OpenAI
-provider is set to use no key, or names a variable that isn't set; live
-dictation in the Console stays on this computer. If audio files already go to a
+provider is set to use no key, or names a variable that isn't set. It is not
+offered either when the OpenAI provider points at a server other than OpenAI's
+(an API base URL such as a company gateway): that key belongs to that server,
+so it is never sent to OpenAI. Live dictation in the Console stays on this
+computer. If audio files already go to a
 Whisper server of your own, **No dictation for now** is chosen and says it
 keeps that server; choosing Cloud instead points it at OpenAI and clears that
 server's own key so it is never sent to OpenAI. If audio files are set to go to
