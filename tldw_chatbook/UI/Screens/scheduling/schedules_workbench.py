@@ -1395,7 +1395,10 @@ class SchedulesWorkbench(BaseAppScreen):
             self.app_instance.notify(message, severity="error")
             await self._refresh_console_context()
             return
-
+        if self._pruning or not self.is_attached or not self.app.is_running:
+            return
+        if not self.query("#scheduling-task-table"):
+            return
         self._tasks = reminders
         # Marks must always refer to rows that still exist (task-23107
         # review F1): a task deleted or filtered out of existence must not
