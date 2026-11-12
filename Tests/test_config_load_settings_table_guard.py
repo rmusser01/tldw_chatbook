@@ -697,7 +697,8 @@ def test_propagation_follows_imports_not_names():
 # not, must update this pin on purpose.
 # TASK-36943.3 (2026-11-03): three comment-only ADR renumberings (146->343,
 # 147->344, 090->332) re-pinned on purpose.
-_TEMPLATE_SHA256 = "99615838d4a17b194c8e2e4988b6ed08d251b79a6aacaee25dfb773c02a3d38e"
+# TASK-39402.285: the approved 0.2.4 Lightning deferral changed only comments.
+_TEMPLATE_SHA256 = "86ec17207bc8d1de103e835176a677cfcb71ec8110147eb5b589659c83188a45"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
