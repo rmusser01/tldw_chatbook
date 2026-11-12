@@ -888,7 +888,7 @@ def test_the_cloud_choice_never_sends_a_gateway_key_to_openai(tmp_path, monkeypa
         raise _Sent()
 
     monkeypatch.setattr(ts.requests, "post", _post)
-    with pytest.raises(Exception):
+    with pytest.raises(ts.TranscriptionError):  # the service wraps _Sent
         ts._LegacyTranscriptionBackend._transcribe_with_remote_whisper(
             SimpleNamespace(), str(audio)
         )
