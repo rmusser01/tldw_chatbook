@@ -995,7 +995,8 @@ MINIMUM_FILES = 2029
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
-MINIMUM_FILES = 2033
+# The spoken Send shared-reader control is appended without shifting existing entries.
+MINIMUM_FILES = 2034
 
 
 def read_census(path: Path) -> list[str]:

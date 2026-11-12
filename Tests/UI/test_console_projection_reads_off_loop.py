@@ -582,7 +582,9 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
         ConsoleRunStatus,
     )
     from tldw_chatbook.UI.Console_Modules import composer_run_controls
-    from tldw_chatbook.UI.Console_Modules.transcript import ConsoleChangeReviewProjection
+    from tldw_chatbook.UI.Console_Modules.transcript import (
+        ConsoleChangeReviewProjection,
+    )
 
     _install_clock(monkeypatch)
     host, gateway, _timeline = build()

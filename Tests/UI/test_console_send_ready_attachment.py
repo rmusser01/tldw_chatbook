@@ -287,6 +287,9 @@ async def test_a_ready_send_with_only_an_image_staged_sends_the_image(monkeypatc
         users = [m for m in store.messages_for_session(session_id) if m.role == "user"]
         assert [m.image_data for m in users] == [b"\x89PNG"]
         # The model received the image, as the only content of the turn.
+        assert len(provider_calls) == 1, (
+            console._ensure_console_chat_controller().run_state_for(session_id)
+        )
         (call,) = provider_calls
         parts = call["messages_payload"][-1]["content"]
         assert [p["image_url"]["url"] for p in parts if p["type"] == "image_url"] == [
