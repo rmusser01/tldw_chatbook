@@ -848,7 +848,9 @@ _BUDGETS: dict[str, int] = {
     # comment): +2, the store's @declare_store backup-participant declaration and import.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 23519,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
-    "tldw_chatbook/DB/AgentRuns_DB.py": 4004,
+    # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
+    # comment): +2, the store's @declare_store backup-participant declaration and import.
+    "tldw_chatbook/DB/AgentRuns_DB.py": 4006,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
