@@ -27,6 +27,7 @@ import time
 import pytest
 from textual.widgets import Input, Static
 
+from Tests.UI.test_console_fleet_history_navigation import _until_painted
 from Tests.UI.test_console_fleet_panel import (
     _real_fleet_recovery_database,
     _SECTION_ID,
@@ -97,6 +98,7 @@ async def test_terminal_unread_steering_paints_recovery_state(retain):
         assert expected in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_full_queue_refusal_keeps_draft_and_explains_the_failure():
     coordinator, handle_id = _fleet_with_live_child()
@@ -111,7 +113,7 @@ async def test_full_queue_refusal_keeps_draft_and_explains_the_failure():
         field.value = "keep this draft"
         field.focus()
         await pilot.press("enter")
-        await pilot.pause()
+        await _until_painted(pilot, host, console, _NOTE, scroll=False)
         assert field.value == "keep this draft"
         note = console.query_one(_NOTE, Static)
         _assert_painted_at_own_region(host, note)
@@ -123,8 +125,7 @@ async def test_full_queue_refusal_keeps_draft_and_explains_the_failure():
                 ]
             ).split()
         )
-        assert "queue is full" in painted
-        assert "Your draft was kept." in painted
+        assert "Queue is full or agent unavailable. Draft kept." in painted
 
 
 class _SteeringFleetBridge:
