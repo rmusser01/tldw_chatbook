@@ -3,7 +3,6 @@
 # This file only shrinks: delete a row when its import is gone. Never add one to make the test pass.
 tldw_chatbook.Backup_Recovery.async_file_participants	tldw_chatbook.Event_Handlers.note_ingest_events	lazy
 tldw_chatbook.Backup_Recovery.launcher	tldw_chatbook.UI.Screens.backup_restore_screen	lazy
-tldw_chatbook.Backup_Recovery.raw_participants	tldw_chatbook.Widgets.emoji_picker	lazy
 tldw_chatbook.Backup_Recovery.staging	tldw_chatbook.Widgets.Tamagotchi.recovery	lazy
 tldw_chatbook.Backup_Recovery.unsaved_editors	tldw_chatbook.UI.Screens.library_screen	lazy
 tldw_chatbook.Backup_Recovery.unsaved_editors	tldw_chatbook.UI.Screens.settings_storage_defaults	lazy
