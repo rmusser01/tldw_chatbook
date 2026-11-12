@@ -63,9 +63,10 @@ def test_notes_sync_executor_module_is_importable() -> None:
 
 @pytest.mark.asyncio
 async def test_create_note_executes_one_sided_plan_and_activates_binding(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     notes = CreatingNoteAuthority()
     file = _file(content="from-file")
     files = FakeFilesystem(file)
@@ -100,9 +101,10 @@ async def test_create_note_executes_one_sided_plan_and_activates_binding(
 
 @pytest.mark.asyncio
 async def test_create_file_executes_one_sided_plan_and_activates_binding(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     note = _note(content="from-note", version=4)
     notes = FakeNoteAuthority(note)
     files = CreatingFilesystem()
@@ -153,11 +155,12 @@ async def test_create_file_executes_one_sided_plan_and_activates_binding(
     ids=("bom", "newline", "final-newline", "mode"),
 )
 async def test_create_file_rejects_representation_drift_before_membership_binding(
+    make_notes_state_store,
     tmp_path: Path,
     observed_profile: NotesSyncSerializationProfile,
     content: str,
 ) -> None:
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     note = _note(content=content, version=4)
     notes = FakeNoteAuthority(note)
     files = DriftingCreatingFilesystem(observed_profile)
@@ -193,13 +196,14 @@ async def test_create_file_rejects_representation_drift_before_membership_bindin
 
 
 def test_classify_on_a_vanished_binding_says_binding_authority_changed(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     """TASK-34000.48 fix round 1 (review Minor 5): the recorded profile is read
     from the binding inside ``_classify``; a binding that no longer exists is
     the owner check's own answer, never a storage error."""
 
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     note = _note(content="before", version=4)
     file = _file(content="before")
     request = _request(action=NotesSyncActionKind.UPDATE_FILE, note=note, file=file)
@@ -214,9 +218,10 @@ def test_classify_on_a_vanished_binding_says_binding_authority_changed(
 
 @pytest.mark.asyncio
 async def test_move_file_executes_guarded_move_and_updates_binding_path(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     note = _note(content="before", version=4)
     notes = FakeNoteAuthority(note)
     source = _file(content="before")
@@ -252,11 +257,12 @@ async def test_move_file_executes_guarded_move_and_updates_binding_path(
     ids=("bom", "newline", "final-newline", "mode"),
 )
 async def test_move_file_rejects_representation_drift_before_membership_binding(
+    make_notes_state_store,
     tmp_path: Path,
     observed_profile: NotesSyncSerializationProfile,
     content: str,
 ) -> None:
-    store, _ = _execution_store(tmp_path, content)
+    store, _ = _execution_store(make_notes_state_store, tmp_path, content)
     note = _note(content=content, version=4)
     notes = FakeNoteAuthority(note)
     source = _file(content=content)
@@ -289,11 +295,12 @@ async def test_move_file_rejects_representation_drift_before_membership_binding(
     ),
 )
 async def test_create_and_move_reconstruct_after_first_stage_without_replay(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
     if action is NotesSyncActionKind.CREATE_NOTE:
-        store, database = _store(tmp_path)
+        store, database = _store(make_notes_state_store, tmp_path)
         notes: FakeNoteAuthority = CreatingNoteAuthority()
         file = _file(content="authority")
         files: object = FakeFilesystem(file)
@@ -314,7 +321,7 @@ async def test_create_and_move_reconstruct_after_first_stage_without_replay(
             candidate_note_id="note-1",
         )
     elif action is NotesSyncActionKind.CREATE_FILE:
-        store, database = _store(tmp_path)
+        store, database = _store(make_notes_state_store, tmp_path)
         note = _note(content="authority", version=4)
         notes = FakeNoteAuthority(note)
         files = CreatingFilesystem()
@@ -337,7 +344,7 @@ async def test_create_and_move_reconstruct_after_first_stage_without_replay(
             ),
         )
     else:
-        store, database = _execution_store(tmp_path)
+        store, database = _execution_store(make_notes_state_store, tmp_path)
         note = _note(content="before", version=4)
         notes = FakeNoteAuthority(note)
         file = _file(content="before")
@@ -362,7 +369,7 @@ async def test_create_and_move_reconstruct_after_first_stage_without_replay(
         ).execute(request)
 
     executor = NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -375,9 +382,10 @@ async def test_create_and_move_reconstruct_after_first_stage_without_replay(
 
 @pytest.mark.asyncio
 async def test_create_note_from_windows_observation_reconstructs_exact_authority(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _store(tmp_path)
+    store, database = _store(make_notes_state_store, tmp_path)
     with store.transaction(immediate=True) as connection:
         connection.execute(
             "UPDATE notes_sync_roots SET direction = 'folder_to_notes' WHERE root_id = 'root-1'"
@@ -416,7 +424,7 @@ async def test_create_note_from_windows_observation_reconstructs_exact_authority
         ).execute(request)
 
     executor = NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -439,11 +447,14 @@ async def test_create_note_from_windows_observation_reconstructs_exact_authority
     ),
 )
 async def test_new_action_direction_fence_refuses_before_admission(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
     direction: NotesSyncDirection,
 ) -> None:
-    store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+    store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store, tmp_path, action
+    )
     with store.transaction(immediate=True) as connection:
         connection.execute(
             "UPDATE notes_sync_roots SET direction = ? WHERE root_id = 'root-1'",
@@ -472,10 +483,13 @@ async def test_new_action_direction_fence_refuses_before_admission(
     ),
 )
 async def test_new_action_capacity_refusal_precedes_every_mutation(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
-    store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+    store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store, tmp_path, action
+    )
 
     result = await NotesSyncExecutor(
         store,
@@ -499,10 +513,13 @@ async def test_new_action_capacity_refusal_precedes_every_mutation(
     ),
 )
 async def test_new_action_cancellation_after_first_stage_resumes_without_replay(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
-    store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+    store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store, tmp_path, action
+    )
 
     def cancel_after_first(stage: NotesSyncOperationState) -> None:
         if stage is NotesSyncOperationState.FIRST_AUTHORITY_APPLIED:
@@ -518,7 +535,7 @@ async def test_new_action_cancellation_after_first_stage_resumes_without_replay(
         ).execute(request)
 
     executor = NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -540,10 +557,13 @@ async def test_new_action_cancellation_after_first_stage_resumes_without_replay(
     ),
 )
 async def test_new_action_root_pause_after_first_stage_blocks_membership_and_binding(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
-    store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+    store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store, tmp_path, action
+    )
 
     def crash_after_first(stage: NotesSyncOperationState) -> None:
         if stage is NotesSyncOperationState.FIRST_AUTHORITY_APPLIED:
@@ -560,7 +580,7 @@ async def test_new_action_root_pause_after_first_stage_blocks_membership_and_bin
     store.transition_root("root-1", NotesSyncRootState.PAUSED)
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -581,10 +601,13 @@ async def test_new_action_root_pause_after_first_stage_blocks_membership_and_bin
     (NotesSyncActionKind.CREATE_NOTE, NotesSyncActionKind.CREATE_FILE),
 )
 async def test_create_candidate_claimed_after_first_stage_fails_before_membership(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
-    store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+    store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store, tmp_path, action
+    )
 
     def crash_after_first(stage: NotesSyncOperationState) -> None:
         if stage is NotesSyncOperationState.FIRST_AUTHORITY_APPLIED:
@@ -614,7 +637,7 @@ async def test_create_candidate_claimed_after_first_stage_fails_before_membershi
     )
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -628,9 +651,11 @@ async def test_create_candidate_claimed_after_first_stage_fails_before_membershi
 
 @pytest.mark.asyncio
 async def test_move_binding_drift_after_first_stage_is_never_overwritten(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store,
         tmp_path, NotesSyncActionKind.MOVE_FILE
     )
 
@@ -653,7 +678,7 @@ async def test_move_binding_drift_after_first_stage_is_never_overwritten(
         )
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -666,9 +691,11 @@ async def test_move_binding_drift_after_first_stage_is_never_overwritten(
 
 @pytest.mark.asyncio
 async def test_move_reconstruction_rejects_same_version_changed_note_authority(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store,
         tmp_path, NotesSyncActionKind.MOVE_FILE
     )
 
@@ -688,7 +715,7 @@ async def test_move_reconstruction_rejects_same_version_changed_note_authority(
 
     with pytest.raises(RuntimeError, match="recovery_authority_changed"):
         await NotesSyncExecutor(
-            NotesDeviceStateStore(database),
+            make_notes_state_store(database),
             notes,
             files,
             recovery_capacity_bytes=4096,
@@ -708,12 +735,15 @@ async def test_move_reconstruction_rejects_same_version_changed_note_authority(
 )
 @pytest.mark.parametrize("resolution", ("resume", "restore", "disconnect"))
 async def test_new_action_reconstructs_reviewed_direction_override_for_every_choice(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
     direction: NotesSyncDirection,
     resolution: str,
 ) -> None:
-    store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+    store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store, tmp_path, action
+    )
     if action is NotesSyncActionKind.MOVE_FILE:
         assert request.file is not None
         files = RestorableMovingFilesystem(request.file)
@@ -744,7 +774,7 @@ async def test_new_action_reconstructs_reviewed_direction_override_for_every_cho
     if resolution != "resume":
         store.mark_operation_attention(request.operation_id, f"{resolution}_requested")
     executor = NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -759,9 +789,11 @@ async def test_new_action_reconstructs_reviewed_direction_override_for_every_cho
 
 @pytest.mark.asyncio
 async def test_new_action_reconstruction_rejects_override_token_corruption(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store,
         tmp_path, NotesSyncActionKind.CREATE_NOTE
     )
     with store.transaction(immediate=True) as connection:
@@ -807,7 +839,7 @@ async def test_new_action_reconstruction_rejects_override_token_corruption(
 
     with pytest.raises(RuntimeError, match="recovery_authority_changed"):
         await NotesSyncExecutor(
-            NotesDeviceStateStore(database),
+            make_notes_state_store(database),
             notes,
             files,
             recovery_capacity_bytes=4096,
@@ -848,9 +880,9 @@ def test_recovery_capacity_has_one_bounded_config_default(
         )
 
 
-def _store(tmp_path: Path) -> tuple[NotesDeviceStateStore, Path]:
+def _store(make_notes_state_store, tmp_path: Path) -> tuple[NotesDeviceStateStore, Path]:
     database = tmp_path / "notes-sync.sqlite3"
-    store = NotesDeviceStateStore(database)
+    store = make_notes_state_store(database)
     store.create_root(
         NotesSyncRootRecord(
             root_id="root-1",
@@ -977,9 +1009,10 @@ def _file_at(
 
 
 def _execution_store(
+    make_notes_state_store,
     tmp_path: Path, content: str = "before"
 ) -> tuple[NotesDeviceStateStore, Path]:
-    store, database = _store(tmp_path)
+    store, database = _store(make_notes_state_store, tmp_path)
     file_before = _file(content=content)
     store.create_binding(
         NotesSyncBindingRecord(
@@ -1406,6 +1439,7 @@ class RestorableMovingFilesystem:
 
 
 def _new_action_fixture(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> tuple[
@@ -1416,7 +1450,7 @@ def _new_action_fixture(
     NotesSyncExecutionRequest,
 ]:
     if action is NotesSyncActionKind.CREATE_NOTE:
-        store, database = _store(tmp_path)
+        store, database = _store(make_notes_state_store, tmp_path)
         notes = CreatingNoteAuthority()
         file = _file(content="authority")
         files: object = FakeFilesystem(file)
@@ -1438,7 +1472,7 @@ def _new_action_fixture(
         )
         return store, database, notes, files, request
     if action is NotesSyncActionKind.CREATE_FILE:
-        store, database = _store(tmp_path)
+        store, database = _store(make_notes_state_store, tmp_path)
         note = _note(content="authority", version=4)
         notes = FakeNoteAuthority(note)
         files = CreatingFilesystem()
@@ -1461,7 +1495,7 @@ def _new_action_fixture(
             ),
         )
         return store, database, notes, files, request
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note = _note(content="before", version=4)
     notes = FakeNoteAuthority(note)
     file = _file(content="before")
@@ -1525,9 +1559,10 @@ def _windows_file(*, content: str) -> WindowsNotesSyncObservation:
 
 
 def test_capacity_and_recovery_are_admitted_atomically_before_mutation(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _store(tmp_path)
+    store, database = _store(make_notes_state_store, tmp_path)
     operation = _operation()
     recovery = _recovery()
 
@@ -1548,9 +1583,10 @@ def test_capacity_and_recovery_are_admitted_atomically_before_mutation(
 
 
 def test_capacity_failure_persists_neither_intent_nor_recovery(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _store(tmp_path)
+    store, database = _store(make_notes_state_store, tmp_path)
 
     decision = store.admit_operation_recovery(
         _operation(),
@@ -1566,9 +1602,10 @@ def test_capacity_failure_persists_neither_intent_nor_recovery(
 
 
 def test_exact_recovery_admission_replay_is_idempotent_and_conflicts_fail_closed(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _store(tmp_path)
+    store, database = _store(make_notes_state_store, tmp_path)
     operation = _operation()
     recovery = _recovery()
 
@@ -1595,9 +1632,10 @@ def test_exact_recovery_admission_replay_is_idempotent_and_conflicts_fail_closed
 
 
 def test_pending_and_attention_recovery_are_never_evicted_even_when_expired(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _store(tmp_path)
+    store, database = _store(make_notes_state_store, tmp_path)
     first = _operation("operation-1")
     first_recovery = _recovery("operation-1", expires_at=1)
     assert store.admit_operation_recovery(
@@ -1623,9 +1661,10 @@ def test_pending_and_attention_recovery_are_never_evicted_even_when_expired(
 
 
 def test_only_completed_expired_recovery_is_reclaimed_for_admission(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _store(tmp_path)
+    store, database = _store(make_notes_state_store, tmp_path)
     first_recovery = _recovery("operation-1", expires_at=1)
     assert store.admit_operation_recovery(
         _operation("operation-1"),
@@ -1663,13 +1702,14 @@ def test_only_completed_expired_recovery_is_reclaimed_for_admission(
     ),
 )
 async def test_executor_advances_every_durable_stage_and_completes_last(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
     note_content: str,
     note_version: int,
     file_content: str,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     note_authority = FakeNoteAuthority(
         _note(content=note_content, version=note_version)
     )
@@ -1719,9 +1759,10 @@ async def test_executor_advances_every_durable_stage_and_completes_last(
 
 @pytest.mark.asyncio
 async def test_windows_observation_can_update_note_but_never_write_file(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     windows_file = _windows_file(content="after")
     store.create_binding(
         NotesSyncBindingRecord(
@@ -1768,9 +1809,10 @@ async def test_windows_observation_can_update_note_but_never_write_file(
 
 
 def test_capacity_is_durable_before_the_first_authority_mutation(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
 
     def assert_admitted() -> None:
         assert store.get_operation("operation-1").state is (
@@ -1801,9 +1843,10 @@ def test_capacity_is_durable_before_the_first_authority_mutation(
 
 @pytest.mark.asyncio
 async def test_conflict_capacity_refusal_has_no_recovery_or_recovery_actions(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note_authority = FakeNoteAuthority(_note(content="before", version=4))
     filesystem = FakeFilesystem(_file(content="after"))
     executor = NotesSyncExecutor(
@@ -1837,10 +1880,11 @@ async def test_conflict_capacity_refusal_has_no_recovery_or_recovery_actions(
 
 @pytest.mark.asyncio
 async def test_journal_observation_failure_cannot_be_misread_as_absence(
+    make_notes_state_store,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=4))
     files = FakeFilesystem(_file(content="after"))
 
@@ -1882,10 +1926,11 @@ class InjectedCrash(BaseException):
     ),
 )
 async def test_reopen_resumes_each_interrupted_stage_without_blind_replay(
+    make_notes_state_store,
     tmp_path: Path,
     crash_stage: NotesSyncOperationState,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note_authority = FakeNoteAuthority(_note(content="before", version=4))
     filesystem = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -1909,7 +1954,7 @@ async def test_reopen_resumes_each_interrupted_stage_without_blind_replay(
         await first_executor.execute(request)
     assert store.get_operation("operation-1").state is crash_stage
 
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     result = await NotesSyncExecutor(
         reopened,
         note_authority,
@@ -1923,9 +1968,10 @@ async def test_reopen_resumes_each_interrupted_stage_without_blind_replay(
 
 @pytest.mark.asyncio
 async def test_resume_with_changed_observation_becomes_explicit_attention(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note_authority = FakeNoteAuthority(_note(content="before", version=4))
     filesystem = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -1949,7 +1995,7 @@ async def test_resume_with_changed_observation_becomes_explicit_attention(
     filesystem.snapshot = _file(content="external-change")
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         note_authority,
         filesystem,
         recovery_capacity_bytes=1024,
@@ -1964,9 +2010,10 @@ async def test_resume_with_changed_observation_becomes_explicit_attention(
 
 @pytest.mark.asyncio
 async def test_cancellation_after_uncertain_mutation_is_durable_attention(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note_authority = FakeNoteAuthority(
         _note(content="before", version=4), cancel_after_replace=True
     )
@@ -1987,7 +2034,7 @@ async def test_cancellation_after_uncertain_mutation_is_durable_attention(
             )
         )
 
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     assert reopened.get_operation("operation-1").state is (
         NotesSyncOperationState.NEEDS_ATTENTION
     )
@@ -1997,9 +2044,10 @@ async def test_cancellation_after_uncertain_mutation_is_durable_attention(
 
 @pytest.mark.asyncio
 async def test_stale_resume_token_fences_the_durable_operation(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note_authority = FakeNoteAuthority(_note(content="before", version=4))
     filesystem = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -2022,14 +2070,14 @@ async def test_stale_resume_token_fences_the_durable_operation(
         ).execute(request)
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         note_authority,
         filesystem,
         recovery_capacity_bytes=1024,
     ).resume(replace(request, observation_token="observation-2"))
 
     assert result.reason_code == "stale_operation_token"
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     assert reopened.get_operation("operation-1").state is (
         NotesSyncOperationState.NEEDS_ATTENTION
     )
@@ -2038,9 +2086,10 @@ async def test_stale_resume_token_fences_the_durable_operation(
 
 @pytest.mark.asyncio
 async def test_resume_rejects_changed_desired_title_bound_by_recovery_intent(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=4))
     files = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -2078,9 +2127,10 @@ async def test_resume_rejects_changed_desired_title_bound_by_recovery_intent(
 
 @pytest.mark.asyncio
 async def test_root_paused_after_admission_blocks_resume_before_mutation(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note_authority = FakeNoteAuthority(_note(content="before", version=4))
     filesystem = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -2104,7 +2154,7 @@ async def test_root_paused_after_admission_blocks_resume_before_mutation(
     store.transition_root("root-1", NotesSyncRootState.PAUSED)
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         note_authority,
         filesystem,
         recovery_capacity_bytes=1024,
@@ -2119,9 +2169,10 @@ async def test_root_paused_after_admission_blocks_resume_before_mutation(
 
 @pytest.mark.asyncio
 async def test_root_paused_after_first_mutation_blocks_all_later_stages(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=4))
     files = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -2145,7 +2196,7 @@ async def test_root_paused_after_first_mutation_blocks_all_later_stages(
     store.transition_root("root-1", NotesSyncRootState.PAUSED)
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=1024,
@@ -2160,9 +2211,10 @@ async def test_root_paused_after_first_mutation_blocks_all_later_stages(
 
 @pytest.mark.asyncio
 async def test_binding_baseline_drift_after_first_stage_is_never_overwritten(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=4))
     files = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -2194,7 +2246,7 @@ async def test_binding_baseline_drift_after_first_stage_is_never_overwritten(
         )
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=1024,
@@ -2208,9 +2260,10 @@ async def test_binding_baseline_drift_after_first_stage_is_never_overwritten(
 
 @pytest.mark.asyncio
 async def test_folder_owner_change_before_membership_stage_never_redirects_placement(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=4))
     files = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -2234,7 +2287,7 @@ async def test_folder_owner_change_before_membership_stage_never_redirects_place
     store.assign_root_folder("root-1", "folder-2")
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=1024,
@@ -2259,6 +2312,7 @@ _RESUMABLE_CRASH_POINTS = (
     "crash_at", _RESUMABLE_CRASH_POINTS, ids=("after-admission", "after-first-write")
 )
 async def test_update_note_of_a_version_only_moved_note_reconstructs_and_resumes(
+    make_notes_state_store,
     tmp_path: Path,
     live_version: int,
     crash_at: NotesSyncOperationState,
@@ -2278,7 +2332,7 @@ async def test_update_note_of_a_version_only_moved_note_reconstructs_and_resumes
     re-observe on resume carry the invariant; the version clause is gone.
     """
 
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=live_version))
     files = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -2299,7 +2353,7 @@ async def test_update_note_of_a_version_only_moved_note_reconstructs_and_resumes
     assert store.get_binding("binding-1").note_version == 4
 
     reopened = NotesSyncExecutor(
-        NotesDeviceStateStore(database), notes, files, recovery_capacity_bytes=2048
+        make_notes_state_store(database), notes, files, recovery_capacity_bytes=2048
     )
     reconstructed = await reopened.reconstruct_request("operation-1")
     assert isinstance(reconstructed, NotesSyncExecutionRequest)
@@ -2328,6 +2382,7 @@ async def test_update_note_of_a_version_only_moved_note_reconstructs_and_resumes
     ids=("after-admission", "after-first-write"),
 )
 async def test_update_note_of_a_version_only_moved_note_still_refuses_a_content_move_on_resume(
+    make_notes_state_store,
     tmp_path: Path,
     crash_at: NotesSyncOperationState,
     refusal: str,
@@ -2340,7 +2395,7 @@ async def test_update_note_of_a_version_only_moved_note_still_refuses_a_content_
     guards that remain at reconstruction and on resume still stop for review.
     """
 
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=6))
     files = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -2360,7 +2415,7 @@ async def test_update_note_of_a_version_only_moved_note_still_refuses_a_content_
     notes.snapshot = _note(content=typed, version=notes.snapshot.version + 1)
 
     reopened = NotesSyncExecutor(
-        NotesDeviceStateStore(database), notes, files, recovery_capacity_bytes=2048
+        make_notes_state_store(database), notes, files, recovery_capacity_bytes=2048
     )
     result = await reopened.resume(await reopened.reconstruct_request("operation-1"))
 
@@ -2383,11 +2438,12 @@ async def test_update_note_of_a_version_only_moved_note_still_refuses_a_content_
     ),
 )
 async def test_configured_direction_refuses_out_of_direction_execution(
+    make_notes_state_store,
     tmp_path: Path,
     direction: NotesSyncDirection,
     action: NotesSyncActionKind,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     with store.transaction(immediate=True) as connection:
         connection.execute(
             "UPDATE notes_sync_roots SET direction = ? WHERE root_id = 'root-1'",
@@ -2423,9 +2479,10 @@ async def test_configured_direction_refuses_out_of_direction_execution(
 
 @pytest.mark.asyncio
 async def test_reviewed_conflict_override_is_typed_persisted_and_token_bound(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     with store.transaction(immediate=True) as connection:
         connection.execute(
             """
@@ -2456,7 +2513,7 @@ async def test_reviewed_conflict_override_is_typed_persisted_and_token_bound(
         recovery_capacity_bytes=1024,
     ).execute(request)
     metadata = json.loads(
-        NotesDeviceStateStore(database)
+        make_notes_state_store(database)
         .load_recovery("recovery-operation-1")
         .metadata.decode("utf-8")
     )
@@ -2473,9 +2530,10 @@ async def test_reviewed_conflict_override_is_typed_persisted_and_token_bound(
 
 @pytest.mark.asyncio
 async def test_partial_filesystem_cleanup_authority_survives_private_store_reopen(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = PartialFilesystem(_file(content="before"))
     request = _request(
@@ -2491,7 +2549,7 @@ async def test_partial_filesystem_cleanup_authority_survives_private_store_reope
         recovery_capacity_bytes=2048,
     ).execute(request)
 
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     recovery = reopened.load_recovery("recovery-operation-1")
     metadata = json.loads(recovery.metadata.decode("utf-8"))
     assert result.reason_code == "replacement_cleanup_pending"
@@ -2504,9 +2562,10 @@ async def test_partial_filesystem_cleanup_authority_survives_private_store_reope
 
 @pytest.mark.asyncio
 async def test_reopened_executor_can_resolve_persisted_private_cleanup_authority(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = PartialFilesystem(_file(content="before"))
     request = _request(
@@ -2521,7 +2580,7 @@ async def test_reopened_executor_can_resolve_persisted_private_cleanup_authority
         recovery_capacity_bytes=2048,
     ).execute(request)
 
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     result = await NotesSyncExecutor(
         reopened,
         notes,
@@ -2575,11 +2634,12 @@ async def test_reopened_executor_can_resolve_persisted_private_cleanup_authority
 
 @pytest.mark.asyncio
 async def test_reopened_executor_resolves_real_posix_private_cleanup_authority(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     if not PosixNotesSyncFilesystem.supports_writes():
         pytest.skip("guarded POSIX replacement is unavailable")
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = PartialFilesystem(_file(content="before"))
     private_leaf = ".note.md.tmp-0123456789abcdef0123456789abcdef"
@@ -2613,7 +2673,7 @@ async def test_reopened_executor_resolves_real_posix_private_cleanup_authority(
         files,
         recovery_capacity_bytes=2048,
     ).execute(request)
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     with PosixNotesSyncFilesystem(sync_root) as real_files:
         result = await NotesSyncExecutor(
             reopened,
@@ -2630,6 +2690,7 @@ async def test_reopened_executor_resolves_real_posix_private_cleanup_authority(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("corruption", ("locator", "identity"))
 async def test_cleanup_locator_corruption_cannot_delete_another_private_file(
+    make_notes_state_store,
     tmp_path: Path,
     corruption: str,
 ) -> None:
@@ -2644,7 +2705,7 @@ async def test_cleanup_locator_corruption_cannot_delete_another_private_file(
     path_a.write_bytes(b"authority-a")
     path_b.write_bytes(b"authority-b")
     identity_a = path_a.stat()
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = PartialFilesystem(_file(content="before"))
     files.replace = lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -2699,7 +2760,7 @@ async def test_cleanup_locator_corruption_cannot_delete_another_private_file(
     with PosixNotesSyncFilesystem(sync_root) as real_files:
         with pytest.raises(NotesSyncFilesystemError, match="target_identity_changed"):
             await NotesSyncExecutor(
-                NotesDeviceStateStore(database),
+                make_notes_state_store(database),
                 notes,
                 real_files,
                 recovery_capacity_bytes=4096,
@@ -2813,9 +2874,10 @@ def test_posix_delete_file_quarantines_exact_created_authority(
 
 @pytest.mark.asyncio
 async def test_null_cleanup_authority_remains_explicitly_fenced_after_reopen(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = NullCleanupPartialFilesystem(_file(content="before"))
     request = _request(
@@ -2830,7 +2892,7 @@ async def test_null_cleanup_authority_remains_explicitly_fenced_after_reopen(
         recovery_capacity_bytes=2048,
     ).execute(request)
 
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     executor = NotesSyncExecutor(
         reopened,
         notes,
@@ -2853,13 +2915,14 @@ async def test_null_cleanup_authority_remains_explicitly_fenced_after_reopen(
 
 @pytest.mark.asyncio
 async def test_unicode_path_cleanup_authority_fits_exact_admitted_capacity(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     relative_path = f"{'界' * 80}.md"
 
     def setup_store(directory: Path) -> NotesDeviceStateStore:
         directory.mkdir()
-        store, database = _execution_store(directory)
+        store, database = _execution_store(make_notes_state_store, directory)
         with sqlite3.connect(database) as connection:
             connection.execute(
                 "UPDATE notes_sync_bindings SET normalized_relative_path = ?",
@@ -2919,9 +2982,10 @@ async def test_unicode_path_cleanup_authority_fits_exact_admitted_capacity(
 
 @pytest.mark.asyncio
 async def test_resume_never_completes_while_private_cleanup_is_pending(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = PartialFilesystem(_file(content="before"))
     request = _request(
@@ -2936,7 +3000,7 @@ async def test_resume_never_completes_while_private_cleanup_is_pending(
         recovery_capacity_bytes=2048,
     ).execute(request)
 
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     result = await NotesSyncExecutor(
         reopened,
         notes,
@@ -2954,10 +3018,11 @@ async def test_resume_never_completes_while_private_cleanup_is_pending(
 
 @pytest.mark.asyncio
 async def test_partial_cleanup_store_failure_keeps_private_authority_actionable(
+    make_notes_state_store,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = PartialFilesystem(_file(content="before"))
     monkeypatch.setattr(
@@ -2989,9 +3054,10 @@ async def test_partial_cleanup_store_failure_keeps_private_authority_actionable(
 
 @pytest.mark.asyncio
 async def test_blocking_file_mutation_is_joined_before_cancellation_is_redelivered(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = BlockingFilesystem(_file(content="before"))
     stages: list[NotesSyncOperationState] = []
@@ -3027,10 +3093,11 @@ async def test_blocking_file_mutation_is_joined_before_cancellation_is_redeliver
 
 @pytest.mark.asyncio
 async def test_attention_store_failure_never_replaces_cancellation(
+    make_notes_state_store,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(
         _note(content="before", version=4), cancel_after_replace=True
     )
@@ -3060,12 +3127,13 @@ async def test_attention_store_failure_never_replaces_cancellation(
 
 @pytest.mark.asyncio
 async def test_arbitrary_reason_code_attribute_is_never_trusted(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     class CredentialError(Exception):
         reason_code = "credential_secret"
 
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(
         _note(content="before", version=4),
         replace_error=CredentialError("PRIVATE/token/path"),
@@ -3091,9 +3159,10 @@ async def test_arbitrary_reason_code_attribute_is_never_trusted(
 
 @pytest.mark.asyncio
 async def test_reopen_lists_and_reconstructs_incomplete_request_without_memory(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=4))
     files = FakeFilesystem(_file(content="after"))
 
@@ -3116,7 +3185,7 @@ async def test_reopen_lists_and_reconstructs_incomplete_request_without_memory(
             )
         )
 
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     executor = NotesSyncExecutor(
         reopened,
         notes,
@@ -3134,9 +3203,10 @@ async def test_reopen_lists_and_reconstructs_incomplete_request_without_memory(
 
 @pytest.mark.asyncio
 async def test_reopen_reconstructs_original_file_recovery_without_memory(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=5))
     files = FakeFilesystem(_file(content="before"))
 
@@ -3159,7 +3229,7 @@ async def test_reopen_reconstructs_original_file_recovery_without_memory(
             )
         )
 
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     executor = NotesSyncExecutor(
         reopened,
         notes,
@@ -3183,13 +3253,14 @@ async def test_reopen_reconstructs_original_file_recovery_without_memory(
     ),
 )
 async def test_reconstruction_rejects_corrupt_recovery_payload_after_first_write(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
     note_content: str,
     note_version: int,
     file_content: str,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content=note_content, version=note_version))
     files = FakeFilesystem(_file(content=file_content))
 
@@ -3213,7 +3284,7 @@ async def test_reconstruction_rejects_corrupt_recovery_payload_after_first_write
             (b"corrupt-authority", "operation-1"),
         )
 
-    reopened = NotesDeviceStateStore(database)
+    reopened = make_notes_state_store(database)
     with pytest.raises(RuntimeError, match="recovery_authority_changed"):
         await NotesSyncExecutor(
             reopened,
@@ -3236,10 +3307,13 @@ async def test_reconstruction_rejects_corrupt_recovery_payload_after_first_write
     ),
 )
 async def test_new_action_reconstruction_rejects_corrupt_recovery_after_first(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
-    store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+    store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store, tmp_path, action
+    )
 
     def crash_after_first(stage: NotesSyncOperationState) -> None:
         if stage is NotesSyncOperationState.FIRST_AUTHORITY_APPLIED:
@@ -3262,7 +3336,7 @@ async def test_new_action_reconstruction_rejects_corrupt_recovery_after_first(
 
     with pytest.raises(RuntimeError, match="recovery_authority_changed"):
         await NotesSyncExecutor(
-            NotesDeviceStateStore(database),
+            make_notes_state_store(database),
             notes,
             files,
             recovery_capacity_bytes=4096,
@@ -3273,9 +3347,11 @@ async def test_new_action_reconstruction_rejects_corrupt_recovery_after_first(
 
 @pytest.mark.asyncio
 async def test_create_note_reconstruction_rejects_same_bytes_on_replaced_file(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store,
         tmp_path, NotesSyncActionKind.CREATE_NOTE
     )
 
@@ -3295,7 +3371,7 @@ async def test_create_note_reconstruction_rejects_same_bytes_on_replaced_file(
 
     with pytest.raises(RuntimeError, match="recovery_authority_changed"):
         await NotesSyncExecutor(
-            NotesDeviceStateStore(database),
+            make_notes_state_store(database),
             notes,
             files,
             recovery_capacity_bytes=4096,
@@ -3304,9 +3380,10 @@ async def test_create_note_reconstruction_rejects_same_bytes_on_replaced_file(
 
 @pytest.mark.asyncio
 async def test_update_note_reconstruction_rejects_same_bytes_on_replaced_identity(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=4))
     files = FakeFilesystem(_file(content="after"))
 
@@ -3333,7 +3410,7 @@ async def test_update_note_reconstruction_rejects_same_bytes_on_replaced_identit
 
     with pytest.raises(RuntimeError, match="recovery_authority_changed"):
         await NotesSyncExecutor(
-            NotesDeviceStateStore(database),
+            make_notes_state_store(database),
             notes,
             files,
             recovery_capacity_bytes=2048,
@@ -3344,9 +3421,10 @@ async def test_update_note_reconstruction_rejects_same_bytes_on_replaced_identit
 
 @pytest.mark.asyncio
 async def test_concurrent_calls_for_one_operation_coalesce_one_mutation(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = DuplicateBlockingFilesystem(_file(content="before"))
     executor = NotesSyncExecutor(
@@ -3377,9 +3455,10 @@ async def test_concurrent_calls_for_one_operation_coalesce_one_mutation(
 
 @pytest.mark.asyncio
 async def test_two_executors_sharing_store_coalesce_one_operation_mutation(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="after", version=4))
     files = DuplicateBlockingFilesystem(_file(content="before"))
     request = _request(
@@ -3416,9 +3495,10 @@ async def test_two_executors_sharing_store_coalesce_one_operation_mutation(
 
 @pytest.mark.asyncio
 async def test_owner_reconciliation_preserves_other_active_binding_memberships(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     store.create_binding(
         NotesSyncBindingRecord(
             binding_id="binding-2",
@@ -3507,9 +3587,10 @@ def test_execution_public_models_reject_ambiguous_states() -> None:
 
 @pytest.mark.asyncio
 async def test_executor_never_promotes_raw_exception_text_to_reason_code(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(
         _note(content="before", version=4),
         replace_error=RuntimeError("credential_secret"),
@@ -3540,10 +3621,11 @@ async def test_executor_never_promotes_raw_exception_text_to_reason_code(
     (NotesSyncActionKind.UPDATE_NOTE, NotesSyncActionKind.UPDATE_FILE),
 )
 async def test_restore_uses_recovery_verifies_then_disconnects_item(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note_before = _note(
         content="before" if action is NotesSyncActionKind.UPDATE_NOTE else "after",
         version=4 if action is NotesSyncActionKind.UPDATE_NOTE else 5,
@@ -3585,7 +3667,7 @@ async def test_restore_uses_recovery_verifies_then_disconnects_item(
         store.mark_operation_attention("operation-1", "restore_requested")
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=2048,
@@ -3605,9 +3687,10 @@ async def test_restore_uses_recovery_verifies_then_disconnects_item(
 
 @pytest.mark.asyncio
 async def test_restore_cancellation_reopens_idempotently_without_replaying_write(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(
         _note(content="before", version=4), cancel_after_replace=True
     )
@@ -3632,7 +3715,7 @@ async def test_restore_cancellation_reopens_idempotently_without_replaying_write
 
     notes._cancel_after_replace = False
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=1024,
@@ -3648,10 +3731,13 @@ async def test_restore_cancellation_reopens_idempotently_without_replaying_write
     (NotesSyncActionKind.CREATE_NOTE, NotesSyncActionKind.CREATE_FILE),
 )
 async def test_create_attention_executes_non_destructive_disconnect(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
-    store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+    store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store, tmp_path, action
+    )
 
     def crash_after_first(stage: NotesSyncOperationState) -> None:
         if stage is NotesSyncOperationState.FIRST_AUTHORITY_APPLIED:
@@ -3667,7 +3753,7 @@ async def test_create_attention_executes_non_destructive_disconnect(
         ).execute(request)
     store.mark_operation_attention(request.operation_id, "disconnect_requested")
     executor = NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -3688,10 +3774,13 @@ async def test_create_attention_executes_non_destructive_disconnect(
     (NotesSyncActionKind.CREATE_NOTE, NotesSyncActionKind.CREATE_FILE),
 )
 async def test_create_restore_returns_to_original_missing_side(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
-    store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+    store, database, notes, files, request = _new_action_fixture(
+        make_notes_state_store, tmp_path, action
+    )
 
     def crash_after_first(stage: NotesSyncOperationState) -> None:
         if stage is NotesSyncOperationState.FIRST_AUTHORITY_APPLIED:
@@ -3708,7 +3797,7 @@ async def test_create_restore_returns_to_original_missing_side(
     store.mark_operation_attention(request.operation_id, "restore_requested")
 
     reopened = NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -3731,9 +3820,10 @@ async def test_create_restore_returns_to_original_missing_side(
 
 @pytest.mark.asyncio
 async def test_move_restore_moves_back_then_disconnects_without_content_loss(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     note = _note(content="before", version=4)
     notes = FakeNoteAuthority(note)
     source = _file(content="before")
@@ -3759,7 +3849,7 @@ async def test_move_restore_moves_back_then_disconnects_without_content_loss(
     store.mark_operation_attention(request.operation_id, "restore_requested")
 
     reopened = NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -3784,11 +3874,12 @@ async def test_move_restore_moves_back_then_disconnects_without_content_loss(
     ),
 )
 async def test_new_action_restore_cancellation_reopens_without_delete_or_move_replay(
+    make_notes_state_store,
     tmp_path: Path,
     action: NotesSyncActionKind,
 ) -> None:
     if action is NotesSyncActionKind.MOVE_FILE:
-        store, database = _execution_store(tmp_path)
+        store, database = _execution_store(make_notes_state_store, tmp_path)
         note = _note(content="before", version=4)
         notes: FakeNoteAuthority = FakeNoteAuthority(note)
         source = _file(content="before")
@@ -3799,7 +3890,9 @@ async def test_new_action_restore_cancellation_reopens_without_delete_or_move_re
             move_destination_relative_path="moved.md",
         )
     else:
-        store, database, notes, files, request = _new_action_fixture(tmp_path, action)
+        store, database, notes, files, request = _new_action_fixture(
+            make_notes_state_store, tmp_path, action
+        )
 
     def crash_after_first(stage: NotesSyncOperationState) -> None:
         if stage is NotesSyncOperationState.FIRST_AUTHORITY_APPLIED:
@@ -3821,14 +3914,14 @@ async def test_new_action_restore_cancellation_reopens_without_delete_or_move_re
 
     with pytest.raises(asyncio.CancelledError):
         await NotesSyncExecutor(
-            NotesDeviceStateStore(database),
+            make_notes_state_store(database),
             notes,
             files,
             recovery_capacity_bytes=4096,
             after_stage=cancel_after_first,
         ).restore(request)
     reopened = NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=4096,
@@ -3857,10 +3950,11 @@ async def test_new_action_restore_cancellation_reopens_without_delete_or_move_re
     ),
 )
 async def test_restore_reopens_after_every_durable_stage_without_replay(
+    make_notes_state_store,
     tmp_path: Path,
     crash_stage: NotesSyncOperationState,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(
         _note(content="before", version=4), cancel_after_replace=True
     )
@@ -3885,14 +3979,14 @@ async def test_restore_reopens_after_every_durable_stage_without_replay(
 
     with pytest.raises(InjectedCrash):
         await NotesSyncExecutor(
-            NotesDeviceStateStore(database),
+            make_notes_state_store(database),
             notes,
             files,
             recovery_capacity_bytes=1024,
             after_stage=crash_after,
         ).restore(request)
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=1024,
@@ -3905,9 +3999,10 @@ async def test_restore_reopens_after_every_durable_stage_without_replay(
 
 @pytest.mark.asyncio
 async def test_restore_refuses_stale_source_and_keeps_recovery_attention(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
+    store, _ = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=4))
     files = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -3948,9 +4043,10 @@ async def test_restore_refuses_stale_source_and_keeps_recovery_attention(
 
 @pytest.mark.asyncio
 async def test_disconnect_is_non_destructive_and_preserves_sibling_placement(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     store.create_binding(
         NotesSyncBindingRecord(
             binding_id="binding-2",
@@ -3989,7 +4085,7 @@ async def test_disconnect_is_non_destructive_and_preserves_sibling_placement(
     note_before, file_before = notes.snapshot, files.snapshot
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=1024,
@@ -4006,9 +4102,10 @@ async def test_disconnect_is_non_destructive_and_preserves_sibling_placement(
 
 @pytest.mark.asyncio
 async def test_disconnect_cancellation_is_attention_and_reopen_is_idempotent(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(
         _note(content="before", version=4), cancel_after_membership=True
     )
@@ -4033,7 +4130,7 @@ async def test_disconnect_cancellation_is_attention_and_reopen_is_idempotent(
         ).execute(request)
     store.mark_operation_attention("operation-1", "disconnect_requested")
     executor = NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=1024,
@@ -4052,9 +4149,10 @@ async def test_disconnect_cancellation_is_attention_and_reopen_is_idempotent(
 
 @pytest.mark.asyncio
 async def test_disconnect_remains_available_when_recovery_is_missing(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
-    store, database = _execution_store(tmp_path)
+    store, database = _execution_store(make_notes_state_store, tmp_path)
     notes = FakeNoteAuthority(_note(content="before", version=4))
     files = FakeFilesystem(_file(content="after"))
     request = _request(
@@ -4084,7 +4182,7 @@ async def test_disconnect_remains_available_when_recovery_is_missing(
         connection.commit()
 
     result = await NotesSyncExecutor(
-        NotesDeviceStateStore(database),
+        make_notes_state_store(database),
         notes,
         files,
         recovery_capacity_bytes=1024,
@@ -4172,6 +4270,7 @@ def _create_note_request() -> NotesSyncExecutionRequest:
 
 @pytest.mark.asyncio
 async def test_executor_never_reads_every_binding_and_projects_off_the_loop(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     """TASK-21129: the read-all sites are gone, and the projection is off-loop.
@@ -4181,7 +4280,7 @@ async def test_executor_never_reads_every_binding_and_projects_off_the_loop(
     fails here even though the calling method would still be ``async def``.
     """
 
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     census = _BindingReadCensus(store)
     request = _create_note_request()
 
@@ -4208,6 +4307,7 @@ async def test_executor_never_reads_every_binding_and_projects_off_the_loop(
 
 @pytest.mark.asyncio
 async def test_membership_projection_sees_a_binding_committed_moments_before(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     """TASK-21129: the off-loop read must never miss the caller's own write.
@@ -4219,7 +4319,7 @@ async def test_membership_projection_sees_a_binding_committed_moments_before(
     a performance detail.
     """
 
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     executor = NotesSyncExecutor(
         store,
         CreatingNoteAuthority(),
@@ -4262,6 +4362,7 @@ async def test_membership_projection_sees_a_binding_committed_moments_before(
 
 @pytest.mark.asyncio
 async def test_concurrent_membership_projections_never_observe_a_torn_set(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     """TASK-21129: interleaved off-loop reads see whole committed snapshots.
@@ -4272,7 +4373,7 @@ async def test_concurrent_membership_projections_never_observe_a_torn_set(
     the reconcile input could drop a live note.
     """
 
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     executor = NotesSyncExecutor(
         store,
         CreatingNoteAuthority(),
@@ -4327,6 +4428,7 @@ async def test_concurrent_membership_projections_never_observe_a_torn_set(
 
 @pytest.mark.asyncio
 async def test_projection_failure_becomes_attention_not_an_unhandled_exception(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     """TASK-21129: the thread hop must not change how a read failure lands.
@@ -4337,7 +4439,7 @@ async def test_projection_failure_becomes_attention_not_an_unhandled_exception(
     than escaping to the caller (a Textual event handler) as a crash.
     """
 
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     request = _create_note_request()
 
     def failing(*_args, **_kwargs):
@@ -4360,6 +4462,7 @@ async def test_projection_failure_becomes_attention_not_an_unhandled_exception(
 
 @pytest.mark.asyncio
 async def test_shutdown_cancel_during_the_projection_leaves_a_resumable_operation(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     """TASK-21129: app quit with the off-loop read in flight stays clean.
@@ -4370,7 +4473,7 @@ async def test_shutdown_cancel_during_the_projection_leaves_a_resumable_operatio
     the way ``NotesSyncRuntimeOwner._shutdown_once`` does.
     """
 
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     request = _create_note_request()
     entered = threading.Event()
     release = threading.Event()
@@ -4421,10 +4524,11 @@ async def test_shutdown_cancel_during_the_projection_leaves_a_resumable_operatio
 
 @pytest.mark.asyncio
 async def test_create_note_lifts_frontmatter_title_and_tags_into_the_note(
+    make_notes_state_store,
     tmp_path: Path,
 ) -> None:
     """task-32535 AC#3: title/keywords come from the request; the body stays exact."""
-    store, _ = _store(tmp_path)
+    store, _ = _store(make_notes_state_store, tmp_path)
     notes = CreatingNoteAuthority()
     content = "---\ntitle: Library ▸ Notes review\ntags: [project, ux]\n---\n# Body\n"
     file = _file(content=content)
