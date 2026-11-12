@@ -69,4 +69,18 @@ Reused TASK-38950's `apply_scoped_breakpoints` (`UI/Console_Modules/frame.py`); 
 - Green on head.
 - Under the mutant that never fills `deep`: red, `507 descendants kept a stale style`.
 
+**Red on dev after merge (2026-11-10).**
+- What failed: `test_a_compact_flip_restyles_only_what_its_rules_style` failed with `40->34: restyled 28 of 540 shell nodes; the compact rules style 6`. It failed on the PR head c89193d850 and at every dev merge from #3484's (e78b62f0e7) through ae9f9e8d21, each run checked. Because that test is in the required check, every PR's required check was red. The original head's covering runs had failed the plain file under RecoveryRequired, which is why nobody saw it.
+- Where the 22 extra restyles come from: the approval card, a reader of the class (AC #3). `ChatScreen` calls `_sync_control_layout` after the flip; it sets the card's own `approval-compact` class (which `_console_approvals.tcss` styles) and switches four action buttons to compact. Each of those class changes restyles its own subtree, 22 nodes in all.
+- How AC #1 is read: it covers the shell's own flip. Readers' own class changes (AC #3) are counted separately.
+- The fix, in the test only:
+  - The expected set now also includes the subtree of each node other than the shell whose classes changed during the flip.
+  - That set must be empty when the height does not cross the line.
+  - It must lie inside the approval card, the one allowed reader; a new reader has to be added to the test on purpose.
+  - The shell's own flip is never excused.
+- Verification:
+  - Green on the fix head: the file passes 18 of 18.
+  - Plain `set_class` mutant: red, `restyled 540 of 540 shell nodes; the compact rules style 6 and readers' reactions 22`.
+  - A mutant that also flips a class on the shell's largest child: red, `386 reaction nodes outside the approval card`. Without the card bound it restyled 409 of 540 nodes and passed.
+
 Files: `tldw_chatbook/UI/Console_Modules/frame.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_restyles.py`, `backlog/docs/lessons-textual.md` (the 38950 entry's "same shape elsewhere" line).

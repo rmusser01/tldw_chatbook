@@ -58,6 +58,7 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchStatus,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import CommandStrip, DestinationHeader
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -868,6 +869,7 @@ async def test_a_compact_flip_restyles_only_what_its_rules_style(monkeypatch):
         assert styled and len(styled) * 20 < total, (len(styled), total)
         applied = _spy_restyles(host, monkeypatch)
         for height, crosses in ((38, False), (34, True), (30, False), (36, True)):
+            classes = {id(node): set(node.classes) for node in shell.walk_children()}
             applied.clear()
             await console._on_message(
                 events.Resize(Size(160, height), Size(160, height))
@@ -875,9 +877,28 @@ async def test_a_compact_flip_restyles_only_what_its_rules_style(monkeypatch):
             assert shell.has_class("-console-compact") is (height < 35)
             nodes = {id(node) for node in shell.walk_children(with_self=True)}
             restyled = {id(node) for node in applied if id(node) in nodes}
-            assert restyled == (styled if crosses else set()), (
+            # The approval card, the one allowed reader, answers the flip with
+            # its own class (``approval-compact``, its buttons' compact) and
+            # restyles its own subtree; the shell's flip itself is never excused.
+            reaction = {
+                id(node)
+                for reader in shell.walk_children()
+                if classes.get(id(reader), set(reader.classes)) != set(reader.classes)
+                for node in reader.walk_children(with_self=True)
+            }
+            assert crosses or not reaction, f"40->{height} moved a reader's classes"
+            cards = {
+                id(node)
+                for card in console.query(ChatApprovalCard)
+                for node in card.walk_children(with_self=True)
+            }
+            assert reaction <= cards, (
+                f"40->{height}: {len(reaction - cards)} reaction nodes outside the approval card"
+            )
+            assert restyled == ((styled if crosses else set()) | reaction), (
                 f"40->{height}: restyled {len(restyled)} of {total} shell nodes; "
-                f"the compact rules style {len(styled)}"
+                f"the compact rules style {len(styled)} and readers' "
+                f"reactions {len(reaction)}"
             )
             flipped = _styles(console)
             host.update_styles(console)
