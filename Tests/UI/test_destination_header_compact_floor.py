@@ -196,6 +196,7 @@ async def test_destination_header_is_normal_on_study_at_a_standard_size():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shell_header_compact_toggles_cleanly_across_repeated_resizes(tmp_path):
     app = _schedules_app(tmp_path)
