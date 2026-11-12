@@ -31,8 +31,10 @@ def bound_roots(tmp_path: Path) -> tuple[Path, Path]:
         ("bash", "rm -r ../container", "workspace-folder-delete"),
         ("bash", "rm -r ../container/*", "workspace-folder-delete"),
         ("bash", "rm -r ./*", "workspace-folder-wipe"),
+        ("bash", "rm -r ./**", "workspace-folder-wipe"),
         ("bash", "rm -r src .keep", "workspace-folder-wipe"),
         ("bash", "rm -r src; rm .keep", "workspace-folder-wipe"),
+        ("bash", "rm -r src; echo done; rm .keep", "workspace-folder-wipe"),
         ("bash", "rm -r src\nrm .keep", "workspace-folder-wipe"),
         (
             "bash",
@@ -47,6 +49,11 @@ def bound_roots(tmp_path: Path) -> tuple[Path, Path]:
             "workspace-folder-delete",
         ),
         ("powershell", "rm -r -Path '*' -Force:$true", "workspace-folder-wipe"),
+        (
+            "powershell",
+            "& 'Remove-Item' -Recurse -LiteralPath '{root}'",
+            "workspace-folder-delete",
+        ),
         (
             "powershell",
             "Remove-Item -Recurse:$true -Force:$false . > 'log.txt'",
@@ -97,6 +104,7 @@ def test_protected_workspace_deletions(bound_roots, dialect, command, violation)
         ("bash", "rmdir -p src/cache"),
         ("bash", "rm .keep"),
         ("bash", "rm -r src || rm .keep"),
+        ("bash", "rm -r src; echo done > retained.txt; rm .keep"),
         ("bash", "rm src; rm .keep"),
         ("bash", 'rm -r "../bound project copy"'),
         ("bash", "rm -r './*'"),
@@ -113,6 +121,7 @@ def test_protected_workspace_deletions(bound_roots, dialect, command, violation)
         ("powershell", "Remove-Item -Path '*' -Filter '*.tmp'"),
         ("powershell", "Get-ChildItem -Filter '*.tmp' | Remove-Item -Recurse"),
         ("powershell", "Write-Output 'text; Remove-Item -Recurse .; more text'"),
+        ("powershell", "'Remove-Item'"),
         ("cmd", "del /q .keep"),
         ("cmd", "del /a:h *.*"),
         ("cmd", 'echo "text & rd /s /q . & more text"'),
@@ -158,6 +167,74 @@ def test_missing_binding_still_protects_its_location(tmp_path):
             "rm -r missing", dialect="bash", cwd=tmp_path, protected_roots=(missing,)
         )
         == "workspace-folder-delete"
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("true", None),
+        ("false", "workspace-folder-wipe"),
+        ("probe", "workspace-folder-wipe"),
+    ],
+)
+def test_fallback_location_respects_command_reachability(bound_roots, status, expected):
+    root, _ = bound_roots
+    sibling = root.parent / "unbound project"
+    sibling.mkdir()
+    assert (
+        workspace_deletion_violation(
+            f'{status} || cd "{root.as_posix()}"; rm -r ./*',
+            dialect="bash",
+            cwd=sibling,
+            protected_roots=(root,),
+        )
+        == expected
+    )
+
+
+def test_skipped_fallback_leaves_bound_working_directory(bound_roots):
+    root, _ = bound_roots
+    sibling = root.parent / "unbound project"
+    sibling.mkdir()
+    assert (
+        workspace_deletion_violation(
+            f'true || cd "{sibling.as_posix()}"; rm -r ./*',
+            dialect="bash",
+            cwd=root,
+            protected_roots=(root,),
+        )
+        == "workspace-folder-wipe"
+    )
+
+
+@pytest.mark.parametrize("has_sibling", [False, True])
+def test_parent_pruning_can_remove_the_last_child(tmp_path, has_sibling):
+    root = tmp_path / "workspace"
+    (root / "parent" / "leaf").mkdir(parents=True)
+    if has_sibling:
+        (root / "parent" / "retained").touch()
+    assert workspace_deletion_violation(
+        "rmdir -p parent/leaf",
+        dialect="bash",
+        cwd=root,
+        protected_roots=(root,),
+    ) == (None if has_sibling else "workspace-folder-wipe")
+
+
+def test_cmd_location_accepts_other_drive_letter_casing(bound_roots):
+    if os.name != "nt":
+        pytest.skip("Native Windows path semantics")
+    root, _ = bound_roots
+    other_casing = root.as_posix()[0].swapcase() + root.as_posix()[1:]
+    assert (
+        workspace_deletion_violation(
+            f'cd "{other_casing}" && del /q *.*',
+            dialect="cmd",
+            cwd=root.parent,
+            protected_roots=(root,),
+        )
+        == "workspace-folder-wipe"
     )
 
 

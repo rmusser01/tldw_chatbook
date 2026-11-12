@@ -52,4 +52,5 @@ Reason: This extends the existing model raw shell refusal policy.
 - Recognition covers bounded Bash, PowerShell, and cmd deletion forms. ADR-094 and `Docs/Architecture/console-file-authority.md` describe the supported forms and limits of static inspection.
 - The six targeted Windows suites passed 292 tests and skipped seven POSIX-only cases. An earlier run hit eight subprocess startup deadlines. All eight cases passed on the serial rerun. The Ruff lint gate, undefined-name check, and changed-line formatting passed.
 - After rebasing onto dev, the guard uses the shared Console provider composition. The five focused Windows launch and admission tests passed on the rebased branch.
+- Independent review caught a native call that could remain active after a final safety refusal. The runtime now settles that refusal and retires pending verifier evidence. The detector also handles literal directory fallbacks, drive casing, all-star Bash globs, PowerShell literal invocation, plain status output between deletes, and literal parent pruning. The focused Windows run passed 182 tests and Ruff.
 <!-- SECTION:NOTES:END -->

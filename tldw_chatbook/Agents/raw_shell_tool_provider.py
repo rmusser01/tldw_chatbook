@@ -680,6 +680,11 @@ class RawShellToolProvider:
         """Map one executor settlement to the ordinary bounded tool contract."""
         from tldw_chatbook.Tools.shell_search_outcomes import is_empty_search
 
+        if result.prelaunch_refusal_rule is not None:
+            return _hardline_refusal(
+                RawCliHardlineViolation(result.prelaunch_refusal_rule)
+            )
+
         exit_code = "none" if result.exit_code is None else str(result.exit_code)
         detail = (
             f"terminal_state: {result.terminal_state}\n"

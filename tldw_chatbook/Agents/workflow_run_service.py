@@ -352,6 +352,10 @@ class _TaskEvidence:
             or current_execution_owner() is not authorization._binding_state[0][0]
         ):
             raise ValueError("native_verifier_result_mismatch")
+        if result.prelaunch_refusal_rule is not None and result.cleanup_proven:
+            # The guard refused before creating a process or collecting evidence.
+            del self.pending[result.invocation_id]
+            return
         spec = observation.spec
         root = str(observation.request.initial_directory)
         after = _manifest(root, spec.input_paths, authorization=authorization)

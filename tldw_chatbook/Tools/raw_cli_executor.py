@@ -149,6 +149,7 @@ class RawCliResult:
     terminal_state: RawCliTerminalState
     truncated: bool
     cleanup_proven: bool
+    prelaunch_refusal_rule: str | None = None
 
 
 class RequiredCliOutput:
@@ -244,6 +245,10 @@ class RawCliHardlineViolation(ValueError):
         super().__init__(
             f"hardline safety floor: rule '{rule}' refuses this command"
         )
+
+
+class RawCliPrelaunchRefusal(RawCliHardlineViolation):
+    """A safety refusal before any worker or output setup."""
 
 
 def _basename(token: str) -> str:
@@ -594,9 +599,9 @@ def resolve_checked_workspace_shell_argv(request: RawCliRequest) -> tuple[str, .
                 protected_roots=request.protected_roots,
             )
         except (OSError, ValueError, RuntimeError):
-            raise RawCliHardlineViolation("workspace-protection-unavailable") from None
+            raise RawCliPrelaunchRefusal("workspace-protection-unavailable") from None
         if violation is not None:
-            raise RawCliHardlineViolation(violation)
+            raise RawCliPrelaunchRefusal(violation)
     return argv
 
 
