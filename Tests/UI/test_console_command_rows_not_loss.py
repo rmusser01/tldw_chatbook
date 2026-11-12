@@ -153,8 +153,9 @@ async def _run_row_kind(pilot, console, store, session_id, kind: str) -> None:
     assert row.content.startswith(starts), row.content[:80]
     # The row is Console's own: never saved, even in a saved chat.
     assert row.persisted_message_id is None
-    # The command's text stays in the composer; Ctrl+U clears it, so the
-    # row is the only thing left that the old inventory counted.
+    # /help and /doctor take their own text once they ran (TASK-33628.20);
+    # the refused /prefill pin keeps it, and Ctrl+U clears it, so the row is
+    # the only thing left that the old inventory counted.
     composer.focus()
     await pilot.press("ctrl+u")
     await _until(

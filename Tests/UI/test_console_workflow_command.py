@@ -541,6 +541,8 @@ async def mounted_workflow(tmp_path, mode):
                 timeout=15,
             )
             status = host.screen
+            # Started, the command has run: its text left (TASK-33628.20).
+            assert composer.draft_text() == ""
             if held:
                 await rig.wait_for_provider_entry()
                 assert status.snapshot.status == "planning"

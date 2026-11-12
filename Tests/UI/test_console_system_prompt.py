@@ -272,6 +272,16 @@ async def test_console_system_bare_command_opens_editor_with_current_text():
             "bare /system must not touch the draft"
         )
 
+        # Applied, the command has run: it leaves an empty composer, the same
+        # as a sent message (TASK-33628.20, owner decision 2026-11-12).
+        modal.query_one(f"#{TEXT_AREA_ID}", TextArea).text = "Answer briefly."
+        modal.query_one(f"#{APPLY_BUTTON_ID}", Button).press()
+        await pilot.pause(0.2)
+        assert len(host.screen_stack) == baseline_depth
+        settings = console._session._ensure_active_console_session_settings()
+        assert settings.system_prompt == "Answer briefly."
+        assert composer.draft_text() == ""
+
 
 # ---------------------------------------------------------------------------
 # Apply / Clear via the modal.
@@ -599,6 +609,8 @@ async def test_console_system_command_picker_selection_applies_system_prompt(tmp
         )
         settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Sunny system."
+        # Applied, the command has run: its text left (TASK-33628.20).
+        assert composer.draft_text() == ""
 
 
 @pytest.mark.asyncio
@@ -641,6 +653,8 @@ async def test_console_system_command_picker_escape_leaves_settings_untouched(tm
         assert len(host.screen_stack) == baseline_depth
         settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt is None
+        # Escape applied nothing, so the command keeps its text (TASK-33628.20).
+        assert composer.draft_text() == "/system Foo"
 
 
 # ---------------------------------------------------------------------------
