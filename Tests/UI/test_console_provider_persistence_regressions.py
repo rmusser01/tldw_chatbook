@@ -144,6 +144,7 @@ def _discard_worker(work=None, *args, **kwargs):
         close()
 
 
+@pytest.mark.bootstrap_profile
 def test_console_settings_apply_warns_when_llamacpp_endpoint_not_persisted(
     monkeypatch,
 ):
@@ -189,6 +190,7 @@ def test_console_settings_apply_warns_when_llamacpp_endpoint_not_persisted(
     assert "restart" in warning or "survive" in warning or "save as default" in warning
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_provider_mirror_untouched_by_mount_population(monkeypatch):
     """TASK-16474: mount/population must not write the provider mirror.
@@ -245,6 +247,7 @@ async def test_compact_provider_mirror_untouched_by_mount_population(monkeypatch
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_bar_selects_no_arbitrary_first_provider(monkeypatch):
     """TASK-16474: no arbitrary first-[providers]-key fallback in the bar.

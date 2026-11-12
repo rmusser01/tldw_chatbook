@@ -142,6 +142,7 @@ def test_apply_agent_status_state_swaps_one_state_class() -> None:
     assert status.has_class("console-agent-section-line"), "base class must survive"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_agent_status_line_carries_state_class(monkeypatch) -> None:
     """The screen's section sync applies the state class to the real Static."""
@@ -203,6 +204,7 @@ def test_unmarked_conversation_row_has_no_state_class() -> None:
     assert not any(button.has_class(cls) for cls in _ROW_MARKER_CLASSES.values())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selected_conversation_line_is_marked_active_only_with_a_summary() -> (
     None
@@ -313,6 +315,7 @@ def test_selected_row_rule_follows_every_marker_rule_in_source() -> None:
 # --- resolved paint --------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_grammar_resolves_to_the_active_theme_colors() -> None:
     """Rule-match probe on the mounted Console (lessons-testing-evidence,
@@ -368,6 +371,7 @@ async def test_rail_grammar_resolves_to_the_active_theme_colors() -> None:
 # --- review follow-ups (Qodo, PR #2393) -------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_selected_row_still_paints_the_focus_contract() -> None:
     """Selection is now a foreground hue; keyboard focus must remain its own

@@ -91,6 +91,7 @@ def _start_fake_run(screen) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.unit
 def test_persona_buddy_run_and_approval_states_drive_real_controller_producers():
     """The real controller callbacks publish and settle exact Buddy owners."""
@@ -118,6 +119,7 @@ def test_persona_buddy_run_and_approval_states_drive_real_controller_producers()
     assert buddy.snapshot().state == "idle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.unit
 def test_persona_buddy_missing_controller_sink_is_noop():
     """Controller-only construction remains valid when no Buddy sink exists."""
@@ -196,6 +198,7 @@ async def test_persona_buddy_stale_run_terminal_cannot_release_replacement():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "action_id,target",
@@ -226,6 +229,7 @@ async def test_mid_run_action_notifies_instead_of_spawning(action_id, target):
     assert any(ALREADY_RUNNING_COPY in note for note in notices)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "action_id,target",

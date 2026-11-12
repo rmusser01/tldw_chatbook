@@ -462,6 +462,7 @@ def test_cell_wrap_line_does_not_hang_at_width_one_with_double_width_text():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bug1_unfocused_insert_keeps_the_sentinel_row_painted():
     """Mounted reproduction of the `cursor_index=None` (unfocused/dictation)
@@ -490,6 +491,7 @@ async def test_bug1_unfocused_insert_keeps_the_sentinel_row_painted():
         assert any(_SENTINEL in row for row in painted_rows), painted_rows
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_expanded_row_grows_with_the_draft_so_the_screen_shows_all_rows():
     """Live-gate RED reproduction: the parent row crops the grown draft.
@@ -535,6 +537,7 @@ async def test_the_expanded_row_grows_with_the_draft_so_the_screen_shows_all_row
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_home_on_a_long_draft_keeps_the_caret_and_leading_text_painted():
     """MEDIUM RED reproduction, mounted: caret at the draft's true start
@@ -566,6 +569,7 @@ async def test_home_on_a_long_draft_keeps_the_caret_and_leading_text_painted():
         ), row0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bug2_cjk_insert_keeps_the_tail_painted():
     """Mounted reproduction of the char-vs-cell wrap bug: 40 double-width CJK

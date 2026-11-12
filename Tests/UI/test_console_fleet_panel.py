@@ -223,6 +223,7 @@ async def _scroll_into_view(pilot, console, selector: str) -> None:
 # -- State 1: collapsed summary line (spec §7) --------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts():
     """Two running + one done -> "2 working, 1 done", with a glyph per
@@ -290,6 +291,7 @@ async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts(
         _assert_painted_at_own_region(host, summary_static)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_1_summary_counts_every_terminal_status_as_done_not_just_literal_done():
     """ "Working" is `status == "running"`; every other status this
@@ -361,6 +363,7 @@ async def test_state_1_summary_counts_every_terminal_status_as_done_not_just_lit
 # -- State 2: expanded rows, two lines each (spec §7) --------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_2_expanded_rows_render_two_painted_lines_per_child():
     """Line 1: glyph + agent name + elapsed. Line 2: dimmed last-step
@@ -444,6 +447,7 @@ async def test_state_2_expanded_rows_render_two_painted_lines_per_child():
 # -- State 3: drill-in via a specific row click (spec §7) -----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_3_drilling_into_a_row_hides_the_fleet_section_and_shows_the_transcript():
     """Once drilled in, the fleet mini-section hides entirely (its rows
@@ -486,6 +490,7 @@ async def test_state_3_drilling_into_a_row_hides_the_fleet_section_and_shows_the
         assert back_button.styles.display != "none"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_the_last_row_drills_into_that_child_directly_not_via_a_cycle():
     """A REAL click (`pilot.click`, not calling the controller method by
@@ -539,6 +544,7 @@ async def test_clicking_the_last_row_drills_into_that_child_directly_not_via_a_c
         assert console._console_agent_drilldown_run_id == "run-3"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_the_first_row_drills_into_that_child_directly():
     """The row-order mirror of the test above -- proves row 0 is reachable
@@ -761,6 +767,7 @@ async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
         assert "128 provider output tok" in str(secondary.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
     """A finished child's measured `total_tokens` (`FleetHandle.
@@ -805,6 +812,7 @@ async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
         assert "1.2k budget tok" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_delete_on_a_running_row_cancels_the_child_through_the_bridge():
     """PR2b Task 5 (per-row cancel), end to end through the REAL screen
@@ -850,6 +858,7 @@ async def test_pressing_delete_on_a_running_row_cancels_the_child_through_the_br
         assert bridge.cancel_calls == [("conv-A", "h1")]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_delete_on_a_finished_row_does_nothing():
     """A terminal child is not cancellable (`_fleet_row_from_handle`'s

@@ -247,6 +247,7 @@ def test_every_disabled_reason_fits_the_strip_whole():
 CHIP_MESSAGE = "Microphone unavailable — check permissions and retry"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_narrow_composer_keeps_draft_visible_beside_voice_chip():
     _, host = _ready_host()
@@ -289,6 +290,7 @@ async def test_wide_composer_keeps_voice_chip_capped_and_draft_floor():
         assert draft.region.width >= DRAFT_FLOOR
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resize_from_wide_to_narrow_retracts_the_voice_chip():
     _, host = _ready_host()

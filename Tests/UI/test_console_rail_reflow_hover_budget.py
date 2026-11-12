@@ -135,6 +135,7 @@ async def test_hover_survives_a_reconcile_burst_then_clears_on_a_real_move() -> 
         assert tree.hover_line == -1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reflow_leg_is_safe_when_the_tree_is_gone() -> None:
     """The deferred check must tolerate a tree removed between pass and settle."""
