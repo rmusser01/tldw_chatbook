@@ -78,6 +78,9 @@ class TraceOmissionReason(str, Enum):
     PERSISTENCE_FAILED = "persistence_failed"
     ALIGNMENT_MISMATCH = "alignment_mismatch"
     UNSUPPORTED_REPLACEMENT_SPAN = "unsupported_replacement_span"
+    # A placeholder that one link of a chained replacement leaves in place of
+    # its group; the chain's final link replaces it (ADR-337, 2026-11-06).
+    REPLACEMENT_CHAIN_LINK = "replacement_chain_link"
 
 
 class TraceTransformKind(str, Enum):

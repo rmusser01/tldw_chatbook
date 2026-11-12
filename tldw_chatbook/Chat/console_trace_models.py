@@ -16,6 +16,10 @@ _IDENTIFIER_TOKEN_PATTERN = re.compile(
     re.ASCII,
 )
 MAX_SURFACE_REPLACEMENT_SPAN = 256
+# ADR-337 amendment 2026-11-06: a rewritten tail wider than one replacement is
+# stored as a chain of placeholder links. The final link spans one placeholder
+# per link, so a chain holds at most one replacement span of links.
+MAX_SURFACE_REPLACEMENT_CHAIN_LINKS = MAX_SURFACE_REPLACEMENT_SPAN
 
 
 def _validate_opaque_id(value: str, field_name: str) -> None:
