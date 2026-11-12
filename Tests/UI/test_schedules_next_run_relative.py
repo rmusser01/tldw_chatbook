@@ -208,6 +208,7 @@ class _FixedApp(ConsolidatedCSSApp):
         self.scheduling_service = _FixedTaskService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_render_table_uses_one_injectable_now():
     """One shared `now` per render; re-rendering with a later reference
@@ -230,6 +231,7 @@ async def test_render_table_uses_one_injectable_now():
         assert "(in 25m)" in str(table.get_row_at(0)[2])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_timer_exists_and_skips_when_not_current():
     app = _FixedApp()
@@ -279,6 +281,7 @@ async def test_refresh_timer_exists_and_skips_when_not_current():
 # immediately so nothing sits stale.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tick_rerenders_without_reloading_data():
     """A tick must repaint the cached rows' relative text, never re-fetch
@@ -304,6 +307,7 @@ async def test_tick_rerenders_without_reloading_data():
         assert not reload_calls, "a tick must never re-fetch data (no reload, no DB)"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_on_screen_suspend_pauses_the_ticker():
     app = _FixedApp()
@@ -322,6 +326,7 @@ async def test_on_screen_suspend_pauses_the_ticker():
         mock_timer.pause.assert_called_once()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_on_screen_resume_resumes_and_ticks_immediately():
     app = _FixedApp()

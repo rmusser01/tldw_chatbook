@@ -564,6 +564,7 @@ async def _mounted_missed_workbench(pilot):
     return workbench
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_disabled_missed_task_keeps_the_retry_affordance():
     """Run now explicitly works on disabled tasks; a disabled task whose
@@ -584,6 +585,7 @@ async def test_disabled_missed_task_keeps_the_retry_affordance():
         assert "Disabled" in str(badge.render())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missed_filter_matches_a_disabled_missed_task():
     """redesign PR-2, Task 2: the old ad hoc queue filter substring-
@@ -611,6 +613,7 @@ async def test_missed_filter_matches_a_disabled_missed_task():
         assert "Failed backup" in titles, titles
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflict_card_shows_for_a_disabled_conflicted_task():
     app = _MissedApp()
