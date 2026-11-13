@@ -1070,7 +1070,10 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.3 +24 -- the
     # planner hook for the per-domain append (rule in
     # console_trace_domain_append.py) and its non-contiguous admitted delta.
-    "tldw_chatbook/Chat/console_trace_service.py": 6624,
+    # owner decision 2026-10-04 (expand limits), applied 2026-11-13:
+    # TASK-34100.3 pre-merge review +2 -- the hook hands the rule the flat
+    # prefix and the retained values it restores after a refused probe.
+    "tldw_chatbook/Chat/console_trace_service.py": 6626,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,

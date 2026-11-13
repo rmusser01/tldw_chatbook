@@ -553,3 +553,109 @@ def test_a_completed_tool_turn_that_changed_nothing_appends_exactly(
     assert admission.completed_tool_turn is None
     assert admission.replacement_range is None
     assert _read_back(chat, persisted) == chat.sent()
+
+
+def _three_traced_turns(db, repository):
+    """Turns 1-3 traced, plus reply 3 and turn 4's message (two checkpoints)."""
+    chat, service, _ = _two_traced_turns(db, repository)
+    _send(service, chat)
+    chat.add("assistant", "Reply 3", _checkpoint(3))
+    chat.add("user", "Turn 4")
+    return chat, service
+
+
+def _spy_on_the_probe(monkeypatch):
+    """Record the planner's retained values around each per-domain probe."""
+    from tldw_chatbook.Chat import console_trace_domain_append, console_trace_service
+
+    probes: list[dict[str, object]] = []
+
+    def probe(**kwargs):
+        retained = kwargs["retained"]
+        record: dict[str, object] = {"before": dict(retained), "during": []}
+        matches = kwargs["matches"]
+
+        def watched(i: int, j: int) -> bool:
+            matched = matches(i, j)
+            record["during"].append(dict(retained))
+            return matched
+
+        record["result"] = console_trace_domain_append.domain_append_indices(
+            **{**kwargs, "matches": watched}
+        )
+        record["after"] = dict(retained)
+        record["retained"] = retained
+        probes.append(record)
+        return record["result"]
+
+    monkeypatch.setattr(
+        console_trace_service,
+        "_domain_appends",
+        lambda: SimpleNamespace(domain_append_indices=probe),
+    )
+    return probes
+
+
+@pytest.mark.parametrize("warm", [True, False], ids=["warm", "cold"])
+def test_a_refused_probe_leaves_the_planner_state_as_it_found_it(
+    db, repository, monkeypatch, warm: bool
+) -> None:
+    """Pre-merge review M3, through the real planner and its real ``matches``.
+
+    Turn 4 replays reply 1's checkpoint unchanged and reply 2's with new
+    bytes. The probe compares the first (the real ``matches`` records its
+    original value in the planner's retained artifact values), then refuses
+    on the second. The retained values must be back to what they were before
+    the probe, and the send is still refused by the existing rules.
+    """
+    chat, service = _three_traced_turns(db, repository)
+    if not warm:
+        service = ConsoleTraceService(repository)
+    probes = _spy_on_the_probe(monkeypatch)
+    owner, _ = chat.checkpoints[1]
+    provenance, values = chat.request(
+        [
+            chat.checkpoints[0],
+            (owner, _checkpoint(2, reasoning="tampered")),
+            chat.checkpoints[2],
+        ]
+    )
+
+    with pytest.raises(ValueError, match=REFUSED):
+        with db.transaction() as cursor:
+            _plan(service, cursor, chat, provenance, values)
+
+    assert len(probes) == 1
+    probe = probes[0]
+    assert probe["result"] is None
+    assert len(probe["during"]) == 2
+    assert len(probe["during"][0]) == len(probe["before"]) + 1, (
+        "the matched first checkpoint was recorded during the probe"
+    )
+    assert probe["after"] == probe["before"]
+
+
+def test_an_admitted_probe_hands_its_values_to_the_boundary(
+    db, repository, monkeypatch
+) -> None:
+    """The planner passes its own retained values; an admitted probe keeps them."""
+    chat, service = _three_traced_turns(db, repository)
+    probes = _spy_on_the_probe(monkeypatch)
+    handed: list[object] = []
+    prepare = ConsoleTraceService.prepare_surface_provenance
+
+    def spy(self, *args, **kwargs):
+        handed.append(kwargs["retained_artifact_values"])
+        return prepare(self, *args, **kwargs)
+
+    monkeypatch.setattr(ConsoleTraceService, "prepare_surface_provenance", spy)
+
+    admission, persisted = _send(service, chat)
+
+    assert [probe["result"] for probe in probes] == [(5, 6, 9)]
+    assert handed == [probes[0]["retained"]]
+    assert handed[0] is probes[0]["retained"]
+    # Both recorded checkpoints were compared and kept for the boundary.
+    assert len(probes[0]["after"]) == len(probes[0]["before"]) + 2
+    assert _read_back(chat, persisted) == chat.sent()
+
