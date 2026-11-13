@@ -73,3 +73,10 @@ hooks preserve their existing granted execution path and shutdown limits; no
 unsupported native cleanup claim is attached. Native workflow authority refuses
 before phase acceptance even when its feature flag is enabled. Passive saved
 workflow history remains available. This does not qualify Windows native groups.
+
+## Windows legacy hook shutdown
+
+Ordinary Windows hook commands reuse the existing suspended-process Job Object
+launcher. The original consent guard covers command creation and Job admission.
+Shutdown kills the Job and observes direct-child exit and Job emptiness under
+the existing cleanup deadline. Native POSIX workflow attachment is unchanged.
