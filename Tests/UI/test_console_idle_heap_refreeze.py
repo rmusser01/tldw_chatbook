@@ -46,20 +46,27 @@ class BusySampler:
     Two probes can miss a gap between hand-offs (press to admission,
     admission to custody, custody to the transcript poll); a re-freeze that
     found one would land inside the send window.
+
+    It reads as each turn's selector poll returns, before that turn's
+    callbacks run, so the loop still sleeps when it has nothing ready. A task
+    re-queued with ``sleep(0)`` kept the loop thread spinning instead, and on
+    CI that starved the send's worker threads (TASK-40334).
     """
 
     def __init__(self, console) -> None:
-        self.samples: list[bool] = []
-        self._console = console
-        self._task = asyncio.get_running_loop().create_task(self._run())
+        self.samples: list[bool] = [console_transcript._console_heap_busy(console)]
+        self._selector = asyncio.get_running_loop()._selector
+        poll = self._selector.select
 
-    async def _run(self) -> None:
-        while True:
-            self.samples.append(console_transcript._console_heap_busy(self._console))
-            await asyncio.sleep(0)
+        def select(timeout=None):
+            ready = poll(timeout)
+            self.samples.append(console_transcript._console_heap_busy(console))
+            return ready
+
+        self._selector.select = select
 
     def stop(self) -> None:
-        self._task.cancel()
+        self._selector.__dict__.pop("select", None)
 
 
 def sending(console) -> bool:
@@ -166,6 +173,26 @@ async def test_console_refreezes_after_painting_a_conversation_and_after_a_run_s
     ]
     assert inside == []
     assert timeline.index("refreeze:run_settled") > provider
+
+
+async def test_the_busy_sampler_lets_an_idle_loop_sleep() -> None:
+    """The sampler reads every loop turn but adds no turns of its own.
+
+    A sampler that re-queued itself with ``sleep(0)`` never let the loop block
+    in its selector, so the loop thread kept the GIL. On CI's Linux runners
+    that starved the send's worker-thread hops (hook reads, imports, the
+    durable commit): the mounted test above stalled until its 15 s wait gave
+    up and stopped the sampler, and the send then went on within
+    milliseconds (TASK-40334).
+    """
+    sampler = BusySampler(BusyScreen())
+    try:
+        await asyncio.sleep(0.2)  # one timer: an idle loop sleeps through it
+    finally:
+        sampler.stop()
+    assert 0 < len(sampler.samples) <= 20, (
+        f"the sampler turned an idle loop {len(sampler.samples)} times in 0.2 s"
+    )
 
 
 class BusyScreen:
