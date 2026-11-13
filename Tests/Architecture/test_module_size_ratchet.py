@@ -86,7 +86,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
     "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
-    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
+    # 2026-11-12, TASK-33628.20 PR #3458 review (owner decision: a fix over a
+    # size ratchet raises the row): /stop takes only its captured draft. 1567 -> 1571.
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1571,
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
