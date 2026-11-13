@@ -134,7 +134,9 @@ def test_a_catalog_ids_transient_outage_never_fails_the_run(
 ) -> None:
     """F9: a 503 'high demand' on a catalog id is transient. It is named in
     the summary (review v5r2 G2C-R3-1: never hidden) but does not fail the
-    run; only the default is held to answering (below)."""
+    run; only the default is held to answering (below). Review v5r4: the
+    summary says what came back (``unavailable``: a 5xx), not that the id
+    "did not answer" -- Google did answer, with a 503."""
     template = {
         "api_settings": {"google": {"model": "gemini-live"}},
         "providers": {"Google": ["gemini-busy"]},
@@ -144,7 +146,10 @@ def test_a_catalog_ids_transient_outage_never_fails_the_run(
     _route(monkeypatch, smoke, {"gemini-busy": _http_error(503, "high demand")})
 
     assert smoke.main(["--providers", "google"]) == 0
-    assert "Did not answer (retry later): google/gemini-busy" in capsys.readouterr().out
+    assert (
+        "Unavailable or unreachable (retry later): google/gemini-busy (unavailable)"
+        in capsys.readouterr().out
+    )
 
 
 def test_an_unreachable_catalog_id_never_fails_the_run_and_is_documented(
@@ -178,29 +183,36 @@ def _flaky(monkeypatch, smoke, model: str, answers: list[object]) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    "silence",
-    [_http_error(503, "high demand"), TimeoutError("timed out")],
+    ("outage", "verdict"),
+    [
+        (_http_error(503, "high demand"), "unavailable"),
+        (TimeoutError("timed out"), "unreachable"),
+    ],
     ids=("503", "timeout"),
 )
-def test_a_shipped_default_that_never_answers_fails_the_run(
-    smoke, monkeypatch, capsys, silence
+def test_a_shipped_default_down_on_every_try_fails_the_run(
+    smoke, monkeypatch, capsys, outage, verdict
 ) -> None:
-    """Review v5r2 G2C-R3-1: the shipped Google default (gemini-flash-latest)
-    timed out or answered 503 on every smoke run for five weeks, and the
-    script exited 0 each time ('unreachable'/'unavailable' never fail a
-    run). The default is what a first chat sends to, so one that does not
-    answer in three attempts fails the run and is named."""
+    """Review v5r2 G2C-R3-1: every smoke run from 2026-10-29 to 2026-11-05
+    recorded a 503 'high demand' or a timeout for the shipped Google default
+    (gemini-flash-latest), and the script exited 0 each time
+    ('unreachable'/'unavailable' never fail a run). The default is what a
+    first chat sends to, so one that is unavailable or unreachable on all
+    three attempts fails the run and is named with what came back."""
     template = {"api_settings": {"google": {"model": "gemini-default"}}, "providers": {}}
     monkeypatch.setattr(smoke, "shipped_template", lambda: template)
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-smoke")
-    asked = _flaky(monkeypatch, smoke, "gemini-default", [silence])
+    asked = _flaky(monkeypatch, smoke, "gemini-default", [outage])
 
     status = smoke.main(["--providers", "google"])
 
     out = capsys.readouterr().out
     assert status == 1
     assert len(asked) == smoke.DEFAULT_ATTEMPTS == 3
-    assert "Shipped default did not answer (3 tries): google/gemini-default" in out
+    assert (
+        "Shipped default unavailable or unreachable on all 3 tries: "
+        f"google/gemini-default ({verdict})"
+    ) in out
     assert "AIza-test-smoke" not in out
 
 
