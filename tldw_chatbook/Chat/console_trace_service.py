@@ -2599,8 +2599,8 @@ class ConsoleTraceService:
         prefix = 0
         while prefix < min(len(active), len(descriptors)) and matches(prefix, prefix):
             prefix += 1
-        # ADR-337 amendment 2026-11-12 (TASK-34100.3): a replayed reasoning
-        # checkpoint grows both domains; append each at its own domain's end.
+        # ADR-337 amendment, owner-approved 2026-11-13 (TASK-34100.3): a send
+        # growing both domains appends each at its end, ahead of compound rules.
         domain_append = (
             _domain_appends().domain_append_indices(
                 recorded_domains=tuple(

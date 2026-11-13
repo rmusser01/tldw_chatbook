@@ -23,9 +23,9 @@ Pass 3 (2026-11-12): turn 3 of a saved Kimi chat now sends normally (the
 planner admits an append in each domain). The pause is reproduced here with
 a request whose recorded history really changed: from turn 3 on, the replay
 drops every saved reasoning checkpoint, so an active continuation the trace
-recorded disappears. That is still refused (ADR-337 amendment 2026-11-12,
-TASK-34100.3.1 AC#2), and the Retry capture / Cancel send pins below run on
-that real refusal.
+recorded disappears. That is still refused (ADR-337 amendment recorded
+2026-11-13, TASK-34100.3.1 AC#2), and the Retry capture / Cancel send pins
+below run on that real refusal.
 
 Both tests are regression pins of dev's d591a4c101 (tasks-32951/32953) and
 pass on base 26b2e677dd; they are not RED guards of this branch.

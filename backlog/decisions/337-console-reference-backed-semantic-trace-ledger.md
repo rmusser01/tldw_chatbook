@@ -908,18 +908,14 @@ defect only, with no remembered per-chat capture bypass. This amendment records
 the mechanism that fix and TASK-33621.29 share. It is recorded with the
 implementing change and is subject to the owner's review of that change.
 
-### Amendment proposed 2026-11-12: append in each domain for replayed reasoning (pending owner approval)
+### Amendment recorded 2026-11-13: append in each domain when a send grows both domains
 
-> **PROPOSED -- NOT APPROVED.** This section is a proposal awaiting the
-> owner's decision. The branch that implements it
-> (`fix/task-34100.3-moonshot-continuation`) must not merge until the owner
-> approves this amendment; approval is TASK-34100.3.1 AC#2. If it is
-> declined, the planner hook in `Chat/console_trace_service.py` and
-> `Chat/console_trace_domain_append.py` come out, and turn 3+ of a saved Kimi
-> chat with capture on goes back to "Trace capture blocked".
-
-Status: proposed with its implementing change (TASK-34100.3, folding in
-TASK-34100.3.1). It needs the owner's approval before it ships.
+Status: approved by the owner on 2026-11-13. It was proposed on 2026-11-12 with
+its implementing change (TASK-34100.3, folding in TASK-34100.3.1), under the
+title "append in each domain for replayed reasoning", and the branch was held
+from merging until the owner decided. The pre-merge review of 2026-11-13
+tightened the rule and this text (unique owners, a side-effect-free probe, the
+precedence and scope below).
 
 TASK-34100.3 made saved-chat Moonshot (Kimi) replies persist, which made a third
 turn reachable. Every model Moonshot lists returns reasoning on each reply, and
@@ -938,29 +934,64 @@ suffix. Dropping the optional replay is no workaround, because removing a
 recorded continuation is itself refused (TASK-34100.3 review round 2 probe).
 
 Admit one more append shape, for FRESH and AGENT_FIRST sends without live
-native custody and outside a completed project-context transition. Every
-condition must hold:
+native custody and outside a completed project-context transition. The rule is
+not specific to Kimi: any provider's send of that kind qualifies when it grows
+exactly in both domains. Replayed reasoning is the case that produced it and,
+today, the only one known. Every condition must hold:
 
-- Both the recorded surface and the request list their domains in provider
-  order, all messages then all continuations.
 - Every recorded message equals, through the planner's existing durable
-  comparison, the incoming message at the same index. Every recorded
-  continuation equals the incoming continuation at the same index.
+  comparison, the incoming message at the same index. The planner's flat
+  prefix already compares them and stops at the first recorded continuation,
+  so it must cover exactly the recorded messages; the rule does not compare
+  them again.
+- Every recorded continuation equals the incoming continuation at the same
+  index, through the same comparison.
 - At least one message and at least one continuation are new.
-- Every incoming continuation is a typed `CONTINUATION_ATTACHMENT`. One in a
-  recorded position must attach to a recorded message. A new one must attach to
-  a new message. No recorded reply gains, loses or swaps a checkpoint.
+- Every incoming continuation is a typed `CONTINUATION_ATTACHMENT` whose owner
+  occurs exactly once among the incoming messages. One in a recorded position
+  must be owned by a recorded message, and a new one by a new message. An
+  owner that two incoming messages share proves nothing, so it is refused.
+
+What the owner check proves: for a recorded slot it checks that the owner is
+some recorded message, and the slot's bytes must equal the recorded
+checkpoint. The guarantee that no recorded reply gains, loses or swaps a
+checkpoint therefore comes from content, not from the owner reference. A Kimi
+checkpoint carries its own reply's content, so two recorded checkpoints can
+only trade places if they are byte-identical, and then the request carries the
+same bytes either way. That is the strength of the existing rule for new
+messages before an unchanged continuation suffix, which also matches
+continuations by content.
+
+Precedence: the rule is tried first. It takes precedence over the
+completed-tool-turn replacement for a non-project witness, and when it admits a
+request the compound replacement is not attempted (a witnessed turn whose
+recorded entries all match needs no replacement). A completed project-context
+turn is outside the rule and keeps the existing rules.
+
+The probe has no side effects. The planner's comparison records each matched
+artifact's original value for the dispatch boundary, so when the rule refuses
+it restores those retained values to what they were before it ran. It never
+compares incoming index 0, so it never touches the rendered-system slot.
+
+Defensive invariants, not gates: the rule also refuses domains out of provider
+order (all messages, then all continuations) on either side, interleaved
+domains, and a recorded surface with no continuation. None of these can reach
+it through the planner, which builds both sequences domain-sorted and calls the
+rule only when its flat prefix stopped short of the recorded surface.
 
 The new messages and continuations append at the end of their own domains, through
 the existing surface append, per-domain ordinals and final binding. This is the
 delta shape cold bootstrap (`_bootstrap_surface_parent`) and dispatch binding
 already accept. No recorded node is replaced, no history is rewritten, and no
-schema, retention, codec, registry or witness is added. An edited, removed or
-reordered recorded entry, a new checkpoint on an earlier reply, an untyped
-continuation, or interleaved domains falls through to the existing rules, which
-refuse it as before. The rule lives in `Chat/console_trace_domain_append.py`.
+schema, retention, codec, registry or witness is added. The delta's tool-loop
+overlay names each marked message by its position in the admitted indices. An
+edited, removed or reordered recorded entry, a new checkpoint on an earlier
+reply, or an untyped or ambiguously owned continuation falls through to the
+existing rules, which refuse it as before. The rule lives in
+`Chat/console_trace_domain_append.py`.
 Its rule-level negative controls are in
-`Tests/Chat/test_console_trace_domain_append.py`.
+`Tests/Chat/test_console_trace_domain_append.py`, including two shared-owner
+cases and a refused probe that must leave the retained values unchanged.
 `Tests/Chat/test_console_trace_domain_append_planner.py` drives the real
 planner (`prepare_current_surface_delta`) over a real ledger, warm and cold:
 it admits exactly the new entries of each domain and reads the ledger back as
@@ -968,7 +999,9 @@ the request sent, and it still refuses an edited saved message the ledger
 never recorded, new bytes for a recorded revision, changed checkpoint bytes,
 reordered checkpoints, a second checkpoint on an earlier reply and a dropped
 replay, plus the tool-loop, Continue and Regenerate routes, live native
-custody and a completed project-context turn.
+custody and a completed project-context turn. It also checks that a refused
+probe leaves the planner's retained values as it found them, and that the
+tool-loop overlay survives the non-contiguous delta.
 `Tests/UI/test_console_trace_retry_refusal.py` drives a really dropped replay
 through the mounted Console and records that it is still refused.
 
