@@ -37,6 +37,8 @@ def test_an_estimated_window_keeps_half_of_itself_for_input() -> None:
 
 
 def test_an_estimated_window_keeps_a_reservation_that_already_fits() -> None:
+    """CONTROL: passes on dev 4b90eb860b, as it must. The AC#1 cap leaves
+    alone a reply that already leaves input room (review v5r4, TE-R4-3)."""
     capacity = resolve_request_capacity(
         context_window_tokens=32000,
         context_window_verified=False,
@@ -49,7 +51,9 @@ def test_an_estimated_window_keeps_a_reservation_that_already_fits() -> None:
 def test_an_estimated_window_never_cuts_a_reply_that_leaves_room() -> None:
     """Review round 1 (F5): a flat window // 4 cap cut every unlisted Gemini
     id's shipped 8,192-token reply to 7,680 (30,720-token provider estimate)
-    although 22,000 tokens of input were left."""
+    although 22,000 tokens of input were left. CONTROL: passes on dev
+    4b90eb860b, which has no cap; its RED was against this branch's first
+    cut (review v5r4, TE-R4-3)."""
     capacity = resolve_request_capacity(
         context_window_tokens=30720,
         context_window_verified=False,
@@ -71,9 +75,10 @@ def test_a_reservation_as_large_as_an_estimated_window_still_leaves_input() -> N
 
 
 def test_a_detected_window_keeps_the_configured_reservation() -> None:
-    # A verified window is a fact, not a guess: the readiness verdict names
-    # the exhausted state ('replies fill the context') instead of silently
-    # shrinking a reply the user asked for (AC#2).
+    """CONTROL: passes on dev 4b90eb860b, as it must (review v5r4,
+    TE-R4-3). A verified window is a fact, not a guess: the readiness
+    verdict names the exhausted state ('replies fill the context') instead
+    of silently shrinking a reply the user asked for (AC#2)."""
     capacity = resolve_request_capacity(
         context_window_tokens=4096,
         context_window_verified=True,
@@ -85,6 +90,9 @@ def test_a_detected_window_keeps_the_configured_reservation() -> None:
 
 
 def test_a_user_window_override_keeps_the_configured_reservation() -> None:
+    """CONTROL: passes on dev 4b90eb860b, as it must. A window the user set
+    is not an estimate, so the AC#1 cap leaves its reply alone (review v5r4,
+    TE-R4-3)."""
     capacity = resolve_request_capacity(
         context_window_tokens=4096,
         context_window_verified=False,
@@ -239,6 +247,9 @@ async def test_a_send_resolves_the_capped_reply_for_every_path(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_a_verified_window_keeps_the_configured_reply_at_send(monkeypatch) -> None:
+    """CONTROL: passes on dev 4b90eb860b, as it must. A send to a verified
+    window keeps the configured reply maximum; the cap is for estimates only
+    (review v5r4, TE-R4-3)."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
     from tldw_chatbook.Chat.console_provider_gateway import (
         ConsoleProviderGateway,
