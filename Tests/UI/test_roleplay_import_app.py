@@ -31,7 +31,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.screen import Screen
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static, TabbedContent
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
 import tldw_chatbook.UI.Persona_Modules.roleplay_import_parse as parse_module
@@ -75,6 +75,9 @@ from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_import_review import (
 )
 from tldw_chatbook.Widgets.Persona_Widgets.buddy_character_review import (
     BuddyCharacterReviewDialog,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_lore_detail import (
+    PersonasLoreDetailWidget,
 )
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
@@ -1572,3 +1575,188 @@ async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleare
         else:
             assert (search.value, screen.state.search_query) == ("Zed", "Zed")
             assert "Abel" not in reads, reads
+
+
+# ---- TASK-33910.48 (interim): a lore Settings draft holds the landing ----
+
+
+async def _dirty_lore_settings(pilot, screen) -> Input:
+    """Type a new scan depth into the selected lore book's Settings tab."""
+    detail = screen.query_one(PersonasLoreDetailWidget)
+    detail.query_one(TabbedContent).active = "personas-lore-tab-settings"
+    await pilot.pause()
+    depth = detail.query_one("#personas-lore-scan-depth", Input)
+    depth.focus()
+    depth.action_select_all()
+    await pilot.press("7")
+    await wait_until(pilot, lambda: depth.value == "7", what="the typed scan depth")
+    return depth
+
+
+async def _open_lore_book(pilot, screen, book_id: int, name: str) -> None:
+    if screen.state.active_mode != "lore":
+        assert await pilot.click("#personas-mode-lore")
+        await settle(pilot)
+    await select_roleplay_item(pilot, screen, f"lore:{book_id}")
+    await wait_until(
+        pilot,
+        lambda: screen.state.selected_entity_name == name,
+        what=f"{name} open",
+    )
+
+
+@pytest.mark.parametrize(
+    "fixture, toast",
+    [
+        ("lore_entries_list.json", "Imported Harbour Lore · in Lore books"),
+        ("card_v2.json", "Imported Wren Halloway · in Characters"),
+    ],
+    ids=["same-kind", "cross-kind"],
+)
+async def test_an_import_never_replaces_a_lore_settings_draft(
+    fixture, toast, import_env, mock_app_instance, monkeypatch
+):
+    """A lore book's Settings edited and not saved: an import lands and
+    toasts where it went, and the book, its kind and the typed value stay.
+    On dev the lore Settings draft was outside every dirty test, so the
+    landing selected the new book over it or switched kind away from it
+    (exists on dev; B2b widened it to cross-kind landings). TASK-33910.48's
+    interim fixes the landing only; the unsaved guard and the leave-Roleplay
+    veto still miss it until B9a (TASK-33910.14). Mutations M48-A (the
+    landing ignores lore Settings) and M48-B (no loaded baseline) turn both
+    cases red."""
+    kepler = WorldBookManager(import_env.db).create_world_book("Kepler Atlas")
+    fake_file_picker(monkeypatch, import_env.files[fixture])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        await _open_lore_book(pilot, screen, kepler, "Kepler Atlas")
+        depth = await _dirty_lore_settings(pilot, screen)
+        notices = _record_notices(monkeypatch, screen)
+        await _press_import(pilot)
+        await wait_until(
+            pilot,
+            lambda: bool(notices) and _import_idle(screen),
+            what="the import done",
+        )
+        await settle(pilot)
+        assert notices[-1:] == [toast]
+        assert screen.state.active_mode == "lore"
+        assert (screen.state.selected_entity_kind, screen.state.selected_entity_id) == (
+            "lore",
+            str(kepler),
+        )
+        assert depth.value == "7" and depth.is_attached
+        assert screen.query_one(PersonasLoreDetailWidget).has_unsaved_settings
+
+
+async def test_a_lore_settings_draft_left_by_a_kind_switch_holds_no_later_import(
+    import_env, mock_app_instance, monkeypatch
+):
+    """A kind switch drops the lore selection and leaves its Settings form
+    unreachable (on dev and here; B9a, TASK-33910.14, owns asking about
+    it), so that form holds no later landing: the import selects as before.
+    Mutation M48-E (the interim ignores which kind is selected) turns this
+    red: the hidden form would hold every later import."""
+    kepler = WorldBookManager(import_env.db).create_world_book("Kepler Atlas")
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        await _open_lore_book(pilot, screen, kepler, "Kepler Atlas")
+        await _dirty_lore_settings(pilot, screen)
+        assert await pilot.click("#personas-mode-characters")
+        await wait_until(
+            pilot,
+            lambda: screen.state.active_mode == "characters",
+            what="Characters",
+        )
+        await settle(pilot)
+        notices = _record_notices(monkeypatch, screen)
+        await _press_import(pilot)
+        await wait_until(
+            pilot,
+            lambda: screen.state.selected_entity_name == "Wren Halloway",
+            what="the imported card selected",
+        )
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        assert not any(" · in " in notice for notice in notices), notices
+
+
+async def test_a_saved_lore_draft_lets_an_import_land_and_a_save_in_flight_holds_it(
+    import_env, mock_app_instance, monkeypatch
+):
+    """The landing's lore baseline follows a save, so saved Settings no
+    longer hold an import (M48-D, the baseline left at the loaded book,
+    turns the first landing red); a Settings save still in flight holds it
+    even over an unedited form, as R24 holds in-flight saves of other kinds
+    (M48-C, the in-flight term dropped, turns the second landing red). On
+    dev neither counted (exists on dev; TASK-33910.48's interim)."""
+    kepler = WorldBookManager(import_env.db).create_world_book("Kepler Atlas")
+    fake_file_picker(
+        monkeypatch,
+        import_env.files["lore_entries_list.json"],
+        import_env.files["lore_sillytavern.json"],
+    )
+    held, entered, release = threading.Event(), threading.Event(), threading.Event()
+    real_update = WorldBookManager.update_world_book
+
+    def update(manager, book_id, **kwargs):
+        if held.is_set():
+            entered.set()
+            assert release.wait(30), "the held lore save was never released"
+        return real_update(manager, book_id, **kwargs)
+
+    monkeypatch.setattr(WorldBookManager, "update_world_book", update)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        try:
+            await _open_lore_book(pilot, screen, kepler, "Kepler Atlas")
+            await _dirty_lore_settings(pilot, screen)
+            detail = screen.query_one(PersonasLoreDetailWidget)
+            status = detail.query_one("#personas-lore-status", Static)
+            detail.query_one("#personas-lore-settings-save", Button).press()
+            await wait_until(
+                pilot,
+                lambda: str(status.render()) == "Saved.",
+                what="the saved settings",
+            )
+            assert not screen._lore_settings_save_in_flight()
+            notices = _record_notices(monkeypatch, screen)
+            await _press_import(pilot)
+            await wait_until(
+                pilot,
+                lambda: screen.state.selected_entity_name == "Harbour Lore",
+                what="the first import selected",
+            )
+            await wait_until(
+                pilot, lambda: _import_idle(screen), what="the first import done"
+            )
+            await settle(pilot)
+            assert notices[-1:] == ["Harbour Lore imported."]
+            harbour = screen.state.selected_entity_id
+            held.set()
+            detail.query_one("#personas-lore-settings-save", Button).press()
+            await wait_until(pilot, entered.is_set, what="the held save")
+            assert not detail.has_unsaved_settings
+            await _press_import(pilot)
+            await wait_until(
+                pilot,
+                lambda: len(notices) == 2 and _import_idle(screen),
+                what="the second import done",
+            )
+            assert notices[-1:] == ["Imported Imported world book · in Lore books"]
+            assert screen.state.selected_entity_id == harbour
+        finally:
+            release.set()
+        await wait_until(
+            pilot,
+            lambda: not screen._lore_settings_save_in_flight(),
+            what="the held save done",
+        )
+        await settle(pilot)
+        assert "Imported world book" in import_env.lore_books()
