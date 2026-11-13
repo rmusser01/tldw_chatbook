@@ -177,7 +177,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-38989 (owner size waiver): 1492 -> 1501. The export
     # body gains the local-content lifetime span that only the screen's
     # stale duplicate carried; library_screen.py drops 79 lines with it.
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1501,
+    # 2026-11-13, TASK-40297: the quality strip's open/close and pick repaint
+    # the ‹ Library bar's guard: 1501 -> 1504.
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1504,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
