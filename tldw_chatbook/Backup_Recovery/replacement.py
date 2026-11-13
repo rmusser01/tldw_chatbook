@@ -1660,6 +1660,7 @@ def replace(
             candidate, journal, session=session, cancel=cancel
         )
         reader._check(cancel)
+        _install_personal_context_keys(archive, plan, candidate, cancel)
         publish_candidate(candidate, plan, journal, rollback, session=session)
         try:
             # This held session has now performed the same durable moves that
@@ -1702,6 +1703,16 @@ def replace(
                 )
             raise ValueError("replacement_rolled_back") from None
     return operation
+
+
+def _install_personal_context_keys(archive, plan, candidate, cancel):
+    """TASK-40135: the restored keys' fresh accounts, written before publication."""
+    if any(issue.startswith("personal_context_restore_readable:") for issue in plan.issues):
+        from tldw_chatbook.Personal_Context.recovery import install_restored_keys
+
+        install_restored_keys(
+            archive, reader.verify_sealed(archive, cancel), plan, candidate
+        )
 
 
 def _verify_applied_credentials(candidate, journal, *, session, records):
@@ -2380,6 +2391,10 @@ def recover_replacement(
             _apply_replacement_credentials(
                 candidate, journal, session=session, cancel=cancel
             )
+            if records[-1].event != "committed":
+                _install_personal_context_keys(
+                    _acquired_source(candidate, plan, cancel), plan, candidate, cancel
+                )
             rollback = next(
                 row.evidence["ciphertext"]["path"]
                 for row in records

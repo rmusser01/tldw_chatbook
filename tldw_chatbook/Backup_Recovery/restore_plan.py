@@ -760,11 +760,11 @@ def plan_restore(
         ):
             raise ValueError("safety_scope_unverified")
     doc = _document(archive)
-    # TASK-40134: until readable restores ship (TASK-40135), no restore publishes
-    # the Personal Context repository; the live copy stays exactly as it is.
+    # TASK-40134/40135: replace restores publish the Personal Context repository
+    # (personal_context_restore_* says how it ends); isolated ones hold it back.
     held_back = {
         row.root_id for row in doc.files if row.owner_id == "personal_context.repository"
-    }
+    } if mode == "isolated" else set()
     destinations = {k: v for k, v in destinations.items() if k not in held_back}
     group_scope = None
     group_ids = None
@@ -1414,6 +1414,16 @@ def plan_restore(
         + sorted(set(projection_issues))
         + (["personal_context_not_restored"] if held_back else []),
     )
+    if local_snapshot is None:
+        from tldw_chatbook.Personal_Context.recovery import restore_plan_issue
+
+        owners_by_id = {row.logical_id: row.owner_id for row in doc.files}
+        issues += [
+            issue
+            for key, path in plan.restore
+            if owners_by_id.get(key) == "personal_context.repository"
+            and (issue := restore_plan_issue(archive, doc, key, path)) is not None
+        ]
     restored_ids = {key for key, _ in restore}
     for record in records:
         if record.logical_id not in restored_ids:

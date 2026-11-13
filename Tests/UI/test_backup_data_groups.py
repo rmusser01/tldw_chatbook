@@ -628,6 +628,11 @@ async def test_backup_review_tells_personal_context_before_anything_is_written(
     assert ("Its key is not in this backup" in coverage) is (
         credential_mode == "exclude"
     )
+    # TASK-40135 AC#5: and how far that copy reaches.
+    assert (
+        "readable only on this device, and only until Personal Context is "
+        "linked or removed" in coverage
+    ) is (credential_mode == "exclude")
     assert "linking to your home server" in coverage
     assert "back up again" in coverage
 
@@ -651,6 +656,40 @@ async def test_restore_review_says_personal_context_is_not_restored(tmp_path):
     assert "Issue: personal_context_not_restored" in review
     assert "Personal Context will not be restored" in review
     assert "stays exactly as it is" in review
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "copy"),
+    [
+        ("personal_context_restore_readable", "will be restored readable"),
+        (
+            "personal_context_restore_locked:personal_context_key_not_in_backup",
+            "does not include its key, and this device does not have it",
+        ),
+        (
+            "personal_context_restore_locked:personal_context_key_install_unavailable",
+            "no secure keyring to hold its key",
+        ),
+    ],
+)
+async def test_restore_review_says_how_personal_context_will_end(
+    tmp_path, code, copy
+):
+    """TASK-40135 AC#10: before a replace restore runs, its plan says whether
+    Personal Context comes back readable with its key or locked, and why."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
+
+    issue = code + ":profile:p:personal_context.repository"
+    plan = RestorePlan("digest", "replace", (), (), (), "fingerprint", issues=(issue,))
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await screen._restore_ready(screen._revision, plan, None)
+        await pilot.pause()
+        review = str(screen.query_one("#backup-restore-preview", Static).render())
+    assert "Issue: " + issue in review
+    assert copy in review
 
 
 @pytest.mark.asyncio

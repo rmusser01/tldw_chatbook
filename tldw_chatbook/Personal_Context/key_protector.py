@@ -190,10 +190,15 @@ class KeyringProfileKeyProtector:
             ) from exc
 
     def create(self, profile_ref: str) -> ProfileKeyMaterial:
+        return self.install(profile_ref, _new_material())
+
+    def install(
+        self, profile_ref: str, material: ProfileKeyMaterial
+    ) -> ProfileKeyMaterial:
+        """Store this material in an unused account only (set-if-absent)."""
+        profile_ref = _normalized_ref(profile_ref)
         if self.exists(profile_ref):
             raise ProfileLockedError("Profile key account is already in use.")
-        profile_ref = _normalized_ref(profile_ref)
-        material = _new_material()
         self.replace(profile_ref, material)
         return material
 

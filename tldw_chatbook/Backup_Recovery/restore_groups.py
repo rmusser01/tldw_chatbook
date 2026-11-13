@@ -63,8 +63,6 @@ def available_group_ids(doc) -> tuple[str, ...]:
                 for key, owner in pairs
                 if key not in support
                 if (group := group_for_owner(owner)) is not None
-                # TASK-40134: not restorable until TASK-40135 (restore_plan).
-                and group != "personal_context"
             }
         )
     )

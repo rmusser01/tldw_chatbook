@@ -321,69 +321,29 @@ def _personal_context_archive(tmp_path, data):
     )
 
 
-@pytest.mark.parametrize("mode", ["replace", "isolated"])
-def test_restore_plans_keep_personal_context_out_and_say_so(tmp_path, mode):
-    """TASK-40134 AC#5: until readable restores ship, no plan publishes the
-    repository, even for Everything; replace preserves the live copy as it is,
-    the archive keeps its copy, and the plan says Personal Context is not restored."""
+def test_isolated_restore_plans_keep_personal_context_out_and_say_so(tmp_path):
+    """TASK-40134 AC#5, narrowed by TASK-40135: an isolated plan still never
+    publishes the repository (TASK-40136 changes that) and says so; the group is
+    now offered for restore, because replace restores publish it."""
     from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
-    from tldw_chatbook.Backup_Recovery.models import FileMetadata, Inventory, StorageItem
     from tldw_chatbook.Backup_Recovery.restore_groups import available_group_ids
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 
     data = b'[general]\nusers_name="default_user"\n'
     archive = _personal_context_archive(tmp_path, data)
-    assert "personal_context" not in available_group_ids(verify_sealed(archive))
-    if mode == "replace":
-        live = tmp_path / "live"
-        live.mkdir(mode=0o700)
-        profile = hashlib.sha256(str(live / "config.toml").encode()).hexdigest()[:24]
-        items = []
-        for owner, name, content in (
-            ("config", "config.toml", data),
-            ("personal_context.repository", "tldw_chatbook_personal_context.db", b"live"),
-        ):
-            path = live / name
-            path.write_bytes(content)
-            path.chmod(0o600)
-            key = "profile:" + profile + ":" + owner
-            items.append(
-                StorageItem(
-                    owner,
-                    key,
-                    path,
-                    "included",
-                    () if owner == "config" else ("profile:" + profile + ":config",),
-                    metadata=FileMetadata(
-                        1, key, name, None, "file", 0o600, path.stat().st_mtime_ns, "private"
-                    ),
-                )
-            )
-        repository = items[1].path
-        before = (repository.read_bytes(), repository.stat().st_ino)
-        plan = plan_restore(
-            archive,
-            mode="replace",
-            destinations={"root:config": live, "root:personal_context.repository": live},
-            target=Inventory(tuple(items), True, "independent-local-review", ()),
-            profile_names={"profile": "default_user"},
-        )
-        assert (items[1].logical_id, repository) in plan.preserve
-        assert repository not in dict(plan.retire).values()
-        assert (repository.read_bytes(), repository.stat().st_ino) == before
-    else:
-        restored = tmp_path / "restored"
-        plan = plan_restore(
-            archive,
-            mode="isolated",
-            destinations={
-                "root:config": restored / "config",
-                "root:personal_context.repository": restored / "data",
-                "profile:profile:paths.data_dir": restored / "data",
-            },
-            target=None,
-            profile_names={"profile": "restored"},
-        )
+    assert "personal_context" in available_group_ids(verify_sealed(archive))
+    restored = tmp_path / "restored"
+    plan = plan_restore(
+        archive,
+        mode="isolated",
+        destinations={
+            "root:config": restored / "config",
+            "root:personal_context.repository": restored / "data",
+            "profile:profile:paths.data_dir": restored / "data",
+        },
+        target=None,
+        profile_names={"profile": "restored"},
+    )
     restored_keys = [key for key, _ in plan.restore]
     assert "profile:profile:config" in restored_keys
     assert not [key for key in restored_keys if "personal_context" in key]
@@ -392,3 +352,267 @@ def test_restore_plans_keep_personal_context_out_and_say_so(tmp_path, mode):
         row.owner_id == "personal_context.repository"
         for row in verify_sealed(archive).files
     )
+
+
+# TASK-40135: real backups and replace restores of a profile holding Personal
+# Context, through RecoveryService in a scratch child. Both "devices" are
+# in-process SecureKeyring dicts; the child never reaches an OS keyring.
+_PERSONAL_CONTEXT_RESTORE = r'''
+import json
+import os
+import tomllib
+from pathlib import Path
+from threading import Event
+from Tests import network_guard
+network_guard.install()
+os.environ['PYTHON_KEYRING_BACKEND'] = 'keyring.backends.null.Keyring'
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from Tests.Personal_Context.test_key_protector import SecureKeyring
+devices = {'a': SecureKeyring(), 'b': SecureKeyring()}
+current = {}
+
+def use(name):
+    current['device'] = devices[name]
+
+use('a')
+from Tests.Architecture.test_backup_owner_inventory import _device_only_record
+from tldw_chatbook.Backup_Recovery import bootstrap, credentials, publication
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+from tldw_chatbook.Backup_Recovery.later_rollback import preview_rollback
+from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+from tldw_chatbook.Personal_Context.key_protector import (
+    KeyringProfileKeyProtector, ProfileKeyMaterial, ProfileLockedError)
+from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+from tldw_chatbook.Personal_Context.service import PersonalContextService
+from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
+
+credentials._credential_store = lambda: KeyringServerCredentialStore(
+    keyring_backend=current['device'])
+SCENARIO, MODE = SCENARIO_VALUE, MODE_VALUE
+source = Path(os.environ['TLDW_CONFIG_PATH'])
+SERVICE = 'tldw_chatbook.personal_context'
+GROUP = ('personal_context',)
+ROLLBACK = b'rollback-test-password'
+
+PREPARE = """
+import os
+from pathlib import Path
+from Tests import network_guard
+network_guard.install()
+from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
+from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+_populate_required_dependencies(preview_capture((selector,), options={'allow_partial': True}))
+assert not network_guard.blocked_attempts()
+"""
+
+def set_config(name):
+    import subprocess
+    import sys
+    data = Path(os.environ['XDG_DATA_HOME']) / name
+    data.mkdir(mode=0o700, exist_ok=True)
+    source.write_text('[general]\nusers_name="default_user"\n[paths]\ndata_dir='
+                      + json.dumps(str(data)) + '\n')
+    source.chmod(0o600)
+    root = user_data_dir(tomllib.loads(source.read_text()))
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # The installed required stores, as a real profile has them.
+    done = subprocess.run([sys.executable, '-c', PREPARE], capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-4000:]
+    return root / 'tldw_chatbook_personal_context.db'
+
+def repository(path):
+    return PersonalContextRepository(
+        path, key_protector=KeyringProfileKeyProtector(current['device']))
+
+def records(path):
+    return sorted(row.record_id for row in repository(path).list_records())
+
+def account(path):
+    import sqlite3
+    from contextlib import closing
+    with closing(sqlite3.connect(path)) as connection:
+        return connection.execute('SELECT key_account FROM profile_meta').fetchone()[0]
+
+def succeeded(operation):
+    result = service.wait(operation)
+    assert result['state'] == 'succeeded', dict(result)
+    return result
+
+def reviewed(start, acknowledged=(), state='succeeded'):
+    """Run one operation; an unacknowledged credential review aborts and retries."""
+    result = service.wait(start(acknowledged))
+    new = set(result['review_issues']) - set(acknowledged)
+    if result['state'] != 'succeeded' and new:
+        pending = result['result'].get('journal_operation_id')
+        if pending:
+            assert succeeded(service.start_recovery(pending, action='abort'))['result']['aborted']
+        return reviewed(start, tuple(sorted(set(acknowledged) | new)), state)
+    assert result['state'] == state, dict(result)
+    return result
+
+def plan_for(acknowledged=()):
+    return service.preview_restore(
+        inspection, mode='replace', profile_bases={}, target_configs={profile: source},
+        external_destinations={}, profile_names={},
+        target=service.preview_backup((source,), options={}), data_groups=GROUP,
+        acknowledged_credential_issues=acknowledged)
+
+admission_authority(bootstrap.default_bootstrap_root())
+live = set_config('fixture')
+original = repository(live)
+PersonalContextService(original).create_profile()
+original.commit_record_version(_device_only_record(original), expected_version_id=None)
+original_account = account(live)
+service = RecoveryService(Path.home() / 'recovery-control')
+try:
+    destination = Path.home() / 'pc.tldw-backup.zip.age'
+    password = b'pc-test-password'
+
+    def backup(acknowledged):
+        options = {'data_groups': GROUP, 'encrypted': True, 'credential_mode': MODE,
+                   'acknowledged_credential_issues': acknowledged}
+        preview = service.preview_backup((source,), options=options)
+        return service.start_backup((source,), preview.scope_digest, destination,
+                                    options=options, password=password)
+
+    reviewed(backup)
+    inspection = service.start_inspection(destination, password=password)
+    succeeded(inspection)
+    profile = service.summary(inspection)['profile_ids'][0]
+    assert 'personal_context' in {
+        row['group_id'] for row in service.summary(inspection)['data_groups']}
+    if SCENARIO == 'other_device':
+        # The relocation advice: another device (empty keyring), another path.
+        use('b')
+        target = set_config('elsewhere')
+        assert target != live and not target.exists()
+    else:
+        target = live
+        # A record made after the backup: the restore replaces it.
+        from tldw_profile_core import PreferencePayload, SemanticKey
+        original.commit_record_version(
+            _device_only_record(original).model_copy(update={
+                'record_id': 'record-after-backup',
+                'version_id': 'record-after-backup-v1',
+                'payload': PreferencePayload(
+                    subject='response.length', polarity='like', value='v'),
+                'semantic_key': SemanticKey(
+                    namespace='preference', subject='response.length'),
+            }), expected_version_id=None)
+        assert records(live) == ['record-after-backup', 'record-device-only']
+    before = dict(current['device'].values)
+    plan = plan_for()
+    assert [i for i in plan.issues if i.startswith('personal_context_restore_')] == [
+        'personal_context_restore_readable:' + next(
+            key for key, path in plan.restore if path == target)], plan.issues
+    assert target in {path for _, path in plan.restore}
+    if SCENARIO in ('finish', 'rollback'):
+        # AC#9: interrupted after the key step, before publication completes.
+        class Stop(Exception):
+            pass
+
+        publish = publication.publish_candidate
+
+        def stopped(*args, **kwargs):
+            raise Stop('interrupted after the key step')
+
+        publication.publish_candidate = stopped
+        pending = reviewed(lambda ack: service.start_restore(
+            inspection, plan_for(ack), rollback_password=ROLLBACK),
+            state='recovery_required')['result']['journal_operation_id']
+        publication.publish_candidate = publish
+        installed = {k for k in current['device'].values if k[0] == SERVICE} - set(before)
+        assert len(installed) == 1, installed
+        assert account(live) == original_account
+        succeeded(service.start_recovery(
+            pending, action='finish' if SCENARIO == 'finish' else 'rollback',
+            rollback_password=ROLLBACK))
+        named = account(live)
+        assert (SERVICE, named) in current['device'].values
+        if SCENARIO == 'finish':
+            assert {(SERVICE, named)} == installed
+            assert records(live) == ['record-device-only']
+        else:
+            assert named == original_account
+            assert records(live) == ['record-after-backup', 'record-device-only']
+        assert {k: v for k, v in current['device'].values.items() if k in before} == before
+        print('retired and reopened')
+        raise SystemExit(0)
+    restored = reviewed(lambda ack: service.start_restore(
+        inspection, plan_for(ack), rollback_password=ROLLBACK))
+    assert 'personal_context_key_unverified' not in restored['issues']
+    # AC#1/#2/#4/#11: readable, from a new account; every earlier entry unchanged.
+    restored_account = account(target)
+    assert restored_account.startswith('personal-context:recovery_')
+    assert restored_account != original_account
+    assert {k: v for k, v in current['device'].values.items() if k in before} == before
+    assert records(target) == ['record-device-only']
+    if SCENARIO == 'other_device':
+        assert {k for k in current['device'].values if k[0] == SERVICE} == {
+            (SERVICE, restored_account)}
+        print('retired and reopened')
+        raise SystemExit(0)
+    # AC#7/#8: the restored profile links (its own account is replaced) or is
+    # removed (its own account is deleted); a rollback still opens the originals.
+    protector = KeyringProfileKeyProtector(current['device'])
+    if SCENARIO == 'link':
+        protector.replace(restored_account, ProfileKeyMaterial(b'l' * 32, b'k' * 32, 2))
+    elif SCENARIO == 'remove':
+        PersonalContextService(repository(target)).remove_local_profile(
+            confirm_only_copy=True)
+        assert (SERVICE, restored_account) not in current['device'].values
+    assert current['device'].values[(SERVICE, original_account)] == before[
+        (SERVICE, original_account)]
+    operation = restored['result']['journal_operation_id']
+
+    def rollback(acknowledged):
+        current_target = service.preview_backup((source,), options={})
+        plan = service.preview_rollback(
+            operation, old_password=ROLLBACK, target=current_target,
+            acknowledged_credential_issues=acknowledged)
+        return service.start_rollback(operation, plan, old_password=ROLLBACK,
+                                      new_password=b'second-safety-password')
+
+    reviewed(rollback)
+    assert account(live) == original_account
+    assert records(live) == ['record-after-backup', 'record-device-only']
+    assert not network_guard.blocked_attempts()
+finally:
+    service.close()
+print('retired and reopened')
+'''
+
+
+@pytest.mark.parametrize(
+    ("scenario", "mode"),
+    [
+        ("link", "include"),
+        ("remove", "include"),
+        ("other_device", "include"),
+        ("link", "exclude"),
+        ("finish", "include"),
+        ("rollback", "include"),
+    ],
+)
+def test_replace_restore_makes_personal_context_readable_and_rolls_back(
+    tmp_path, scenario, mode
+):
+    """TASK-40135 AC#1, #2, #4, #7-#11: a replace restore (with the key in the
+    backup, or same-device without it) opens and lists the restored records from
+    a new account, leaves every earlier entry unchanged, and a rollback after the
+    restored profile links or is removed opens the originals. ``other_device`` is
+    the portable relocation advice: another keyring, another data path, a backup
+    with credentials, then Replace. ``finish``/``rollback``: interrupted after
+    the key step, either recovery leaves a reference to an account that exists
+    and opens it."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    script = _PERSONAL_CONTEXT_RESTORE.replace("SCENARIO_VALUE", repr(scenario)).replace(
+        "MODE_VALUE", repr(mode)
+    )
+    _run(tmp_path, "personal-context", "success", script=script, timeout=300)

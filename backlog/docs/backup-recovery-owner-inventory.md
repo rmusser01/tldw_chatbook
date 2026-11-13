@@ -4081,4 +4081,8 @@ Manual (inert) extraction never offers or writes credential material.
 | --- | --- | --- | --- | --- | --- |
 | tldw_chatbook/Personal_Context/recovery.py | _Repository.capture | copy_private_sqlite | 1 | qualified | personal_context.repository |
 | tldw_chatbook/Personal_Context/recovery.py | _Repository.validate | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only catalog validation and first-link check |
+| tldw_chatbook/Personal_Context/recovery.py | _archived_key | ZipFile | 1 | qualified | personal_context.repository; reads the sealed archive's own copy and key record to plan and recheck a restore (TASK-40135) |
+| tldw_chatbook/Personal_Context/recovery.py | _archived_key | connect_private_sqlite | 1 | qualified | personal_context.repository; in-memory image only, no file (TASK-40135) |
+| tldw_chatbook/Personal_Context/recovery.py | stamp_restored_key | connect_private_sqlite | 1 | qualified | personal_context.repository; staged candidate's key reference only (TASK-40135) |
+| tldw_chatbook/Personal_Context/recovery.py | verify_restored_key | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only check of the published copy (TASK-40135) |
 

@@ -2576,8 +2576,8 @@ class BackupRestoreScreen(Screen):
         rows.extend(
             f"Issue: {issue}"
             + (
-                f" — {self.service.issue_message(issue)}"
-                if issue == "personal_context_not_restored"
+                f" — {self.service.issue_message(issue.split(':profile:', 1)[0])}"
+                if issue.startswith("personal_context_")
                 else ""
             )
             for issue in plan.issues

@@ -562,15 +562,11 @@ def _capture_under_maintenance(
                 )
             # Captured values needing manual application limit recovery readiness,
             # without making the coordinated stored-data snapshot inconsistent.
-            manual_issues = tuple(
-                issue
-                for issue in issues
-                if issue.startswith("credential_manual_recovery_required:")
-            )
+            from .credential_policies import MANUAL_CREDENTIAL_ISSUES as manual
+
+            manual_issues = tuple(issue for issue in issues if issue.startswith(manual))
             consistency_issues = tuple(
-                issue
-                for issue in issues
-                if not issue.startswith("credential_manual_recovery_required:")
+                issue for issue in issues if not issue.startswith(manual)
             )
             if consistency_issues:
                 representation = replace(

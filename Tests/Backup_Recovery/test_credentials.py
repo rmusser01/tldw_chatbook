@@ -1,6 +1,8 @@
 """Staged managed-credential processing never changes source/private peers."""
 
+import hashlib
 import json
+import os
 import sqlite3
 from contextlib import closing
 from types import SimpleNamespace
@@ -1034,3 +1036,233 @@ def test_profile_key_reference_survives_exclusion_and_empty_carries_no_key(
         assert hashlib.sha256(staged.read_bytes()).digest() == hashlib.sha256(
             before
         ).digest()
+
+
+# TASK-40135: a replace restore installs an authenticated key into a new account,
+# or leaves the marker. The keyring is the in-process SecureKeyring dict.
+
+
+def _tables(path):
+    """Every row of every table, with ``profile_meta.key_account`` left out."""
+    with closing(sqlite3.connect(path)) as connection:
+        names = [
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"
+            )
+        ]
+        dump = {}
+        for name in names:
+            cursor = connection.execute(f'SELECT * FROM "{name}"')  # nosec B608 - catalog names
+            columns = [column[0] for column in cursor.description]
+            dump[name] = sorted(
+                tuple(
+                    value
+                    for column, value in zip(columns, row)
+                    if (name, column) != ("profile_meta", "key_account")
+                )
+                for row in cursor
+            )
+        return dump
+
+
+def _restore_case(tmp_path, monkeypatch, source):
+    """A staged archived copy, its record value, a target path, and the store."""
+    from Tests.Personal_Context.test_key_protector import SecureKeyring
+
+    backend = SecureKeyring()
+    staging, staged, account, _inv = _personal_context_stage(tmp_path, backend)
+    record = backend.values[("tldw_chatbook.personal_context", account)]
+    target = tmp_path / "target" / "tldw_chatbook_personal_context.db"
+    if source == "record":
+        backend.values.clear()  # another device: the record is the only key
+    elif source == "legacy":
+        legacy = "personal-context:" + hashlib.sha256(
+            os.fsencode(str(target.absolute()))
+        ).hexdigest()
+        backend.values = {("tldw_chatbook.personal_context", legacy): record}
+        with closing(sqlite3.connect(staged)) as connection, connection:
+            connection.execute("UPDATE profile_meta SET key_account = ''")
+    monkeypatch.setattr(
+        credentials, "_credential_store", lambda: SimpleNamespace(_keyring=backend)
+    )
+    return staged, record, target, backend
+
+
+def _publish(staged, target):
+    import shutil
+
+    target.parent.mkdir(mode=0o700, exist_ok=True)
+    shutil.copyfile(staged, target)
+    target.chmod(0o600)
+
+
+def _open_restored(staged, target, backend):
+    from tldw_chatbook.Personal_Context.key_protector import KeyringProfileKeyProtector
+    from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+
+    _publish(staged, target)
+    return PersonalContextRepository(
+        target, key_protector=KeyringProfileKeyProtector(backend)
+    )
+
+
+_KEY = "profile:p:personal_context.repository"
+
+
+def _stamp(staged, target, *, record=None, planned, account="personal-context:recovery_" + "a" * 32):
+    from tldw_chatbook.Personal_Context import recovery
+
+    recovery.stamp_restored_key(
+        staged, record_value=record, target=target, logical_id=_KEY,
+        planned=planned, account=account,
+    )
+    return account
+
+
+@pytest.mark.parametrize("source", ["record", "named", "legacy"])
+def test_restore_names_a_new_account_for_an_authenticated_key(
+    tmp_path, monkeypatch, source
+):
+    """TASK-40135 AC#2-4: with a key that authenticates the copy (the archive's
+    record, the account the copy names on this device, or the target path's
+    legacy account), staging names a new, unused account and writes nothing to
+    the keyring; only ``key_account`` changes, and the key it found opens it."""
+    from tldw_chatbook.Personal_Context import recovery
+    from tldw_chatbook.Personal_Context.key_protector import (
+        KeyringProfileKeyProtector,
+        decode_keyring_material,
+    )
+
+    staged, record, target, backend = _restore_case(tmp_path, monkeypatch, source)
+    before, rows = dict(backend.values), _tables(staged)
+
+    account = _stamp(
+        staged, target, record=record if source == "record" else None,
+        planned=recovery.RESTORE_READABLE + ":" + _KEY,
+    )
+
+    assert backend.values == before
+    assert _tables(staged) == rows
+    with closing(sqlite3.connect(staged)) as connection:
+        assert connection.execute("SELECT key_account FROM profile_meta").fetchone() == (
+            account,
+        )
+    KeyringProfileKeyProtector(backend).install(account, decode_keyring_material(record))
+    repository = _open_restored(staged, target, backend)
+    assert [row.record_id for row in repository.list_records()] == ["record-device-only"]
+    assert recovery.verify_restored_key(target) is None
+
+
+def test_restore_never_names_an_account_already_in_use(tmp_path, monkeypatch):
+    """TASK-40135 AC#2 (ADR-126 decision 8): an occupied fresh name refuses."""
+    from tldw_chatbook.Personal_Context import recovery
+
+    staged, record, target, backend = _restore_case(tmp_path, monkeypatch, "named")
+    account = "personal-context:recovery_" + "b" * 32
+    backend.values[("tldw_chatbook.personal_context", account)] = record
+    data, before = staged.read_bytes(), dict(backend.values)
+    with pytest.raises(ValueError, match="personal_context_key_account_in_use"):
+        _stamp(staged, target, planned=recovery.RESTORE_READABLE + ":" + _KEY,
+               account=account)
+    assert staged.read_bytes() == data and backend.values == before
+
+
+@pytest.mark.parametrize(
+    ("case", "reason"),
+    [
+        ("no_key", "personal_context_key_not_in_backup"),
+        ("other_key", "personal_context_key_not_in_backup"),
+        ("no_keyring", "personal_context_key_install_unavailable"),
+    ],
+)
+def test_restore_without_an_authenticating_key_leaves_the_marker(
+    tmp_path, monkeypatch, case, reason
+):
+    """TASK-40135 AC#3: nothing authenticates, or no secure keyring: the copy names
+    the marker, no keyring entry changes, every other row stays, and it is locked."""
+    from tldw_chatbook.Personal_Context import recovery
+    from tldw_chatbook.Personal_Context.key_protector import (
+        KeyringProfileKeyProtector,
+        ProfileKeyMaterial,
+        ProfileLockedError,
+    )
+
+    staged, record, target, backend = _restore_case(tmp_path, monkeypatch, "named")
+    if case == "other_key":
+        (entry,) = backend.values
+        KeyringProfileKeyProtector(backend).replace(
+            entry[1], ProfileKeyMaterial(b"o" * 32, b"p" * 32)
+        )
+    if case == "no_key":
+        backend.values.clear()
+    before, rows = dict(backend.values), _tables(staged)
+    if case == "no_keyring":
+        from Tests.Personal_Context.test_key_protector import PlaintextKeyring
+
+        monkeypatch.setattr(
+            credentials,
+            "_credential_store",
+            lambda: SimpleNamespace(_keyring=PlaintextKeyring()),
+        )
+
+    _stamp(
+        staged, target, record=record if case == "no_keyring" else None,
+        planned=recovery.RESTORE_LOCKED + ":" + reason + ":" + _KEY,
+    )
+
+    assert backend.values == before
+    assert _tables(staged) == rows
+    with closing(sqlite3.connect(staged)) as connection:
+        assert connection.execute("SELECT key_account FROM profile_meta").fetchone() == (
+            "recovery:setup_required:" + reason,
+        )
+    with pytest.raises(ProfileLockedError):
+        _open_restored(staged, target, backend).list_records()
+    assert backend.values == before
+
+
+def test_restore_refuses_an_outcome_the_plan_did_not_say(tmp_path, monkeypatch):
+    """TASK-40135 AC#10: the plan said readable; a key gone since then refuses
+    before any write instead of quietly ending locked."""
+    from tldw_chatbook.Personal_Context import recovery
+
+    staged, _record, target, backend = _restore_case(tmp_path, monkeypatch, "named")
+    backend.values.clear()
+    data = staged.read_bytes()
+    with pytest.raises(ValueError, match="personal_context_restore_changed"):
+        _stamp(staged, target, planned=recovery.RESTORE_READABLE + ":" + _KEY)
+    assert staged.read_bytes() == data and backend.values == {}
+
+
+def test_failed_verification_removes_only_the_account_the_restore_created(
+    tmp_path, monkeypatch
+):
+    """TASK-40135 AC#6: a published copy its new account cannot open keeps its data;
+    only that account goes, and Personal Context is locked."""
+    from tldw_chatbook.Personal_Context import recovery
+    from tldw_chatbook.Personal_Context.key_protector import (
+        KeyringProfileKeyProtector,
+        ProfileKeyMaterial,
+        ProfileLockedError,
+    )
+
+    staged, _record, target, backend = _restore_case(tmp_path, monkeypatch, "named")
+    account = _stamp(staged, target, planned=recovery.RESTORE_READABLE + ":" + _KEY)
+    KeyringProfileKeyProtector(backend).install(
+        account, ProfileKeyMaterial(b"w" * 32, b"x" * 32)
+    )  # not the key that opens the copy
+    _publish(staged, target)
+    others = {
+        key: value
+        for key, value in backend.values.items()
+        if key != ("tldw_chatbook.personal_context", account)
+    }
+    data = target.read_bytes()
+
+    assert recovery.verify_restored_key(target) == recovery.KEY_UNVERIFIED
+
+    assert backend.values == others
+    assert target.read_bytes() == data
+    with pytest.raises(ProfileLockedError):
+        _open_restored(staged, target, backend).list_records()

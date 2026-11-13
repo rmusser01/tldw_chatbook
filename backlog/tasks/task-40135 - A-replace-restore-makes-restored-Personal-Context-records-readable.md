@@ -1,9 +1,11 @@
 ---
 id: TASK-40135
 title: "A replace restore makes restored Personal Context records readable"
-status: To Do
+status: In Progress
 created_date: 2026-11-10 17:13
-updated_date: '2026-11-12 19:38'
+updated_date: '2026-11-13 15:45'
+assignee:
+- '@claude'
 labels:
 - follow-up
 - backup
@@ -63,7 +65,17 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [ ] #8 A rollback after the restored profile has linked, or after Remove local profile on it, still opens the original records
 - [ ] #9 A restore interrupted after the key step and finished with `recover --finish` or `--rollback` leaves the database's key reference naming an account that exists and holds its key; a test covers both
 - [ ] #10 The restore plan says, before the restore runs, whether Personal Context will be restored readable with its key or will end locked, and why
+- [ ] #11 The portable relocation advice — make an encrypted backup with credentials on the original device, then restore it with Replace — works end to end for a profile holding Personal Context; a test pins it (coordinator ruling, round 14, carried over from the TASK-40138 review)
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. `KeyringProfileKeyProtector.install(account, material)`: set-if-absent with given material (`create` delegates to it).
+2. `Personal_Context/recovery.py`: one outcome function used at plan time and at staging. Candidates are the archive's `personal_context` record, then the account the archived database names on this device (or, for an empty reference, the target path's legacy account); a value is used only after it authenticates the archived copy's manifest head. Outcome: readable (secure keyring present), or locked with `personal_context_key_install_unavailable` (no secure keyring) / `personal_context_key_not_in_backup` (nothing authenticates).
+3. `plan_restore`: replace restores publish the repository and carry `personal_context_restore_readable` or `personal_context_restore_locked:<reason>`; isolated restores still hold it back (TASK-40136). The group becomes restorable.
+4. `stage_restore` (replace): recompute the outcome; refuse if it differs from the plan. Readable: install into a fresh `personal-context:recovery_<hex>` account (set-if-absent, read back) and stamp the staged `key_account`; locked: stamp `recovery:setup_required:<reason>`. Every other table is untouched. A failed staging deletes only the account it created. The key step precedes the journal, so `recover --finish` publishes a candidate naming an account that exists and `--rollback` puts back an original naming its untouched account.
+5. After publication (restore and `recover --finish`): reopen the published database and authenticate with the stamped account; on failure delete only that `recovery_` account, keep the database, report `personal_context_key_unverified`.
+6. Copy for the plan lines and the result; tests: unit tests for the outcome/stamp, end-to-end child runs through `RecoveryService` with an in-process keyring (same path, other path + other keyring, no credentials on the same device, rollback after link and after Remove, interrupted finish/rollback, verify failure).
 
 ## Implementation Notes
 

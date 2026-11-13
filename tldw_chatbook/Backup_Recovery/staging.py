@@ -916,6 +916,8 @@ def stage_restore(
                     )
                 if issues:
                     raise ValueError(issues[0])
+            if plan.mode == "replace" and plan.local_snapshot is None:
+                _stamp_personal_context(doc, plan, selected, extracted, stage)
         validated = {
             key: reader._hash(path, cancel)
             for key, path in extracted.items()
@@ -1258,3 +1260,54 @@ def stage_restore(
                         if not path.is_symlink():
                             os.chmod(path, 0o700, follow_symlinks=False)
                 shutil.rmtree(root)
+
+
+def _stamp_personal_context(doc, plan, selected, extracted, stage):
+    """TASK-40135: point each restored Personal Context copy at its key or marker.
+
+    The keyring entry itself is written just before publication (replacement).
+    """
+    from tldw_chatbook.Personal_Context.recovery import (
+        recovery_adapters,
+        restore_account,
+        stamp_restored_key,
+    )
+
+    from .credentials import _material
+
+    records = (
+        {
+            record["file"]: record["value"]
+            for record in _material(stage)
+            if record["kind"] == "personal_context" and record["status"] == "captured"
+        }
+        if (stage / "credential-recovery.json").exists()
+        else {}
+    )
+    (owner,) = recovery_adapters()
+    for payload in doc.files:
+        if (
+            payload.logical_id not in selected
+            or payload.owner_id != "personal_context.repository"
+        ):
+            continue
+        key = payload.logical_id
+        stamp_restored_key(
+            extracted[key],
+            record_value=records.get(payload.payload),
+            target=selected[key],
+            logical_id=key,
+            planned=next(
+                (
+                    issue
+                    for issue in plan.issues
+                    if issue.startswith("personal_context_restore_")
+                    and issue.endswith(":" + key)
+                ),
+                None,
+            ),
+            account=restore_account(stage, key),
+        )
+        issues = owner.validate(extracted[key])
+        if issues:
+            raise ValueError(issues[0])

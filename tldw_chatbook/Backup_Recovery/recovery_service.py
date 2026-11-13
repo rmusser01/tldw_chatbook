@@ -189,11 +189,39 @@ _ISSUE_MESSAGES = {
         "Personal Context will not be restored: your current Personal Context "
         "profile stays exactly as it is, and the backup keeps its copy."
     ),
+    # TASK-40135: what a replace restore will do with Personal Context.
+    "personal_context_restore_readable": (
+        "Personal Context will be restored readable: its key goes into a new "
+        "keyring account, and no existing keyring entry is changed."
+    ),
+    "personal_context_restore_locked:personal_context_key_not_in_backup": (
+        "Personal Context will be restored but stay locked: this backup does not "
+        "include its key, and this device does not have it. The data is kept."
+    ),
+    "personal_context_restore_locked:personal_context_key_install_unavailable": (
+        "Personal Context will be restored but stay locked: this device has no "
+        "secure keyring to hold its key. The data is kept, and the key stays in "
+        "the encrypted restore copy."
+    ),
+    "personal_context_key_unverified": (
+        "Personal Context was restored but its key did not open it, so it stays "
+        "locked and the new keyring entry was removed. The data is kept; restore "
+        "again with Replace from the same backup."
+    ),
     "credential_personal_context_link_keys_excluded": (
         "Personal Context's link keys are left out: the device wrapping key, staged "
         "integrity keys and dataset staging keys stay in this device's keyring."
     ),
 }
+
+
+def _verify_personal_context(service, operation, plan) -> None:
+    """TASK-40135: a published repository opens with the key its account holds."""
+    from tldw_chatbook.Personal_Context.recovery import verify_restored_keys
+
+    issues = verify_restored_keys(plan)
+    if issues:
+        service._update(operation, issues=issues)
 
 
 def issue_message(code: str) -> str:
@@ -797,6 +825,7 @@ class RecoveryService:
                     "journal_operation_id": journal_operation,
                     "restoration_validated": True,
                 }
+                _verify_personal_context(self, operation, plan)
             self._update(operation, phase="restoration_validated", result=result)
 
         return self._start("restore", restore)
@@ -933,6 +962,12 @@ class RecoveryService:
                     rollback_password=rollback_password,
                     cancel=cancel,
                 )
+            if outcome == "committed" and state["mode"] != "isolated":
+                from .plan_records import load_plan
+                from .recovery_copies import _journal
+
+                plan = load_plan(_journal(self.control_root, operation_id))
+                _verify_personal_context(self, operation, plan)
             self._update(
                 operation,
                 phase=outcome,
