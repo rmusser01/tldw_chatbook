@@ -18,7 +18,9 @@ and this project adheres to Some kind of Versioning
   `full_agent_tools_enabled` setting on this version, it checks once, in the
   background, for a sub-agent definition, a workspace folder or SSH binding,
   or an earlier Console or mobile-companion reply that ran a tool outside the
-  light set (a call that was refused does not count). If it finds one, it
+  light set (a call that was refused does not count, and neither does the
+  agent's own housekeeping: searching for or loading tools, or reading its
+  own run log or messages). If it finds one, it
   adds the one line `full_agent_tools_enabled = true` under `[tools]` in
   config.toml and keeps the rest of the file byte for byte, comments and
   layout included (a later settings save rewrites the file, as every
