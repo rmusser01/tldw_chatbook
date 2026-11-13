@@ -37,9 +37,9 @@ import pytest
 
 from Tests.UI.test_console_blocked_send_recovery import _frame_rows, _until
 from Tests.UI.test_console_moonshot_reasoning_reply import (
-    REPLY,
     TRACE_BLOCKED,
     _mounted_console,
+    _reply,
     _send,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -95,6 +95,11 @@ def _checkpoints(h) -> list[tuple]:
     ]
 
 
+def _first_replies(count: int) -> list[str]:
+    """The replies of the first ``count`` provider calls (each call's own)."""
+    return [_reply(call) for call in range(1, count + 1)]
+
+
 def _replies(h, session_id: str) -> list[str]:
     return [
         message.content
@@ -116,7 +121,7 @@ async def test_refused_retry_capture_keeps_the_trace_pause(
             await _send(h, text)
             await _until(
                 h.pilot,
-                lambda turn=turn: _replies(h, saved.id) == [REPLY] * turn,
+                lambda turn=turn: _replies(h, saved.id) == _first_replies(turn),
                 timeout=30.0,
                 what=f"turn {turn} did not reply",
             )
@@ -159,7 +164,7 @@ async def test_refused_retry_capture_keeps_the_trace_pause(
         await h.pilot.click("#console-trace-send-without")
         await _until(
             h.pilot,
-            lambda: _replies(h, saved.id) == [REPLY] * 3,
+            lambda: _replies(h, saved.id) == _first_replies(3),
             timeout=30.0,
             what="Send without capture did not reply after the refused retry",
         )
@@ -194,7 +199,7 @@ async def test_cancel_send_settles_the_trace_pause(tmp_path, monkeypatch) -> Non
             await _send(h, text)
             await _until(
                 h.pilot,
-                lambda turn=turn: _replies(h, saved.id) == [REPLY] * turn,
+                lambda turn=turn: _replies(h, saved.id) == _first_replies(turn),
                 timeout=30.0,
                 what=f"turn {turn} did not reply",
             )
