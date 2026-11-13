@@ -264,8 +264,20 @@ class LibraryCollectionsController:
                 and capture_controller.state.selected_identity is not None
             ),
         )
+        screen = self._screen
+        grips = (shell.library_grip, shell.items_grip)
+        parked = previous is None and screen.focused in grips
         shell.sync_layout(layout)
         self._library_collections_reader_layout = layout
+        retry = screen._library_collections_focus_retry
+        screen._library_collections_focus_retry = None
+        if parked and retry:
+            # r14ls-rev2: a first visit composes this shell with the width-0
+            # layout, so the route's restore found its rail row disabled and
+            # parked focus on a grip; retry that id now the rail is open.
+            targets = [target for target in screen.query(retry) if target.focusable]
+            if targets:
+                screen.set_focus(targets[0], scroll_visible=False)
 
     def _mirror_library_collections_reader_preference(
         self,

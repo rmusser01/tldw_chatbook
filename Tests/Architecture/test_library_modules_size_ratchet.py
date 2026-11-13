@@ -161,8 +161,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-13, TASK-40328: the entry load repaints the capture panes in
     # place (``_sync_library_collections_capture_panes``): 1689 -> 1698
     # (measured). Review r14ls-rev1: the same repaint re-syncs the rail's
-    # count and Details in place: 1698 -> 1702 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1702,
+    # count and Details in place: 1698 -> 1702 (measured). Review r14ls-rev2:
+    # the first layout sync retries the restore's focus id: 1702 -> 1714
+    # (measured).
+    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1714,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to

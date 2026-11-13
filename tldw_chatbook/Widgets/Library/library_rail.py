@@ -726,9 +726,13 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         details_shape_matches = bool(
             len(shell.details_lines) > 2 and shell.details_lines[2]
         ) or not bool(len(self.shell.details_lines) > 2 and self.shell.details_lines[2])
+        # GRADUATED composes the same tree as EXPANDED (the only lifecycle-
+        # gated child, "Back to Get started", is EXPANDED-only and the
+        # lifecycle must be unchanged), so it patches too (r14ls-rev2).
         can_patch_in_place = (
             self.is_mounted
-            and self.lifecycle is LibraryLifecycle.EXPANDED
+            and self.lifecycle
+            in (LibraryLifecycle.EXPANDED, LibraryLifecycle.GRADUATED)
             and lifecycle is self.lifecycle
             and preferences == self.preferences
             and query == self.query

@@ -380,11 +380,15 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
     Those recomposes were also what repainted the rail with the count the
     load produced (review r14ls-rev1): the painted Collections row and the
     Details line must show it, for a capture saved after the rail's prefetch
-    and after a failed prefetch (task-32103's contradiction).
+    and after a failed prefetch (task-32103's contradiction). The rail is
+    re-synced in place, not recomposed, and Enter on the focused row leaves
+    focus on it (review r14ls-rev2: it used to land on a rail control, so a
+    second Enter acted on something else).
     """
     from textual.widgets import Static
 
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.Widgets.Library.library_rail import LibraryRail
 
     app, scope, _identities = await _seed()
     host = LibraryProductionCSSHarness(app)
@@ -395,10 +399,18 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
         composes.append(screen)
         return compose_content(screen)
 
+    rail_composes = []
+    rail_compose = LibraryRail.compose
+
+    def counting_rail_compose(rail):
+        rail_composes.append(rail)
+        return rail_compose(rail)
+
     def row_label() -> str:
         return str(screen.query_one("#library-row-browse-collections", Button).label)
 
     monkeypatch.setattr(LibraryScreen, "compose_content", counting_compose_content)
+    monkeypatch.setattr(LibraryRail, "compose", counting_rail_compose)
     async with host.run_test(size=(170, 48)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
@@ -425,9 +437,14 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
             assert "Collections count unavailable" in str(
                 screen.query_one("#library-details-body", Static).render()
             )
-        expected = "(3)" if rail_count == "late_capture" else "(2)"
+        count = 3 if rail_count == "late_capture" else 2
+        expected = f"({count})"
+        row = screen.query_one("#library-row-browse-collections", Button)
+        row.focus()
+        await pilot.pause()
         composes.clear()
-        screen.query_one("#library-row-browse-collections", Button).press()
+        rail_composes.clear()
+        await pilot.press("enter")
 
         def settled() -> bool:
             work = screen.query("#library-collections-work")
@@ -446,9 +463,11 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
         await pilot.pause()
         await pilot.pause()
         assert len(composes) <= 1, f"{len(composes)} Library recomposes for one press"
+        assert len(rail_composes) <= 1, f"{len(rail_composes)} rail composes"
+        assert getattr(screen.focused, "id", None) == "library-row-browse-collections"
         title = str(screen.query_one("#library-collections-reader-title").render())
         assert any(name in title for name in ("Alpha", "Beta", "Gamma")), title
-        assert len(screen.query(".library-collections-item-row")) == int(expected[1])
+        assert len(screen.query(".library-collections-item-row")) == count
         await _wait_for_condition(
             pilot,
             lambda: expected in row_label(),

@@ -3708,6 +3708,9 @@ class LibraryScreen(BaseAppScreen):
         #: instead of dropping its number silently, and only the deadline
         #: kind claims a wait (fix round 1).
         self._library_collections_count_failure: str = ""
+        #: r14ls-rev2: the last recompose restore's focus id, retried by the
+        #: Collections shell's first layout sync once it opens the rail.
+        self._library_collections_focus_retry: str | None = None
         self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
             self._collections_state.reader_preferences,
@@ -8936,6 +8939,7 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_focus_channel_owns_this_window():
             return
+        self._library_collections_focus_retry = previous
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             self._restore_library_media_focus(previous)
         super().restore_focus_after_recompose(previous)
@@ -22185,7 +22189,7 @@ class LibraryScreen(BaseAppScreen):
     def _sync_library_rail_state(
         self, rail: LibraryRail, shell: LibraryShellState | None = None
     ) -> None:
-        """Patch ``rail`` from ``shell`` (default: a fresh one) and live inputs."""
+        """Re-sync ``rail`` in place from ``shell`` (default: a fresh one)."""
         rail.sync_state(
             shell
             or build_library_shell_state(
