@@ -26,7 +26,9 @@ _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
     "tldw_chatbook/UI/Screens/chat_screen.py"
 ]
 #: The screen-size ratchet row this file holds unraised, re-pinned the same day.
-LIVE_RATCHET_ROW = ("ChatScreen", 24_608, 741)
+#: Re-pinned 2026-11-07 by TASK-36948.3 with the row's dated waiver raise.
+#: Re-pinned 2026-11-12 with the row (measured on dev 4b90eb860b).
+LIVE_RATCHET_ROW = ("ChatScreen", 24_568, 742)
 MAX_DELEGATE_LINES = 5
 
 MOVE_METHODS = frozenset(

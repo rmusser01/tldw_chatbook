@@ -16180,6 +16180,50 @@ class ChatScreen(BaseAppScreen):
             state["interface_type"] = "native_console"
         return state
 
+    def has_unsaved_editor_state(self) -> bool:
+        """Whether the Console holds unsaved composer work; read-only (TASK-36948.3).
+
+        Covers the visible draft, the draft-switch snapshot taken when a
+        session switch begins, and the Enter capture's stash before its
+        callback takes custody. Reads the controls directly:
+        ``_console_composer_or_none`` memoizes, while draft reconciliation
+        writes back to sessions and clears stashes.
+
+        Returns:
+            True when any of them holds text, or the stash holds segments.
+
+        Raises:
+            TypeError: An unknown shape, so maintenance refuses, never "clean".
+        """
+
+        def text(value: object) -> bool:
+            if type(value) is not str:
+                raise TypeError("unknown draft shape")
+            return len(value) != 0
+
+        composers = list(self.query(ConsoleComposerBar))
+        if len(composers) != 1 or type(composers[0]) is not ConsoleComposerBar:
+            raise TypeError("unknown mounted composer")
+        dirty = text(composers[0].draft_text())
+        snapshot = self._session._console_draft_switch_snapshot
+        if snapshot is not None:
+            if type(snapshot) is not tuple or len(snapshot) != 3:
+                raise TypeError("unknown draft transition")
+            dirty = text(snapshot[1]) or dirty
+        # Enter retains a typed capture until its callback takes custody. The
+        # composer keeps the draft until accepted work owns it; there is no
+        # separate screen-owned inflight stash in the installed send path.
+        pending = self._console_pending_send
+        if pending is not None:
+            if type(pending) is not _ConsolePendingSend:
+                raise TypeError("unknown pending send")
+            stash = pending.stash
+            if stash is not None and type(stash) is not ConsoleDraftStash:
+                raise TypeError("unknown draft stash")
+            if stash is not None:
+                dirty = text(stash.text) or bool(stash.segments) or dirty
+        return dirty
+
     def console_prompt_target_projection(
         self,
     ) -> ConsolePromptTargetProjection | None:
