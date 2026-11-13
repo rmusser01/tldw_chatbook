@@ -21114,11 +21114,22 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             creator = getattr(database, "create_assistant_with_continuation", None)
             if not callable(creator):
                 raise RuntimeError("Durable continuation storage is unavailable.")
-            from .provider_continuation_owner_row import create_continuation_owner_row
-
-            message_version = create_continuation_owner_row(  # None: a flush won
-                self, message, creator, conversation_id, content, private_json
-            )
+            parent_message_id = self._previous_persisted_message_id(message)
+            # TASK-34100.3: create under the stream flush's insert claim and
+            # re-check; when the flush won, update its row (never a sibling).
+            with self._pending_row_insert_lock:
+                if message.persisted_message_id is None:
+                    creator(
+                        message_id=message.id,
+                        conversation_id=conversation_id,
+                        parent_message_id=parent_message_id,
+                        content=content,
+                        provider_continuation_json=private_json,
+                    )
+                    message.persisted_message_id = message.id
+                    message.parent_message_id = parent_message_id
+                    self._pending_persistence_message_ids.discard(message.id)
+                    message_version = 1
         if message_version is None:
             version_reader = getattr(persistence, "get_message_version", None)
             durable_version = (
