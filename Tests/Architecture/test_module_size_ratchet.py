@@ -1065,6 +1065,9 @@ _BUDGETS: dict[str, int] = {
     # G2C-R3-3: MLX-LM's sample identity is its host/port; 8,983 -> 9,015).
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 +1 (review v5r2
     # G2C-R3-1: why the Google default is the Flash-Lite alias; 9,015 -> 9,016).
+    # Re-measured 2026-11-12 after the rebase onto dev 26b2e677dd (owner
+    # decision 2026-10-04, expand limits): dev's 8,837 plus the branch's +181
+    # (the rows above plus round v5r4's honest-wording comments), exact 9,018.
     "tldw_chatbook/config.py": 9080,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
