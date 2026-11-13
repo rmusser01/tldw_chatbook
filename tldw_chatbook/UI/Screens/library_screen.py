@@ -17335,7 +17335,7 @@ class LibraryScreen(BaseAppScreen):
                             self._focus_library_control, focus_identity
                         )
                     else:  # TASK-40293: land focus the reset strands.
-                        self._arm_library_list_entry_focus()
+                        self._media_controller._land_library_media_emptied_page()
                 return
         if (
             applied_selection_id

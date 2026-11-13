@@ -473,7 +473,10 @@ _BUDGETS: dict[str, int] = {
     # immediate select (``]``/``[`` and the review-set walk too) hands it back.
     # 2026-11-06, TASK-38981 re-review 4 (same waiver): 5260 -> 5275 (+15):
     # the viewer sync lands a pending stage pick once its item has loaded.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5275,
+    # 2026-11-13, TASK-40293 review r14lf-rev1: the emptied-page landing that
+    # replaces the Reader reset's list-entry arm (the file grows 5267 ->
+    # 5308): 5275 -> 5308.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5308,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

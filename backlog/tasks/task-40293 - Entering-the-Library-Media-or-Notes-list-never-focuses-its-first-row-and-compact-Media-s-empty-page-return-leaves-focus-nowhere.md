@@ -4,7 +4,7 @@ title: "Entering the Library Media or Notes list never focuses its first row, an
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 05:40'
+updated_date: '2026-11-13 07:20'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -73,3 +73,12 @@ Premise held on base 26b2e677dd: all five nodes failed as filed. Traced with a t
 - Files: `UI/Screens/library_screen.py`, `Tests/Architecture/test_screen_size_ratchet.py` (38167 -> 38183), `scripts/library_shell_push_deselect.txt` (4 lines), `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/library.md`, `backlog/docs/lessons-textual.md`.
 
 Covering run (shared by the stream's five tasks, final tree): 58 Library UI files that reference the changed seams (`test_library_shell.py` whole, side-by-side, canvas-sync defects, choice strips, multiselect, honesty, workbench focus, screen navigation and 50 more), `-n 4`, load 42-66: 2023 passed, 863 failed. Every failing function was re-run on the head tree and on the base source (26b2e677dd, same tests): of those 871 nodes 850 fail on head and 845 on base, almost all the local RecoveryRequired wall for plain Tests/UI files plus the deselected nodes owned by TASK-32503/34000.60/40296/40299. Head-only reds re-checked: the fake-row unit test above (fixed), `test_any_non_markdown_item_with_content_says_why_rendered_is_absent[video]` (3 of 3 green on head when re-run alone), `test_literal_history_restore_keeps_kind_definition_and_guards` (red 1-3 of 3 params on base too), and four nodes that passed on re-run. `Tests/Architecture` Library wiring files: 49 passed (serial).
+
+**Fix round 1 (review r14lf-rev1).**
+- Critical: under load the reset branch's list-entry arm was revoked by Textual's queued DescendantFocus for `#library-browse-library-grip` (the Items prune parks focus there), leaving focus at None (reviewer: 3 of 12 probe runs). The arm is gone. `LibraryMediaController._land_library_media_emptied_page` now lands focus itself after the recompose: it resolves `_library_media_empty_list_fallback_target()` in a `call_after_refresh` and retries every 50 ms (up to 2 s) while the target is missing, pruning or not yet focusable. A queued foreign focus event has nothing to revoke.
+- Important: the landing now takes only focus the reset strands: none, detached, a pane grip, or anything inside the Media browse shell outside `#library-rail`. Focus in the rail search box (or the nav bar) stays, as on base. It checks before the recompose and again at landing.
+- Tests: the compact node now also asserts Import still holds focus 0.5 s after it lands. `test_compact_media_empty_page_landing_survives_a_queued_grip_focus` reproduces the ordering deterministically: it parks focus on the grip right after the reset and puts its DescendantFocus on the screen's queue. With the old arm restored it fails 2 of 2 with focus None; it passes with the fix. `test_wide_media_reader_reset_leaves_focus_the_user_holds_in_the_rail` (170x48, focus in `#library-search-input`) fails with focus on `library-media-empty-import` under the old arm and under the landing without its stranded gate, and passes with the fix.
+- `-n 4 --dist each` (4 copies of each node): the compact node and the wide node passed 8/8 in each of 4 rounds (32/32, load ~17). The old arm also passed 24/24 at that load (the race needs more), which is why the queued-grip test pins the ordering itself.
+- Both new nodes are appended at the UI census tail (`MINIMUM_FILES` 2029 -> 2031). Serial times with the lane flags: 7.3 s and 8.4 s call, about 15 s whole, load 19-36.
+- The User Guide sentence now says the return lands only focus that was in the Media panes.
+- Size rows: `library_media_controller.py` 5275 -> 5308 (the file grows 5267 -> 5308). `library_screen.py` is unchanged by this round (a one-line swap at the call site).

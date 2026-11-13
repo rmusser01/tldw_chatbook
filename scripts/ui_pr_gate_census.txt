@@ -3067,3 +3067,8 @@ Tests/UI/test_console_controller_wiring.py::test_context_spend_re_resolves_runti
 # empty page lands on the Import recovery action (15.6 s call, 31.9 s whole,
 # serial at load 55-62).
 Tests/UI/test_library_media_side_by_side.py::test_compact_media_viewer_back_empty_page_focuses_recovery_control
+# TASK-40293 review r14lf-rev1 (2026-11-13): the emptied-page landing holds
+# against Textual's queued grip focus, and leaves rail-search focus alone at
+# the wide size (7.3 s and 8.4 s call, ~15 s whole, serial at load 19-36).
+Tests/UI/test_library_media_side_by_side.py::test_compact_media_empty_page_landing_survives_a_queued_grip_focus
+Tests/UI/test_library_media_side_by_side.py::test_wide_media_reader_reset_leaves_focus_the_user_holds_in_the_rail
