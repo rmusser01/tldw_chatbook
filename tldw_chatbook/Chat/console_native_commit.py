@@ -494,6 +494,13 @@ async def _controller_settle_cancelled_native_commit(self, owner, continuation):
         if explicit
         else "Accepted turn failed before provider dispatch."
     )
+    # TASK-40312: a close reports what every other close path does; the saved
+    # reply keeps "Response stopped.".
+    report = (
+        _source_controller.SESSION_CLOSED_COPY
+        if explicit and session_id in self._session_close_generations
+        else content
+    )
     completion = await settle_accepted_durable_turn_owned(
         owner.store,
         continuation.preparation_id,
@@ -520,7 +527,7 @@ async def _controller_settle_cancelled_native_commit(self, owner, continuation):
         return _source_controller.ConsoleSubmitResult(
             True,
             False,
-            content,
+            report,
             session_id=session_id,
             user_message_id=commit.user_message_id,
             assistant_message_id=commit.assistant_message_id,
@@ -564,7 +571,7 @@ async def _controller_settle_cancelled_native_commit(self, owner, continuation):
     self._set_run_state(
         _source_controller.ConsoleRunState(
             _source_controller.ConsoleRunStatus.STOPPED if explicit else _source_controller.ConsoleRunStatus.FAILED,
-            content,
+            report,
         ),
         session_id=session_id,
     )
@@ -584,7 +591,7 @@ async def _controller_settle_cancelled_native_commit(self, owner, continuation):
     return _source_controller.ConsoleSubmitResult(
         True,
         False,
-        content,
+        report,
         session_id=session_id,
         user_message_id=commit.user_message_id,
         assistant_message_id=commit.assistant_message_id,
