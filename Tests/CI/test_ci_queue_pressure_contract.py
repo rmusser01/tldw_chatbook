@@ -591,6 +591,14 @@ RECOVERED_SUITES_TARGETS = (
     # targets, before the bootstrap_profile ones.
     "Tests/Chat/test_trace_v2_collaboration.py::test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are",
     "Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked",
+    # TASK-40301: a shared bundle masks with the log sanitizer's own patterns,
+    # and an older bundle holding a newly masked shape is refused on import.
+    # TASK-40303: a credentials-v1 legacy ledger keeps migrating. Pure or an
+    # in-memory DB, so among the sandboxed targets too.
+    "Tests/Chat/test_trace_v2_collaboration.py::test_every_shape_the_log_sanitizer_masks_is_masked_in_a_shared_bundle",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_the_bundle_masks_with_the_log_sanitizers_own_patterns",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_an_older_bundle_holding_a_newly_masked_shape_is_refused_on_import",
+    "Tests/Chat/test_console_trace_legacy_migration.py::test_a_v1_legacy_ledger_keeps_migrating_new_exchanges_under_v2",
     # TASK-39172: config participant lifetimes, sandboxed and reading config
     # in-process, so before the bootstrap_profile suites.
     "Tests/Backup_Recovery/test_config_participant_lifetimes.py",
