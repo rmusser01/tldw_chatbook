@@ -1256,19 +1256,19 @@ configured in **F4 ▸ Providers & Models**.
   is private but is replayed when K3 requires it. Other Kimi models follow only
   their curated policy. GLM keeps reasoning for an active or restored function
   tool run with `clear_thinking=false`; ordinary GLM chat clears prior thinking.
-- Every model Moonshot lists today (`kimi-k2.6`, `kimi-k2.7-code`,
-  `kimi-k2.7-code-highspeed`, `kimi-k3`) returns reasoning even on a plain
-  reply. In a saved chat, Console saves that reasoning privately with the reply
-  so the next turn can replay it. A Temporary chat keeps no copy, so its later
-  turns are sent without the earlier reasoning; these models answer either
-  way. If that optional copy cannot be saved, the reply is still shown and
-  saved as an ordinary assistant message, Send stays available, and the run's
-  trace records **Reasoning not preserved for replay**; the reply is never
-  held behind a response-recovery card.
-- With trace capture on (the default), every turn of a saved Kimi chat is
-  traced like any other: each request replays the earlier replies' saved
-  reasoning, and its trace records that request, so **Trace** shows each Kimi
-  call with its reply.
+- Kimi models return reasoning even on a plain reply. In a saved chat, Console
+  saves that reasoning privately with the reply so the next turn can replay
+  it. A Temporary chat keeps no copy, so its later turns are sent without the
+  earlier reasoning; these models answer either way. If that optional copy
+  cannot be saved, the reply is still shown and saved as an ordinary assistant
+  message, Send stays available, and the run's trace records **Reasoning not
+  preserved for replay** instead of holding the reply behind a
+  response-recovery card. The exception is a reply whose saved reasoning names
+  a different provider endpoint than the one the send was accepted for: that
+  reply still goes to response recovery.
+- With trace capture on (the default), each turn you send in a saved Kimi chat
+  is traced like any other send: its request replays the earlier replies'
+  saved reasoning, and **Trace** lists that turn's call with its reply.
 - Private continuation data is assistant/variant-owned, bounded, and omitted
   from the visible transcript, logs, summaries, ordinary exports, and usage
   details. It still counts against the context window and is evicted atomically
