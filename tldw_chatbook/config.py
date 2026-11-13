@@ -6352,9 +6352,8 @@ def apply_literal_settings_transaction_to_cli_config(
 class ConfigTextInsertError(ValueError):
     """config.toml cannot take one more line without rewriting the user's text.
 
-    For example ``tools = { ... }`` (an inline table) or a ``tools.x = ...``
-    dotted key: neither can take a new line or a second ``[tools]`` header.
-    Nothing was written.
+    For example ``tools = { ... }`` (an inline table): it can take neither a
+    new line nor a ``[tools]`` header. Nothing was written.
     """
 
 
@@ -6368,8 +6367,13 @@ def _text_with_inserted_key(
 
     The line goes directly under a ``[section]`` header line, or, with no
     header that takes it, a new ``[section]`` table is appended at the end.
-    Each candidate must parse to exactly ``expected``; that check also
-    rejects a header-looking line inside a multi-line string.
+    When ``[section]``'s values are root-level dotted keys
+    (``section.x = ...``, no header; TOML then forbids a ``[section]``
+    header), the line goes in as one more root-level dotted key, at the end
+    of the root keys: before the first table header and the comments and
+    blank lines directly above it, or at the end with no header (pre-merge
+    review 2026-11-12). Each candidate must parse to exactly ``expected``;
+    that check also rejects a header-looking line inside a multi-line string.
 
     Raises:
         ConfigTextInsertError: No candidate parses to ``expected``.
@@ -6393,6 +6397,21 @@ def _text_with_inserted_key(
     candidates.append(
         tail + (newline if tail else "") + f"[{section}]" + newline + line + newline
     )
+    dotted = f"{section}.{line}{newline}"
+    for index, text in enumerate(lines):
+        if not text.lstrip().startswith("["):
+            continue
+        try:  # The first header: its prefix is not cut inside a string or array.
+            tomllib.loads("".join(lines[:index]))
+        except tomllib.TOMLDecodeError:
+            continue
+        start = index
+        while start and lines[start - 1].lstrip()[:1] in ("", "#"):
+            start -= 1  # keep a comment that introduces the header with it
+        for at in dict.fromkeys((start, index)):
+            candidates.append("".join(lines[:at]) + dotted + "".join(lines[at:]))
+        break
+    candidates.append(tail + dotted)
     for candidate in candidates:
         try:
             if tomllib.loads(candidate) == expected:

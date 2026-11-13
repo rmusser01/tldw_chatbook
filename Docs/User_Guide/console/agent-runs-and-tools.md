@@ -95,11 +95,17 @@ the profile already uses agent features:
 If it finds any of them, it turns **Full agent tools** on for you, so plain
 chat keeps the tools it had. It adds one line, `full_agent_tools_enabled =
 true`, under `[tools]` in config.toml (or a new `[tools]` table at the end of
-the file), and keeps every other byte, your comments and layout included.
-That holds for this one write only: a later settings save rewrites
-config.toml, as every settings save does. A profile with none of them, and
-every new profile, stays on the light set, and its config.toml is left as it
-was. The check runs once per profile: the profile's workspaces database
+the file). If your tool settings are written as `tools.…` lines at the top
+of the file, with no `[tools]` header, the line is
+`tools.full_agent_tools_enabled = true` instead, added after them. Every
+other byte is kept, your comments and layout included. That holds for this
+one write only: a later settings save rewrites config.toml, as every
+settings save does. One shape is left alone: if config.toml writes `[tools]`
+as an inline table (`tools = { … }`), the line cannot be added without
+rewriting it. The file is then not changed and the profile stays on the
+light set, so turn on Full agent tools yourself. A profile with none of
+them, and every new profile, stays on the light set, and its config.toml is
+left as it was. The check runs once per profile: the profile's workspaces database
 records that it ran. If that database is replaced, or restored from a copy
 without that record, the check runs again on what the profile holds then.
 It never changes a value you set yourself, so switching Full agent tools off

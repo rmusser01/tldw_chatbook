@@ -908,7 +908,10 @@ _BUDGETS: dict[str, int] = {
     # writer runs at dev's short config-write switch interval, TASK-38987):
     # 8954 -> 8961. Re-measured 2026-11-12 after the rebase onto dev
     # 26b2e677dd: dev's 8,837 plus the branch's +126, exact measurement 8,963.
-    "tldw_chatbook/config.py": 8963,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +19, the
+    # one-line writer takes [tools] written as root-level dotted keys
+    # (pre-merge review 2026-11-12): 8963 -> 8982, exact measurement.
+    "tldw_chatbook/config.py": 8982,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
