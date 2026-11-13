@@ -14317,7 +14317,9 @@ class PersonasScreen(BaseAppScreen):
         change to the list since the clear (``_list_state_changes``) is newer
         and stays. The import intent cannot tell those apart, and comparing
         the list's values missed a change that ended on the cleared values (a
-        key typed and erased, a switch away and back; fix round 1).
+        key typed and erased, a switch away and back; fix round 1). The kind
+        is checked too: a conversation deep link sets it directly, uncounted
+        (fix round 2).
 
         Args:
             before: The search, sort and box before the clear.
@@ -14328,7 +14330,11 @@ class PersonasScreen(BaseAppScreen):
         query, sort_key, box_value = before
         if (query, sort_key, box_value) == ("", cleared_sort, ""):
             return  # nothing was cleared
-        if self._closed or self._list_state_changes != changes:
+        if (
+            self._closed
+            or self._list_state_changes != changes
+            or self.state.active_mode != mode
+        ):
             return
         try:
             box = self.query_one("#personas-library-search", Input)
