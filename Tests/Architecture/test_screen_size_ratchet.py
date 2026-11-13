@@ -347,7 +347,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-12, TASK-33628.20 PR #3458 review (owner decision: a fix over a
     #: size ratchet raises the row): the clearing commands take only their
     #: captured draft and /doctor takes before its checks. 24542/741 -> 24555/741.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24568, 742),
+    #: 2026-11-12: re-measured after rebasing onto dev 26b2e677dd (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24568/742 -> 24599/742.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24599, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
