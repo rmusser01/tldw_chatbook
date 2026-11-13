@@ -1,0 +1,82 @@
+name: Self-hosted runner qualification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/self-hosted-ci]
+    paths:
+      - .github/workflows/self-hosted-runner-qualification.yml
+      - scripts/ci/self_hosted/**
+
+permissions:
+  contents: read
+
+jobs:
+  control-first:
+    runs-on: tldw-ci-control
+    timeout-minutes: 10
+    outputs:
+      runner: ${{ steps.identity.outputs.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.11'
+      - name: Verify control tools and leave a disposable marker
+        id: identity
+        env:
+          RUNNER_NAME: ${{ runner.name }}
+        run: |
+          set -euo pipefail
+          python --version
+          gh --version
+          test ! -e /etc/github-qemu-runner/app-key.pem
+          test ! -e /tmp/tldw-ci-qualification-marker
+          touch /tmp/tldw-ci-qualification-marker
+          echo "runner=$RUNNER_NAME" >> "$GITHUB_OUTPUT"
+
+  control-renewed:
+    needs: control-first
+    runs-on: tldw-ci-control
+    timeout-minutes: 10
+    steps:
+      - name: Verify the single control slot was replaced
+        env:
+          PREVIOUS_RUNNER: ${{ needs.control-first.outputs.runner }}
+          CURRENT_RUNNER: ${{ runner.name }}
+        run: |
+          set -euo pipefail
+          test -n "$PREVIOUS_RUNNER"
+          test "$CURRENT_RUNNER" != "$PREVIOUS_RUNNER"
+          test ! -e /tmp/tldw-ci-qualification-marker
+          printf 'Fresh control runner: %s (previous: %s)\n' "$CURRENT_RUNNER" "$PREVIOUS_RUNNER"
+
+  test-worker:
+    runs-on: tldw-ci-test
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.11'
+      - name: Verify test worker tools and private network isolation
+        run: |
+          set -euo pipefail
+          python --version
+          test ! -e /etc/github-qemu-runner/app-key.pem
+          python - <<'PY'
+          import socket
+          import urllib.request
+
+          with urllib.request.urlopen('https://api.github.com/', timeout=15) as response:
+              assert response.status == 200
+          for address in ('10.0.2.2', '192.168.2.236'):
+              with socket.socket() as connection:
+                  connection.settimeout(2)
+                  try:
+                      connection.connect((address, 22))
+                  except (TimeoutError, PermissionError):
+                      print(f'Private host blocked: {address}')
+                  else:
+                      raise AssertionError(f'Guest can reach private SSH: {address}')
+          PY
