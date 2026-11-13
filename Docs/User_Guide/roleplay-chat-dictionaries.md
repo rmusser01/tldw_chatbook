@@ -137,11 +137,13 @@ Import never asks about unsaved edits. When nothing is unsaved, Roleplay
 still shows, and you have not done anything newer since you picked the
 file, the new item opens in its own kind (the list switches to it).
 "Newer" means a create, a kind switch, a selection, a cursor move, a
-search, sort or tag change, or Escape clearing the search. Otherwise
-the open draft and the list stay as they are and a toast names where it
-went: "Imported Wren · in Lore books". Opening the new item clears the
-list's search so the item shows; if something newer happens while the list
-reloads, the item is not opened and your search and sort come back.
+search, sort or tag change, or Escape clearing the search. Edited lore book
+Settings that are not saved yet, or a Settings save still running, count as
+unsaved here. Otherwise the open draft and the list stay as they are and a
+toast names where it went: "Imported Wren · in Lore books". Opening the new
+item clears the list's search so the item shows; if something newer happens
+while the list reloads, the item is not opened and your search and sort come
+back.
 
 **Empty states.** A kind with nothing in it says so and names the way
 out: "No characters yet - use New or Import to add one.", and the same for

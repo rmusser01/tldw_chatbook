@@ -234,6 +234,8 @@ async def save_lore_settings(
         if not is_current():
             report("Saved.")
             return
+        # The import landing's lore baseline follows the save (TASK-33910.48).
+        detail.mark_settings_saved(submitted_snapshot)
         if record is None:
             report(
                 "Saved, but could not reload the lore book. Reselect before saving again."

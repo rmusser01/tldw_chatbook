@@ -125,6 +125,9 @@ class PersonasLoreDetailWidget(Vertical):
         self._suppress_enabled_toggle: bool = (
             False  # True while we set the Switch programmatically
         )
+        # settings_snapshot() as loaded or last saved; None while no book is
+        # loaded (TASK-33910.48 interim, read only by the import landing).
+        self._loaded_settings: tuple | None = None
 
     # ----- compose -----
 
@@ -308,6 +311,7 @@ class PersonasLoreDetailWidget(Vertical):
         self._set_enabled_switch(bool(record.get("enabled", True)))
         self.update_entries(list(record.get("entries") or []))
         self.query_one("#personas-lore-status", Static).update("")
+        self._loaded_settings = self.settings_snapshot()
 
     def update_entries(self, entries: list[dict]) -> None:
         """Re-render the entries table from a fresh service response.
@@ -379,6 +383,7 @@ class PersonasLoreDetailWidget(Vertical):
             None.
         """
         self._entries = []
+        self._loaded_settings = None
         self.query_one("#personas-lore-entries-table", DataTable).clear()
         self.query_one("#personas-lore-name", Input).value = ""
         self.query_one("#personas-lore-description", TextArea).text = ""
@@ -493,7 +498,10 @@ class PersonasLoreDetailWidget(Vertical):
         }
 
     def settings_snapshot(self) -> tuple:
-        """Capture raw submitted controls without normalizing unfinished input."""
+        """Capture raw submitted controls without normalizing unfinished input.
+
+        Enabled is the last field (``has_unsaved_settings`` leaves it out).
+        """
         return (
             self.query_one("#personas-lore-name", Input).value,
             self.query_one("#personas-lore-description", TextArea).text,
@@ -502,6 +510,28 @@ class PersonasLoreDetailWidget(Vertical):
             self.query_one("#personas-lore-recursive", Switch).value,
             self.query_one("#personas-lore-enabled", Switch).value,
         )
+
+    @property
+    def has_unsaved_settings(self) -> bool:
+        """Whether the Settings tab differs from the book as loaded or saved.
+
+        TASK-33910.48 interim (owner ruling 2026-11-05): only the import
+        landing reads this; B9a (TASK-33910.14) replaces it with a lore
+        settings domain in the unsaved-changes aggregate. Enabled is not part
+        of the draft: each toggle saves at once (``LoreBookEnableToggled``).
+        """
+        return (
+            self._loaded_settings is not None
+            and self.settings_snapshot()[:-1] != self._loaded_settings[:-1]
+        )
+
+    def mark_settings_saved(self, submitted_snapshot: tuple) -> None:
+        """Take the saved controls as the new baseline; newer edits stay unsaved.
+
+        Args:
+            submitted_snapshot: ``settings_snapshot()`` when Save was pressed.
+        """
+        self._loaded_settings = tuple(submitted_snapshot)
 
     def settings_payload(self) -> dict:
         raw_scan_depth = (

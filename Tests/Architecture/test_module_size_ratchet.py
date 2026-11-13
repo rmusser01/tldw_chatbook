@@ -375,7 +375,9 @@ _BUDGETS: dict[str, int] = {
     # in a thread: +3 (16,924 -> 16,927).
     # TASK-33910.51, a landing that then toasts restores the search, box and
     # sort it cleared: +79 (16,927 -> 17,006).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 17006,
+    # TASK-33910.48 interim, a lore Settings draft or save in flight holds the
+    # import landing: +27 (17,006 -> 17,033).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17033,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a

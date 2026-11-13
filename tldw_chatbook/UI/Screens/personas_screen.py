@@ -6810,11 +6810,7 @@ class PersonasScreen(BaseAppScreen):
         self, message: LoreBookSettingsSaveRequested
     ) -> None:
         message.stop()
-        previous = self._lore_settings_save_worker_handle
-        if previous is not None and (
-            self._lore_settings_save_started
-            or not (previous.is_cancelled or previous.is_finished)
-        ):
+        if self._lore_settings_save_in_flight():
             return
         if (
             self.state.selected_entity_kind != "lore"
@@ -14208,7 +14204,10 @@ class PersonasScreen(BaseAppScreen):
 
         def landing(expected: tuple[int, int]) -> str:
             return frame_state.import_landing(
-                clean=self._aggregate_roleplay_draft_snapshot().is_clean,
+                # A lore Options draft or its save holds the landing too
+                # (TASK-33910.48 interim; on dev nothing counted it).
+                clean=self._aggregate_roleplay_draft_snapshot().is_clean
+                and not self._lore_settings_unsaved_for_landing(),
                 intent_current=self._import_intent_now() == expected,
                 presentation_current=self._import_presentation_is_current(kind),
             )
@@ -14340,6 +14339,34 @@ class PersonasScreen(BaseAppScreen):
         # One read, in the search worker behind its currency check, so a
         # search typed after this restore supersedes it.
         self._start_debounced_search_render(query=query, mode=mode)
+
+    def _lore_settings_save_in_flight(self) -> bool:
+        """Whether a lore Settings save holds admission (queued or draining)."""
+        previous = self._lore_settings_save_worker_handle
+        return previous is not None and (
+            self._lore_settings_save_started
+            or not (previous.is_cancelled or previous.is_finished)
+        )
+
+    def _lore_settings_unsaved_for_landing(self) -> bool:
+        """A lore Options draft, or its save in flight, holds an import landing.
+
+        TASK-33910.48 interim (owner ruling 2026-11-05, "Interim landing
+        check"): only ``_land_import``'s clean test reads this, so a landing
+        never selects over, or switches kind away from, unsaved lore Settings.
+        On dev nothing counted them, and a landing could replace them. They
+        stay out of the R24 aggregate, ``_run_guarded`` and the leave-Roleplay
+        veto, which would offer a Save that cannot save lore Options; B9a
+        (TASK-33910.14) replaces this with its lore-settings domain.
+        """
+        if self._lore_settings_save_in_flight():
+            return True
+        if self.state.selected_entity_kind != "lore":
+            return False  # a kind switch dropped the selection and its form
+        detail = self._ready_center_view("lore-detail")
+        return (
+            isinstance(detail, PersonasLoreDetailWidget) and detail.has_unsaved_settings
+        )
 
     def _active_character_import_worker(self) -> Worker[None] | None:
         """Return the active app-owned character import, if any."""
