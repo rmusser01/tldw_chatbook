@@ -35,6 +35,13 @@ jobs:
           touch /tmp/tldw-ci-qualification-marker
           echo "runner=$RUNNER_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Make guest shutdown fail to exercise host reclamation
+        run: |
+          # This path is inside this disposable VM, never the host.
+          sudo ln -sf /bin/true /usr/sbin/poweroff
+          sudo poweroff
+          echo 'Guest shutdown deliberately disabled; host must reclaim this VM.'
+
   control-renewed:
     needs: control-first
     runs-on: tldw-ci-control
