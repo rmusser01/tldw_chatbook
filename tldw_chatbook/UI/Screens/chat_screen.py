@@ -24550,11 +24550,15 @@ _CONSOLE_RECEIVED_SCREEN_SELECTORS = tuple(
         "_console_setup_blocked_reason",
     )
 )
+_CONSOLE_RAG_DEPTH_READERS = (
+    (_stock_received_rag_top_k, _stock_received_rag_top_k.__code__),
+    (_console_library_rag_profile_top_k, _console_library_rag_profile_top_k.__code__),
+)
+_CONSOLE_RAG_DEPTH_DELEGATE = library_rag_profile_top_k, library_rag_profile_top_k.__code__
 _CONSOLE_RECEIVED_RAG_READERS = (
     (_stock_received_rag_sources, _stock_received_rag_sources.__code__),
-    (_stock_received_rag_top_k, _stock_received_rag_top_k.__code__),
     (_console_library_rag_source_scope, _console_library_rag_source_scope.__code__),
-    (_console_library_rag_profile_top_k, _console_library_rag_profile_top_k.__code__),
+    *_CONSOLE_RAG_DEPTH_READERS,
 )
 
 

@@ -27,6 +27,7 @@ from Tests.UI.test_destination_shells import (
     _ToolsPaneHarness,
     _active_destination_screen,
     _wait_for_selector,
+    _wait_for_visible_text,
 )
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
 from Tests.UI.test_library_shell import (
@@ -1749,10 +1750,14 @@ async def test_schedules_screen_matches_approved_control_plane_columns():
 @pytest.mark.asyncio
 async def test_workflows_screen_matches_approved_authoring_columns():
     app = _build_test_app()
+    # This test measures the settled layout, after the real owner opens.
+    await app.ensure_workflow_authoring()
     host = DestinationHarness(app, "workflows")
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#workflow-panes")
+        # The panes mount before the authoring worker publishes their data.
+        await _wait_for_visible_text(screen, pilot, "No workflows yet")
         visible_text = _visible_static_text(screen)
         for expected in (
             "Workflows · Local authoring",

@@ -2646,6 +2646,9 @@ async def capture_mounted_configuration_owned(
     selection = selector(session_id, scratch_owner=controller._scratch_spaces)
     if selection is None:
         return None
+    worker_reads_rag_depth = (
+        selection.rag_defaults is not None and "top_k" not in selection.rag_defaults
+    )
     adapter = owner._scratch_snapshot_provider
     screen = adapter.args[0]
     runtime_accessor = screen._console_runtime
@@ -2669,6 +2672,10 @@ async def capture_mounted_configuration_owned(
             or screen.app_instance is not app
             or not same(screen._console_runtime, runtime_accessor)
             or not turn_admission.policy_producers_current()
+            or (
+                worker_reads_rag_depth
+                and not turn_admission.stock_rag_depth_current(owner)
+            )
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
 

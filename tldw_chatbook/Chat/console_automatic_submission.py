@@ -428,6 +428,10 @@ def hook_admission_reason(controller) -> str | None:
                 # can share this one read with its later preparation.
                 read = permissions.authority_read()
                 source.read = read
+                if source.managed and read.snapshot.ready:
+                    from .console_runtime import _prepare_legacy_hook_import
+
+                    _prepare_legacy_hook_import(source.runtime)
                 return read.snapshot.blocked_reason
             return permissions.snapshot().blocked_reason
         saved = read_hooks_config_snapshot()

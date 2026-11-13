@@ -126,7 +126,7 @@ from dataclasses import dataclass, field, replace as replace
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, RLock, get_ident
-from types import MethodType
+from types import MethodType, ModuleType
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping
 from uuid import uuid4
 
@@ -190,6 +190,26 @@ CONSOLE_RUNTIME_ATTR = "console_runtime"
 
 #: Lazy app-owned engine slot; construction performs no authority I/O.
 _UNSET = object()
+
+
+@functools.cache
+def _native_legacy_hook_module() -> ModuleType:
+    from tldw_chatbook.Agents import legacy_hook_ownership
+
+    return legacy_hook_ownership
+
+
+def _prepare_legacy_hook_import(runtime: ConsoleRuntime) -> None:
+    """Resolve the inert module during an owned read, before engine attachment."""
+    try:
+        if (
+            inspect.getattr_static(runtime._app, CONSOLE_RUNTIME_ATTR, None) is runtime
+            and runtime._legacy_hooks_source is None
+        ):
+            _native_legacy_hook_module()
+    except Exception:  # noqa: BLE001 -- the original attach site owns import failures
+        pass
+
 
 #: Where a runtime hides when the app object cannot hold one (a `None` app,
 #: or a read-only double). Never the production path — `TldwCli.__init__`
@@ -5255,11 +5275,8 @@ class ConsoleRuntime:
                 and self._legacy_hooks_source is None
                 and read_console_runtime(self._app) is self
             ):
-                from tldw_chatbook.Agents.legacy_hook_ownership import (
-                    NativeLegacyHookSource,
-                )
-
-                self._legacy_hooks_source = NativeLegacyHookSource(
+                legacy_module = _native_legacy_hook_module()
+                self._legacy_hooks_source = legacy_module.NativeLegacyHookSource(
                     self, self._run_hooks_engine, owner
                 )
                 self._run_hooks_engine._native_source = self._legacy_hooks_source
