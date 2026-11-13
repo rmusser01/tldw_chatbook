@@ -1172,9 +1172,10 @@ _BUDGETS: dict[str, int] = {
     # console_trace_domain_append.py) and its non-contiguous admitted delta.
     # owner decision 2026-10-04 (expand limits), applied 2026-11-13:
     # TASK-34100.3 pre-merge review +2 -- the hook hands the rule the flat
-    # prefix and the retained values it restores after a refused probe.
-    # Rebased onto dev a6df4d8d48 (2026-11-19): 6739 -> 6765, exact measurement.
-    "tldw_chatbook/Chat/console_trace_service.py": 6765,
+    # prefix and the retained values it restores after a refused probe; +1,
+    # the delta's tool-loop overlay is read from the admitted indices.
+    # Rebased onto dev a6df4d8d48 (2026-11-19): 6739 -> 6766, exact measurement.
+    "tldw_chatbook/Chat/console_trace_service.py": 6766,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
