@@ -2947,3 +2947,18 @@ Tests/UI/test_console_command_rows_not_loss.py::test_command_rows_beside_tempora
 Tests/UI/test_console_command_clears_composer.py::test_a_command_that_ran_leaves_an_empty_composer[help]
 Tests/UI/test_console_command_clears_composer.py::test_a_refused_or_unknown_command_keeps_its_text[unknown_command]
 Tests/UI/test_console_command_clears_composer.py::test_ctrl_q_right_after_a_command_quits_without_asking[help]
+# TASK-33628.20, PR #3458 review (2026-11-12): /help <unknown> keeps its
+# text; text typed right after Enter stays (/help, /prefill, /stop, an action
+# command); a direct call takes nothing; /doctor and /skills take their text
+# before their slow work; an applied bare /system editor takes it. About
+# 5-15 s each locally. Appended at the tail. The 12 TASK-33628.16/.20 tail
+# entries were replayed (--shards 36) over the UI lane logs of PR runs
+# 43248233114 and 43245032382, each charged at its loaded-host serial time
+# (7.5-44.3 s): the slowest shard is 12.9 pytest min, under 13.3, so no
+# --rebalance.
+Tests/UI/test_console_command_clears_composer.py::test_a_refused_or_unknown_command_keeps_its_text[help_unknown_name]
+Tests/UI/test_console_command_clears_composer.py::test_text_typed_right_after_enter_stays
+Tests/UI/test_console_command_clears_composer.py::test_a_direct_call_takes_nothing
+Tests/UI/test_console_command_clears_composer.py::test_doctor_takes_its_text_before_its_checks
+Tests/UI/test_console_command_clears_composer.py::test_skills_takes_its_text_before_its_lookup
+Tests/UI/test_console_system_prompt.py::test_console_system_bare_command_opens_editor_with_current_text
