@@ -63,7 +63,9 @@ async def run():
             if read.creator is not app or held:
                 return
             assert type(read) is reads_source.ConsolePreparationRead
-            assert frame.f_globals is vars(reads_source)
+            # 064d5cb014 (TASK-39147) moved run_preparation_read out of
+            # console_preparation_reads, which re-exports it.
+            assert frame.f_globals is reads_source.run_preparation_read.__globals__
             assert read.task is task and not read.retired.done()
             if route == 'skill':
                 assert read.callback.__self__ is app and read.callback.__func__ is builder

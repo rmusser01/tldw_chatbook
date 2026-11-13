@@ -117,6 +117,10 @@ async def exercise():
     monitor.slots.append((read_source, 'run_preparation_read', physical_read))
     invoke_code = next(code for code in physical_read.__code__.co_consts
                        if inspect.iscode(code) and code.co_name == 'invoke')
+    # 064d5cb014 (TASK-39147) moved run_preparation_read to
+    # Backup_Recovery.runtime_producer_lifetime; console_preparation_reads
+    # re-exports it, so its invoke closure carries the defining module's globals.
+    read_globals = physical_read.__globals__
     fresh_submit = inspect.getattr_static(FreshContextExecutor, 'submit')
     fresh_code = monitor._pin(fresh_submit)
     base_submit = inspect.getattr_static(ThreadPoolExecutor, 'submit')
@@ -249,7 +253,7 @@ async def exercise():
                 if len(arguments) != 1 or type(arguments[0]) is not FunctionType:
                     return
                 callback = arguments[0]
-                if callback.__code__ is not invoke_code or callback.__globals__ is not vars(read_source):
+                if callback.__code__ is not invoke_code or callback.__globals__ is not read_globals:
                     return
                 cells = dict(zip(callback.__code__.co_freevars, callback.__closure__))
                 read = cells['read'].cell_contents
@@ -292,7 +296,7 @@ async def exercise():
                     assert type(context_run) is BuiltinMethodType
                     assert type(context_run.__self__) is contextvars.Context and context_run.__name__ == 'run'
                     assert type(request) is FunctionType and request.__code__ is invoke_code
-                    assert request.__globals__ is vars(read_source)
+                    assert request.__globals__ is read_globals
                     cells = dict(zip(request.__code__.co_freevars, request.__closure__))
                     read = cells['read'].cell_contents
                     assert type(read) is read_source.ConsolePreparationRead and read.creator is app
