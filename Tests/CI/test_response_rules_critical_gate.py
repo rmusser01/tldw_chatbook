@@ -137,6 +137,9 @@ INHERITED = {
         "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py",  # TASK-38758
         "Tests/LLM_Management/test_vllm_profiles.py",  # TASK-38759
         "Tests/Chat/test_qwencloud_provider_contract.py",  # TASK-38966
+        "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",  # TASK-34100.5.3.2
+        "Tests/Agents/test_full_agent_tools_upgrade.py",  # TASK-34100.5.3.2
+        "Tests/App/test_full_agent_tools_upgrade_boot.py",  # TASK-34100.5.3.2
         "Tests/UI/test_library_modal_dismissal.py",  # TASK-38985
         "Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle",  # TASK-39052
         "Tests/Web_Server/test_mobile_service.py",  # TASK-39049
