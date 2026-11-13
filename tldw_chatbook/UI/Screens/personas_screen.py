@@ -124,7 +124,6 @@ from ...Character_Chat.visual_identity import (
     publish_visual_identity_candidate,
     resolve_visual_identity,
 )
-from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Actor_Packs.contracts import validate_actor_portrait
 from ...Actor_Packs.controller import (
@@ -977,6 +976,10 @@ class PersonasScreen(BaseAppScreen):
         # load; with the list's cursor moves it says whether a newer intent
         # arrived since an import's picker opened (frame slice B2b).
         self._import_intent: int = 0
+        # Bumped by every user change to the list (search typing, kind switch,
+        # sort cycle, tag pick, Escape's clear): a landing restores the search
+        # it cleared only when none came after (TASK-33910.51).
+        self._list_state_changes: int = 0
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
@@ -4069,6 +4072,7 @@ class PersonasScreen(BaseAppScreen):
     def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
         message.stop()
         # Search does not change selection or center pane — no unsaved guard needed.
+        self._list_state_changes += 1
         previous_query = self.state.search_query
         self.state.search_query = message.query.strip()
         if self.state.search_query != previous_query:
@@ -4129,6 +4133,7 @@ class PersonasScreen(BaseAppScreen):
     async def _cycle_sort(self) -> None:
         """Move ``sort_key`` to the next option and reload from row 0."""
         self._bump_import_intent()  # the user's sort: a newer intent (B2b)
+        self._list_state_changes += 1
         cycle = [key for key, _ in self._character_sort_cycle()]
         current = self.state.sort_key if self.state.sort_key in cycle else cycle[0]
         self.state.sort_key = cycle[(cycle.index(current) + 1) % len(cycle)]
@@ -4175,6 +4180,7 @@ class PersonasScreen(BaseAppScreen):
     async def _apply_tag_filter(self, tag: str | None) -> None:
         """Set the characters tag filter and reload (and recount) from row 0."""
         self._bump_import_intent()  # the user's tag pick: a newer intent (B2b)
+        self._list_state_changes += 1
         self.state.tag_filter = tag
         self._count_cache_key = None  # (search, tag) changed → recount
         await self._reload_character_page()
@@ -4569,6 +4575,7 @@ class PersonasScreen(BaseAppScreen):
                 a saved-mode restore) keep the default and wait.
         """
         self._bump_import_intent()
+        self._list_state_changes += 1
         self._advance_persona_buddy_session()
         if mode != "characters":
             self._clear_character_tts_profile_suggestion()
@@ -6811,11 +6818,7 @@ class PersonasScreen(BaseAppScreen):
         self, message: LoreBookSettingsSaveRequested
     ) -> None:
         message.stop()
-        previous = self._lore_settings_save_worker_handle
-        if previous is not None and (
-            self._lore_settings_save_started
-            or not (previous.is_cancelled or previous.is_finished)
-        ):
+        if self._lore_settings_save_in_flight():
             return
         if (
             self.state.selected_entity_kind != "lore"
@@ -14209,7 +14212,10 @@ class PersonasScreen(BaseAppScreen):
 
         def landing(expected: tuple[int, int]) -> str:
             return frame_state.import_landing(
-                clean=self._aggregate_roleplay_draft_snapshot().is_clean,
+                # A lore Options draft or its save holds the landing too
+                # (TASK-33910.48 interim; on dev nothing counted it).
+                clean=self._aggregate_roleplay_draft_snapshot().is_clean
+                and not self._lore_settings_unsaved_for_landing(),
                 intent_current=self._import_intent_now() == expected,
                 presentation_current=self._import_presentation_is_current(kind),
             )
@@ -14224,6 +14230,7 @@ class PersonasScreen(BaseAppScreen):
             # _run_guarded bumped the intent once for this transition; only
             # a newer one may stop the select below.
             expected = self._import_intent_now()
+            cleared: tuple[tuple[str, str, str], str, int] | None = None
             if self.state.active_mode != mode:
                 # Clean, so no draft is asked about; the new kind's list
                 # starts unfiltered.
@@ -14231,16 +14238,10 @@ class PersonasScreen(BaseAppScreen):
                 # _apply_mode bumps it once more, at its head.
                 expected = (expected[0] + 1, expected[1])
             else:
-                # Clear an active search so the imported row is in the list.
-                self._cancel_search_debounce()
-                self.state.search_query = ""
-                try:
-                    self.query_one("#personas-library-search", Input).value = ""
-                except Exception:
-                    pass
+                # Clear an active search so the imported row is in the list,
+                # keeping what it was for a failed decision below.
+                cleared = self._clear_search_for_import_landing(kind)
                 if kind == "character":
-                    if self.state.sort_key == "relevance":
-                        self.state.sort_key = "name_asc"
                     await self.character_handler.refresh_character_list()
                 elif kind == "lore":
                     await self._render_lore_rows(query="")
@@ -14251,6 +14252,9 @@ class PersonasScreen(BaseAppScreen):
             # On dev the character landing re-checked only that Characters
             # still showed (a draft started during its refresh was replaced).
             if landing(expected) != "select":
+                if cleared is not None:
+                    # On dev the clear stayed applied (TASK-33910.51).
+                    self._restore_search_after_import_landing(*cleared, mode=mode)
                 return
             if kind == "character":
                 await self._select_character(item_id, name)
@@ -14262,6 +14266,117 @@ class PersonasScreen(BaseAppScreen):
 
         await self._run_guarded(select)
         return selected
+
+    def _clear_search_for_import_landing(
+        self, kind: str
+    ) -> tuple[tuple[str, str, str], str, int]:
+        """Clear the search (and a character search's relevance sort) to land.
+
+        Args:
+            kind: The imported item's kind.
+
+        Returns:
+            The search, sort and box before the clear, the sort the clear
+            left, and the count of the user's list changes so far:
+            ``_restore_search_after_import_landing``'s arguments.
+        """
+        try:
+            box: Input | None = self.query_one("#personas-library-search", Input)
+        except QueryError:
+            box = None
+        before = (
+            self.state.search_query,
+            self.state.sort_key,
+            box.value if box is not None else "",
+        )
+        self._cancel_search_debounce()
+        self.state.search_query = ""
+        if kind == "character" and self.state.sort_key == "relevance":
+            self.state.sort_key = "name_asc"
+        if box is not None:
+            # No Input.Changed: its handler would arm a second, debounced
+            # read, and after a restore it would clear the search again (on
+            # dev this write posted it; as _apply_mode, TASK-33910.39).
+            with box.prevent(Input.Changed):
+                box.value = ""
+        return before, self.state.sort_key, self._list_state_changes
+
+    def _restore_search_after_import_landing(
+        self,
+        before: tuple[str, str, str],
+        cleared_sort: str,
+        changes: int,
+        *,
+        mode: str,
+    ) -> None:
+        """Put back the search and sort a landing cleared when it then toasts.
+
+        TASK-33910.51: on dev a same-kind landing whose second decision failed
+        left the search cleared and a relevance sort reset to name. A draft
+        started or a row picked meanwhile gets the search back; any user
+        change to the list since the clear (``_list_state_changes``) is newer
+        and stays. The import intent cannot tell those apart, and comparing
+        the list's values missed a change that ended on the cleared values (a
+        key typed and erased, a switch away and back; fix round 1). The kind
+        is checked too: a conversation deep link sets it directly, uncounted
+        (fix round 2).
+
+        Args:
+            before: The search, sort and box before the clear.
+            cleared_sort: The sort the clear left.
+            changes: ``_list_state_changes`` right after the clear.
+            mode: The landing's mode.
+        """
+        query, sort_key, box_value = before
+        if (query, sort_key, box_value) == ("", cleared_sort, ""):
+            return  # nothing was cleared
+        if (
+            self._closed
+            or self._list_state_changes != changes
+            or self.state.active_mode != mode
+        ):
+            return
+        try:
+            box = self.query_one("#personas-library-search", Input)
+        except QueryError:
+            return
+        self._cancel_search_debounce()
+        self.state.search_query = query
+        self.state.sort_key = sort_key
+        self._count_cache_key = None  # the (search, tag) pair changed
+        with box.prevent(Input.Changed):  # a restore is no newer intent
+            box.value = box_value
+        # One read, in the search worker behind its currency check, so a
+        # search typed after this restore supersedes it.
+        self._start_debounced_search_render(query=query, mode=mode)
+
+    def _lore_settings_save_in_flight(self) -> bool:
+        """Whether a lore Settings save holds admission (queued or draining)."""
+        previous = self._lore_settings_save_worker_handle
+        return previous is not None and (
+            self._lore_settings_save_started
+            or not (previous.is_cancelled or previous.is_finished)
+        )
+
+    def _lore_settings_unsaved_for_landing(self) -> bool:
+        """A lore Options draft, or its save in flight, holds an import landing.
+
+        TASK-33910.48 interim (owner ruling 2026-11-05, "Interim landing
+        check"): only ``_land_import``'s clean test reads this, so a landing
+        never selects over, or switches kind away from, unsaved lore Settings.
+        On dev nothing counted them, and a landing could replace them. They
+        stay out of the R24 aggregate, ``_run_guarded`` and the leave-Roleplay
+        veto, which would offer a Save that cannot save lore Options; B9a
+        (TASK-33910.14) replaces this with its lore-settings domain.
+        """
+        if self._lore_settings_save_in_flight():
+            return True
+        if self.state.selected_entity_kind != "lore":
+            return False  # a kind switch dropped the selection and its form
+        detail = self._ready_center_view("lore-detail")
+        return (
+            isinstance(detail, PersonasLoreDetailWidget) and detail.has_unsaved_settings
+        )
 
     def _active_character_import_worker(self) -> Worker[None] | None:
         """Return the active app-owned character import, if any."""
@@ -14662,21 +14777,26 @@ class PersonasScreen(BaseAppScreen):
         except OSError as exc:
             self._notify(f"Import failed: {exc}", "error")
             return
+        # Lazy: not on the Roleplay route's pre-import path (spec 5.10).
+        from ..Persona_Modules.roleplay_import_parse import (
+            ImportNotJSON,
+            read_world_book_import,
+        )
+
         try:
-            text = await asyncio.to_thread(source.read_text, "utf-8")
+            # Read, parse and normalise in one thread (TASK-33910.44); on dev
+            # only the read did, and a 9 MB book's parse and normalise held
+            # the event loop.
+            data = await asyncio.to_thread(read_world_book_import, source)
         except (OSError, UnicodeDecodeError) as exc:
             logger.opt(exception=True).warning(
                 f"Could not read world-book file {path}."
             )
             self._notify(f"Import failed: {exc}", "error")
             return
-        try:
-            parsed = json.loads(text)
-        except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+        except ImportNotJSON as exc:
             self._notify(f"Import failed: not valid JSON ({exc})", "error")
             return
-        try:
-            data = normalize_world_book_import(parsed)
         except ValueError as exc:
             self._notify(f"Import failed: {exc}", "error")
             return
@@ -14742,30 +14862,29 @@ class PersonasScreen(BaseAppScreen):
         except OSError as exc:
             self._notify(f"Import failed: {exc}", "error")
             return
+        # Lazy: not on the Roleplay route's pre-import path (spec 5.10).
+        from ..Persona_Modules.roleplay_import_parse import (
+            ImportNotJSON,
+            read_dictionary_import,
+        )
+
         try:
-            text = await asyncio.to_thread(source.read_text, "utf-8")
+            # Read and (for .json) parse in one thread (TASK-33910.44); on dev
+            # only the read did, and the parse held the event loop.
+            content = await asyncio.to_thread(read_dictionary_import, source)
         except (OSError, UnicodeDecodeError) as exc:
             logger.opt(exception=True).warning(f"Could not read import file {path}.")
             self._notify(f"Import failed: {exc}", "error")
             return
+        except ImportNotJSON as exc:
+            self._notify(f"Import failed: not valid JSON ({exc})", "error")
+            return
+        except ValueError as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
         suffix = source.suffix.lower()
-        if suffix == ".json":
-            try:
-                parsed = json.loads(text)
-            except (json.JSONDecodeError, RecursionError, ValueError) as exc:
-                self._notify(f"Import failed: not valid JSON ({exc})", "error")
-                return
-            raw = (
-                parsed.get("data")
-                if isinstance(parsed, dict) and "data" in parsed
-                else parsed
-            )
-            if not isinstance(raw, dict):
-                self._notify(
-                    "Import failed: JSON must be a dictionary object.", "error"
-                )
-                return
-            data = dict(raw)
+        if isinstance(content, dict):  # a .json file, parsed
+            data = content
             request = {"data": data}
 
             def _rename(new_name: str) -> None:
@@ -14774,7 +14893,7 @@ class PersonasScreen(BaseAppScreen):
             base_name = str(data.get("name") or "Imported Dictionary")
             importer = service.import_json
         elif suffix in (".md", ".markdown"):
-            request = {"name": source.stem, "content": text}  # name REQUIRED
+            request = {"name": source.stem, "content": content}  # name REQUIRED
 
             def _rename(new_name: str) -> None:
                 request["name"] = new_name
@@ -16726,6 +16845,7 @@ class PersonasScreen(BaseAppScreen):
         # like a typed search (B2b Task 5); the prevented Input.Changed below
         # would otherwise skip _handle_search_changed's bump.
         self._bump_import_intent()
+        self._list_state_changes += 1
         self._stop_also_in()
         self._cancel_search_debounce()
         self.state.search_query = ""

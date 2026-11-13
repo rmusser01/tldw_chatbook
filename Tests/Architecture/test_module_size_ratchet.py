@@ -369,7 +369,21 @@ _BUDGETS: dict[str, int] = {
     # prevented Input.Changed on the search clear: +46.
     # 2026-11-12: rebased onto #3427's rebased head; row set to the
     # measurement at this head (16,878 + 46 = 16,924).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16924,
+    # 2026-11-12 owner decision (expand limits, never contort code; B2b
+    # follow-up burn-down PR 5, stacked on #3441), each line one commit:
+    # TASK-33910.44, the lore and dictionary imports await one parse helper
+    # in a thread: +3 (16,924 -> 16,927).
+    # TASK-33910.51, a landing that then toasts restores the search, box and
+    # sort it cleared: +79 (16,927 -> 17,006).
+    # TASK-33910.48 interim, a lore Settings draft or save in flight holds the
+    # import landing: +27 (17,006 -> 17,033).
+    # PR 5 fix round 1, 2026-11-12, same owner rule: TASK-33910.51's restore
+    # counts the user's list changes instead of comparing values: +5
+    # (17,033 -> 17,038).
+    # PR 5 fix round 2, 2026-11-12, same owner rule: the restore also needs
+    # the kind the clear left (a deep link sets it uncounted): +6
+    # (17,038 -> 17,044).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17044,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
