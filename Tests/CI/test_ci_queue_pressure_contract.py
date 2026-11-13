@@ -26,12 +26,9 @@ PR_TEST_RUNNER = (
     "github.event.pull_request.head.repo.full_name == github.repository && "
     "vars.CI_TEST_RUNNER || 'ubuntu-latest' }}"
 )
-#: The push-to-dev-only jobs' condition (library-shell-dev, backup-owner-suites-dev).
-DEV_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/dev'"
-LANES = (
-    "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
-    "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
-)
+#: Dev regression jobs retain push cadence until the nightly tier is enabled.
+DEV_PUSH = "(github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TIERED_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.nightly)"
+LANES = "needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))"
 PLUGIN_RECOVERY_UI_TARGETS = (
     "Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen",
     "Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches",
@@ -1157,6 +1154,8 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # TASK-35575: the admission-sensitive suites run in two jobs.
     assert required.get("needs") == [
         "preflight",
+        "dev-light",
+        "release-qualification",
         "pr-fast-lane",
         "pr-fast-lane-admission",
         "pr-fast-lane-admission-2",
@@ -1186,7 +1185,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     assert preflight_verdict["if"] == "${{ !cancelled() && needs.preflight.result != 'success' }}"
     assert "exit 1" in preflight_verdict["run"]
     for lane in required["needs"]:
-        if lane != "preflight":
+        if lane not in {"preflight", "release-qualification"}:
             assert workflow["jobs"][lane]["needs"] == ["preflight"]
 
     # TASK-33621.27 review round 4: `!cancelled() &&` drops the implicit
@@ -1426,8 +1425,7 @@ def test_heavy_tests_run_only_on_main_push_or_manual_dispatch() -> None:
     workflow = _workflow("test.yml")
     triggers = _triggers(workflow)
 
-    assert set(triggers) == {"push", "workflow_dispatch"}
-    assert triggers["push"]["branches"] == ["main"]
+    assert set(triggers) == {"workflow_call", "workflow_dispatch"}
     assert set(workflow["jobs"]) == HEAVY_JOB_KEYS
     assert workflow["jobs"]["backup-platform-windows"]["if"] == (
         "github.event_name == 'workflow_dispatch' && inputs.backup_platform_only == true"
@@ -2186,7 +2184,7 @@ def test_focused_guards_keep_dev_pr_and_dev_main_push_coverage() -> None:
     for workflow_name in STANDALONE_WORKFLOWS:
         triggers = _triggers(_workflow(workflow_name))
 
-        assert triggers["pull_request"]["branches"] == ["dev"]
+        assert triggers["pull_request"]["branches"] == (["dev", "main"] if workflow_name == "derived-artifacts.yml" else ["dev"])
         assert triggers["pull_request"]["types"] == PULL_REQUEST_TYPES
         assert triggers["push"]["branches"] == ["dev", "main"]
 
