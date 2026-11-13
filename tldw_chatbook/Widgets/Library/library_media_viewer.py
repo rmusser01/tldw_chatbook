@@ -1227,8 +1227,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
 
         Returns:
             True when nothing changed or it was patched in place; False when
-            only a recompose can apply it (no content body, a new query, or an
-            Analysis Raw/Rendered swap).
+            only a recompose can apply it (no content body, a new query, an
+            Analysis Raw/Rendered swap, or a reopen while the bar a close in
+            the same loop turn removed is still in the DOM).
         """
         if not focus and (find_open, query, match_index) == (
             self.find_open,
@@ -1242,15 +1243,20 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             self.content_query,
             self.content_match_index,
         )
-        if body is None or (
-            clearing and (query or self._query_flip_swaps_analysis_mode(query))
+        controls = self.query("#library-media-content-search-controls")
+        # A close earlier in this loop turn only marked its bar for removal;
+        # reopening must not adopt the doomed bar (review r14ls-rev1).
+        reopening_pruned = find_open and any(node._pruning for node in controls)
+        if (
+            body is None
+            or reopening_pruned
+            or (clearing and (query or self._query_flip_swaps_analysis_mode(query)))
         ):
             return False
         if clearing:
             body.sync_search(query, match_index)
             self.content_query, self.content_match_index = query, match_index
         self.find_open = find_open
-        controls = self.query("#library-media-content-search-controls")
         if not (find_open or query):
             controls.remove()
         elif not controls:

@@ -4,7 +4,7 @@ title: "Opening Find in the Library Media viewer re-parses the whole document"
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 05:13'
+updated_date: '2026-11-13 07:06'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -53,4 +53,5 @@ Found in round 13 of the 2026-10-23 burn-down (lib stream; TASK-39152 recorded t
 - **Covering runs** (`-n 4`, load 50-70): the Find/viewer files (match-nav, crit10 viewer, render fixes, reader flow, side-by-side, reader shell, Library media content/state); every non-RecoveryRequired failure was compared against base with the same command: identical apart from load flakes that fail on either side (`NoMatches` for a Reader button before the Reader mounted). Plain files hitting the local RecoveryRequired trap were run under a temporary module-level `bootstrap_profile` marker, then the marker was removed.
 - **Lane.** The new node is in `scripts/ui_pr_gate_census.txt` (tail): 13.4 s call, 24.4 s total serial with the UI lane's flags at load 42-46.
 - Files: `tldw_chatbook/Widgets/Library/library_media_viewer.py`, `tldw_chatbook/UI/Library_Modules/library_media_controller.py` (5267 -> 5273, inside its pin), `Tests/UI/test_library_shell.py`, `Tests/UI/test_library_media_reader_match_nav_t22209.py`, `Tests/UI/test_library_media_reader_flow.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+- **Fix round 1 (review r14ls-rev1, 2026-11-13).** Two Find gestures in one loop turn (close, then reopen) left Find "open" with no bar: the close's `remove()` only marks the bar `_pruning`, the reopen found it in the query and skipped the mount, then the prune removed it. `sync_find_bar` now returns False, before any mutation, when opening while the bar in the DOM is being pruned, so the recompose path owns that reopen. Pinned by a same-tick `_toggle_library_media_find()` pair at the end of `test_find_toggle_keeps_body_parse_and_focus`: red with the guard removed ("Reopened Find has no live bar"), green with it (load 36-38). The node now runs 8.9 s call / 17.4 s total serial at load 37.
 

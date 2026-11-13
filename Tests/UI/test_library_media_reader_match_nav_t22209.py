@@ -544,3 +544,30 @@ async def test_find_toggle_keeps_body_parse_and_focus(monkeypatch):
             message=lambda: f"Escape left focus on {screen.focused!r}",
         )
         unchanged()
+
+        # Review r14ls-rev1: a close and a reopen handled in one loop turn,
+        # before the close's removal has run, still end with Find open and a
+        # live bar mounted (the reopen must not adopt the doomed bar).
+        find.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-content-search")),
+            message="Find did not open",
+        )
+
+        def bar_matches_state() -> bool:
+            bars = [
+                bar
+                for bar in screen.query("#library-media-content-search-controls")
+                if not bar._pruning
+            ]
+            return screen._media_state.find_open and len(bars) == 1
+
+        screen._toggle_library_media_find()
+        screen._toggle_library_media_find()
+        await _wait_for_condition(
+            pilot, bar_matches_state, message="Reopened Find has no live bar"
+        )
+        for _ in range(10):
+            await pilot.pause()
+        assert bar_matches_state()
