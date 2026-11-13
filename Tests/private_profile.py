@@ -325,6 +325,8 @@ def private_profile_test(function):
                 "-m",
                 "pytest",
                 request.node.nodeid,
+                # Explicit paths bypass ignores; avoid building sibling collectors.
+                "--ignore-glob=*",
                 "-p",
                 "pytest_asyncio.plugin",
                 "-p",

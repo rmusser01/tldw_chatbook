@@ -2926,3 +2926,5 @@ Tests/UI/test_console_skill_context_worker.py::test_eager_mount_discovery_closin
 # TASK-40720 (2026-11-13): native sync admission, rewritten off the profiler;
 # its publication case had never passed and no lane ran the file.
 Tests/UI/test_console_sync_worker_admission.py
+# TASK-40750: ownership scanning stays complete and parses each source once.
+Tests/UI/test_component_pattern_governance.py::test_ownership_scan_parses_sources_once_and_observes_changes

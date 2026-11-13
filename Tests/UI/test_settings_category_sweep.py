@@ -20,6 +20,7 @@ Each size's sweep is split across nodes over contiguous thirds of
 test checks that the thirds together are all of it.
 """
 
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -37,7 +38,8 @@ from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId, Setting
 
 ALL_CATEGORY_IDS = tuple(
     summary.category.value
-    for summary in SettingsScreen(_build_test_app())._category_summaries()
+    # Enumerating the rail needs no running app or its databases at collection.
+    for summary in SettingsScreen(SimpleNamespace(app_config={}))._category_summaries()
 )
 
 #: Categories whose rail press lands focus somewhere other than their own
@@ -130,6 +132,10 @@ async def test_every_settings_category_renders_and_restores_focus(size, group, r
     async with host.run_test(size=size) as pilot:
         await _settle_settings(pilot)
         screen = _active_destination_screen(host)
+        assert (
+            tuple(summary.category.value for summary in screen._category_summaries())
+            == ALL_CATEGORY_IDS
+        )
 
         for category_value in _category_group(group):
             await _click_settings_category(pilot, category_value)
