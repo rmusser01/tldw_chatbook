@@ -64,7 +64,8 @@ theme colors rendered (not monochrome), no truncated right edge.
 
 Checked-in drivers already cover some images and strip the fonts themselves:
 `scripts/capture_user_guide.py <target>` boots the real app on a throwaway
-profile (targets `search-rag`, `file-notes`, `watchlists-workflow`), and
+profile (targets `search-rag`, `file-notes`, `watchlists-workflow`,
+`plugins`), and
 `scripts/regen_approval_card_svg.py` renders the approval card. Add a target
 there rather than keeping a one-off script.
 

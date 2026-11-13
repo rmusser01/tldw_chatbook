@@ -16,6 +16,8 @@ Targets, and the image each one writes under ``Docs/User_Guide/images``:
   the Console Watchlists workflow run to completion. The model's turns are
   scripted (``Tests/QA/test_console_watchlists_workflow_uat.py``); every
   tool, receipt and database write is the app's own.
+* ``plugins`` -- ``plugins/overview.svg``: Plugins (F8) on a fresh profile,
+  before plugin authority is set up, on its 1 Installed view.
 
 Each run boots a real ``TldwCli`` in ``run_test(size=(235, 52))`` on a fresh
 temporary profile: HOME, XDG_* and TLDW_CONFIG_PATH point into it, the
@@ -362,11 +364,27 @@ async def _watchlists_workflow(app, pilot) -> Path:
     return IMAGES / "watchlists" / "console-workflow-complete.svg"
 
 
+async def _plugins(app, pilot) -> Path:
+    await pilot.press("f8")
+    await _wait(pilot, lambda: _screen_named(app, "PluginsScreen"), "Plugins")
+    screen = app.screen
+    # The scope line reads "Scope: loading…" until the first load settles.
+    await _wait(
+        pilot,
+        lambda: not screen._loading
+        and "loading" not in str(screen.query_one("#plugins-scope").render()),
+        "the Installed view",
+    )
+    await pilot.pause(0.5)
+    return IMAGES / "plugins" / "overview.svg"
+
+
 #: target -> (drive it to its state, optional setup run before the app boots)
 TARGETS = {
     "search-rag": (_search_rag, None),
     "file-notes": (_file_notes, None),
     "watchlists-workflow": (_watchlists_workflow, _arm_watchlists_workflow),
+    "plugins": (_plugins, None),
 }
 
 

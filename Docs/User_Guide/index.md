@@ -47,7 +47,7 @@ can sync with a tldw server you configure).
 | F4 | [Settings](settings.md) | Global app preferences, appearance, accounts, and storage. |
 | F5 | [Research](research_workspace.md) | Authority-explicit research workspaces, plus navigation to durable Research Runs. |
 | F7 | [Meetings](meetings.md) | Record a call or a room with a live labelled transcript, then file it in the Library. |
-| F8 | [Plugins](plugins.md) 🚧 | Installed plugins, source-qualified browsing, and marketplaces. |
+| F8 | [Plugins](plugins.md) | Installed plugins, source-qualified browsing, and marketplaces. |
 | F9 | [Kanban](kanban.md) | A keyboard-first board of columns and cards over the local Kanban store. |
 
 Lab, Logs, Settings, Research, Meetings, Plugins, and Kanban sit past the ten
