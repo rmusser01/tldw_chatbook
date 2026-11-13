@@ -485,7 +485,9 @@ _BUDGETS: dict[str, int] = {
     # 5308): 5275 -> 5308.
     # 2026-11-13, TASK-40293 review r14lf-rev2: the landing drops its retry
     # and checks the route: 5308 -> 5307.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5307,
+    # 2026-11-13 restack: TASK-40327's in-place Find bar (+6 on its own base)
+    # stacked on TASK-40293's landing: 5307 -> 5313 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5313,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
