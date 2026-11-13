@@ -41,7 +41,14 @@ from tldw_chatbook.Chat.console_trace_repository import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
-_LEGACY_POLICY_ID = "00000000-0000-4000-8000-000000000097"
+#: TASK-40303: one fixed legacy policy id per credential filter version. The
+#: policies table is append-only and ``ensure_policy`` refuses a stored row
+#: that differs, so a profile that normalized a legacy exchange under v1 keeps
+#: that row (its calls still bind) and newer exchanges bind the current one.
+_LEGACY_POLICY_IDS = {
+    "credentials-v1": "00000000-0000-4000-8000-000000000097",
+    "credentials-v2": "00000000-0000-4000-8000-000000000098",
+}
 _LEGACY_JSON_VERSION = "canonical-json-v1"
 _LEGACY_MEDIA_TYPE = "application/json"
 _LEGACY_NORMALIZATION_VERSION = 1
@@ -256,7 +263,7 @@ class LegacyTraceNormalizer:
         policy = self.repository.ensure_policy(
             cursor,
             FrozenTracePolicy(
-                policy_id=_LEGACY_POLICY_ID,
+                policy_id=_LEGACY_POLICY_IDS[CREDENTIAL_FILTER_VERSION],
                 credential_filter_version=CREDENTIAL_FILTER_VERSION,
                 pii_redaction_enabled=False,
                 pii_ruleset_revision_id=None,
