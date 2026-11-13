@@ -2599,13 +2599,33 @@ class ConsoleTraceService:
         prefix = 0
         while prefix < min(len(active), len(descriptors)) and matches(prefix, prefix):
             prefix += 1
+        # ADR-337 amendment 2026-11-12 (TASK-34100.3): a replayed reasoning
+        # checkpoint grows both domains; append each at its own domain's end.
+        domain_append = (
+            _domain_appends().domain_append_indices(
+                recorded_domains=tuple(
+                    _surface_reference_domain(key) for _, _, key in active
+                ),
+                domains=domains,
+                descriptors=descriptors,
+                matches=matches,
+            )
+            if prefix < len(active)
+            and live_native_custody is None
+            and route_identity in {"agent_first", "fresh"}
+            and (
+                completed_tool_turn is None
+                or completed_tool_turn.project_context_count is None
+            )
+            else None
+        )
 
         replacement_range: VerifiedSurfaceReplacementRange | None = None
         compound = False
         rewritten: RewrittenTailWitness | None = None
         admitted_from = prefix
         admitted_to = len(descriptors)
-        if prefix < len(active):
+        if prefix < len(active) and domain_append is None:
             suffix = 0
             project_transition = (
                 completed_tool_turn is not None
@@ -2868,7 +2888,8 @@ class ConsoleTraceService:
                 },
             )
             bootstrap = False
-        admitted = descriptors[admitted_from:admitted_to]
+        admitted_indices = domain_append or tuple(range(admitted_from, admitted_to))
+        admitted = tuple(descriptors[index] for index in admitted_indices)
         admission = SurfaceDeltaAdmission(
             owner_id=owner_id,
             segment_id=segment_id,
@@ -2890,17 +2911,13 @@ class ConsoleTraceService:
             delta_values = values
         else:
             message_delta = tuple(
-                descriptor
-                for index, descriptor in enumerate(
-                    descriptors[admitted_from:admitted_to], admitted_from
-                )
+                descriptors[index]
+                for index in admitted_indices
                 if domains[index] == "messages_payload"
             )
             continuation_delta = tuple(
-                descriptor
-                for index, descriptor in enumerate(
-                    descriptors[admitted_from:admitted_to], admitted_from
-                )
+                descriptors[index]
+                for index in admitted_indices
                 if domains[index] == "provider_continuations"
             )
             delta_provenance = replace(
@@ -2915,10 +2932,10 @@ class ConsoleTraceService:
                 tool_loop=tuple(
                     index - admitted_from
                     for index in provenance.tool_loop
-                    if admitted_from <= index < admitted_to
+                    if index in admitted_indices
                 ),
             )
-            delta_values = values[admitted_from:admitted_to]
+            delta_values = tuple(values[index] for index in admitted_indices)
         boundary = self.prepare_surface_provenance(
             cursor,
             checkpoint,
@@ -6357,6 +6374,13 @@ def _saved_revision_component_kind(descriptor: DerivedTraceProvenance) -> str:
     if descriptor.transform is TraceTransformKind.CONTINUATION_ATTACHMENT:
         return "continuation"
     return "message"
+
+
+def _domain_appends():
+    """Load the per-domain append rule only when a surface changed."""
+    from tldw_chatbook.Chat import console_trace_domain_append
+
+    return console_trace_domain_append
 
 
 def _rewritten_tails():

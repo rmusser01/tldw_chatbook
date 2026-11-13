@@ -1063,7 +1063,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-39123 (owner size waiver): 6587 -> 6600 (+13) -- the
     # replay and surface-prefix comparisons accept a turn stored under an
     # older readable credential projection (review r12b-rev2).
-    "tldw_chatbook/Chat/console_trace_service.py": 6600,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.3 +24 -- the
+    # planner hook for the per-domain append (rule in
+    # console_trace_domain_append.py) and its non-contiguous admitted delta.
+    "tldw_chatbook/Chat/console_trace_service.py": 6624,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,

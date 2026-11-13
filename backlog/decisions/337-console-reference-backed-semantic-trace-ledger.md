@@ -908,6 +908,61 @@ defect only, with no remembered per-chat capture bypass. This amendment records
 the mechanism that fix and TASK-33621.29 share. It is recorded with the
 implementing change and is subject to the owner's review of that change.
 
+### Amendment proposed 2026-11-12: append in each domain for replayed reasoning (pending owner approval)
+
+Status: proposed with its implementing change (TASK-34100.3, folding in
+TASK-34100.3.1). It needs the owner's approval before it ships.
+
+TASK-34100.3 made saved-chat Moonshot (Kimi) replies persist, which made a third
+turn reachable. Every model Moonshot lists returns reasoning on each reply, and
+Console replays each earlier reply's saved reasoning checkpoint on the next turn.
+With capture on (the default), turns 1 and 2 traced normally. Every later
+FRESH or AGENT_FIRST send stopped before the provider with "Trace capture blocked".
+Measured on dev `26b2e677dd`: `count_or_span`, prefix 3, suffix 1, 3 incoming
+entries changed, 0 recorded entries changed, domains `messages_payload` and
+`provider_continuations`. Turn N's request is the recorded messages, then the
+previous reply and the new user message, then every recorded checkpoint, then
+the previous reply's checkpoint. Nothing recorded changes. Flattened, though, the
+new messages sit before the old checkpoints and the new checkpoint sits after
+them, so the planner saw two change points. It already admits growth in one
+domain: a plain append, and new messages before an unchanged continuation
+suffix. Dropping the optional replay is no workaround, because removing a
+recorded continuation is itself refused (TASK-34100.3 review round 2 probe).
+
+Admit one more append shape, for FRESH and AGENT_FIRST sends without live
+native custody and outside a completed project-context transition. Every
+condition must hold:
+
+- Both the recorded surface and the request list their domains in provider
+  order, all messages then all continuations.
+- Every recorded message equals, through the planner's existing durable
+  comparison, the incoming message at the same index. Every recorded
+  continuation equals the incoming continuation at the same index.
+- At least one message and at least one continuation are new.
+- Every incoming continuation is a typed `CONTINUATION_ATTACHMENT`. One in a
+  recorded position must attach to a recorded message. A new one must attach to
+  a new message. No recorded reply gains, loses or swaps a checkpoint.
+
+The new messages and continuations append at the end of their own domains, through
+the existing surface append, per-domain ordinals and final binding. This is the
+delta shape cold bootstrap (`_bootstrap_surface_parent`) and dispatch binding
+already accept. No recorded node is replaced, no history is rewritten, and no
+schema, retention, codec, registry or witness is added. An edited, removed or
+reordered recorded entry, a new checkpoint on an earlier reply, an untyped
+continuation, or interleaved domains falls through to the existing rules, which
+refuse it as before. The rule lives in `Chat/console_trace_domain_append.py`.
+Its negative controls are in `Tests/Chat/test_console_trace_domain_append.py`.
+`Tests/UI/test_console_trace_retry_refusal.py` drives a really dropped replay
+through the real planner and records that it is still refused.
+
+The same change drains the reply's pending trace settlement when the final
+continuation's atomic dispatch settlement completes it. That path set the reply
+complete without the drain the ordinary terminal write performs, so every saved
+Kimi call stayed `response_started` and the Trace view showed none. This adds no
+admission authority. Evidence: `Tests/UI/test_console_moonshot_reasoning_reply.py`
+runs five saved turns per Kimi model with capture on and reconstructs each call's
+request from the ledger.
+
 ## Renumbering provenance
 
 Renumbered from ADR-097 to ADR-337 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-097 now refers to 097-boot-budget-ratchets.md.
