@@ -840,7 +840,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | write | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | mkdir | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | write | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.__init__ | makedirs | 1 | unsupported | tokenizers.custom; participant-task10 |
+| tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager._create_directory | makedirs | 1 | unsupported | tokenizers.custom; participant-task10 |
 | tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager._load_mappings | open | 1 | unsupported | tokenizers.custom; participant-task10 |
 | tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.install_tokenizer | copy2 | 1 | unsupported | tokenizers.custom; participant-task10 |
 | tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.save_mappings | dump | 1 | unsupported | tokenizers.custom; participant-task10 |
