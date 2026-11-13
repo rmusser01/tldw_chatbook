@@ -236,6 +236,7 @@ import asyncio
 from pathlib import Path
 from Tests import network_guard
 network_guard.install()
+from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination;install_semantic_coordination()
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
 from tldw_chatbook.RAG_Search.simplified.config import RAGConfig

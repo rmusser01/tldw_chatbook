@@ -1334,3 +1334,18 @@ def _decode_optional_json(value: object) -> object:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError("semantic_envelope_json_invalid") from exc
+
+
+def install_semantic_coordination() -> None:
+    """Install the coordinator into the DB layer's port (idempotent).
+
+    Composition roots call this at startup; importing this module also calls it.
+    """
+    from tldw_chatbook.DB.transaction_observer import (
+        install_semantic_coordinator_factory,
+    )
+
+    install_semantic_coordinator_factory(SemanticRevisionCoordinator)
+
+
+install_semantic_coordination()

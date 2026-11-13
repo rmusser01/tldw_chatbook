@@ -248,6 +248,7 @@ import json,os
 from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
 install()
+from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination;install_semantic_coordination()
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 root=Path.home()/'seed';root.mkdir(mode=0o700)
