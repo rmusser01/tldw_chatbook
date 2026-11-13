@@ -672,7 +672,11 @@ async def stop_command(screen: Any, parse: Any) -> bool:
     """
 
     del parse  # takes no arguments
-    screen._clear_console_composer_draft()
+    # Only the revision the send captured (PR #3458 review): text typed after
+    # Enter stays.
+    from .command_draft import take_or_clear_command_draft
+
+    take_or_clear_command_draft(screen)
     await stop_this_tab_run(screen)
     return True
 
