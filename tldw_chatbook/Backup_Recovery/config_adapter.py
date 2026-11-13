@@ -687,7 +687,7 @@ class _LocalSQLite:
 
     def discover(self, config):
         database = user_data_dir(config) / self.filename
-        return tuple(
+        items = tuple(
             _excluded_root(
                 config,
                 self.owner_id,
@@ -696,6 +696,18 @@ class _LocalSQLite:
                 local_id=suffix,
             )
             for suffix in ("", "-wal", "-shm", "-journal")
+        )
+        # TASK-34100.16.1: such a store opens and closes with its feature,
+        # and SQLite creates and removes its sidecars with each connection.
+        # Never captured, so whether a file exists is not backup scope:
+        # file metadata here made a Review taken while it was open fail at
+        # Create with scope_changed. A wrong-kind path still reports
+        # unsupported.
+        return tuple(
+            replace(item, metadata=None)
+            if item.status == "intentionally_excluded"
+            else item
+            for item in items
         )
 
     def schema_policy(self):
