@@ -125,6 +125,54 @@ def test_reasoning_reply_settles_against_the_gateway_destination(tmp_path) -> No
     db.close()
 
 
+class _TraceCallHandoff:
+    """The store's trace-settlement seam: one provider call awaiting its reply."""
+
+    call_id = "kimi-trace-call"
+
+    def __init__(self) -> None:
+        self.settled_with: list[str | None] = []
+
+    def settle(self, canonical_message_id: str | None) -> None:
+        self.settled_with.append(canonical_message_id)
+
+
+def test_a_settled_reasoning_reply_settles_its_trace_call(tmp_path) -> None:
+    """The final checkpoint's dispatch settlement completes the reply, so it
+    must also hand the reply to the trace call that produced it.
+
+    TASK-34100.3 pass 3: no later terminal write runs for that reply, so every
+    saved Kimi call stayed ``response_started`` and the Trace view listed none.
+    """
+    db, store, session_id, _ = _started_store(
+        tmp_path,
+        lambda conversation_id: _with_real_destination(
+            _moonshot_acceptance(conversation_id),
+            "moonshot",
+            "kimi-k3",
+            "https://api.moonshot.ai/v1",
+        ),
+    )
+    reply = store._message_or_raise("assistant-1")  # noqa: SLF001
+    reply.status = "streaming"  # the reply is still being produced
+    handoff = _TraceCallHandoff()
+    store.register_provider_trace_settlement(reply.id, handoff)
+    assert handoff.settled_with == []
+    assert store.pending_provider_trace_settlement_count(reply.id) == 1
+
+    store.persist_provider_continuation_event(
+        FinalContinuation(_event().context, _kimi_final(), None, "answer"),
+        continuation_target=_kimi_target(),
+    )
+
+    assert db.get_message_by_id("assistant-1")["assistant_generation_state"] == (
+        "complete"
+    )
+    assert handoff.settled_with == ["assistant-1"]
+    assert store.pending_provider_trace_settlement_count(reply.id) == 0
+    db.close()
+
+
 def test_tool_batch_hands_off_against_the_gateway_destination(tmp_path) -> None:
     db, store, session_id, _ = _started_store(
         tmp_path,
