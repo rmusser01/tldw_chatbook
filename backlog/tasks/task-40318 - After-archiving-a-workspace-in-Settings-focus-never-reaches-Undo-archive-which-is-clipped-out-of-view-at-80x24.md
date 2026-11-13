@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 03:16
+updated_date: 2026-11-13 06:00
 labels:
 - follow-up
 - settings
@@ -35,6 +35,7 @@ Found in round 13 of the 2026-10-23 burn-down (cprod stream, TASK-39169 review r
 <!-- AC:BEGIN -->
 - [x] #1 After a confirmed archive through the real dialog, focus is on Undo archive and it is painted inside its pane at 80x24; a test is red before the fix
 - [x] #2 test_workspace_lifecycle_feedback_is_visible passes for every case, and its file runs on a PR lane
+- [x] #3 The create dialog's retry error is fully in view at 80x24 whatever the folder path length; the three test_partial_create_keeps_the_committed_workspace_clear nodes pass 10 of 10 at -n 4
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,12 +55,18 @@ Found in round 13 of the 2026-10-23 burn-down (cprod stream, TASK-39169 review r
 **Tests.**
 - `test_workspace_lifecycle_feedback_is_visible[archive]` now also asserts `host.focused is` Undo archive before its painted check. Red at base 26b2e677dd: focus was `settings-category-group-domain-defaults`; before the assertion was added it failed on Undo's `Region(x=39, y=21, width=16, height=1)` outside the compositor's visible set (three base runs). Green with the fix, serially and at `-n 4`.
 - `Tests/UI/test_workspace_archive_async_completion.py`: the Settings stand-in gains `_after_category_panes`/`_restore_category_pane_focus`, and the cancellation test pins that Undo is queued only while Settings is current.
-- All five feedback cases pass at `-n 4`; the whole file, 13 passed serially with the lane's flags.
+- All five feedback cases pass at `-n 4`. The whole file passed 13 of 13 serially with the lane's flags, and 13 of 13 at `-n 4` after the review fix, in a covering run of six files: 109 passed.
 
-**`test_partial_create_keeps_the_committed_workspace_clear` (3 cases) fails locally at `-n 4` only, from the path length, not code.** The retry error prints the folder twice, and under the scratch wrapper's basetemp plus the private-profile nesting at `-n 4` that `tmp_path` is about 245 characters, so the error is 11 rows and runs one row past the modal's clip at 80x24. A temporary edit pointing the folder at a 136-character path (CI's is about 131) passed all three at `-n 4`, and the serial lane command passed them under the wrapper as well. Proposed as a follow-up, not changed here.
+**Retry error short scroll (review r14set-rev1, AC #3).** My first explanation for the three red `test_partial_create_keeps_the_committed_workspace_clear` cases (path length) was wrong. Review measured that the error, the dialog's last child, is revealed to the clip's last row at every path length: 133 chars y=14 h=8; 255 y=11 h=11; 355 y=7 h=15; 455 y=5 h=17. The failing `y=12 h=11` is the 255 case stopped one row short. A probe at `-n 4` read `scroll_y` 13 against `max_scroll_y` 14 (247-char path, virtual height 42).
+
+A `watch_scroll_y` trace found the cause. `_reveal_error` did scroll to 14. Then timer `_tick`s moved it back to 13: `_show_binding_retry`'s `retry.focus()` makes `Screen.set_focus` queue an animated `scroll_to_center(origin_visible=True)`. That animation aimed at 13 before the error's final layout and kept running after the immediate reveal. CI's shorter path gives no protection (max 8, zero spare rows).
+
+Fix: `retry.focus(scroll_visible=False)` in `WorkspaceCreateModal._show_binding_retry`, so the reveal is the only scroll. It is smaller than a second reveal or a `scroll_end`, and a later reveal could also land mid-animation.
+
+Red at base, at `-n 4`: 3 failed in each of two runs at load 40-48 (and in the earlier `-n 4` runs at load 31-77). Fixed: 3 passed in 10 of 10 runs at `-n 4` (load 33-46). With a temporary edit putting the folder about 447 characters deep, all 3 passed at `-n 4`.
 
 **Lane.** The file's 13 cases are appended to `scripts/ui_pr_gate_census.txt`, one entry each (every case is over the per-entry budget), and `MINIMUM_FILES` is the measured count. Local serial times (`-p no:xdist --timeout=180 --durations=0`, load 55-67 on 18 CPUs, 623.8 s in all): feedback rename_error 52.5, rename_success 49.2, restore_error 43.4, archive 46.0, create_error 41.1; partial_create retry 62.2, keep 61.4, escape 60.5; completion activate 40.0, restore 38.7, literal_archive 39.0; theme textual-dark 34.1, textual-light 34.0.
 
-**Docs and lessons.** `Docs/User_Guide/settings.md` (the Archive row says where the receipt appears and that focus moves to Undo archive). Lessons: `lessons-textual.md` (a pane rebuilt inside a modal's confirm callback finds the modal's focus) and `lessons-testing-evidence.md` (a temp path shown in the UI makes a geometry test depend on basetemp length).
+**Docs and lessons.** `Docs/User_Guide/settings.md`: the Archive row quotes the dialog exactly and says the receipt appears in the result row below the list, and that focus moves to Undo archive. Lessons in `lessons-textual.md`: a pane rebuilt inside a modal's confirm callback finds the modal's focus; and `focus()` starts an animated scroll that outlives an immediate reveal. That second entry replaces the path-length lesson, which was wrong and is dropped from `lessons-testing-evidence.md`.
 
-Files: `tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/UI/Settings_Modules/workspace_archive.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Tests/UI/test_settings_workspace_lifecycle_journeys.py`, `Tests/UI/test_workspace_archive_async_completion.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/settings.md`, `backlog/docs/lessons-textual.md`, `backlog/docs/lessons-testing-evidence.md`.
+Files: `tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/Widgets/workspace_create_modal.py`, `tldw_chatbook/UI/Settings_Modules/workspace_archive.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Tests/UI/test_settings_workspace_lifecycle_journeys.py`, `Tests/UI/test_workspace_archive_async_completion.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/settings.md`, `backlog/docs/lessons-textual.md`.

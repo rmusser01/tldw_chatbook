@@ -1683,7 +1683,7 @@ tool (Read file, List directory, …) has its own switch, both under **Settings
 |---|---|
 | **Rename** | Renames the selected workspace (the box above it is pre-filled). |
 | **Set active** | Makes it the active workspace; replaced by "This workspace is active." when it already is. Console doesn't switch immediately, but picks up the change and switches its own session to match the next time you visit it. |
-| **Archive** | Confirms first: "Archive \<name\>? Its conversations stay saved and remain visible in Library; the workspace disappears from the switcher and the Console browser." Once archived, the list says "Archived \<name\>. Saved conversations stay in Library." above **Undo archive** and **View archived**, and focus moves to **Undo archive**, scrolled into view, so Enter takes the archive back. |
+| **Archive** | Confirms first: "Archive \<name\>? Its conversations stay saved and remain visible in Library; the workspace disappears from the active switcher list and the Console browser. Recover it using Show archived." Once archived, the result row below the list reads "Archived \<name\>. Saved conversations stay in Library.", with **Undo archive** and **View archived** under it, and focus moves to **Undo archive**, scrolled into view, so Enter takes the archive back. |
 | **Unarchive** | Returns an archived workspace to the list. It does *not* activate it. |
 | **Add folder** / **Remove** | Bind a folder for agent file tools (new bindings are read-only), or unbind it. |
 | **Allow write** / **Read-only** | Flips a bound folder's access; the button is labelled with the state you would move to. |

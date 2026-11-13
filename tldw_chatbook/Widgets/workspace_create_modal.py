@@ -577,7 +577,10 @@ class WorkspaceCreateModal(
         if not confirms:
             return
         retry = confirms.first(Button)
-        retry.focus()
+        # TASK-40318: the reveal below owns the scroll. Textual's own focus
+        # scroll is animated, aims before the error's final layout, and kept
+        # running after the reveal, stopping one row short at 80x24.
+        retry.focus(scroll_visible=False)
         self._error_origin = retry
         self.call_after_refresh(self._reveal_error)
 
