@@ -401,15 +401,15 @@ def _resolve_first_run_provider_endpoints(
 
 
 def _first_run_discovery_base(owner_key: str, raw: str, chat_url: str) -> str:
-    """The endpoint discovery is handed: the base URL where a send needs one.
+    """The endpoint discovery is handed: Google's own API base for Gemini.
 
-    TASK-34100.2 AC#4 (gap-01): every engine preset (NVIDIA NIM, Novita, ...)
-    failed discovery as ``invalid_provider_settings`` for a VALID key, because
-    the hosted engine refuses a ``/chat/completions`` base and setup staged the
-    chat URL. Engine presets get their API base -- what persistence writes
-    for them -- and Gemini keeps Google's own API base, which the generic
-    endpoint contract would otherwise rewrite to ``.../v1beta/v1/chat/
-    completions``. Every other provider keeps the chat URL it always staged.
+    TASK-34100.2 AC#5 (gap-03): Gemini is listed from Google's models.list,
+    so it keeps Google's API base, which the generic endpoint contract would
+    otherwise rewrite to ``.../v1beta/v1/chat/completions``. Every other
+    provider keeps the chat URL it always staged. (AC#4's engine presets get
+    their API base from dev's TASK-34100.6 staging,
+    ``first_run_model_discovery._first_run_discovery_staged_settings``; review
+    v5r2 TE-1 found a second strip here had no effect, so it is gone.)
 
     Args:
         owner_key: The shared owner key of the provider being set up.
@@ -419,13 +419,8 @@ def _first_run_discovery_base(owner_key: str, raw: str, chat_url: str) -> str:
     Returns:
         The discovery endpoint to stage.
     """
-    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
-
     if owner_key == "google":
         return raw.rstrip("/")
-    record = RECORDS_BY_KEY.get(owner_key)
-    if record is not None and record.engine_driven:
-        return chat_url.removesuffix("/chat/completions")
     return chat_url
 
 

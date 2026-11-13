@@ -10,6 +10,16 @@ before any request. Gemini's base was mangled the same way
 what persistence writes for these providers -- and the catalog service must
 then reach the provider. The discovery client here records the request
 instead of sending it.
+
+Review v5r2 (TE-1): the engine-preset half is dev's own behaviour now. Dev's
+TASK-34100.6 (c7417cc518) strips ``/chat/completions`` for every engine
+preset in ``_first_run_discovery_staged_settings``, which both the Provider
+and the Model step stage through, so the engine-preset tests here pass on
+dev and are REGRESSION PINS of that staging, not RED evidence. This branch's
+own second strip had no observable effect (the connection identity is the
+same for the base and the chat URL) and was removed. Gemini's base URL is
+this branch's (AC#5); its behaviour is RED-tested by
+``Tests/Wizards/test_first_run_key_check.py::test_gemini_check_key_runs_googles_model_list``.
 """
 
 from __future__ import annotations
@@ -57,20 +67,27 @@ def _staged(resolved: setup_state.FirstRunProviderDraft, key) -> dict:
 
 @pytest.mark.parametrize("record", _PRESETS, ids=lambda record: record.key)
 def test_engine_preset_discovery_is_staged_as_the_base_url(record) -> None:
+    """Regression pin (TE-1): what discovery is HANDED for an engine preset
+    is its API base. Dev's staging does the stripping; this was a pin of the
+    draft's own field, which only this branch's removed strip set."""
     config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
     resolved = setup_state.resolve_first_run_provider_draft(_draft(record.key), config)
 
     if record.default_base_url is None:
         pytest.skip(f"{record.key} has no shipped base URL (per-account host)")
-    assert not resolved.discovery_endpoint.endswith("/chat/completions")
-    assert resolved.discovery_endpoint.rstrip("/") == record.default_base_url.rstrip(
-        "/"
-    )
+    from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+
+    key = setup_state.build_first_run_model_discovery_key(resolved)
+    staged = _staged(resolved, key)["api_settings"][key.provider_key]
+    endpoint = staged[provider_endpoint_key(key.provider_key)]
+    assert not endpoint.endswith("/chat/completions")
+    assert endpoint.rstrip("/") == record.default_base_url.rstrip("/")
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("record", _PRESETS, ids=lambda record: record.key)
 async def test_engine_preset_discovery_reaches_the_provider(record) -> None:
+    """Regression pin of dev's TASK-34100.6 staging (TE-1): passes on dev."""
     if record.default_base_url is None:
         pytest.skip(f"{record.key} has no shipped base URL (per-account host)")
     config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
@@ -146,7 +163,8 @@ async def test_the_real_client_lists_each_preset_at_its_models_url(
     """Review round 1 (C11): the test above stubs the discovery client, so it
     cannot show the real client builds each preset's models URL from the staged
     base (Novita's lives under /openai/v1). Here the real client runs; only the
-    transport is an ``httpx.MockTransport``."""
+    transport is an ``httpx.MockTransport``. A regression pin of dev's
+    TASK-34100.6 staging (review v5r2 TE-1): it passes on dev."""
     import httpx
 
     from tldw_chatbook.LLM_Provider_Catalog import (
