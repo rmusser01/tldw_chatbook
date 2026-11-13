@@ -1163,7 +1163,11 @@ _BUDGETS: dict[str, int] = {
     # (+139), exact measurement. The owner-approved chained replacement
     # (ADR-337 amendment 2026-11-06): the planner cuts a rewritten tail into
     # links, and the writer validates and writes each link in dispatch binding.
-    "tldw_chatbook/Chat/console_trace_service.py": 6739,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.3 +24 -- the
+    # planner hook for the per-domain append (rule in
+    # console_trace_domain_append.py) and its non-contiguous admitted delta.
+    # Rebased onto dev a6df4d8d48 (2026-11-19): 6739 -> 6763, exact measurement.
+    "tldw_chatbook/Chat/console_trace_service.py": 6763,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
