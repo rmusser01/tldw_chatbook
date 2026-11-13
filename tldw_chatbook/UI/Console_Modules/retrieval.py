@@ -10,6 +10,7 @@ from typing import Any
 
 from loguru import logger
 
+from ...Backup_Recovery.participants import run_finite_local_worker
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_display_state import (
     ConsoleDisplayRow,
@@ -304,10 +305,16 @@ class ConsoleRetrievalController:
     async def _read_console_retrieval_scope(
         db: Any, conversation_id: str
     ) -> RagScope | None:
-        """Read a stored scope off-loop except for thread-local memory DBs."""
+        """Read a stored scope off-loop except for thread-local memory DBs.
+
+        TASK-34100.16.1: the worker retires its pool-thread handle, whose lease
+        a backup's pause cannot revoke (the picker's opener on a saved chat).
+        """
         if getattr(db, "is_memory_db", False):
             return read_conversation_scope(db, conversation_id)
-        return await asyncio.to_thread(read_conversation_scope, db, conversation_id)
+        return await asyncio.to_thread(
+            run_finite_local_worker, read_conversation_scope, db, conversation_id
+        )
 
     @staticmethod
     async def _write_console_retrieval_scope(
@@ -317,7 +324,9 @@ class ConsoleRetrievalController:
         if getattr(db, "is_memory_db", False):
             write_conversation_scope(db, conversation_id, scope)
             return
-        await asyncio.to_thread(write_conversation_scope, db, conversation_id, scope)
+        await asyncio.to_thread(
+            run_finite_local_worker, write_conversation_scope, db, conversation_id, scope
+        )
 
     def _console_scope_picker_listers(self) -> tuple[Any, Any, Any]:
         """Build the real media, notes, and keyword listers."""
