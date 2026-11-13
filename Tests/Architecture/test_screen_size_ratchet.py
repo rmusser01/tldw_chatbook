@@ -343,7 +343,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # rebase onto dev.
     # 2026-11-12, same waiver: re-measured on dev 4b90eb860b (24,524 lines);
     # this branch adds 44 lines and the one method above.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24568, 742),
+    # TASK-34100.16.1 review v5r2, 2026-11-13: owner decision 2026-10-04
+    # (expand limits). The Console dictionary and world-book pickers run their
+    # store reads and writes through run_finite_local_worker, so they no longer
+    # keep pool-thread leases a backup's pause cannot revoke: +3 lines (one
+    # import, two comment-carrying calls), no methods. Exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24571, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

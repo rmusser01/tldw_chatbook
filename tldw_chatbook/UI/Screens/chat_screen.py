@@ -263,6 +263,7 @@ from ...Chat.console_roleplay_identity import (
 )
 from ...Chat.prompt_history import PromptHistory
 from ...Backup_Recovery import raw_participants as raw
+from ...Backup_Recovery.participants import run_finite_local_worker
 from ...Backup_Recovery.async_file_participants import FileJob
 from ...Chat.console_cost_tracker import (
     build_cost_snapshot,
@@ -13127,8 +13128,8 @@ class ChatScreen(BaseAppScreen):
                 return
             db = getattr(self.app_instance, "chachanotes_db", None)
             try:
-                rows = await asyncio.to_thread(
-                    console_attachable_dictionaries, db, conversation_id
+                rows = await asyncio.to_thread(  # retires its pool-thread handle
+                    run_finite_local_worker, console_attachable_dictionaries, db, conversation_id
                 )
             except Exception:
                 logger.opt(exception=True).warning(
@@ -13198,7 +13199,7 @@ class ChatScreen(BaseAppScreen):
                 ]
 
             try:
-                rows = await asyncio.to_thread(_attachable)
+                rows = await asyncio.to_thread(run_finite_local_worker, _attachable)
             except Exception:
                 logger.opt(exception=True).warning(
                     "Could not load world books for the Console attach picker."
@@ -13220,6 +13221,7 @@ class ChatScreen(BaseAppScreen):
                 return
             try:
                 await asyncio.to_thread(
+                    run_finite_local_worker,
                     WorldBookManager(db).associate_world_book_with_conversation,
                     str(conversation_id),
                     int(picked),
@@ -13260,7 +13262,7 @@ class ChatScreen(BaseAppScreen):
                 ]
 
             try:
-                rows = await asyncio.to_thread(_attached)
+                rows = await asyncio.to_thread(run_finite_local_worker, _attached)
             except Exception:
                 logger.opt(exception=True).warning(
                     "Could not load world books for the Console detach picker."
@@ -13287,6 +13289,7 @@ class ChatScreen(BaseAppScreen):
                 return
             try:
                 await asyncio.to_thread(
+                    run_finite_local_worker,
                     WorldBookManager(db).disassociate_world_book_from_conversation,
                     str(conversation_id),
                     int(picked),
@@ -13314,8 +13317,8 @@ class ChatScreen(BaseAppScreen):
                 return
             db = getattr(self.app_instance, "chachanotes_db", None)
             try:
-                rows = await asyncio.to_thread(
-                    console_attached_dictionaries, db, conversation_id
+                rows = await asyncio.to_thread(  # retires its pool-thread handle
+                    run_finite_local_worker, console_attached_dictionaries, db, conversation_id
                 )
             except Exception:
                 logger.opt(exception=True).warning(
