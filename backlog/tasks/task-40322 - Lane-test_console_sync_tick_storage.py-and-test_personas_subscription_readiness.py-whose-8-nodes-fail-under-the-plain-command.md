@@ -60,3 +60,15 @@ Neither path appears in `scripts/ui_pr_gate_census.txt`, `.github/` or `scripts/
 - **Serial lane times** (`-p no:xdist --timeout=180 --durations=0`): Personas file 38.3 s at load 47 (about 10-14 s a node at `-n 4`); sync-tick file 33.7 s at load 45, almost all of it `test_sync_ticks_during_a_run_check_the_character_scope_once_a_second` (one node, which cannot be split further).
 - **Size.** `personas_screen.py` is exactly at its 16,835-line row (the fix is one line). The module size ratchet passes.
 - **Files.** `tldw_chatbook/UI/Screens/personas_screen.py`, `Tests/UI/test_personas_subscription_readiness.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+
+**Review r14ti-rev1 (2026-11-13): per-entry serial times for the 10 census nodes.** Measured in one serial run of all 59 entries this branch added (`-p no:xdist --timeout=180 --durations=0 --durations-min=0`, setup + call + teardown per entry, 73 passed in 167 s, load 19-26, 2026-11-13). The first entry in a process carries the shared import and fixture start-up.
+    - `test_handoff_readiness_keeps_ui_responsive_and_finishes_automatically[file-ready]` 1.2 s
+    - `test_handoff_readiness_keeps_ui_responsive_and_finishes_automatically[keychain-ready]` 0.9 s
+    - `test_handoff_readiness_keeps_ui_responsive_and_finishes_automatically[file-missing]` 1.2 s
+    - `test_handoff_readiness_keeps_ui_responsive_and_finishes_automatically[file-error]` 0.9 s
+    - `test_completion_between_header_and_inspector_reads_refreshes_both_surfaces` 1.1 s
+    - `test_handoff_readiness_refreshes_expiry_and_stale_snapshot_without_edits` 1.4 s
+    - `test_credential_completion_uses_current_provider_and_selection` 1.6 s
+    - `test_unmount_stops_handoff_refresh_before_credential_completion` 1.2 s
+    - `test_sync_ticks_during_a_run_check_the_character_scope_once_a_second` 12.5 s
+    - `test_a_scope_invalidated_during_a_run_check_is_checked_at_once` 0.3 s
