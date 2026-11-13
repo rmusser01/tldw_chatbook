@@ -156,7 +156,13 @@ async def exercise():
         # innermost frames, then every busy asyncio task's innermost awaits
         # (last, so the failure's 1,000-character tail keeps them).
         lines, threads = [], []
-        for item in asyncio.all_tasks(loop):
+        # Read off the loop thread when the loop itself is blocked: the task
+        # walk is best effort, the thread frames always print.
+        try:
+            tasks = list(asyncio.all_tasks(loop))
+        except RuntimeError as error:
+            tasks, lines = [], ['task dump unavailable: ' + str(error)]
+        for item in tasks:
             chain, coro = [], item.get_coro()
             for _ in range(80):
                 frame = next((getattr(coro, name) for name in ('cr_frame', 'gi_frame', 'ag_frame') if getattr(coro, name, None) is not None), None)
@@ -185,13 +191,21 @@ async def exercise():
 
     def watch(seconds, what):
         # Fail within `seconds` and name the pending wait, instead of
-        # sitting out the outer 240-second bound with the loop idle.
+        # sitting out the outer 240-second bound. A daemon timer, not
+        # loop.call_later, so it still fires when the UI loop thread is blocked.
         def fire():
+            try:
+                report = pending_report()
+            except Exception as error:  # A frame can vanish mid-walk off the loop.
+                report = ['pending report failed: ' + type(error).__name__]
+            report.append('stock_skill_hang: ' + what + ' still pending after ' + str(seconds) + ' s')
             # fd 1 directly: Textual redirects sys.stdout inside run_test.
-            report = pending_report() + ['stock_skill_hang: ' + what + ' still pending after ' + str(seconds) + ' s']
             os.write(1, ('\n'.join(report) + '\n').encode('utf-8', 'replace'))
             os._exit(3)
-        return loop.call_later(seconds, fire)
+        timer = threading.Timer(seconds, fire)
+        timer.daemon = True
+        timer.start()
+        return timer
 
     @contextlib.asynccontextmanager
     async def run_app():

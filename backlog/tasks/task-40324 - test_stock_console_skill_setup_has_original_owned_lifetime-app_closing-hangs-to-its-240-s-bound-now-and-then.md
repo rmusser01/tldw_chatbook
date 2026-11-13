@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 04:05
+updated_date: 2026-11-13 08:17
 labels:
 - follow-up
 - tests
@@ -59,6 +59,7 @@ How it gets there:
 **Tests.**
 - New: `Tests/UI/test_console_readiness_config_projection.py::test_a_refresh_worker_cancelled_before_its_first_step_still_settles`. Red before the fix ("warm() waited on a read that never ran"); green after. It is at the census tail (`MINIMUM_FILES` 2039 after TASK-40322's split). Serial lane time 7.8 s at load 48.
 - AC#3 (`test_console_skill_trust_stock_owned.py`): the script's two unbounded waits now get a 60 s watch: the discovery-producer wait, and `run_test`'s teardown (through a small `run_app()` wrapper). When the watch fires it writes the pending report straight to fd 1 (Textual redirects `sys.stdout` inside `run_test`) and exits 3. The parent's 240 s bound stays as the last resort.
+  - Review r14ti-rev1: the watch is a daemon `threading.Timer`, not `loop.call_later`, so it also fires when the UI loop thread itself is blocked. The task walk off the loop is best effort; the thread frames always print. Negative control (a temporary 5 s watch with `time.sleep(40)` on the loop thread at teardown): exit 3 within the bound, naming the pending waits.
 
 **Evidence (four- and six-wide runs, separate processes, since xdist runs a duplicated node id once).**
 - Before the fix, `app_closing` hung 7 of 20 (four-wide, load 50-65), then 3 of 6 and 2 of 6. The 7 failed at about 95 s, before the report went to fd 1. With it, 3 of 6 failed at about 100 s, each naming the two frames above, for example: `task message pump ChatScreen(): ... ConsoleReadinessConfigProjection.warm:530 > Event.wait:212` and `stock_skill_hang: App exit (run_test teardown) still pending after 60 s`.
@@ -73,3 +74,6 @@ How it gets there:
 The module size ratchet passes.
 
 **Files.** `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `Tests/UI/test_console_readiness_config_projection.py`, `Tests/Performance/test_console_skill_trust_stock_owned.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+
+**Review r14ti-rev1 (2026-11-13): per-entry serial time for the census node.** In the same run as TASK-40322's (load 19-26):
+    - `test_a_refresh_worker_cancelled_before_its_first_step_still_settles` 0.3 s
