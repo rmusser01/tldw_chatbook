@@ -107,6 +107,30 @@ def effective_roots(roots, entries):
     return tuple(result)
 
 
+def absent_strict_roots(entries):
+    """Name registered roots that admission refuses because they are gone.
+
+    TASK-34100.16.1 review v5r2: an absent root keeps refusing unless an
+    enrolled directory already owns it (``effective_roots``). Naming these is
+    the only actionable part of that refusal; the result grants nothing.
+
+    Args:
+        entries: Registry entry mappings, as ``bootstrap._registry`` returns.
+
+    Returns:
+        The absent roots ``effective_roots`` keeps strict, in declared order.
+    """
+    entries = tuple(entries)
+    declared = tuple(
+        dict.fromkeys(Path(root) for entry in entries for root in entry["roots"])
+    )
+    return tuple(
+        root
+        for root in effective_roots(declared, entries)
+        if not os.path.lexists(root)
+    )
+
+
 def check_redundant_profiles(registry, profiles):
     """Prove exhaustive fixed-profile co-ownership before global alias omission."""
     roots = {Path(path) for entry in registry.values() for path in entry["roots"]}

@@ -136,6 +136,12 @@ _ISSUE_MESSAGES = {
         "when it started, for example after setup or a settings change moved a "
         "folder. Quit and reopen Chatbook, then review and create the backup again."
     ),
+    "registered_storage_missing": (
+        "The location shown above no longer exists, but Chatbook registered it "
+        "for its storage (a backup registers what it copies). Backups and the "
+        "next start stop until it is back. If it was a folder, create it again "
+        "(an empty folder is enough), then review and create the backup again."
+    ),
     "restore_setup_parent_required": "Choose an existing private Files needing setup directory outside profile and recovery storage. Restored files will remain inactive there.",
     "isolated_destination_parent_overlaps_control": "Choose a folder beneath a separate private restore directory, outside recovery control storage.",
     "private_destination_parent_required": "Choose a restore folder beneath a private directory owned by your user, with access limited to you.",
@@ -205,6 +211,11 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
         # TASK-34100.16.1: a capture refusal the user can act on (restart so
         # the app registers its current storage), not a generic failure.
         return "capture_source_outside_scope"
+    if isinstance(error, RecoveryRequired) and error.args == (
+        "registered_storage_missing",
+    ):
+        # TASK-34100.16.1 review v5r2: a removed registered folder, named.
+        return "registered_storage_missing"
     if isinstance(error, InterruptedError):
         return "cancelled"
     if isinstance(error, CaptureReviewRequired):
@@ -1296,14 +1307,19 @@ class RecoveryService:
             if not available:
                 raise ValueError(reason)
             self._update(operation, phase="capturing")
-            captured = capture_service.capture(
-                config_paths,
-                approved_scope,
-                destination,
-                options=settings,
-                cancel=cancel,
-                include_known_profiles=include_known_profiles,
-            )
+            try:
+                captured = capture_service.capture(
+                    config_paths,
+                    approved_scope,
+                    destination,
+                    options=settings,
+                    cancel=cancel,
+                    include_known_profiles=include_known_profiles,
+                )
+            except capture_service.RegisteredStorageMissing as error:
+                # The screen shows result["path"] above the issue message.
+                self._update(operation, result={"path": str(error.path)})
+                raise
             info = os.stat(captured.root, follow_symlinks=False)
             identity = info.st_dev, info.st_ino
             try:
