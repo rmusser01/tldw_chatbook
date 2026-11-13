@@ -1539,7 +1539,7 @@ def run_agent_loop(
     ) -> bool:
         nonlocal store_failure
         original = event
-        projected = False
+        projected = persisted = False
         try:
             if isinstance(event, ToolBatchReady):
                 event = replace(
@@ -1553,16 +1553,25 @@ def run_agent_loop(
                 )
             projected = True
             deps.persist_provider_continuation(event)
+            # Committed: a later failure must never read as "unwritten".
+            persisted = True
             if deps.acknowledge_provider_continuation is not None:
                 deps.acknowledge_provider_continuation(original, event, model_result)
         except Exception as exc:
             # Deferred: only a failed persist needs the code table (ADR-097).
             from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+                ACKNOWLEDGE_FAILED,
                 PROJECTION_FAILED,
                 store_failure_code,
             )
 
-            store_failure = store_failure_code(exc) if projected else PROJECTION_FAILED
+            store_failure = (
+                ACKNOWLEDGE_FAILED
+                if persisted
+                else store_failure_code(exc)
+                if projected
+                else PROJECTION_FAILED
+            )
             logger.warning(
                 "Provider continuation persist failed: event={} store_failure={} "
                 "error_type={} cause_type={}",

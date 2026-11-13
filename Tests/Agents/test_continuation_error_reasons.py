@@ -50,8 +50,10 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
 )
 from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+    ACKNOWLEDGE_FAILED,
     STORE_FAILURE_CODES,
     UNRECOGNIZED_STORE_FAILURE,
+    UNWRITTEN_STORE_FAILURES,
     store_failure_code,
 )
 
@@ -643,6 +645,60 @@ def test_possibly_written_checkpoint_still_fails_closed(store_text, store_code) 
     assert not [
         step for step in traced if step.summary == "Reasoning not preserved for replay"
     ]
+
+
+@pytest.mark.parametrize(
+    "acknowledge_text",
+    [
+        # Each would name an unwritten store failure if it reached the code
+        # table; raised after the commit, it must not.
+        "Continuation revision conflict.",
+        "Provider continuation terminal settlement failed.",
+        "PRIVATE-CANARY",
+    ],
+)
+def test_acknowledge_failure_after_the_commit_still_fails_closed(
+    acknowledge_text, warnings_log
+) -> None:
+    """Pre-merge review M6: the acknowledge hook runs after the store committed.
+
+    A failure there is not an unwritten checkpoint, whatever its text, so the
+    keep-reply path must never say "Reasoning not preserved for replay": the
+    reasoning WAS saved. It gets its own code, outside the unwritten set.
+    """
+    persisted: list[object] = []
+
+    def acknowledge(original, event, model_result) -> None:
+        raise RuntimeError(acknowledge_text)
+
+    order: list[str] = []
+    traced: list[object] = []
+    deps = _deps(
+        [_first_final_turn()],
+        order=order,
+        persist=persisted.append,
+        invoke=lambda call: pytest.fail("no tool expected"),
+    )
+    deps.acknowledge_provider_continuation = acknowledge
+    deps.on_trace_step = traced.append
+    outcome = run_agent_loop(
+        CONFIG, [{"role": "user", "content": "go"}], [CALCULATOR], deps
+    )
+
+    assert len(persisted) == 1, "the store committed the checkpoint"
+    assert outcome.status == RUN_ERROR
+    assert _error_states(outcome) == {
+        "continuation_error": "final_persist_failed",
+        "continuation_store_failure": ACKNOWLEDGE_FAILED,
+    }
+    assert ACKNOWLEDGE_FAILED not in UNWRITTEN_STORE_FAILURES
+    assert not [
+        step for step in traced if step.summary == "Reasoning not preserved for replay"
+    ]
+    assert any(
+        f"store_failure={ACKNOWLEDGE_FAILED}" in line for line in warnings_log
+    ), warnings_log
+    assert not any("PRIVATE-CANARY" in line for line in warnings_log)
 
 
 @pytest.mark.parametrize(
