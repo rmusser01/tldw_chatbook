@@ -2629,6 +2629,47 @@ do not replace native admission or relax ACL checks to make collection pass.
 Separate later POSIX-only assertions or native publication failures from the
 evidence for the changed feature, and report those verification limits.
 
+## Before calling a rebased pilot failure "inherited", diff the harness against a passing dev sibling (TASK-34100.3 pass 3, 2026-11-12)
+
+**Incident.** After a ~4,080-commit rebase, the rebase report recorded that every
+mounted Console pilot was refused with "Console preparation source unavailable;
+Send again." on dev tip, and named two dev pilot files that fail the same way.
+It concluded that the task's TDD pilot could not run until dev fixed it. In
+fact dev's `Tests/UI/test_console_blocked_send_recovery.py` passed 10 of 12 on
+the same tree. Dev's TASK-39147 (`e7e70c2278`) had repaired the mounted
+fixtures: they build the app with `_build_test_app(user_data_dir=get_user_data_dir())`,
+so native configuration capture finds profile-bound sources, and they wait on
+`runtime.has_custodied_turns(session_id)`. Copying both into the branch's
+fixture made its pilots run within one round. The old wait was worse than
+slow: it awaited tasks captured by an `accept_turn` wrapper that a mounted send
+no longer calls, so `tasks` stayed empty, the wait returned at once, and later
+assertions raced the turn.
+
+**What to do.** When a pilot fails after a rebase with an error that dev's own
+tests "also" hit, find a dev test that drives the same path and still passes,
+and diff the two fixtures before you blame dev. Also check that every
+`wait for X` helper is waiting on something that is actually populated: one
+assertion that the captured list is non-empty would have exposed the dead
+wrapper.
+
+## Assert that a traced call settles, not only that its request was recorded (TASK-34100.3 pass 3, 2026-11-12)
+
+**Incident.** Since gap-02's fix, saved-chat Kimi replies had persisted with
+their reasoning checkpoints, and passed every test. But no saved Kimi call ever
+left `response_started`, so the Trace view (which reads settled calls only)
+showed none of them. The reply completes through the FinalContinuation branch
+of `persist_provider_continuation_event`, whose atomic dispatch settlement
+marks it complete itself and skipped the trace-handoff drain the ordinary
+terminal write performs. The defect surfaced only when the new five-turn pilot
+read each call back with `ConsoleTraceNativeReader.read_calls` and got `()` for
+turn 1. A probe then showed the handoff still sitting in the store's
+`_provider_trace_settlements`.
+
+**What to do.** When a change touches how a reply completes, read the trace
+back the way the viewer does (`ConsoleTraceNativeReader(db).read_calls(user_id)`),
+or at least assert `console_trace_calls.state` is terminal. A recorded request
+surface proves only the request half.
+
 ## Run a proposed workaround for a refusal through the real refuser first (TASK-34100.3 review round 2, 2026-10-06)
 
 **Incident.** With trace capture on, the third send of a saved Kimi chat is
