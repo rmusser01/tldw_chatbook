@@ -668,6 +668,9 @@ async def test_scope_note_says_plain_chat_needs_full_agent_tools(runs_db):
     assert len(notes) == 1, notes
     assert "Plain chat spawns them only with Full agent tools on" in notes[0]
     assert "Tool gates" in notes[0]
+    # Review v5r1 (R1-6): a message that names a skill gets the full agent
+    # surface for that turn, so it can spawn them with Full agent tools off.
+    assert "or for one turn that names a skill" in notes[0]
 
 
 @pytest.mark.asyncio
