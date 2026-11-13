@@ -1,11 +1,11 @@
 ---
 id: TASK-40726
 title: Build frozen recovery fixtures in explicit SQLite transactions
-status: In Progress
+status: Done
 created_date: 2026-11-13 21:20
 assignee:
 - '@codex'
-updated_date: 2026-11-13 21:22
+updated_date: 2026-11-13 21:39
 ---
 
 ## Description
@@ -18,7 +18,7 @@ Frozen recovery fixtures issue hundreds of DDL statements outside an explicit tr
 <!-- AC:BEGIN -->
 - [x] #1 Frozen fixture catalogs and seed rows commit together before production recovery validation begins.
 - [x] #2 Existing lineage coverage, migration/rollback/security assertions, subprocess isolation and all deadlines remain unchanged.
-- [ ] #3 Affected lineage and restore parameterizations pass focused checks and the loaded required CI lanes.
+- [x] #3 Affected lineage and restore parameterizations pass focused checks and the loaded required CI lanes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -38,7 +38,7 @@ Reason: Test-fixture construction optimization only; no application transaction 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Added explicit BEGIN before frozen catalog declarations in three fixture builders: Canvas lineage child, Canvas hybrid catalog, and response-rule historical catalog. Existing context managers commit fixture DDL and seed rows before production validation. No declarations, seeds, migration/rollback/security assertions, subprocess isolation, production code or deadlines changed; synchronous durability stays enabled. Recorded the incident lesson.
 
-SQLite experiment confirmed CREATE leaves in_transaction false without BEGIN and true with BEGIN. Original exact version81 test passed locally in4.99s total (4.52s call); the loaded CI child had exceeded45s. After the change all76 affected parameterizations passed in71.41s, including all4 formerly failing children and all48 restore variants. Ruff and whitespace/backlog checks passed. Independent review verified fresh connection state, FTS5 transaction compatibility, duplicate-DDL error behavior and committed byte-comparison baselines; no blockers. Live loaded verification remains pending, so this task stays InProgress. No ADR required for fixture-only setup optimization.
+SQLite experiment confirmed CREATE leaves in_transaction false without BEGIN and true with BEGIN. Original exact version81 test passed locally in4.99s total (4.52s call); the loaded CI child had exceeded45s. After the change all76 affected parameterizations passed in71.41s, including all4 formerly failing children and all48 restore variants. Ruff and whitespace/backlog checks passed. Independent review verified fresh connection state, FTS5 transaction compatibility, duplicate-DDL error behavior and committed byte-comparison baselines; no blockers. Live loaded verification passed in gate43510161110: sandboxed P0 job132180869051 passed184tests in318.23s (job6m45s); restore job132180869141 passed54tests in43.09s (job3m02s, formerly33m03s). Logs: /tmp/tldw-ci-fixture-{sandbox,restore}-live.log. Completion bookkeeping stays local to avoid restarting healthy fullCI. No ADR required for fixture-only setup optimization.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

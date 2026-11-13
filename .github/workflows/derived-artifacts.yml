@@ -265,6 +265,11 @@ jobs:
           python-version: '3.12'
           cache: pip
 
+      # Executable Tests/CI contracts need Node on PATH, including on bare guests.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
       - name: Install fast-lane dependencies
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
 

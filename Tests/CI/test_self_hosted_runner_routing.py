@@ -120,3 +120,16 @@ def test_p0_profiles_each_run_once_without_fail_fast(workflows):
     assert {"console-p0-gate", "dreams-boundary"} <= set(
         jobs["derived-artifacts"]["needs"]
     )
+
+
+def test_fast_lane_provisions_node_before_executable_ci_contracts(workflows):
+    steps = workflows["derived-artifacts.yml"]["jobs"]["pr-fast-lane"]["steps"]
+    contract = next(
+        i for i, step in enumerate(steps) if step.get("name") == "Run fast PR contract"
+    )
+    assert any(
+        step.get("uses", "").startswith("actions/setup-node@")
+        and str(step.get("with", {}).get("node-version")) == "24"
+        and not step.get("if")
+        for step in steps[:contract]
+    )

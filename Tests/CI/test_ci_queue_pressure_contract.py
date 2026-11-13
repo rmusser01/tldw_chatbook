@@ -1258,7 +1258,9 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
     # process); TASK-34916 moved that invocation to its own job.
     # TASK-37270 adds bounded UAT, report validation, negative control, and artifacts to
     # the existing second job; the original serial invocation stays in place.
-    assert len(fast["steps"]) == (8 if job_name == "pr-fast-lane-admission-2" else 4)
+    # The sandboxed lane also provisions Node for its executable CI contracts.
+    expected_steps = {"pr-fast-lane-admission-2": 8, "pr-fast-lane": 5}
+    assert len(fast["steps"]) == expected_steps.get(job_name, 4)
     assert fast["steps"][-1]["name"] == test_step
     assert "if" not in fast["steps"][-1]
 

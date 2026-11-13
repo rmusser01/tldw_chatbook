@@ -65,3 +65,5 @@ Sustained-load qualification (TASK-40724): attempt [43487945840](https://github.
 
 
 Attempt 43496035687 passed Dreams/Guardian in 21m08s and the P0 admission profile in 13m27s, but sandboxed P0 still hit 35 minutes. Its three response-rule restore selectors completed in 25m46s before the remaining Canvas workload. Those exact selectors now have their own restore profile; all P0 selectors still occur exactly once, and no per-test or job limit was raised further. The same attempt exposed an ingest crash-probe startup cost, repaired separately by TASK-40725. Full-gate timing remains unqualified until the next complete successful attempt.
+
+The PR Fast Lane explicitly provisions Node24 with setup-node before running Tests/CI (TASK-40727). The cleanup and cost-report contracts execute real JavaScript; the Actions runner's bundled internal Node is not a shell-PATH dependency. Keep those tests required on both hosted and disposable runners.
