@@ -4,7 +4,7 @@ title: "Restore review calls Actor Pack and visual-identity persona data 'Other 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 06:00
+updated_date: 2026-11-13 06:35
 labels:
 - follow-up
 - backup
@@ -87,3 +87,7 @@ Runs: the label test serially, 1 passed. The AC2 test: green twice (585.9 s at l
 - **M3:** both AC2 tests now use the per-platform timeout form.
 - **Regression check:** `test_later_created_destinations`, `test_builtin_later_snapshot`, `test_rollback_group_scope`, `test_later_rollback` and `test_eval_later_snapshot` with `-n 4`: 122 passed, 1 failed. The failure is `test_builtin_later_snapshot.py::test_fresh_process_rederives_finite_sources_and_executes_later_rollback`, whose 60 s child timed out. It timed out the same way against base `later_rollback.py` at load ~44.
 - **Changed scenario:** green again after the restructure (328 s).
+
+### Review round 3 (r14act-rev2)
+
+The created-tree test's outer budget now exceeds its two children's on every platform. On win32 the outer budget is 5700; the source child's is 1500 and the target child's is 4000. The producer's timeout is per-platform (900 on win32, 240 elsewhere). Verified by collection only: 22 tests collected.

@@ -186,7 +186,8 @@ class PersonaActorPackCoordinator:
             )
         except Exception:
             # Committed: any failure here (a storage pause included) only
-            # leaves the intent for startup recover() to finish (TASK-40304).
+            # leaves the intent for startup recover(), which finishes it if
+            # the persona store is unchanged and else quarantines it.
             return PersonaActorPackCreationResult(identity, cleanup_pending=True)
         return PersonaActorPackCreationResult(identity, cleanup_pending=False)
 

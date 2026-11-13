@@ -3215,7 +3215,9 @@ nothing written), and a pause that begins mid-activation cannot drain until the
 activation has retired and removed its uncommitted files. In the app, maintenance
 another process requests reaches the activation as this process's local pause, so
 it refuses the same way rather than waiting. A failure after the persona commit
-keeps the files and reports cleanup pending. Before, a pause that began between two
+keeps the files and reports cleanup pending; startup `recover()` finishes that
+intent if the persona store is unchanged, and a persona edit in between leaves it
+quarantined (existing coordinator rule). Before, a pause that began between two
 asset writes drained at once and left a published asset with no committed row
 behind.
 

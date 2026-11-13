@@ -4,7 +4,7 @@ title: "Actor Pack activation writes into captured persona trees without a stora
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 06:00
+updated_date: 2026-11-13 06:35
 labels:
 - follow-up
 - backup
@@ -69,7 +69,7 @@ Covering runs (load 64-88): the 3 Architecture files serially, 246 passed. `Test
 
 ### Review round 2 (r14act-rev1)
 
-- **C1:** a pause that began after the persona commit made `cleanup_persona_intent` raise `RecoveryRequired`. The new `except RecoveryRequired` then deleted the committed assets: 3 files at commit, 0 after, with the identity committed. `PersonaActorPackCoordinator.create_persona` now treats any failure after its commit as `cleanup_pending=True`; startup `recover()` finishes committed intents. Test: `test_actor_pack_pause_after_the_persona_commit_keeps_its_assets`. It was red with the old narrow catch ("committed Actor Pack assets were removed") and is green now.
+- **C1:** a pause that began after the persona commit made `cleanup_persona_intent` raise `RecoveryRequired`. The new `except RecoveryRequired` then deleted the committed assets: 3 files at commit, 0 after, with the identity committed. `PersonaActorPackCoordinator.create_persona` now treats any failure after its commit as `cleanup_pending=True`; startup `recover()` finishes a committed intent if the persona store is unchanged; a persona edit in between leaves it quarantined (`authority_mismatch`), and later activations then refuse `actor_pack_creation_blocked` (existing coordinator rule). Test: `test_actor_pack_pause_after_the_persona_commit_keeps_its_assets`. It was red with the old narrow catch ("committed Actor Pack assets were removed") and is green now.
 - **I1:** neither test failed with the admission removed. Both now fail when `acquire_storage` is replaced by `nullcontext()`:
   - The pause test asserts that `_activation_material` is never reached (`assert [True] == []` under the bypass).
   - The in-flight test's publish hook closes the worker thread's cached ChaChaNotes connection before the pause. Under the bypass all three cases failed with "a capture drained over an in-flight activation".
@@ -83,3 +83,7 @@ Runs at load 30-50:
 - The same tests under the admission-bypass control: 4 failed. Under the combined C1/M2/I2 controls: 3 failed (one per fix).
 - `Tests/Actor_Packs`, Packaging, Roleplay import and Buddy conversion with `-n 4`: 312 passed, 2 failed. The two are the known export golden-byte failures, also red at base.
 - Ratchets and the inventory file, serially: 243 passed.
+
+### Review round 3 (r14act-rev2)
+
+Startup `recover()` finishes a committed intent only while the persona store is unchanged. The C1 note above, the ADR-126 note, the inventory paragraph and the coordinator comment now say so.

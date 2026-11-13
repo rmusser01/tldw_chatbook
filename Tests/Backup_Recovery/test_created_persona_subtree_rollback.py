@@ -613,7 +613,7 @@ print(json.dumps({'root':str(root),'digest':review.content_digest}))
 '''
 
 def produce(*args):
-    result=subprocess.run([sys.executable,'-c',producer,*args],capture_output=True,text=True,timeout=240)
+    result=subprocess.run([sys.executable,'-c',producer,*args],capture_output=True,text=True,timeout=900 if sys.platform=='win32' else 240)
     assert result.returncode==0,result.stderr[-4000:]+result.stdout[-1000:]
     return json.loads(result.stdout.strip().splitlines()[-1])
 
@@ -735,7 +735,9 @@ def test_later_rollback_of_a_restore_that_changed_actor_pack_trees(tmp_path):
     )
 
 
-@pytest.mark.timeout(4200 if sys.platform == "win32" else 1500)
+# Above the two children's summed budgets on every platform; the source
+# child's budget holds its producer's (900 on win32).
+@pytest.mark.timeout(5700 if sys.platform == "win32" else 1500)
 def test_later_rollback_of_a_restore_that_created_actor_pack_trees(tmp_path):
     """TASK-40305 AC2: restore a backup holding both trees into a profile that
     never had either, then roll that restore back later. The rollback leaves
@@ -749,7 +751,7 @@ def test_later_rollback_of_a_restore_that_created_actor_pack_trees(tmp_path):
         "created-source",
         "backup",
         script=_ACTOR_TREES_ROLLBACK,
-        timeout=900 if sys.platform == "win32" else 300,
+        timeout=1500 if sys.platform == "win32" else 300,
     )
     _run(
         tmp_path / "created-target",
