@@ -155,9 +155,14 @@ row whose contents are never listed (a local-source `repository.git` can hold
 tens of thousands of files), and replace restore keeps such a directory whole
 when the archive excluded it too (`restore_plan`'s unknown-children rule skips
 it). A fetch folder the archive lacks that holds excluded members cannot be
-retired around them, so `plan_restore` calls `refuse_added_fetch_folders` and the
-review refuses with `plugin_fetch_added_since_backup` (owner decision
-2026-11-12: refuse early; automatic handling is a follow-up). Capture refuses rather than waits: an unsettled `processes` row or a
+retired around them, so `plan_restore` calls `refuse_added_fetch_folders`, which
+raises `FetchRemovalRequired` (`plugin_fetch_removal_required`) naming every such
+member. The Backup screen lists them; on the user's confirmation
+`remove_fetch_members` deletes exactly those, holding the runtime lock and never
+following a link, before the restore is planned again, so they never reach the
+safety copy or any archive. The snapshot-only folder and its custody record are
+then retired into the safety copy like any other target (TASK-40309, owner
+decision 2026-11-12: remove after the user confirms). Capture refuses rather than waits: an unsettled `processes` row or a
 held runtime lock reduces the owner to one unavailable root plus a
 `writers_active` row, and the inventory adds `plugin_writers_active` after group
 selection; each item's copy creates if needed and holds the lock. Restore is in

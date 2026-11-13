@@ -99,6 +99,8 @@ class BackupRestoreScreen(Screen):
         self._restore_review_codes_seen = ()
         self._restore_retention_accepted = False
         self._safety_scope_seen = ()
+        # TASK-40309: reviewed fetch-folder members to delete before planning.
+        self._fetch_removal = ()
         self._rollback_copy_id = None
         self._rollback_plan = None
         self._rollback_availability = None
@@ -310,6 +312,14 @@ class BackupRestoreScreen(Screen):
                         id="backup-restore-preview",
                         markup=False,
                     )
+                    remove = Button(
+                        "Remove newer plugin downloads",
+                        id="backup-remove-plugin-downloads",
+                        variant="warning",
+                        classes="backup-restore-screen-button",
+                    )
+                    remove.display = False
+                    yield remove
                     yield Button(
                         "Review restore",
                         id="backup-review-restore",
@@ -1323,6 +1333,8 @@ class BackupRestoreScreen(Screen):
     def _invalidate(self):
         self._revision += 1
         self._preview = self._reviewed = None
+        self._fetch_removal = ()
+        self.query_one("#backup-remove-plugin-downloads", Button).display = False
         self._backup_availability = None
         self.query_one("#backup-create", Button).disabled = True
         self._restore_plan = None
@@ -1383,6 +1395,8 @@ class BackupRestoreScreen(Screen):
 
     def _forget_safety_scope(self):
         self._safety_scope_seen = ()
+        # TASK-40309: reviewed fetch-folder members to delete before planning.
+        self._fetch_removal = ()
         self.query_one("#backup-safety-scope").display = False
         for box in self.query(".backup-safety-member"):
             box.value = False
@@ -2260,6 +2274,8 @@ class BackupRestoreScreen(Screen):
         data_groups=None,
         displayed_groups=None,
     ):
+        from tldw_chatbook.Plugins.backup import FetchRemovalRequired
+
         try:
             inventory = (
                 None
@@ -2297,12 +2313,85 @@ class BackupRestoreScreen(Screen):
                 if plan.mode == "replace"
                 else None
             )
+        except FetchRemovalRequired as error:
+            self._deliver(app, self._fetch_removal_ready, revision, error.members)
         except (OSError, ValueError, RuntimeError) as error:
             self._deliver(
                 app, self._restore_ready, revision, None, self.service.issue_code(error)
             )
         else:
             self._deliver(app, self._restore_ready, revision, plan, None, availability)
+
+    def _fetch_removal_ready(self, revision, members):
+        """List newer plugin download folders and what removing them deletes."""
+        if not self.is_mounted or revision != self._revision:
+            return
+        self._restore_plan = None
+        self._fetch_removal = tuple(members)
+        folders = dict.fromkeys(member.parent for member in members)
+        rows = [
+            "Newer plugin downloads. These folders were downloaded from a "
+            "repository after this backup was made (a source refresh, an update "
+            "check, an install or an update). Restoring Tools and skills removes "
+            "them. Installed plugins keep working.",
+            "Remove newer plugin downloads deletes the files below now, with no "
+            "safety copy; a rollback cannot bring them back. They are each "
+            "download's git copy (repository.git, content) and the copies of your "
+            "git and SSH settings it made (host-git-config, host-ssh-*). Your own "
+            "git configuration and ~/.ssh are not touched.",
+            "Each folder's snapshot and its download record stay until you start "
+            "the restore, which moves them into the before-replacement safety "
+            "copy with the rest of your current data.",
+            "Review restore runs again after the removal.",
+        ]
+        for folder in folders:
+            rows.append(f"Folder: {folder}")
+            rows.extend(
+                f"  Delete: {member.name}"
+                for member in members
+                if member.parent == folder
+            )
+        self.query_one("#backup-restore-preview", Static).update("\n".join(rows))
+        self.query_one("#backup-start-restore", Button).disabled = True
+        button = self.query_one("#backup-remove-plugin-downloads", Button)
+        button.display = True
+        button.disabled = False
+        button.focus()
+
+    @on(Button.Pressed, "#backup-remove-plugin-downloads")
+    def _remove_plugin_downloads(self):
+        if not self._fetch_removal:
+            return
+        self.query_one("#backup-remove-plugin-downloads", Button).disabled = True
+        self._run_fetch_removal(self.app, self._revision, self._fetch_removal)
+
+    @work(exclusive=True, thread=True, group="backup-plugin-download-removal")
+    def _run_fetch_removal(self, app, revision, members):
+        from tldw_chatbook.Plugins.backup import remove_fetch_members
+
+        try:
+            remove_fetch_members(members)
+        except (OSError, ValueError) as error:
+            self._deliver(
+                app, self._fetch_removal_done, revision, self.service.issue_code(error)
+            )
+        else:
+            self._deliver(app, self._fetch_removal_done, revision, None)
+
+    def _fetch_removal_done(self, revision, issue):
+        if not self.is_mounted or revision != self._revision:
+            return
+        button = self.query_one("#backup-remove-plugin-downloads", Button)
+        if issue is not None:
+            button.disabled = False
+            self.query_one("#backup-restore-preview", Static).update(
+                "Removal refused: " + self.service.issue_message(issue) + f" ({issue})"
+            )
+            return
+        self.query_one("#backup-message", Static).update(
+            "Newer plugin downloads removed. Reviewing restore again."
+        )
+        self._review_restore()
 
     def _restore_requirements_ready(self, revision, requirements):
         """Show target-linked groups in the existing form before a new review."""

@@ -37,7 +37,7 @@ OWNER = "plugins"
 REGISTRY = "registry.sqlite3"
 LOCK = "runtime.lock"
 WRITERS_ACTIVE = "plugin_writers_active"
-FETCH_ADDED = "plugin_fetch_added_since_backup"
+FETCH_REMOVAL = "plugin_fetch_removal_required"
 
 # Exact installed v5 catalog, measured from PluginRegistry._reference_schema()
 # (migrations 001-005). A new migration must add its catalog here; the pinning
@@ -80,14 +80,28 @@ def _staging_excluded(relative: str) -> bool:
     return len(parts) > 2 and parts[0] == "staging" and parts[2] != "snapshot"
 
 
+class FetchRemovalRequired(ValueError):
+    """A replace restore over fetch folders the backup lacks needs their removal.
+
+    ``members`` names every member to delete, never ``snapshot/``: the restore
+    review lists them, and the user's confirmation removes them before the
+    restore is planned again (owner decision 3, TASK-40309, 2026-11-12).
+    """
+
+    def __init__(self, members: tuple[Path, ...]):
+        super().__init__(FETCH_REMOVAL)
+        self.members = members
+
+
 def refuse_added_fetch_folders(items, archived) -> None:
-    """Refuse a replace restore over a fetch folder the archive lacks that holds
-    excluded members: restore would retire the folder but must keep what it never
-    captured, so Start could not finish (owner decision 2026-11-12: refuse early
-    with a reason that says what to do; automatic handling is a follow-up).
+    """Refuse to plan a replace restore over a fetch folder the archive lacks
+    while it holds members no backup captures: retiring the folder would have to
+    keep them, which Start cannot do. ``FetchRemovalRequired`` lists them so the
+    review can offer their removal; a folder holding only ``snapshot/`` restores
+    and is retired with its custody record into the safety copy.
 
     ``items`` is the target inventory, ``archived`` the archive's producer rows
-    by logical id. A folder holding only ``snapshot/`` restores normally.
+    by logical id.
     """
     paths = {item.path: item for item in items if item.path is not None}
     roots = [
@@ -97,6 +111,7 @@ def refuse_added_fetch_folders(items, archived) -> None:
         and item.metadata is not None
         and item.metadata.relative_path == ""
     ]
+    members = set()
     for item in items:
         if item.owner != OWNER or item.status != "intentionally_excluded":
             continue
@@ -108,7 +123,50 @@ def refuse_added_fetch_folders(items, archived) -> None:
                 continue
             folder = paths.get(root.joinpath(*parts[:2]))
             if folder is None or folder.logical_id not in archived:
-                raise ValueError(FETCH_ADDED)
+                members.add(root.joinpath(*parts[:3]))
+    if members:
+        raise FetchRemovalRequired(tuple(sorted(members)))
+
+
+def remove_fetch_members(members: tuple[Path, ...]) -> None:
+    """Delete exactly the reviewed fetch-folder members, with no safety copy.
+
+    Each must be a direct member of ``<plugins root>/staging/<name>/`` other
+    than ``snapshot``; links are removed, never followed. The runtime lock is
+    held so no plugin owner starts meanwhile. Nothing here enters an archive.
+    """
+    import os
+    import shutil
+    import stat
+
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise ValueError("plugin_fetch_removal_unqualified")
+    by_root = {}
+    for member in members:
+        member = Path(member)
+        folder = member.parent
+        root = folder.parent.parent
+        if (
+            not member.is_absolute()
+            or member.name in {"snapshot", "", ".", ".."}
+            or folder.parent.name != "staging"
+            or folder.parent.is_symlink()
+            or folder.is_symlink()
+            or not (root / REGISTRY).is_file()
+        ):
+            raise ValueError("plugin_fetch_removal_invalid")
+        by_root.setdefault(root, []).append(member)
+    for root, paths in by_root.items():
+        with _runtime_lock(root, create=True):
+            for member in paths:
+                try:
+                    mode = os.lstat(member).st_mode
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISDIR(mode):
+                    shutil.rmtree(member)
+                else:
+                    os.unlink(member)
 
 
 @contextmanager

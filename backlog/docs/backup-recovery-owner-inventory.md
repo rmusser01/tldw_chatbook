@@ -2935,15 +2935,17 @@ into a separate profile refuses the owner (`owner_relocation_unverified:plugins`
 a registry whose data-root paths, or installed and fetched package paths
 (`materialized_identity` in `revisions.inspection_json`), name another root is
 refused the same way at staging. A replace restore whose target holds a fetch
-folder the archive lacks, with excluded members inside, is refused at review
-with `plugin_fetch_added_since_backup` (`Plugins/backup.refuse_added_fetch_folders`,
-called from `restore_plan.plan_restore` when the plugins owner is selected; owner
-decision 2026-11-12, "Refuse early, feature next"): retiring that folder would
-have to keep members it never captured, which Start cannot do
-(`rollback_dependency_selection_required`, `publication_preserved_overlap`). The
-copy says to restore without Tools and skills, or to delete everything but
-`snapshot/` in those folders first; a snapshot-only folder restores and is
-retired. `restore_plan`'s unknown-children rule keeps a directory whole only when
+folder the archive lacks, with excluded members inside, cannot be planned:
+retiring that folder would have to keep members it never captured, which Start
+cannot do (`rollback_dependency_selection_required`,
+`publication_preserved_overlap`). `Plugins/backup.refuse_added_fetch_folders`
+(called from `restore_plan.plan_restore` when the plugins owner is selected)
+raises `FetchRemovalRequired` (`plugin_fetch_removal_required`) naming those
+members; the Backup screen lists them and, on the user's confirmation,
+`remove_fetch_members` deletes them with no safety copy before the restore is
+planned again (TASK-40309, owner decision 2026-11-12, "Remove it after the user
+confirms"). The snapshot-only folder and its custody record are then retired
+into the safety copy. `restore_plan`'s unknown-children rule keeps a directory whole only when
 both the target and the archive exclude it. Detached import refuses a plugin root
 by name (`detached_owner_unavailable:plugins`). The owner is activation-required: the
 plugin service refuses to run plugins for a restored generation until its own

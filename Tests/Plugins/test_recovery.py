@@ -1179,41 +1179,68 @@ def test_odd_staging_member_is_excluded_not_blocking(tmp_path, kind):
 
 @platform_support.package_capture
 @pytest.mark.parametrize("planted", ["fetched", "snapshot-only"])
-def test_replace_restore_refuses_a_fetch_folder_added_since_the_backup(tmp_path, planted):
-    """I-1 (owner decision 2026-11-12, refuse early): a replace restore retires a
-    fetch folder the backup lacks, which it cannot do while the folder holds
-    members no backup captures. The preview refuses with a plugin reason that
-    says what to do; a folder holding only its snapshot restores."""
+def test_replace_restore_lists_and_removes_a_fetch_folder_added_since_the_backup(
+    tmp_path, planted
+):
+    """TASK-40309 (owner decision 3, 2026-11-12, "Remove it after the user
+    confirms"): a replace restore over a fetch folder the backup lacks lists
+    every member a backup never captures for the review to confirm, never
+    ``snapshot/``. Removing exactly those deletes them, links included, without
+    following a link; the restore can then be planned. A folder holding only its
+    snapshot plans directly. The old refusal code no longer fires."""
     from tldw_chatbook.Backup_Recovery.recovery_service import issue_code, issue_message
     from tldw_chatbook.Plugins import backup
 
     config, root = _plugin_root(tmp_path)
-    refuse = getattr(backup, "refuse_added_fetch_folders", None)
-    assert refuse is not None, "no plugin-specific restore preview check"
     backed_up = _plugin_rows(config, root)[0].items
     archived = {item.logical_id: item for item in backed_up}
-    refuse(backed_up, archived)  # the backup's own fetch folders never refuse
+    backup.refuse_added_fetch_folders(backed_up, archived)  # the backup's own never
     added = root / "staging" / "zz-new"
+    outside = tmp_path / "outside-the-plugin-root"
+    outside.write_bytes(b"kept")
     members = {"snapshot/plugin.json": b"{}"}
     if planted == "fetched":
-        members.update({"repository.git/HEAD": b"ref", "host-git-config": b"x"})
+        members.update(
+            {
+                "repository.git/HEAD": b"ref",
+                "content/plugin.json": b"{}",
+                "host-git-config": b"x",
+                "host-ssh-config": b"y",
+            }
+        )
     for relative, payload in members.items():
         (added / relative).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         (added / relative).write_bytes(payload)
         (added / relative).chmod(0o600)
+    if planted == "fetched":
+        (added / "later-link").symlink_to(outside)
     target = _plugin_rows(config, root)[0]
     if planted == "snapshot-only":
-        refuse(target.items, archived)
+        backup.refuse_added_fetch_folders(target.items, archived)
         return
-    with pytest.raises(ValueError) as refused:
-        refuse(target.items, archived)
+    with pytest.raises(backup.FetchRemovalRequired) as refused:
+        backup.refuse_added_fetch_folders(target.items, archived)
+    assert refused.value.members == tuple(
+        added / name
+        for name in (
+            "content",
+            "host-git-config",
+            "host-ssh-config",
+            "later-link",
+            "repository.git",
+        )
+    )
     code = issue_code(refused.value)
-    assert code == "plugin_fetch_added_since_backup"
-    message = issue_message(code)
-    assert "downloaded from a repository since this backup" in message
-    assert "a source refresh, an update check, an install or an update" in message
-    assert "without the Tools and skills group" in message
-    assert "except the snapshot folder" in message and "Uninstall" not in message
+    assert code == "plugin_fetch_removal_required" != "plugin_fetch_added_since_backup"
+    assert "removes them when you confirm" in issue_message(code)
+    for wrong in (added / "snapshot", root / "registry.sqlite3", outside):
+        with pytest.raises(ValueError, match="plugin_fetch_removal_invalid"):
+            backup.remove_fetch_members((wrong,))
+    backup.remove_fetch_members(refused.value.members)
+    assert sorted(path.name for path in added.iterdir()) == ["snapshot"]
+    assert (added / "snapshot/plugin.json").read_bytes() == b"{}"
+    assert outside.read_bytes() == b"kept"
+    backup.refuse_added_fetch_folders(_plugin_rows(config, root)[0].items, archived)
 
 
 @platform_support.package_capture
@@ -1682,20 +1709,24 @@ try:
   assert not (moved/'default_user'/'plugins'/'registry.sqlite3').exists()
   source.write_bytes(original)
   phase('moved data refused')
-  # I-1 (owner decision 2026-11-12, refuse early): a plugin fetched since the
-  # backup leaves a fetch folder the archive lacks. While it holds members no
-  # backup captures, the review refuses with the plugin reason, before Start.
+  # TASK-40309 (owner decision 2026-11-12, remove after the user confirms): a
+  # plugin fetched since the backup leaves a fetch folder and a custody record
+  # the archive lacks. The review lists the folder's uncaptured members; the
+  # confirmation removes exactly those (the Backup screen's call), and the
+  # restore then retires snapshot/ and the record into the safety copy.
+  from tldw_chatbook.Plugins.backup import FetchRemovalRequired,remove_fetch_members
   plugin_root=next(item.path for item in plugins if item.metadata and item.metadata.relative_path=='')
   added=plugin_root/'staging'/'zz-new'
-  for name,payload in (('snapshot/plugin.json',b'{}'),('repository.git/HEAD',b'ref'),('host-git-config',b'x')):
-   (added/name).parent.mkdir(parents=True,exist_ok=True,mode=0o700);(added/name).write_bytes(payload);(added/name).chmod(0o600)
+  record=plugin_root/'acquisition-custody'/('0'*64+'.json')
+  for path,payload in ((added/'snapshot/plugin.json',b'{}'),(added/'repository.git/HEAD',b'ref'),(added/'host-git-config',b'x'),(record,b'{}')):
+   path.parent.mkdir(parents=True,exist_ok=True,mode=0o700);path.write_bytes(payload);path.chmod(0o600)
   try:restore()
-  except ValueError as error:
-   assert service.issue_code(error)=='plugin_fetch_added_since_backup',str(error)
+  except FetchRemovalRequired as error:members=error.members
   else:raise AssertionError('restore planned over a fetch folder added since the backup')
-  # The copy's step: keep only snapshot/ there. The restore then retires it.
-  shutil.rmtree(added/'repository.git');(added/'host-git-config').unlink()
-  phase('newer fetch refused')
+  assert members==(added/'host-git-config',added/'repository.git'),members
+  remove_fetch_members(members)
+  assert sorted(path.name for path in added.iterdir())==['snapshot'] and record.exists()
+  phase('newer fetch removed')
   next(item.path for item in preview.items if item.owner=='plugins' and item.path is not None and item.path.name=='notes.txt').write_bytes(b'changed after the backup')
  # The first attempt stops at the rollback snapshot's credential review (about
  # 10 s) for the restored skill trust; the user acknowledges and restores again.
@@ -1709,7 +1740,7 @@ try:
   phase('aborted')
   result=restore(acknowledged_credential_issues=issues)
  assert result['state']=='succeeded',dict(result)
- if first:assert not added.exists(),'the newer fetch folder was not retired'
+ if first:assert not added.exists() and not record.exists(),'the newer fetch folder or its record was not retired'
  phase('restored')
 finally:
  service.close()

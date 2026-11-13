@@ -183,11 +183,16 @@ saved data stay on disk:
 - You restored on another computer at the same paths, or the OS keyring was
   reset. **Authority…** reports "Plugin authority needs recovery: …".
 
-**Reset authority…** does not help in either case. Restoring after plugins
-were downloaded again since the backup, and restoring after plugin folders
-were deleted, have further limits; see
-[After restoring a backup](../Plugins/operations.md#after-restoring-a-backup)
-and [Local backup and recovery](../Backup-and-Recovery.md).
+**Reset authority…** does not help in either case. Restoring after plugin
+folders were deleted has further limits; see
+[After restoring a backup](../Plugins/operations.md#after-restoring-a-backup).
+
+If plugins were downloaded from a repository after the backup was made (a
+source refresh, an update check, an install or an update), the Backup screen's
+**Review restore** lists their download folders and offers **Remove newer plugin
+downloads**. It deletes each download's git copy and its copies of your git and
+SSH settings, with no safety copy; installed plugins keep working. See
+[Local backup and recovery](../Backup-and-Recovery.md).
 
 ## Common tasks
 

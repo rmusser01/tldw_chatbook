@@ -531,20 +531,50 @@ async def test_backup_review_explains_refused_live_plugins(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_restore_review_explains_refused_newer_plugin_fetches(tmp_path):
-    """TASK-40132 I-1 (owner decision 2026-11-12, refuse early): a restore review
-    refused over plugin fetches newer than the backup says what to do."""
-    from textual.widgets import Static
+async def test_restore_review_lists_newer_plugin_downloads_and_removes_them(
+    tmp_path, monkeypatch
+):
+    """TASK-40309 (owner decision 3, 2026-11-12): the restore review lists the
+    newer download folders and, before the user confirms, says what is deleted
+    with no safety copy and that a rollback cannot bring it back. The
+    confirmation deletes exactly the listed members, keeps snapshot/, and
+    reviews the restore again."""
+    from textual.widgets import Button, Static
 
+    root = tmp_path / "plugins"
+    folder = root / "staging" / "zz-new"
+    for relative in ("snapshot/plugin.json", "repository.git/HEAD", "host-git-config"):
+        (folder / relative).parent.mkdir(parents=True, exist_ok=True)
+        (folder / relative).write_bytes(b"x")
+    (root / "registry.sqlite3").write_bytes(b"")
+    members = (folder / "host-git-config", folder / "repository.git")
     async with mounted(tmp_path) as (pilot, screen, _service):
-        await screen._restore_ready(
-            screen._revision, None, "plugin_fetch_added_since_backup"
-        )
+        reviews = []
+        monkeypatch.setattr(screen, "_review_restore", lambda: reviews.append(1))
+        button = screen.query_one("#backup-remove-plugin-downloads", Button)
+        assert not button.display
+        screen._fetch_removal_ready(screen._revision, members)
         await pilot.pause()
         review = str(screen.query_one("#backup-restore-preview", Static).render())
-        assert "Restore review refused" in review
-        # r13g-rev4: every repository download leaves such a folder, not only
-        # installs and updates.
-        assert "downloaded from a repository since this backup" in review
-        assert "a source refresh, an update check, an install or an update" in review
-        assert "without the Tools and skills group" in review
+        assert "downloaded from a repository after this backup" in review
+        assert "with no safety copy; a rollback cannot bring them back" in review
+        assert "Your own git configuration and ~/.ssh are not touched" in review
+        assert "moves them into the before-replacement safety copy" in review
+        assert f"Folder: {folder}" in review
+        assert "Delete: host-git-config" in review and "Delete: repository.git" in review
+        assert "Delete: snapshot" not in review
+        assert button.display and screen.app.focused is button
+        assert screen.query_one("#backup-start-restore", Button).disabled
+        await press(pilot, "#backup-remove-plugin-downloads")
+        for _ in range(100):
+            if reviews:
+                break
+            await pilot.pause(0.02)
+        assert reviews == [1]
+        assert sorted(path.name for path in folder.iterdir()) == ["snapshot"]
+        message = str(screen.query_one("#backup-message", Static).render())
+        assert "Newer plugin downloads removed" in message
+        screen._invalidate()
+        assert not button.display and screen._fetch_removal == ()
+
+
