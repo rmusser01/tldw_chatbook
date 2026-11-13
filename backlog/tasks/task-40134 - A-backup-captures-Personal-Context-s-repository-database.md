@@ -1,11 +1,11 @@
 ---
 id: TASK-40134
 title: "A backup captures Personal Context's repository database"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 17:13
-updated_date: '2026-11-13 03:54'
+updated_date: '2026-11-13 08:34'
 labels:
 - follow-up
 - backup
@@ -70,18 +70,18 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A backup preview of a profile holding the repository database (with its `-wal`) lists it as captured in a selectable "Personal Context" group, and the preview is no longer incomplete because of it (red first)
-- [ ] #2 The archive holds a consistent copy of the database, including device-only records, that passes the installed exact-schema validation for each v9 layout from TASK-40133
-- [ ] #3 A backup that includes credentials carries the profile key as a `personal_context` credential record, and capture checks that the key opens the captured copy (its manifest authenticates) before writing the record
-- [ ] #4 A backup without credentials carries no key material and keeps the database's key reference exactly as it was (it is not sanitized); its preview says the key is not in the backup
-- [ ] #5 After a replace restore with the default "Everything" selection, the live Personal Context repository is byte-for-byte unchanged, the restore plan said beforehand that Personal Context would not be restored, and the archive still holds the captured copy; an isolated restore likewise leaves the repository out, and its plan says so (red first)
-- [ ] #6 Inert extraction cannot write the key to disk from any archive; a test pins it
-- [ ] #7 Capture is refused with a named reason, shown in the preview, while a first-link freeze or rebaseline marker exists
-- [ ] #8 The review of a backup that includes credentials says the device wrapping key, staged integrity keys and dataset staging keys are left out, as it does for skill-trust keys
-- [ ] #9 After any restore, Personal Context sync does not resume until the restored generation is reviewed; this guard holds on its own (red first)
-- [ ] #10 That review approves only `personal_context.repository`, never `config` or `runtime.sync_state`, and only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`; its copy does not claim that Personal Context sync resumes; after one that published either, Personal Context sync stays off and the user sees a named reason saying so
-- [ ] #11 A detached source holding the repository is refused by name and never imported without its key
-- [ ] #12 The owner inventory doc's Personal Context rows and the Personal Context User Guide page's backup paragraph describe the new behaviour
+- [x] #1 A backup preview of a profile holding the repository database (with its `-wal`) lists it as captured in a selectable "Personal Context" group, and the preview is no longer incomplete because of it (red first)
+- [x] #2 The archive holds a consistent copy of the database, including device-only records, that passes the installed exact-schema validation for each v9 layout from TASK-40133
+- [x] #3 A backup that includes credentials carries the profile key as a `personal_context` credential record, and capture checks that the key opens the captured copy (its manifest authenticates) before writing the record
+- [x] #4 A backup without credentials carries no key material and keeps the database's key reference exactly as it was (it is not sanitized); its preview says the key is not in the backup
+- [x] #5 After a replace restore with the default "Everything" selection, the live Personal Context repository is byte-for-byte unchanged, the restore plan said beforehand that Personal Context would not be restored, and the archive still holds the captured copy; an isolated restore likewise leaves the repository out, and its plan says so (red first)
+- [x] #6 Inert extraction cannot write the key to disk from any archive; a test pins it
+- [x] #7 Capture is refused with a named reason, shown in the preview, while a first-link freeze or rebaseline marker exists
+- [x] #8 The review of a backup that includes credentials says the device wrapping key, staged integrity keys and dataset staging keys are left out, as it does for skill-trust keys
+- [x] #9 After any restore, Personal Context sync does not resume until the restored generation is reviewed; this guard holds on its own (red first)
+- [x] #10 That review approves only `personal_context.repository`, never `config` or `runtime.sync_state`, and only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`; its copy does not claim that Personal Context sync resumes; after one that published either, Personal Context sync stays off and the user sees a named reason saying so
+- [x] #11 A detached source holding the repository is refused by name and never imported without its key
+- [x] #12 The owner inventory doc's Personal Context rows and the Personal Context User Guide page's backup paragraph describe the new behaviour
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -112,6 +112,8 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 **Keyring isolation.** Credential tests patch `credentials._credential_store` to the in-process `SecureKeyring` dict; repository fixtures use `InMemoryProfileKeyProtector` or that dict through `KeyringProfileKeyProtector`; the activation test's subprocess inherits the null keyring from `Tests/conftest.py`.
 
 **Evidence.** The 34 new nodes were run against the TASK-40133 commit's source (tests kept): 31 fail, most on assertions (`DID NOT RAISE`, missing copy, regex mismatch on `detached_unknown_content`, `'unsupported' == 'included'`, `PC root in plan.restore`), some as errors where an API is new (`recovery.SYNC_REVIEW_REQUIRED`). The 3 that pass there pin invariants base already keeps (exclude mode leaves an untracked database alone; repository-only extraction), so they carry negative controls on the new code, each red on an assertion and then reverted: exclude mode rewriting the database (2 nodes), recording without authentication (1), loader without the gate (1), review ignoring published owners (3), first-link check removed (2), restore hold-back removed (2).
+
+**Suites.** `Tests/Backup_Recovery` in full (7,015 nodes, `-n 4`, load 30-45): 391 failed and 37 errors. The same 428 nodes on base 26b2e677dd: 350 still fail there. Of the 78 that passed on base, a rerun on this branch at lower load passed 61; the other 17 (14 `test_created_persona_subtree_rollback` setups hitting their subprocess timeout under xdist, `test_rag_projection_capture[foreign]`, `test_generated_media_capture`, `test_storage_initialization_wait[path-drift]`) all pass serially. `test_data_groups` was updated for the new group. Also green: `Tests/Personal_Context`, the Personal Context Sync/App/Agents/Chat suites, `Tests/UI/test_backup_data_groups.py`, `Tests/UI/test_settings_personal_context.py`, `Tests/UI/test_personal_context_link_app_flow.py`, `Tests/Plugins/test_recovery.py` (its in-place replace restore timed out once under load and passes serially), `Tests/DB/test_private_sqlite_inventory.py` (pins extended for C100/B42, one more backup copy and the new recovery-capture owner; `test_backup_inventory_matches_current_sqlite_and_settings_operations` stays red as on base, which never listed the TASK-40132 plugin capture), `Tests/Architecture/test_backup_owner_inventory.py`, the module-size ratchet (`app.py`, `private_sqlite.py` and `repository.py` at their budgets), and preflight.
 
 **Not verified / limits.** AC#5 is pinned at the plan (what publication executes), not by an executed end-to-end replace restore. `_published_owners`' journal read is fail-closed and exercised only through a stub in the activation test; no test drives a real restore journal into the review. The settings review test is a node outside the PR lane (the UI census has no shard margin this round).
 
