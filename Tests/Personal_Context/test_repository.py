@@ -1861,3 +1861,52 @@ def test_the_review_trigger_reencrypts_through_the_service(
     assert _stored_account(db_path) == account != restored
     assert (_KEYRING_SERVICE, restored) not in backend.values
     assert [r.record_id for r in _keyring_repo(db_path, backend).list_records()] == records
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "recovery:setup_required:personal_context_key_not_in_backup",
+        "recovery:setup_required:personal_context_keyring_unavailable",
+        "recovery:setup_required:personal_context_key_install_unavailable",
+        "named account",
+    ],
+)
+def test_without_a_secure_keyring_the_restore_reason_still_shows(
+    tmp_path, record_factory, monkeypatch, stored
+) -> None:
+    """TASK-40136 AC#1/#2/#5: production passes no key protector, and an isolated
+    copy (or a device without a secure keyring) has only the null keyring. The
+    marker's reason must still be what Settings shows; anything else keeps the
+    keyring's own `profile_locked`. Nothing is created or written."""
+    import keyring
+    from keyring.backends.null import Keyring as NullKeyring
+
+    from tldw_chatbook.Personal_Context.bootstrap import (
+        bootstrap_personal_context_service,
+    )
+
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    _profile(db_path, backend, record_factory)
+    if stored != "named account":
+        _set_stored_account(db_path, stored)
+    monkeypatch.setattr(keyring, "get_keyring", lambda: NullKeyring())
+    data = db_path.read_bytes()
+
+    status = bootstrap_personal_context_service(db_path=db_path).status()
+
+    reason = (
+        "profile_locked"
+        if stored == "named account"
+        else stored.removeprefix("recovery:setup_required:")
+    )
+    assert (status.locked, status.reason_code) == (True, reason)
+    assert db_path.read_bytes() == data
+    absent = tmp_path / "b" / "personal-context.db"
+    absent.parent.mkdir(mode=0o700)
+    assert bootstrap_personal_context_service(db_path=absent).status().reason_code == (
+        "profile_locked"
+    )
+    assert not absent.exists()

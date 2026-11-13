@@ -77,6 +77,24 @@ class RepositoryKeyCustody:
                 raise _locked("Restored profile key is not set up.", reason)
         raise ProfileLockedError("Profile key account is invalid.")
 
+    def _or_marker(self, keyring_protector):
+        """The default keyring protector, or the reason a restore left.
+
+        Without a secure keyring (an isolated restored copy always runs a null
+        one) the protector refuses to construct. A restore's marker names the
+        real reason, so it is read first, read-only, without creating the
+        database (TASK-40136); anything else keeps the keyring's refusal.
+        """
+        try:
+            return keyring_protector()
+        except ProfileLockedError as refusal:
+            from .recovery import stored_restore_marker
+
+            stored = stored_restore_marker(self.db_path)
+            if stored is not None:
+                self._named_key_account(stored)  # raises the marker's reason
+            raise refusal
+
     def _account_on(self, connection: sqlite3.Connection) -> str:
         row = connection.execute(
             "SELECT key_account FROM profile_meta WHERE singleton = 1"
@@ -360,7 +378,20 @@ def profile_key_opens(connection: sqlite3.Connection, account: str, value) -> bo
     Backup uses it on a captured copy before it records the key (TASK-40134).
     """
 
-    from .repository import PersonalContextRepository
+    return profile_key_authenticates(connection, account, value) is True
+
+
+def profile_key_authenticates(
+    connection: sqlite3.Connection, account: str, value
+) -> bool | None:
+    """True or False when the manifest head says so; None when it could not tell.
+
+    False is definite: the value is not key material, or the head fails
+    AEAD/HMAC under it. Anything else (a read error, say) is None, so a caller
+    never deletes a possibly good key on it (TASK-40135).
+    """
+
+    from .repository import PersonalContextRepository, ProfileIntegrityError
 
     try:
         keys = decode_keyring_material(value)
@@ -376,7 +407,11 @@ def profile_key_opens(connection: sqlite3.Connection, account: str, value) -> bo
     try:
         probe._authenticate_keys(connection, keys)
         return True
-    except Exception:  # noqa: BLE001 - any failure means the key does not open it
+    except ProfileIntegrityError:
         return False
+    except ProfileLockedError as error:
+        return False if isinstance(error.__context__, ProfileIntegrityError) else None
+    except Exception:  # noqa: BLE001 - could not tell; never a verdict
+        return None
     finally:
         connection.row_factory = factory

@@ -3,7 +3,7 @@ id: TASK-40135
 title: "A replace restore makes restored Personal Context records readable"
 status: Done
 created_date: 2026-11-10 17:13
-updated_date: '2026-11-13 17:10'
+updated_date: '2026-11-13 20:30'
 assignee:
 - '@claude'
 labels:
@@ -102,4 +102,10 @@ Files: `tldw_chatbook/Personal_Context/{recovery.py,key_protector.py}`, `tldw_ch
 **2026-11-13 (after rebasing onto pca 76af2a47a6).** A keyring that does not answer is never "no key": `recovery._stored_value` now refuses (`personal_context_keyring_read_failed`) instead of returning nothing, so the plan, staging and the pre-publication install refuse rather than plan a lock or treat an account as free; after publication a failed read reports `personal_context_key_check_unavailable` and keeps the new entry instead of deleting it. Pinned by `test_credentials.py::test_a_keyring_that_does_not_answer_is_never_no_key` (red under a temporary revert to the old `return None`: the stamp raised `personal_context_restore_changed`). The rebase conflict in `key_protector.py` kept pca's `exists()` and made `install` (set-if-absent with given material) use it; `create` delegates to `install`.
 
 **Census follow-up (same day).** The DB inventory pins C-row ids and admits each `open_recovery_validation` caller by shape: C101 (`_archived_key`, memory) and C102 (`verify_restored_key`) are the documented `connect_private_sqlite` sites, the id range in `test_inventory_has_stable_unique_connection_and_backup_ids` extends to C102, and `_qualified_fixed_validation_dispatch` admits exactly `open_recovery_validation(OWNER, candidate, writable=True, with_restrictions=True)` in `stamp_restored_key`. `Tests/DB/test_private_sqlite_inventory.py`: 60 passed plus the base-red `test_backup_inventory_matches_current_sqlite_and_settings_operations`.
+
+**2026-11-13, review r14pccA fixes.**
+- **Rollback deletes the restore's own account (spec Q4).** `recovery.forget_restored_keys(plan, candidate)` deletes `restore_account(candidate, key)` for each `personal_context_restore_readable:<key>` plan line, and nothing else. It runs after `_rollback_replacement` at all three sites: a finalize failure inside `replace`, `recover --rollback`, and a finalize failure inside `recover --finish`. A keyring failure there leaves an unnamed entry; it never fails the rollback. The `[rollback-include]` child now asserts the entry is gone.
+- **"Could not check" is not "wrong key".** The new `repository_keys.profile_key_authenticates` returns True, False or None. False is definite: not key material, or AEAD/HMAC failure on the manifest head. `profile_key_opens` is `authenticates(...) is True`. `verify_restored_key` deletes only on a definite failure or a missing entry. It returns `personal_context_key_check_unavailable` and keeps the entry when there is no secure keyring, the keyring does not answer, a read or SQLite error occurs, or the result is undecided. Test: `test_credentials.py::test_a_key_check_that_cannot_tell_keeps_the_entry[no_secure_keyring|read_error]`.
+- **Named refusals.** `personal_context_restore_changed`, `personal_context_key_account_in_use`, `personal_context_key_install_failed` and `personal_context_validation_unavailable` have messages, and are also listed in `known`. `restore_changed` tells the user to review the restore again. Test: `test_personal_context_restore_refusals_are_named`.
+- **Red on the previous head:** the four codes read `backup_operation_failed`, and both cannot-tell cases deleted or misreported.
 

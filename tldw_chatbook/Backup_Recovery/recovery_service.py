@@ -209,9 +209,27 @@ _ISSUE_MESSAGES = {
         "Open Restored profiles again and review the new counts."
     ),
     "personal_context_key_check_unavailable": (
-        "Personal Context was restored, but the keyring did not answer when its "
-        "key was checked. The data and the new keyring entry are kept; open "
-        "Settings > Personal Context and choose Try again."
+        "Personal Context was restored, but its key could not be checked (the "
+        "keyring or the database did not answer). The data and the new keyring "
+        "entry are kept; open Settings > Personal Context and choose Try again."
+    ),
+    "personal_context_restore_changed": (
+        "What Personal Context's restore would do changed after the plan was "
+        "shown (its key was added or removed on this device). Nothing was "
+        "restored; review the restore again."
+    ),
+    "personal_context_key_account_in_use": (
+        "The new keyring account for Personal Context's key is already in use, so "
+        "nothing was restored and no keyring entry changed. Review the restore again."
+    ),
+    "personal_context_key_install_failed": (
+        "Personal Context's key could not be stored in the keyring, so nothing was "
+        "restored. Check the keyring, then review the restore again."
+    ),
+    "personal_context_validation_unavailable": (
+        "Personal Context's copy in this backup could not be read, so the restore "
+        "cannot say how it would end. Restore without the Personal Context group, "
+        "or use another backup."
     ),
     "personal_context_keyring_read_failed": (
         "The keyring did not answer while Personal Context's key was read, so "
@@ -307,6 +325,11 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
         "recovery_operation_running",
         "recovered_review_changed",
         "recovered_asset_held",
+        # TASK-40135: also in _ISSUE_MESSAGES, which returns them first.
+        "personal_context_restore_changed",
+        "personal_context_key_account_in_use",
+        "personal_context_key_install_failed",
+        "personal_context_validation_unavailable",
     }
     if (
         isinstance(error, ValueError)

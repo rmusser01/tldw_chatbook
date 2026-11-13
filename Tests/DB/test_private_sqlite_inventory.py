@@ -825,10 +825,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C99/B41 read and copy the plugin registry for backup (TASK-40132).
         # C100/B42 validate and copy the Personal Context repository (TASK-40134).
         # C101/C102 read an archived Personal Context image and check the
-        # published copy's key after a restore (TASK-40135).
+        # published copy's key after a restore (TASK-40135); C103 reads a live
+        # copy's restore marker when no secure keyring exists (TASK-40136).
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 103) if number not in {8, 9, 10, 75, 97}
+        for number in range(1, 104) if number not in {8, 9, 10, 75, 97}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).

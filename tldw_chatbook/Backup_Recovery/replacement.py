@@ -1703,8 +1703,16 @@ def replace(
                 _rollback_replacement(
                     journal, prepared, session, check_credentials, recovery_cancel
                 )
+            _forget_personal_context_keys(plan, candidate)
             raise ValueError("replacement_rolled_back") from None
     return operation
+
+
+def _forget_personal_context_keys(plan, candidate):
+    """TASK-40135: after a rollback, delete only the accounts this restore created."""
+    from tldw_chatbook.Personal_Context.recovery import forget_restored_keys
+
+    forget_restored_keys(plan, candidate)
 
 
 def _install_personal_context_keys(archive, plan, candidate, cancel):
@@ -2384,6 +2392,7 @@ def recover_replacement(
                 _rollback_replacement(
                     journal, prepared, session, check_credentials, cancel
                 )
+                _forget_personal_context_keys(plan, candidate)
                 return "rolled_back"
             if any(
                 row.event in {"rollback_started", "rollback_credentials_planned"}
@@ -2417,6 +2426,7 @@ def recover_replacement(
                 _rollback_replacement(
                     journal, prepared, session, check_credentials, Event()
                 )
+                _forget_personal_context_keys(plan, candidate)
                 raise ValueError("replacement_rolled_back") from None
             return "committed"
 

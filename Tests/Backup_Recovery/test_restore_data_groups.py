@@ -483,19 +483,23 @@ def tables(path):
         return dump
 
 STATUS = """
-import sys
+import os, sys
+os.environ['PYTHON_KEYRING_BACKEND'] = 'keyring.backends.null.Keyring'
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
 from Tests import network_guard
 network_guard.install()
-from Tests.Personal_Context.test_key_protector import SecureKeyring
 from tldw_chatbook.Personal_Context.bootstrap import bootstrap_personal_context_service
-from tldw_chatbook.Personal_Context.key_protector import KeyringProfileKeyProtector
-status = bootstrap_personal_context_service(
-    db_path=sys.argv[1], key_protector=KeyringProfileKeyProtector(SecureKeyring())).status()
+# As production starts it: the default protector, here with no secure keyring,
+# as an isolated copy (and a device without one) always has.
+status = bootstrap_personal_context_service(db_path=sys.argv[1]).status()
 print(status.locked, status.reason_code)
 """
 
 def status(path):
-    """A fresh start (another process) reads the locked reason from the copy alone."""
+    """A fresh start (another process, null keyring, default protector) reads the
+    locked reason from the copy alone."""
     import subprocess
     import sys
     done = subprocess.run([sys.executable, '-c', STATUS, str(path)], capture_output=True,
@@ -673,6 +677,8 @@ try:
         else:
             assert named == original_account
             assert records(live) == ['record-after-backup', 'record-device-only']
+            # Spec Q4: the rollback deletes the account this restore created.
+            assert not installed & set(current['device'].values), installed
         assert {k: v for k, v in current['device'].values.items() if k in before} == before
         print('retired and reopened')
         raise SystemExit(0)

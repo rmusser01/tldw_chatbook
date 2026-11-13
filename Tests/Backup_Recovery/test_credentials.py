@@ -1356,3 +1356,59 @@ def test_a_keyring_that_does_not_answer_is_never_no_key(tmp_path, monkeypatch):
                account="personal-context:recovery_" + "e" * 32)
     assert recovery.verify_restored_key(target) == recovery.KEY_CHECK_UNAVAILABLE
     assert backend.values == before and staged.read_bytes() == data
+
+
+@pytest.mark.parametrize("cause", ["no_secure_keyring", "read_error"])
+def test_a_key_check_that_cannot_tell_keeps_the_entry(tmp_path, monkeypatch, cause):
+    """TASK-40135 AC#6 (review r14pccA): only a definite authentication failure
+    deletes the restore's account; "could not check" keeps it and says so."""
+    from tldw_chatbook.Personal_Context import recovery
+    from tldw_chatbook.Personal_Context.key_protector import (
+        KeyringProfileKeyProtector,
+        decode_keyring_material,
+    )
+    from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+
+    staged, record, target, backend = _restore_case(tmp_path, monkeypatch, "named")
+    account = _stamp(staged, target, planned=recovery.RESTORE_READABLE + ":" + _KEY)
+    KeyringProfileKeyProtector(backend).install(account, decode_keyring_material(record))
+    _publish(staged, target)
+    before = dict(backend.values)
+    if cause == "no_secure_keyring":
+        from Tests.Personal_Context.test_key_protector import PlaintextKeyring
+
+        monkeypatch.setattr(
+            credentials,
+            "_credential_store",
+            lambda: SimpleNamespace(_keyring=PlaintextKeyring()),
+        )
+    else:
+
+        def unreadable(self, connection, keys):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(PersonalContextRepository, "_authenticate_keys", unreadable)
+
+    assert recovery.verify_restored_key(target) == recovery.KEY_CHECK_UNAVAILABLE
+    assert backend.values == before
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "personal_context_restore_changed",
+        "personal_context_key_account_in_use",
+        "personal_context_key_install_failed",
+        "personal_context_validation_unavailable",
+        "personal_context_keyring_read_failed",
+        "personal_context_key_check_unavailable",
+    ],
+)
+def test_personal_context_restore_refusals_are_named(code):
+    """TASK-40135 (review r14pccA): each refusal reaches the user by name."""
+    from tldw_chatbook.Backup_Recovery import recovery_service
+
+    assert recovery_service.issue_code(ValueError(code)) == code
+    assert recovery_service.issue_message(code) != recovery_service.issue_message(
+        "an_unknown_code"
+    )

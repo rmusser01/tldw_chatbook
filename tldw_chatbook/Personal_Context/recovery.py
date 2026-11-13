@@ -558,6 +558,50 @@ def install_restored_keys(archive, doc, plan, candidate: Path) -> None:
             raise ValueError("personal_context_key_install_failed")
 
 
+def stored_restore_marker(db_path: Path) -> str | None:
+    """A live profile's restore marker, read-only; None for anything else.
+
+    The repository reads it when no secure keyring exists, so a restore's
+    reason shows instead of the keyring's refusal (TASK-40136). It never
+    creates the database.
+    """
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    if not Path(db_path).exists():
+        return None
+    try:
+        with closing(
+            connect_private_sqlite(
+                "recovery.personal_context.repository", db_path, read_only=True
+            )
+        ) as connection:
+            row = connection.execute(
+                "SELECT key_account FROM profile_meta "
+                "WHERE singleton = 1 AND destroyed = 0"
+            ).fetchone()
+    except (OSError, ValueError, sqlite3.Error):
+        return None
+    stored = None if row is None else row[0]
+    return stored if isinstance(stored, str) and stored.startswith(MARKER) else None
+
+
+def forget_restored_keys(plan, candidate: Path) -> None:
+    """After a rollback, delete the fresh accounts this restore created (spec Q4).
+
+    Their names are unique to this staging, and the rolled-back database names
+    its own account again; nothing else is touched. A keyring that fails here
+    leaves an entry no database names, never a failed rollback.
+    """
+    protector = _device_protector()
+    if protector is None:
+        return
+    prefix = RESTORE_READABLE + ":"
+    for issue in plan.issues:
+        if issue.startswith(prefix):
+            with suppress(Exception):
+                protector.delete(restore_account(candidate, issue[len(prefix) :]))
+
+
 def verify_restored_key(path: Path) -> str | None:
     """After publication: the restored copy opens with the key its account holds.
 
@@ -566,9 +610,8 @@ def verify_restored_key(path: Path) -> str | None:
     """
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
-    from .repository_keys import profile_key_opens
+    from .repository_keys import profile_key_authenticates
 
-    account = protector = None
     try:
         with closing(
             connect_private_sqlite(
@@ -582,18 +625,24 @@ def verify_restored_key(path: Path) -> str | None:
                 return None
             account = row[1]
             protector = _device_protector()
-            try:
-                value = None if protector is None else _stored_value(protector, account)
-            except ValueError:
-                # Not answering is not a wrong key: keep the entry, say so.
+            if protector is None:
                 return KEY_CHECK_UNAVAILABLE
-            if value is not None and profile_key_opens(connection, account, value):
-                return None
+            # A keyring that does not answer raises: that is not a wrong key.
+            value = _stored_value(protector, account)
+            verdict = (
+                False
+                if value is None
+                else profile_key_authenticates(connection, account, value)
+            )
     except (OSError, ValueError, sqlite3.Error):
-        pass
-    if account is not None and protector is not None:
-        with suppress(Exception):
-            protector.delete(account)
+        return KEY_CHECK_UNAVAILABLE
+    if verdict is None:
+        return KEY_CHECK_UNAVAILABLE  # could not tell: keep the entry
+    if verdict:
+        return None
+    # Definite: the entry is missing, or its key does not open the copy.
+    with suppress(Exception):
+        protector.delete(account)
     return KEY_UNVERIFIED
 
 

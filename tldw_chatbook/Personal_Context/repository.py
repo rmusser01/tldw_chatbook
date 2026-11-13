@@ -367,7 +367,7 @@ class PersonalContextRepository(RepositoryKeyCustody):
             "personal-context:"
             + hashlib.sha256(os.fsencode(str(self.db_path.absolute()))).hexdigest()
         )
-        self._protector = key_protector or KeyringProfileKeyProtector()
+        self._protector = key_protector or self._or_marker(KeyringProfileKeyProtector)
         self._keys: ProfileKeyMaterial | None = None
         self._read_operation = local()
 

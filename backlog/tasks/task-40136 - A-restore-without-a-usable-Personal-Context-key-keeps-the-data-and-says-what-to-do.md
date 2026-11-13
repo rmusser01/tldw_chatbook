@@ -4,7 +4,7 @@ title: "A restore without a usable Personal Context key keeps the data and says 
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 17:45'
+updated_date: '2026-11-13 20:30'
 created_date: 2026-11-10 17:13
 labels:
 - follow-up
@@ -90,4 +90,14 @@ The spec's Q2 table gives each case a named reason and the copy.
 **Tests.** `Tests/Personal_Context/test_repository.py` (marker reasons across two starts, key mismatch with the same and another `key_version`, integrity past the manifest); `Tests/Backup_Recovery/test_credentials.py` (isolated stamping per spec row, acknowledgement refusal in both modes); `Tests/Backup_Recovery/test_restore_data_groups.py::...[no_keyring-include]` (no secure keyring: locked with `key_install_unavailable`, keyring and every row unchanged, the reason read by a fresh process, then a second Replace from the same archive once the keyring is back is readable: AC#6), `[isolated-include]`, `[isolated_elsewhere-exclude]`; `Tests/UI/test_settings_personal_context.py::test_locked_profile_says_why_and_offers_only_what_a_locked_profile_allows`; `Tests/UI/test_backup_data_groups.py` (acknowledgement copy; keyring-unavailable plan line). `scripts/check_markup_interpolation.py` OK. Covering run (`Tests/Personal_Context`, `test_credentials.py`, `test_restore_data_groups.py`, `test_restore_plan.py`, the two UI files, `-n 4`, load 26-36): 1,000 passed, 2 failed; the two (`test_restore_plan.py::test_shipped76_archive_stages_installed_schema_without_changing_source[False|True]`, a ChaChaNotes dispatch-checkpoint row diff) fail identically on the pca base ab4bdf751d. The end-to-end children take 50-90 s each serially.
 
 Files: `tldw_chatbook/Personal_Context/{repository_keys.py,recovery.py}`, `tldw_chatbook/Backup_Recovery/{restore_plan.py,staging.py,replacement.py,recovery_service.py,sqlite_validation.py}`, `tldw_chatbook/UI/Screens/backup_restore_screen.py`, `tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py`, the tests above, `Docs/User_Guide/settings/personal-context-profile.md`, `backlog/docs/{backup-recovery-owner-inventory.md,sqlite-private-owner-inventory.md}`.
+
+**2026-11-13, review r14pccA fix: the reasons now show where these cases actually run.**
+- **The bug.** Production passes no key protector, and an isolated copy (or a device with no secure keyring) has only the null one. `KeyringProfileKeyProtector()` refused at construction, before `_open_keys` read the marker, so Settings showed the generic `profile_locked` "Unlock secure key storage" copy instead of the restore's reason.
+- **The fix.** The repository now builds its default protector through `RepositoryKeyCustody._or_marker`. When the keyring refuses, the mixin reads a live profile's `key_account` read-only through `recovery.stored_restore_marker`, which never creates the database. A restore marker raises its reason; anything else keeps the keyring's refusal.
+  - `repository.py` changed in place only and stays at its line budget.
+  - The new read-only site is census row C103, plus a persistence census row.
+- **Tests.**
+  - `Tests/Personal_Context/test_repository.py::test_without_a_secure_keyring_the_restore_reason_still_shows[3 reasons + named account]` bootstraps with no protector under the null keyring. Red on the previous head: the three marker cases read `(True, 'profile_locked')`.
+  - The end-to-end STATUS helper now starts like production: the default protector, null keyring.
+- **Docs.** The User Guide's isolated-copy row says where the key is kept and that the reason shows without a keyring.
 
