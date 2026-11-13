@@ -458,6 +458,26 @@ _PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?"
     r"(?:-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----|$)"
 )
+#: Stripe/Svix webhook signing secrets and Groq keys (TASK-40301): masked in
+#: logs and shared Trace bundles, but in neither stored trace projection,
+#: whose output must not change for history already stored.
+_LOG_ONLY_CREDENTIALS = (
+    re.compile(r"(?<![A-Za-z0-9_-])whsec_[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9_-])"),
+    re.compile(r"(?<![A-Za-z0-9_-])gsk_[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),
+)
+_TOKEN_CREDENTIALS = (
+    *_STANDALONE_CREDENTIALS,
+    *_UNDERSCORE_KEY_CREDENTIALS,
+    *_LOG_ONLY_CREDENTIALS,
+)
+#: Every credential value shape logs mask. A shared Trace bundle masks with
+#: this same tuple (TASK-40301), so the export cannot drift from logs again.
+CREDENTIAL_VALUE_PATTERNS = (
+    _PRIVATE_KEY_BLOCK,
+    _DIAGNOSTIC_URL_USERINFO,
+    _BEARER,
+    *_TOKEN_CREDENTIALS,
+)
 
 
 def _sanitize_diagnostic_text(text: str) -> str:
@@ -480,11 +500,7 @@ def _sanitize_diagnostic_text(text: str) -> str:
     )
     result = _DIAGNOSTIC_URL_USERINFO.sub(r"\1" + REDACTION_MARKER + "@", result)
     result = _BEARER.sub(r"\1" + REDACTION_MARKER, result)
-    for pattern in (
-        *_STANDALONE_CREDENTIALS,
-        *_UNDERSCORE_KEY_CREDENTIALS,
-        *_DIAGNOSTIC_PII_PATTERNS,
-    ):
+    for pattern in (*_TOKEN_CREDENTIALS, *_DIAGNOSTIC_PII_PATTERNS):
         result = pattern.sub(REDACTION_MARKER, result)
     return result
 
