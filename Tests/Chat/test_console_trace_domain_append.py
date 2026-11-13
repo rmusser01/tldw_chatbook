@@ -8,7 +8,9 @@ exact append in each domain is admitted; any change to what was recorded
 the planner's existing rules refuse it.
 
 ``matches`` stands in for the planner's durable comparison: recorded entry
-``i`` equals incoming entry ``j`` exactly when their labels are equal.
+``i`` equals incoming entry ``j`` exactly when their domains and labels are
+equal, and, like the planner's, a match records the incoming value in the
+retained values. ``prefix`` is computed the way the planner computes it.
 """
 
 from __future__ import annotations
@@ -50,16 +52,47 @@ def _attached(owner: str) -> DerivedTraceProvenance:
     )
 
 
-def _plan(recorded, incoming):
-    """Run the rule over (domain, label, descriptor) rows."""
+def _plan(recorded, incoming, *, calls=None, retained=None):
+    """Run the rule over (domain, label, descriptor) rows, as the planner does.
 
+    Args:
+        calls: Optional list that records every ``matches`` call the rule
+            makes (the planner's flat prefix loop is not recorded).
+        retained: Optional dict standing in for the planner's retained
+            artifact values; ``matches`` writes each match into it.
+    """
+
+    recorded_domains = [domain for domain, _label in recorded]
     recorded_labels = [label for _domain, label in recorded]
+    incoming_domains = [domain for domain, _label, _descriptor in incoming]
     incoming_labels = [label for _domain, label, _descriptor in incoming]
+    retained = {} if retained is None else retained
+
+    def same(i: int, j: int) -> bool:
+        return (
+            recorded_domains[i] == incoming_domains[j]
+            and recorded_labels[i] == incoming_labels[j]
+        )
+
+    prefix = 0
+    while prefix < min(len(recorded), len(incoming)) and same(prefix, prefix):
+        prefix += 1
+
+    def matches(i: int, j: int) -> bool:
+        if calls is not None:
+            calls.append((i, j))
+        matched = same(i, j)
+        if matched:
+            retained[i] = incoming_labels[j]
+        return matched
+
     return domain_append_indices(
-        recorded_domains=[domain for domain, _label in recorded],
-        domains=[domain for domain, _label, _descriptor in incoming],
+        recorded_domains=recorded_domains,
+        domains=incoming_domains,
         descriptors=[descriptor for _domain, _label, descriptor in incoming],
-        matches=lambda i, j: recorded_labels[i] == incoming_labels[j],
+        prefix=prefix,
+        matches=matches,
+        retained=retained,
     )
 
 
@@ -166,6 +199,101 @@ def test_growth_in_one_domain_is_left_to_the_existing_rules() -> None:
 
 
 def test_domains_out_of_provider_order_are_refused() -> None:
+    # Defensive invariants: the planner builds both sequences domain-sorted,
+    # so its hook never hands the rule an interleaved one.
     interleaved = _turn_three(order=["u1", "a1", "u2", "c-a1", "a2", "u3", "c-a2"])
     assert _plan(RECORDED, interleaved) is None
     assert _plan([(M, "u1"), (C, "c-a1"), (M, "a1")], _turn_three()) is None
+
+
+@pytest.mark.parametrize(
+    ("case", "incoming"),
+    [
+        # The new reply carries the same descriptor as a recorded one, so a
+        # checkpoint "attached to a new message" could equally be attached to
+        # the recorded reply.
+        (
+            "new owner equals a recorded message",
+            _turn_three(
+                a2=(M, "a2", _message("a1")),
+                **{"c-a2": (C, "c-a2", _attached("a1"))},
+            ),
+        ),
+        # Two new messages carry the same descriptor as the new checkpoint's
+        # owner: membership no longer names one message.
+        (
+            "two new messages share the owner",
+            _turn_three(
+                u3=(M, "u3", _message("a2")),
+            ),
+        ),
+    ],
+)
+def test_a_checkpoint_owner_must_name_exactly_one_message(case, incoming) -> None:
+    """Pre-merge review M2: ownership is a proof only when the owner is unique."""
+    assert _plan(RECORDED, incoming) is None, case
+
+
+#: Turn 3's recorded surface: [u1, a1, u2, a2, u3] + [c(a1), c(a2)].
+RECORDED_TURN_THREE = [
+    (M, "u1"), (M, "a1"), (M, "u2"), (M, "a2"), (M, "u3"),
+    (C, "c-a1"), (C, "c-a2"),
+]
+
+
+def _turn_four(**overrides):
+    """Turn 4's request: [u1 .. u3, a3, u4] + [c(a1), c(a2), c(a3)]."""
+
+    return _turn_three(
+        a3=(M, "a3", _message("a3")),
+        u4=(M, "u4", _message("u4")),
+        **{"c-a3": (C, "c-a3", _attached("a3"))},
+        **overrides,
+        order=["u1", "a1", "u2", "a2", "u3", "a3", "u4", "c-a1", "c-a2", "c-a3"],
+    )
+
+
+def test_the_rule_compares_only_the_recorded_continuations() -> None:
+    """Pre-merge review M4: the flat prefix already compared every message.
+
+    Only the recorded continuations are compared, each with the incoming
+    continuation at the same index. None of them is incoming index 0, so the
+    planner's (0, 0) rendered-system branch of ``matches`` is never taken.
+    """
+    calls: list[tuple[int, int]] = []
+
+    assert _plan(RECORDED_TURN_THREE, _turn_four(), calls=calls) == (5, 6, 9)
+    assert calls == [(5, 7), (6, 8)]
+
+
+def test_an_inexact_message_prefix_compares_nothing() -> None:
+    calls: list[tuple[int, int]] = []
+    edited = _turn_four(a1=(M, "a1-edited", _message("a1")))
+
+    assert _plan(RECORDED_TURN_THREE, edited, calls=calls) is None
+    assert calls == []
+
+
+def test_a_refused_probe_leaves_the_retained_values_as_it_found_them() -> None:
+    """Pre-merge review M3: the probe is speculative, so a None undoes it.
+
+    The first recorded checkpoint matches (and ``matches`` records it), the
+    second has new bytes. The rule returns None, and the planner's retained
+    values must be exactly what they were, or a later rule would inherit a
+    value from a comparison it never made.
+    """
+    retained: dict[object, object] = {0: "u1", 1: "a1"}
+    changed = _turn_four(**{"c-a2": (C, "c-a2-v2", _attached("a2"))})
+    calls: list[tuple[int, int]] = []
+
+    assert _plan(RECORDED_TURN_THREE, changed, calls=calls, retained=retained) is None
+    assert calls == [(5, 7), (6, 8)], "the first checkpoint did match and record"
+    assert retained == {0: "u1", 1: "a1"}
+
+
+def test_an_admitted_probe_keeps_what_it_compared() -> None:
+    """The planner still gets each recorded checkpoint's original value."""
+    retained: dict[object, object] = {}
+
+    assert _plan(RECORDED_TURN_THREE, _turn_four(), retained=retained) == (5, 6, 9)
+    assert retained == {5: "c-a1", 6: "c-a2"}

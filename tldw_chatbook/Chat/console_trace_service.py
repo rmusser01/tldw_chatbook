@@ -2629,7 +2629,9 @@ class ConsoleTraceService:
                 ),
                 domains=domains,
                 descriptors=descriptors,
+                prefix=prefix,
                 matches=matches,
+                retained=retained_artifact_values,
             )
             if prefix < len(active)
             and live_native_custody is None
