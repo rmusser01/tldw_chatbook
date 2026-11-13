@@ -1,12 +1,16 @@
 """AgentRunsDB against a real on-disk SQLite file."""
 
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
 
-from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.agent_runs_owner import (
+    AGENT_RUNS_MIGRATIONS,
+    install_agent_runs_v18,
+    owned_agent_runs_db,
+)
 from tldw_chatbook.Agents.agent_models import AgentDefinition, definition_from_row
 from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
 from tldw_chatbook.DB.AgentRuns_DB import (
@@ -14,6 +18,7 @@ from tldw_chatbook.DB.AgentRuns_DB import (
     AgentStepConflictError,
     ConsoleActivityReceiptsUnavailable,
 )
+from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 from tldw_chatbook.Tools.raw_cli_executor import (
     MAX_RAW_COMMAND_BYTES,
     MAX_RAW_PREVIEW_BYTES,
@@ -1273,53 +1278,56 @@ def test_definitions_survive_reopen_and_migration_is_idempotent(request, tmp_pat
 
 
 def _seed_v18_definitions(path):
-    """Build the complete production schema, seed prior data, then restore v18."""
-    database = owned_agent_runs_db(path, client_id="build-v18-predecessor")
-    try:
-        live_id = database.create_agent_definition(_defn(name="live-agent"))
-        disabled_id = database.create_agent_definition(
-            _defn(name="disabled-agent", enabled=False)
+    """Build the frozen v18 schema with persisted definitions and a completed run."""
+    live_id, disabled_id, deleted_id = "live", "disabled", "deleted"
+    with closing(sqlite3.connect(path)) as conn:
+        install_agent_runs_v18(conn)
+        conn.executemany(
+            """INSERT INTO agent_definitions
+               (id, name, description, instructions, tool_allowlist,
+                enabled, deleted, created_at, updated_at)
+               VALUES (?, ?, 'Searches sources.', 'Research thoroughly.', '["web_search"]',
+                       ?, ?, 'then', 'then')""",
+            (
+                (live_id, "live-agent", 1, 0),
+                (disabled_id, "disabled-agent", 0, 0),
+                (deleted_id, "deleted-agent", 1, 1),
+            ),
         )
-        deleted_id = database.create_agent_definition(_defn(name="deleted-agent"))
-        database.soft_delete_agent_definition(deleted_id)
-        with database.transaction() as conn:
-            conn.execute(
-                """INSERT INTO automatic_work_chains
-                   (id, conversation_id, root_submission_id, limits_json,
-                    status, created_at, last_observed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                ("chain", "migration-conversation", "root", "{}", "active", 1.0, 1.0),
-            )
-            conn.execute(
-                """INSERT INTO automatic_work_runtime_owner(singleton, owner_id)
-                   VALUES (?, ?)""",
-                (1, "migration-owner"),
-            )
-        run_id = database.create_run(
-            conversation_id="migration-conversation",
-            agent_kind="primary",
-            work_chain_id="chain",
+        conn.execute(
+            """INSERT INTO automatic_work_chains
+               (id, conversation_id, root_submission_id, limits_json,
+                status, created_at, last_observed_at)
+               VALUES ('chain', 'migration-conversation', 'root', '{}', 'active', 1.0, 1.0)"""
         )
-        database.append_steps(
-            run_id, [{"index": 0, "kind": "model", "summary": "existing"}]
+        conn.execute(
+            "INSERT INTO automatic_work_runtime_owner(singleton, owner_id) "
+            "VALUES (1, 'migration-owner')"
         )
-    finally:
-        database.close()
-
-    conn = sqlite3.connect(path)
-    try:
-        # Legacy reconstruction must not retain later mobile/command evidence.
+        conn.execute(
+            """INSERT INTO agent_runs
+               (id, conversation_id, agent_kind, status, result, work_chain_id,
+                created_at, updated_at)
+               VALUES ('run', 'migration-conversation', 'primary', 'done', 'saved result',
+                       'chain', 'then', 'then')"""
+        )
+        conn.executemany(
+            "INSERT INTO agent_run_steps(run_id, seq, payload, created_at) "
+            "VALUES ('run', ?, ?, 'then')",
+            (
+                (0, '{"index":0,"kind":"model","summary":"existing"}'),
+                (1, '{"index":1,"kind":"agent_run_completed"}'),
+            ),
+        )
+        conn.commit()
         for table in (
             "console_command_receipts",
             "mobile_consolidation_batches",
             "mobile_import_authority_holds",
         ):
-            assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
-            conn.execute(f"DROP TABLE {table}")
-        conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
-        conn.execute("DELETE FROM schema_version WHERE version >= ?", (19,))
-        conn.execute("DROP TABLE agent_worktrees")
-        conn.commit()
+            assert conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone() is None
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(agent_definitions)")
         }
@@ -1327,9 +1335,18 @@ def _seed_v18_definitions(path):
         assert (
             conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
         )
-        return live_id, disabled_id, deleted_id, _snapshot_v18_data(conn)
-    finally:
-        conn.close()
+        before = _snapshot_v18_data(conn)
+    path.chmod(0o600)
+    return live_id, disabled_id, deleted_id, before
+
+
+@contextmanager
+def _open_migration_db(path, client_id):
+    with (
+        ConsoleExecutionOwner.acquire(path) as owner,
+        closing(AgentRunsDB(path, client_id=client_id, execution_owner=owner)) as db,
+    ):
+        yield db
 
 
 def _snapshot_v18_data(conn):
@@ -1342,12 +1359,28 @@ def _snapshot_v18_data(conn):
                    FROM agent_definitions ORDER BY id"""
             )
         ],
-        "agent_runs": [tuple(row) for row in conn.execute("SELECT * FROM agent_runs")],
+        "agent_runs": [
+            tuple(row)
+            for row in conn.execute(
+                """SELECT id, conversation_id, parent_run_id, agent_kind, task, status,
+                          steps, result, budget, created_at, updated_at,
+                          assistant_message_id, agent_definition, definition_fingerprint,
+                          wake_delivered_at, resumed_from_run_id, spawn_event_id,
+                          budget_tokens, work_chain_id
+                   FROM agent_runs"""
+            )
+        ],
         "agent_run_steps": [
             tuple(row) for row in conn.execute("SELECT * FROM agent_run_steps")
         ],
         "automatic_work_chains": [
-            tuple(row) for row in conn.execute("SELECT * FROM automatic_work_chains")
+            tuple(row)
+            for row in conn.execute(
+                """SELECT id, conversation_id, root_submission_id, limits_json, status,
+                          pause_reason, created_at, started_at, deadline_at, clock_owner_id,
+                          started_monotonic, last_observed_at
+                   FROM automatic_work_chains"""
+            )
         ],
         "automatic_work_runtime_owner": [
             tuple(row)
@@ -1360,8 +1393,7 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
     path = tmp_path / "definitions-v18.db"
     live_id, disabled_id, deleted_id, before = _seed_v18_definitions(path)
 
-    first = owned_agent_runs_db(path, client_id="upgrade-v18")
-    try:
+    with _open_migration_db(path, "upgrade-v18") as first:
         with first.connection() as conn:
             after = _snapshot_v18_data(conn)
             caps = conn.execute(
@@ -1431,17 +1463,12 @@ def test_real_v18_definition_rows_upgrade_reopen_and_remain_unchanged(tmp_path):
             "created_at": expected_uncapped["created_at"],
             "updated_at": expected_uncapped["created_at"],
         }
-    finally:
-        first.close()
 
     for client_id in ("reopen-once", "reopen-twice"):
-        reopened = owned_agent_runs_db(path, client_id=client_id)
-        try:
+        with _open_migration_db(path, client_id) as reopened:
             assert reopened.get_agent_definition(live_id)["max_wall_seconds"] is None
             assert reopened.get_agent_definition(capped_id) == expected_capped
             assert reopened.get_agent_definition(uncapped_id) == expected_uncapped
-        finally:
-            reopened.close()
 
 
 def test_v18_upgrade_is_guarded_when_definition_cap_column_already_exists(tmp_path):
@@ -1454,8 +1481,7 @@ def test_v18_upgrade_is_guarded_when_definition_cap_column_already_exists(tmp_pa
     finally:
         conn.close()
 
-    database = owned_agent_runs_db(path, client_id="guarded-v18")
-    try:
+    with _open_migration_db(path, "guarded-v18") as database:
         with database.connection() as conn:
             columns = [
                 row[1] for row in conn.execute("PRAGMA table_info(agent_definitions)")
@@ -1465,8 +1491,6 @@ def test_v18_upgrade_is_guarded_when_definition_cap_column_already_exists(tmp_pa
             ).fetchone()[0]
         assert columns.count("max_wall_seconds") == 1
         assert version == AgentRunsDB._CURRENT_SCHEMA_VERSION
-    finally:
-        database.close()
 
 
 def test_standalone_v18_to_v19_sql_migrates_real_predecessor_shape(tmp_path):
@@ -2223,36 +2247,37 @@ def test_pre_v21_db_gains_v21_columns_on_open(tmp_path):
 
 def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_path):
     path = tmp_path / "routing-v20.db"
-    database = owned_agent_runs_db(path)
-    definition_id = database.create_agent_definition(_defn(max_wall_seconds=12.5))
-    run_id = database.create_run(conversation_id="c", agent_kind="primary")
-    with database.connection() as conn:
-        # Legacy reconstruction must not retain later mobile/command evidence.
-        for table in (
-            "console_command_receipts",
-            "mobile_consolidation_batches",
-            "mobile_import_authority_holds",
+    definition_id, _, _, _ = _seed_v18_definitions(path)
+    run_id = "run"
+    with closing(sqlite3.connect(path)) as conn:
+        for migration in (
+            "agent_runs_v18_to_v19_definition_wall_seconds.sql",
+            "agent_runs_v19_to_v20_worktree_recovery.sql",
         ):
-            assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
-            conn.execute(f"DROP TABLE {table}")
-        for column in ("provider", "params_json"):
-            conn.execute(f"ALTER TABLE agent_definitions DROP COLUMN {column}")
-        for column in (
-            "resolved_provider",
-            "resolved_model",
-            "resolved_base_url",
-            "resolved_params_json",
-        ):
-            conn.execute(f"ALTER TABLE agent_runs DROP COLUMN {column}")
-        conn.execute("DELETE FROM schema_version WHERE version > 20")
+            conn.executescript((AGENT_RUNS_MIGRATIONS / migration).read_text(encoding="utf-8"))
+        conn.execute(
+            "UPDATE agent_definitions SET max_wall_seconds=? WHERE id=?",
+            (12.5, definition_id),
+        )
+        conn.execute(
+            """INSERT INTO agent_worktrees
+               (run_id, workspace_id, binding_id, locator_fingerprint, repo_root,
+                repo_identity, git_common_dir, git_common_identity, child_path,
+                child_identity, branch, base_sha, execution_id, created_at, updated_at)
+               VALUES (?, 'workspace', 'binding', 'locator', '/repo', 'repo-identity',
+                       '/repo/.git', 'git-identity', '/child', 'child-identity',
+                       'worktree', 'base', 'execution', 'then', 'then')""",
+            (run_id,),
+        )
+        conn.commit()
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (20,)
         before = _snapshot_v18_data(conn)
+        worktree = conn.execute("SELECT * FROM agent_worktrees").fetchone()
         worktree_schema = conn.execute(
             "SELECT sql FROM sqlite_master WHERE name = 'agent_worktrees'"
         ).fetchone()[0]
-    database.close()
     for _ in range(2):
-        database = owned_agent_runs_db(path)
-        try:
+        with _open_migration_db(path, "migrate-v20") as database:
             assert (
                 database.get_agent_definition(definition_id)["max_wall_seconds"] == 12.5
             )
@@ -2260,9 +2285,8 @@ def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_pa
             assert database.get_run_resolved_target(run_id) is None
             with database.connection() as conn:
                 after = _snapshot_v18_data(conn)
-                # The new snapshot columns append to the historical run shape.
-                after["agent_runs"] = [row[:-4] for row in after["agent_runs"]]
                 assert after == before
+                assert tuple(conn.execute("SELECT * FROM agent_worktrees").fetchone()) == worktree
                 assert (
                     conn.execute(
                         "SELECT sql FROM sqlite_master WHERE name = 'agent_worktrees'"
@@ -2276,8 +2300,6 @@ def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_pa
                     == AgentRunsDB._CURRENT_SCHEMA_VERSION
                 )
                 assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-        finally:
-            database.close()
 
 
 def test_mobile_worker_result_is_scoped_bounded_and_inert_on_read_only_owner(db):
