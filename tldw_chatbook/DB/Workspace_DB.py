@@ -806,26 +806,50 @@ COMMIT;
             row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         return int(row[0] or 0) if row is not None else 0
 
-    def is_agent_backfill_complete(self) -> bool:
-        """Whether the v7 agent assistant-defaults backfill has completed."""
+    def is_agent_backfill_complete(self, key: str = "assistant_defaults") -> bool:
+        """Whether the one-time agent backfill named ``key`` has completed.
+
+        Args:
+            key: ``"assistant_defaults"`` (the v7 workspace assistant-defaults
+                backfill) or ``"full_agent_tools_upgrade"`` (TASK-34100.5.3.2,
+                the light-surface upgrade's marker).
+        """
 
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT 1 FROM workspace_agent_backfill WHERE key = 'assistant_defaults'"
+                "SELECT 1 FROM workspace_agent_backfill WHERE key = ?", (key,)
             ).fetchone()
         return row is not None
 
-    def mark_agent_backfill_complete(self) -> None:
-        """Record that the v7 agent assistant-defaults backfill has completed."""
+    def mark_agent_backfill_complete(self, key: str = "assistant_defaults") -> None:
+        """Record that the one-time agent backfill named ``key`` has completed."""
 
         with self.transaction() as conn:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO workspace_agent_backfill (key, completed_at)
-                VALUES ('assistant_defaults', ?)
+                VALUES (?, ?)
                 """,
-                (datetime.now(timezone.utc).isoformat(),),
+                (key, datetime.now(timezone.utc).isoformat()),
             )
+
+    def has_runtime_binding(self, binding_kinds: tuple[str, ...]) -> bool:
+        """Whether any workspace has a runtime binding of one of these kinds.
+
+        TASK-34100.5.3.2: a folder or SSH binding is one of the signals that
+        a profile uses agent features.
+        """
+
+        if not binding_kinds:
+            return False
+        placeholders = ", ".join("?" for _ in binding_kinds)
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM workspace_runtime_bindings "
+                f"WHERE binding_kind IN ({placeholders}) LIMIT 1",
+                tuple(binding_kinds),
+            ).fetchone()
+        return row is not None
 
 
 # Definition-time originals for the finite stock run-log availability read.

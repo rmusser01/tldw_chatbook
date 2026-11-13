@@ -85,6 +85,11 @@ def test_staggered_order_runs_prefetches_before_the_resumable_backfills():
     """
     assert STAGGERED_BOOT_WORKER_KEYS == (
         "actor_pack_recovery",
+        # TASK-34100.5.3.2: a one-time check the first plain chat send of an
+        # upgraded profile reads -- the tier's one member with a waiter --
+        # bounded by its own time budget, recorded once per profile. Second:
+        # recovery stays first (test_console_runtime_ownership pins it).
+        "full_agent_tools_upgrade",
         "actor_pack_staging_sweep",
         "chachanotes_fts_backfill",
         "subscriptions_fts_backfill",
@@ -313,6 +318,7 @@ async def test_every_staggered_body_runs_after_the_ui_is_ready(request):
 
         return body
 
+    app._run_full_agent_tools_upgrade = recorder("full_agent_tools_upgrade")
     app.ensure_actor_pack_recovery = recorder("actor_pack_recovery")
     app.ensure_actor_pack_staging_sweep = recorder("actor_pack_staging_sweep")
     app._backfill_chachanotes_messages_fts = recorder("chachanotes_fts_backfill")

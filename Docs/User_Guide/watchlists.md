@@ -7,7 +7,7 @@
 
 ## Console-driven feed-to-briefing workflow
 
-The Console agent can perform the complete local workflow when you provide the feed URLs and desired recurrence:
+With **Full agent tools** on (plain chat's light tool surface has no Watchlists tools; see [what plain chat offers](console/agent-runs-and-tools.md#what-plain-chat-offers--the-light-tool-surface)), the Console agent can perform the complete local workflow when you provide the feed URLs and desired recurrence:
 
 1. Create the sources and report their canonical IDs.
 2. Create one Watchlist containing those sources.

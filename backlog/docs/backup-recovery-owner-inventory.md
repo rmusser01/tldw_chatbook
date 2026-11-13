@@ -173,6 +173,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 | sqlite:cookies.firefox | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner | _READ_ONLY_URI | external/excluded |
 | sqlite:db.base | tldw_chatbook/DB/base_db | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:db.subscriptions.agent_read | tldw_chatbook/DB/Subscriptions_DB | _READ_ONLY_URI | sqlite/unsupported |
+| sqlite:agents.full_agent_tools_upgrade | tldw_chatbook/Agents/full_agent_tools_upgrade | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:db.subscriptions.site_configs | tldw_chatbook/DB/Subscriptions_DB | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.chachanotes.backup | tldw_chatbook/DB/ChaChaNotes_DB | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.chachanotes.primary | tldw_chatbook/DB/ChaChaNotes_DB | _PRIVATE_OR_MEMORY | sqlite/unsupported |
@@ -3387,6 +3388,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Backup_Recovery/destinations.py | _configs | ZipFile | 1 | generic_boundary | backup_control_reader |
 | tldw_chatbook/Backup_Recovery/effective_roots.py | effective_roots | open | 1 | generic_boundary | backup_control_reader |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor._parse_import | open | 1 | unsupported | caller-selected-external-theme-export |
+| tldw_chatbook/Agents/full_agent_tools_upgrade.py | _read_runs_signal | connect_private_sqlite | 1 | unsupported | agents.full_agent_tools_upgrade |
 | tldw_chatbook/Chat/console_launch_wake.py | pending_conversations_at_launch | connect_private_sqlite | 1 | unsupported | chat.launch_wake |
 | tldw_chatbook/Chat/console_trace_maintenance.py | PhysicalTraceCompactor._open_maintenance_connection | connect_private_sqlite | 1 | unsupported | chat.trace_maintenance |
 | tldw_chatbook/Chatbooks/local_chatbook_service.py | LocalChatbookService._save_registry | atomic_write_json | 1 | unsupported | chatbooks.registry; participant-task10 |

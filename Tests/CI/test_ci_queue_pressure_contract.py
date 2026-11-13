@@ -392,6 +392,17 @@ DREAMS_BOUNDARY_TARGETS = (
     # TASK-38966: the QwenCloud provider contract file, red on dev in no PR
     # lane. Pure, 7 tests; 2.7 s at -n 4 on dev, 1.8-2.1 s serial (load 36-38).
     "Tests/Chat/test_qwencloud_provider_contract.py",
+    # TASK-34100.5.3.2 (review round 1, F1-0): here, not in pr-fast-lane, for
+    # the same reason as TASK-36532 above, and before the bootstrap-profile
+    # suites below (TASK-32873). Every production
+    # ConsoleAgentBridge( passes a light-surface reader (carried #3295 review
+    # fix; pure AST, <1 s); the one-time Full agent tools upgrade's decision
+    # over real tmp WorkspaceDB/AgentRunsDB files and a real config.toml
+    # (~25 s); and the app's boot worker running it on three seeded private
+    # profiles (~40 s serial). All sandboxed.
+    "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",
+    "Tests/Agents/test_full_agent_tools_upgrade.py",
+    "Tests/App/test_full_agent_tools_upgrade_boot.py",
     # TASK-38985: the Library modal dismissal contracts and launch inventory,
     # red on dev in no PR lane. ~2 min serial (140.2, 114.6 and 101.6 s with
     # this step's command, load 20-34 on 18 CPUs), whole file: the UI census

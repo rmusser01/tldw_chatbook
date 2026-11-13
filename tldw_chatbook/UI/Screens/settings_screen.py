@@ -23392,6 +23392,7 @@ class SettingsScreen(BaseAppScreen):
                     tooltip=(
                         "Global kill switch. Turning it off preserves stored Canvas "
                         "artifacts while revoking execution and browser delivery."
+                        " In plain chat the assistant's Canvas tools also need Full agent tools on."
                     ),
                 )
                 yield StateCheckbox(

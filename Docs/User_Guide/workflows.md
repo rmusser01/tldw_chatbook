@@ -222,7 +222,7 @@ item exists. Refreshing this strip does not replace the editor or its draft.
 This separate Console procedure stays inside the core Watchlists and briefing
 product; it is not execution of a definition from the authoring editor:
 
-1. Give the Console agent the RSS or Atom URLs and a Watchlist name.
+1. With **Full agent tools** on (plain chat's light tool surface has no Watchlists tools), give the Console agent the RSS or Atom URLs and a Watchlist name.
 2. Approve the specific local Watchlists tools the agent needs.
 3. Have the agent create the sources and Watchlist, then follow every source-check receipt.
 4. Have it generate a briefing, follow the briefing receipt, and save an every-24-hours schedule.

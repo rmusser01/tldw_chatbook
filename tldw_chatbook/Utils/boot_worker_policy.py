@@ -26,10 +26,26 @@ Two tiers:
 ``STAGGERED``
     Started after ``_ui_ready``, in the declared order, at most
     :data:`MAX_CONCURRENT_STAGGERED_BOOT_WORKERS` at a time; each completion
-    admits the next. Every member here is either a *prefetch* for a surface
-    that re-runs the same work itself behind a once-gate, or a resumable
-    background rebuild that no surface waits on. That is the property that
-    makes delaying one safe, and it is recorded per row in ``unblocks``.
+    admits the next. Every member here but one is either a *prefetch* for a
+    surface that re-runs the same work itself behind a once-gate, or a
+    resumable background rebuild that no surface waits on. That is the
+    property that makes delaying one safe, and it is recorded per row in
+    ``unblocks``.
+
+    The exception is ``full_agent_tools_upgrade`` (TASK-34100.5.3.2), which
+    has a soft waiter: until it lands, plain chat on an upgraded profile that
+    uses agent features is offered the light tool set. Delaying it is still
+    safe, because the light set is the safe default (a send made meanwhile
+    gets fewer tools, never a broken answer), and it fails closed. It is
+    second: ``actor_pack_recovery`` stays first (see the priority reasoning
+    below), and nothing else goes ahead of the check. So the check starts
+    when recovery frees the slot. Measured live with this order, at load
+    ~20: 0.7-1.3 s after the gate opened on a relaunched idle profile, and
+    2.8 s on a fresh profile's first launch, where recovery also installs the
+    bundled Buddy. Its own cost is bounded by its time budget
+    (``Agents.full_agent_tools_upgrade.DETECTION_BUDGET_SECONDS``), on a
+    worker thread, so a profile whose scan always runs past that budget holds
+    the one slot for at most that long at each launch.
 
 The honest lever is ORDER and CONCURRENCY, not more sleeping: a sleep cannot
 subdivide one ``import_module`` or one ``BEGIN IMMEDIATE`` chunk (TASK-21113,
@@ -121,7 +137,17 @@ class BootWorkerSpec:
 #:    read / ``create_persona``; the importer's ``inspect_archive``). If the
 #:    worker has not run, the surface runs the work itself -- on the event
 #:    loop. They are short one-shots, so they go first: finishing them frees
-#:    the slots quickly and removes the inline-cost risk.
+#:    the slots quickly and removes the inline-cost risk. Recovery is first
+#:    of all (pinned by ``Tests/UI/test_console_runtime_ownership.py::
+#:    test_actor_pack_recovery_precedes_character_persona_surfaces``).
+#: 1a. ``full_agent_tools_upgrade`` (TASK-34100.5.3.2) sits between the two,
+#:    second: the tier's one member with a waiter (see the module docstring),
+#:    because the first plain chat send on an upgraded profile that uses
+#:    agent features reads its result. It is a few reads under a time budget
+#:    (90-400 ms measured live at load ~20, the write included; at most the
+#:    budget), then recorded once per profile. The staging sweep follows it:
+#:    its surface is an import the user starts, and that import sweeps for
+#:    itself.
 #: 2. The two FTS backfills go last, and behind each other (the cap is 1, so
 #:    the order IS the schedule). Nothing waits on either -- search fills in
 #:    progressively and both are resumable across kills -- and on a first
@@ -169,6 +195,20 @@ BOOT_WORKER_POLICY: tuple[BootWorkerSpec, ...] = (
         ),
     ),
     BootWorkerSpec(
+        key="full_agent_tools_upgrade",
+        name="_run_full_agent_tools_upgrade",
+        group="full-agent-tools-upgrade",
+        tier=BootWorkerTier.STAGGERED,
+        unblocks=(
+            "Plain Console chat's tool surface on a profile upgraded from "
+            "before the light surface (TASK-34100.5.3.2): until it lands, a "
+            "profile that uses agent features still gets the light set. A "
+            "one-time check, recorded once done: a few reads under a time "
+            "budget and at most one config write. Second, right behind "
+            "recovery (which stays first), and ahead of everything else."
+        ),
+    ),
+    BootWorkerSpec(
         key="actor_pack_staging_sweep",
         name="deferred_actor_pack_staging_sweep",
         group="actor_pack_staging_sweep",
@@ -176,7 +216,8 @@ BOOT_WORKER_POLICY: tuple[BootWorkerSpec, ...] = (
         unblocks=(
             "Nothing hard: ActorPackImportService.inspect_archive gates on the "
             "same once-lock, so a first import sweeps for itself. Prefetch of a "
-            "filesystem walk, second for the same reason as recovery."
+            "filesystem walk, early for the same reason as recovery, right "
+            "behind the Full agent tools check (TASK-34100.5.3.2)."
         ),
     ),
     BootWorkerSpec(
@@ -216,8 +257,9 @@ BOOT_WORKER_POLICY: tuple[BootWorkerSpec, ...] = (
 #: the worst shape in the fleet, two whole-table re-tokenizations running at
 #: once, is exactly what the cap would still permit. Serializing costs the
 #: prefetches nothing measurable (they are ahead of the backfills, and their
-#: own durations are milliseconds on a healthy profile), and nothing else in
-#: the tier has a waiter.
+#: own durations are milliseconds on a healthy profile), and the tier's one
+#: member with a waiter, the Full agent tools check, is second, behind only
+#: recovery.
 #:
 #: What still runs alongside: the screen pre-importer's daemon thread, the
 #: immediate tier, and the event loop itself. This cap bounds the staggered

@@ -105,6 +105,12 @@ Enter and the POST than dev: the profiles' history, not their code.
 - Run the arms simultaneously to halve a round's time or to give both the same load while it drifts. Do not expect it to narrow the interval.
 - Number ABBA units from each launch's index in its block (launches 1-2, 3-4, ...), not from the first launch that survived banding.
 
+## A served-companion send always goes to openai/gpt-4o-mini, whatever the profile's provider (TASK-34100.5.3.2, 2026-11-05)
+
+**Incident.** To check what a phone send through the served mobile companion carries, the live run used a profile whose only provider was a local llama.cpp server started with `--log-prompts-dir`. `POST /api/v1/mobile/conversations/<sid>/messages` answered `202 {"ok": true}`, but the transcript held a system row, "openai is not ready: Missing API key", and llama-server logged nothing. `MobileChatService._build_engine` builds its `ConsoleChatController` with `provider="openai", model="gpt-4o-mini"`; the profile's `[chat_defaults]` provider is never read. A cloud send would have worked, but the request would not have been visible.
+
+**What to do.** To see the exact request a companion send makes, point that provider at a real local server in the scratch profile: `[api_settings.openai] api_base_url = "http://127.0.0.1:<port>/v1"` and `api_key = "x"` (the dummy that `api_base_url` endpoints accept), with llama-server's `--log-prompts-dir` on (its jinja template renders the native `tools` into the logged prompt). Drive the API with curl: `GET /` from loopback logs in and returns the CSRF token in the `chatbook-csrf` meta tag; send it as `X-Chatbook-CSRF` with the cookie jar and an `Origin` header on every POST.
+
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
 **Incident.** TASK-37653's first owner-approved live run spent 40 requests and 2 children, and its verifier never started. Every spawn returned `original_reports_not_presented`. The gated harness built its own `ConsoleChatController` and set `controller.app = app`. That was the attach step before PR #3286 moved review presentation into the UI wiring. The Console screen now attaches through `wiring.attach_review_presenter`, which is what installs the original-report presenter. With that one-line change, the second run (50 requests) sealed the verifier and expanded every finding. The run also failed twice before it started:

@@ -1794,13 +1794,16 @@ this page writes config.
 
 Named sub-agent definitions the Console supervisor can spawn (Ctrl+2 ▸ ask it
 to delegate). The supervisor delegates only with **Full agent tools** on
-(Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates); plain chat's
-light tool surface has no sub-agents. A definition is a reusable persona: a name, a one-line
+(Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates), or for one
+turn whose message names a skill (`$skill`); plain chat's light tool surface
+has no sub-agents. A definition is a reusable persona: a name, a one-line
 description the supervisor reads when deciding who to delegate to, and
 instructions — plus optional narrowing of tools and model. It opens with a
-one-line scope note: "Named sub-agents the Console supervisor can spawn.
-Changes apply immediately (stored in agent_runs.db, not config.toml) and take
-effect on the next reply."
+scope note: "Named sub-agents the Console supervisor can spawn. Plain chat
+spawns them only with Full agent tools on (Settings ▸ Tools & MCP ▸ Servers ▸
+built-in row ▸ Tool gates), or for one turn that names a skill. Changes apply
+immediately (stored in agent_runs.db, not config.toml) and take effect on the
+next reply."
 
 | Field | What it does |
 |---|---|
