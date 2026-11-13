@@ -698,6 +698,9 @@ def _actor_pack_import_error_copy(category: str | None) -> str:
         "actor_pack_import_disk_unavailable": (
             "There is not enough verified private storage to import this pack."
         ),
+        "actor_pack_import_storage_unavailable": (
+            "Backup or restore is using this profile. Import again when it finishes."
+        ),
     }.get(category, "Actor Pack import failed.")
 
 

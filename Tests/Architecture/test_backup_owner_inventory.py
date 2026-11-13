@@ -5,6 +5,8 @@ from collections import Counter
 from pathlib import Path
 import re
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 DOC = ROOT / "backlog/docs/backup-recovery-owner-inventory.md"
 
@@ -1131,3 +1133,200 @@ def test_actor_pack_persona_images_preview_and_validate_with_persona_artwork(
         for item in discover((config,)).items
         if item.owner == "persona.assets" and item.path is None
     ] == ["references_unavailable"]
+
+
+def _actor_pack_activation_on_profile(tmp_path, monkeypatch):
+    """TASK-40304: a persona Actor Pack review on a configured file-backed profile.
+
+    Activating it publishes into both captured trees: ``visual_identities/
+    actor_packs/<digest>/`` (shared visual) and ``actor_packs/<digest>/
+    persona-runtime/`` (persona runtime).
+    """
+    from Tests.Actor_Packs.test_actor_pack_activation import (
+        _persona_runtime_section,
+        _shared_visual_section,
+        _write_archive,
+    )
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+    from tldw_chatbook.Actor_Packs.activation import ActorPackActivationService
+    from tldw_chatbook.Actor_Packs.importer import ActorPackImportService
+    from tldw_chatbook.Actor_Packs.persona_coordinator import (
+        PersonaActorPackCoordinator,
+    )
+    from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Character_Chat.local_character_persona_service import (
+        LocalCharacterPersonaService,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    root = tmp_path / "bootstrap"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    (tmp_path / "data").mkdir(mode=0o700)
+    selector = tmp_path / "config.toml"
+    selector.write_text(
+        f'[paths]\ndata_dir = "{tmp_path / "data"}"\n'
+        f'[database]\nchachanotes_db_path = "{tmp_path / "chat.sqlite"}"\n'
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
+    config = install_config_source(monkeypatch)
+    profile = config.get_user_data_dir()
+    db = CharactersRAGDB(tmp_path / "chat.sqlite", "actor-pack-storage")
+    repository = ActorPackRepository(db)
+    local_service = LocalCharacterPersonaService(
+        db, persona_store_path=profile / "personas.json"
+    )
+    importer = ActorPackImportService(
+        repository,
+        staging_root=profile / "actor_pack_imports",
+        profile_root=profile,
+        local_service=local_service,
+    )
+    activation = ActorPackActivationService(
+        db,
+        local_service,
+        repository,
+        PersonaActorPackCoordinator(repository, local_service),
+        importer,
+    )
+    review = importer.inspect_archive(
+        _write_archive(
+            tmp_path / "persona.tldw-actor-pack",
+            actor_kind="persona",
+            portable_uuid="123e4567-e89b-42d3-a456-426614174000",
+            sections=(_shared_visual_section(), _persona_runtime_section()),
+        )
+    )
+    trees = (
+        profile / "visual_identities" / "actor_packs" / review.content_digest,
+        profile / "actor_packs" / review.content_digest,
+    )
+    return db, activation, review, trees
+
+
+def _published_files(trees):
+    return sorted(
+        str(path) for tree in trees if tree.exists() for path in tree.rglob("*")
+        if path.is_file()
+    )
+
+
+def test_actor_pack_activation_refuses_while_a_capture_or_restore_holds_storage(
+    tmp_path, monkeypatch
+):
+    """TASK-40304 AC1: the in-process capture/restore pause refuses a new
+    activation with a named, path-free reason before it writes anything."""
+    from tldw_chatbook.Actor_Packs.activation import ActorPackActivationError
+    from tldw_chatbook.Actor_Packs.import_controller import _error_category
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        _actor_pack_import_error_copy,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch
+    )
+    try:
+        pause = storage._begin_local_pause()
+        try:
+            with pytest.raises(ActorPackActivationError) as raised:
+                activation.activate(review, "create_new")
+            assert _published_files(trees) == []
+        finally:
+            pause.resume()
+        assert raised.value.category == "actor_pack_import_storage_unavailable"
+        assert _error_category(raised.value) == raised.value.category
+        assert raised.value.cleanup_pending is False
+        assert "Backup or restore" in _actor_pack_import_error_copy(
+            raised.value.category
+        )
+        # AC2: the inventory's activation rows name the admission they run under.
+        activation_rows = [
+            line
+            for line in DOC.read_text().splitlines()
+            if line.startswith("| tldw_chatbook/Actor_Packs/activation.py |")
+        ]
+        assert len(activation_rows) == 6
+        assert not [row for row in activation_rows if "no participant token" in row]
+        # Nothing was committed either: the same review still activates after.
+        result = activation.activate(review, "create_new")
+        assert result.actor_kind == "persona"
+        assert len(_published_files(trees)) == 3
+    finally:
+        db.close_connection()
+
+
+def test_actor_pack_activation_in_flight_keeps_a_capture_drain_waiting(
+    tmp_path, monkeypatch
+):
+    """TASK-40304 AC1: a pause that begins after the first asset is published
+    cannot drain until the activation has retired, and the activation leaves no
+    file in either tree for the capture to find."""
+    import threading
+    import time
+
+    from tldw_chatbook.Actor_Packs import activation as activation_module
+    from tldw_chatbook.Actor_Packs.activation import ActorPackActivationError
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import (
+        retire_current_thread_caches,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch
+    )
+    first, release = threading.Event(), threading.Event()
+    publish = activation_module._publish_immutable
+
+    def publish_then_wait(*args, **kwargs):
+        created = publish(*args, **kwargs)
+        if not first.is_set():
+            first.set()
+            assert release.wait(30)
+        return created
+
+    monkeypatch.setattr(activation_module, "_publish_immutable", publish_then_wait)
+    outcome = []
+
+    def run():
+        # The finite-worker boundary retires the worker thread's own DB
+        # connection, which a drain otherwise (rightly) keeps waiting for.
+        from tldw_chatbook.Backup_Recovery.participants import (
+            run_finite_local_worker,
+        )
+
+        try:
+            outcome.append(
+                run_finite_local_worker(activation.activate, review, "create_new")
+            )
+        except BaseException as error:  # noqa: BLE001 - relayed to the test thread.
+            outcome.append(error)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert first.wait(30)
+        assert _published_files(trees)
+        # Runtime maintenance's order: fence, retire this thread's own DB
+        # cache, then require a drain.
+        pause = storage._begin_local_pause()
+        try:
+            retire_current_thread_caches(pause)
+            drained_early = pause.drain(time.monotonic() + 0.3)
+            release.set()
+            worker.join(30)
+            assert not worker.is_alive()
+            assert pause.drain(time.monotonic() + 10)
+            # What a capture starting now would copy.
+            leftover = _published_files(trees)
+        finally:
+            pause.resume()
+        assert drained_early is False, "a capture drained over an in-flight activation"
+        assert leftover == []
+        assert type(outcome[0]) is ActorPackActivationError, outcome
+        assert outcome[0].category == "actor_pack_import_storage_unavailable"
+        assert outcome[0].cleanup_pending is False
+    finally:
+        release.set()
+        worker.join(30)
+        db.close_connection()

@@ -3205,12 +3205,21 @@ detached layout discovers it through its own validator. The shared-visual half o
 `visual_identities/actor_packs/` and was already captured by
 `persona.visual_identity`.
 
-Limits, as of 2026-11-10: activation writes (`_publish_immutable`,
-`_cleanup_published`) are raw native writes that take no participant token, as the
-activation's writes under `visual_identities/actor_packs/` already were. The owner is
-not in the later-rollback safety scope that `persona.assets` and the builtin owner
-have (neither is `persona.visual_identity`), and it has no recovery-review label of
-its own ("Other saved data").
+Activation writes (`_publish_immutable`, `_cleanup_published`) stay raw native
+writes, but since TASK-40304 `ActorPackActivationService.activate` holds ordinary
+storage admission (`acquire_storage`) on both trees it publishes into,
+`visual_identities/actor_packs/<digest>/` and `actor_packs/<digest>/`, from before
+its first write through its commit or the cleanup of its own files. A capture's or
+restore's local pause refuses a new activation (`actor_pack_import_storage_unavailable`,
+nothing written), a pause that begins mid-activation cannot drain until the
+activation has retired and removed its uncommitted files, and another process's
+maintenance makes the activation wait for native admission. Before, a pause that
+began between two asset writes drained at once and left a published asset with no
+committed row behind.
+
+Limits, as of 2026-11-10: the owner is not in the later-rollback safety scope that
+`persona.assets` and the builtin owner have (neither is `persona.visual_identity`),
+and it has no recovery-review label of its own ("Other saved data").
 
 The Actor_Packs rows: activation producers are `qualified` under the owner they write
 into; import staging rows, and `_preflight_space` (which checks free space on the
@@ -3497,12 +3506,12 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/MCP/permission_store.py | MCPPermissionStore._save_locked | mkdir | 1 | unsupported | mcp |
 | tldw_chatbook/MCP/permission_store.py | MCPPermissionStore._save_locked | os.replace | 1 | unsupported | mcp |
 | tldw_chatbook/MCP/permission_store.py | _fsync_parent_directory | open | 2 | unsupported | mcp |
-| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_character_sections | secure_private_directory | 1 | qualified | persona.visual_identity; Actor Pack activation publication, no participant token |
-| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_persona_sections | secure_private_directory | 1 | qualified | persona.actor_packs; Actor Pack activation publication, no participant token |
-| tldw_chatbook/Actor_Packs/activation.py | _cleanup_published | os.unlink | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
-| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | open | 2 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
-| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | os.unlink | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
-| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | write | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_character_sections | secure_private_directory | 1 | qualified | persona.visual_identity; Actor Pack activation publication under the activation's storage admission (TASK-40304) |
+| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_persona_sections | secure_private_directory | 1 | qualified | persona.actor_packs; Actor Pack activation publication under the activation's storage admission (TASK-40304) |
+| tldw_chatbook/Actor_Packs/activation.py | _cleanup_published | os.unlink | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication under the activation's storage admission (TASK-40304) |
+| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | open | 2 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication under the activation's storage admission (TASK-40304) |
+| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | os.unlink | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication under the activation's storage admission (TASK-40304) |
+| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | write | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication under the activation's storage admission (TASK-40304) |
 | tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | ZipFile | 1 | generic_boundary | caller-supplied stream: Actor Pack export destination (external) or buddy-conversion staging (assets) |
 | tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | open | 1 | generic_boundary | caller-supplied stream: Actor Pack export destination (external) or buddy-conversion staging (assets) |
 | tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | write | 1 | generic_boundary | caller-supplied stream: Actor Pack export destination (external) or buddy-conversion staging (assets) |

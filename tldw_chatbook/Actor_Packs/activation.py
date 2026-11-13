@@ -42,6 +42,10 @@ from .persona_coordinator import (
 from .repository import ActorPackRepository, ActorPackRepositoryError
 
 
+# A capture or restore holds profile storage, or it needs recovery first.
+_STORAGE_UNAVAILABLE = "actor_pack_import_storage_unavailable"
+
+
 class ActorPackActivationError(ValueError):
     """One fixed, path-free activation failure."""
 
@@ -138,6 +142,52 @@ class ActorPackActivationService:
         ):
             raise ActorPackActivationError("actor_pack_import_action_invalid")
         self._raise_if_cancelled(cancel_requested)
+        # TASK-40304: hold ordinary storage admission on both trees this
+        # activation publishes into, from before its first write through its
+        # commit or file cleanup. A capture's or restore's pause then refuses a
+        # new activation, and its drain waits for one already inside (ADR-126).
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        profile = self.importer._profile_root
+        try:
+            with storage.acquire_storage(
+                profile / "visual_identities" / "actor_packs" / review.content_digest,
+                related_paths=(profile / "actor_packs" / review.content_digest,),
+            ):
+                result = self._activate_admitted(review, action, cancel_requested)
+        except RecoveryRequired:
+            raise ActorPackActivationError(_STORAGE_UNAVAILABLE) from None
+        except ActorPackActivationError as exc:
+            if exc.category == _STORAGE_UNAVAILABLE or not storage.local_pause_active():
+                raise
+            # A pause that began mid-activation refuses its store reads, which
+            # the importer reports as a stale review; name the actual cause.
+            raise ActorPackActivationError(
+                _STORAGE_UNAVAILABLE, cleanup_pending=exc.cleanup_pending
+            ) from None
+        try:
+            self.importer.cleanup_review(review)
+        except ActorPackImportError:
+            return ActorPackActivationResult(
+                result.actor_kind,
+                result.local_actor_id,
+                result.portable_uuid,
+                cleanup_pending=True,
+                sections=result.sections,
+            )
+        return result
+
+    def _activate_admitted(
+        self,
+        review: ActorPackImportReview,
+        action: str,
+        cancel_requested: Callable[[], bool],
+    ) -> ActorPackActivationResult:
+        """Publish and commit, removing this attempt's own files on failure."""
+
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
         published: list[_PublishedFile] = []
         try:
             material = self.importer._activation_material(review)
@@ -186,16 +236,10 @@ class ActorPackActivationService:
                 "actor_pack_import_activation_failed",
                 cleanup_pending=_cleanup_published(published),
             ) from None
-        try:
-            self.importer.cleanup_review(review)
-        except ActorPackImportError:
-            return ActorPackActivationResult(
-                result.actor_kind,
-                result.local_actor_id,
-                result.portable_uuid,
-                cleanup_pending=True,
-                sections=result.sections,
-            )
+        except RecoveryRequired:
+            raise ActorPackActivationError(
+                _STORAGE_UNAVAILABLE, cleanup_pending=_cleanup_published(published)
+            ) from None
         return result
 
     def _activate_character(
