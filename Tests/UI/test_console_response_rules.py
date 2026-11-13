@@ -656,14 +656,23 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             async with asyncio.timeout(5):
                 await case.helper_entered.wait()
             await case.pilot.pause()
-            async with asyncio.timeout(2):
-                # The attach flag can precede its startup worker dispatch.
-                while (
-                    not case.console._console_attach_reconciled
-                    or case.console._console_control_bar_sync_scheduled
-                    or case.console not in startup_sync_dispatched
-                ):
-                    await asyncio.sleep(0.01)
+            try:
+                async with asyncio.timeout(2):
+                    # The attach flag can precede its startup worker dispatch.
+                    while (
+                        not case.console._console_attach_reconciled
+                        or case.console._console_control_bar_sync_scheduled
+                        or case.console not in startup_sync_dispatched
+                    ):
+                        await asyncio.sleep(0.01)
+            except TimeoutError as error:
+                error.add_note(
+                    "Console startup readiness: "
+                    f"attach_reconciled={case.console._console_attach_reconciled}, "
+                    f"control_sync_scheduled={case.console._console_control_bar_sync_scheduled}, "
+                    f"startup_sync_dispatched={case.console in startup_sync_dispatched}"
+                )
+                raise
             assert case.console._console_credential_poll_timer is not None
             source = case.rules._sources[case.session_id]
             assert case.rules.acceptance_current(source)
