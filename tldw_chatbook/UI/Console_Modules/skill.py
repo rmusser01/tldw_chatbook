@@ -251,13 +251,15 @@ class ConsoleSkillController:
         """
         args = parse.args.strip()
         if not args:
+            # It cannot be refused (an empty list is still a list), so it
+            # takes "/skills" before the lookup awaits (PR #3458 review).
+            self._take_ran_command_draft()
             context = await self._fetch_console_skill_context()
             candidates = self._console_skill_trusted_candidates_from_context(context)
             # Lazy: keeps command_handoff off the boot path (ADR-097). After
             # the fetch, answer in the chat /skills came from (TASK-33622.16).
             from .command_handoff import append_command_output
 
-            self._take_ran_command_draft()
             await append_command_output(
                 self._append_native_console_system_message,
                 format_skills_list(candidates),

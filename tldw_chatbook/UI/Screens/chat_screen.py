@@ -18608,6 +18608,10 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.command_draft import take_ran_command_draft
         from ..Console_Modules.command_handoff import append_command_output
 
+        # It cannot be refused -- every failure below becomes a report row --
+        # so it takes "/doctor" before its 10-25 s of checks: Ctrl+Q and a
+        # re-send meanwhile find nothing left (TASK-33628.20, PR #3458 review).
+        take_ran_command_draft(self)
         include_network = "network" in (parse.args or "").lower()
         try:
             checks = await _asyncio.to_thread(
@@ -18620,8 +18624,6 @@ class ChatScreen(BaseAppScreen):
             report = format_doctor_report(checks)
         except Exception as exc:  # noqa: BLE001 - a command must not crash the screen
             report = f"Doctor could not complete: {exc}"
-        # It ran, even when a check failed: take "/doctor" out (TASK-33628.20).
-        take_ran_command_draft(self)
         await append_command_output(self._append_native_console_system_message, report)
 
     async def _console_command_run_action(self, parse: CommandParse) -> None:
@@ -18636,7 +18638,10 @@ class ChatScreen(BaseAppScreen):
             )
             return
         try:
-            self._clear_console_composer_draft()  # it ran: drop "/model son"
+            # It ran: drop "/model son", only the revision the send captured.
+            from ..Console_Modules.command_draft import take_or_clear_command_draft
+
+            take_or_clear_command_draft(self)
             takes_args = dict(CONSOLE_ACTION_COMMANDS).get(parse.name)  # /model [query]
             result = method(parse.args) if takes_args else method()
             if inspect.isawaitable(result):
@@ -18779,6 +18784,8 @@ class ChatScreen(BaseAppScreen):
         the draft in place for correction (mirrors `/system`'s
         no-system-part behavior); handled outcomes clear it.
         """
+        from ..Console_Modules.command_draft import take_or_clear_command_draft
+
         action = parse_prefill_args(parse.args)
         store = self._ensure_console_chat_store()
         self._session._ensure_active_console_session_settings()
@@ -18813,7 +18820,7 @@ class ChatScreen(BaseAppScreen):
             # them) that make the confirmation visible to a polling caller
             # before this coroutine resumes past the `await` -- clearing
             # first closes that window instead of racing it.
-            self._clear_console_composer_draft()
+            take_or_clear_command_draft(self)
             await self._append_native_console_system_message("\n".join(lines))
             return
         if action.kind == ACTION_CLEAR:
@@ -18824,7 +18831,7 @@ class ChatScreen(BaseAppScreen):
             copy = "Prefill cleared."
             if not persisted:
                 copy += " (Warning: saved conversation not updated.)"
-            self._clear_console_composer_draft()
+            take_or_clear_command_draft(self)
             await self._append_native_console_system_message(copy)
             return
         # Deliberately NOT markup-escaped: native Console transcript rows
@@ -18845,14 +18852,14 @@ class ChatScreen(BaseAppScreen):
             )
             if not persisted:
                 copy += " (Warning: saved conversation not updated.)"
-            self._clear_console_composer_draft()
+            take_or_clear_command_draft(self)
             await self._append_native_console_system_message(copy)
             return
         if action.kind == ACTION_ONE_SHOT:
             store.set_session_one_shot_prefill(session.id, action.text)
             self._sync_console_chat_core_state()
             self._sync_console_settings_summary()
-            self._clear_console_composer_draft()
+            take_or_clear_command_draft(self)
             await self._append_native_console_system_message(
                 f"Prefill armed for next send: '{preview}'. The reply continues "
                 "directly from the last character; tool calling is skipped on "
@@ -19093,7 +19100,9 @@ class ChatScreen(BaseAppScreen):
         # without this the full `/steer <text>` stays in the composer and one
         # habitual extra Enter delivers the SAME guidance twice into the live
         # run. Siblings (/prefill, /fewer-permission-prompts) clear too.
-        self._clear_console_composer_draft()
+        from ..Console_Modules.command_draft import take_or_clear_command_draft
+
+        take_or_clear_command_draft(self)
         self.app_instance.notify("Steered into the running turn.")
         return True
 
@@ -19115,7 +19124,9 @@ class ChatScreen(BaseAppScreen):
         # Same double-delivery guard as /steer (review I-3): dispatch
         # restores the stash, so the command would sit in the composer and
         # one habitual extra Enter would redirect the run twice.
-        self._clear_console_composer_draft()
+        from ..Console_Modules.command_draft import take_or_clear_command_draft
+
+        take_or_clear_command_draft(self)
         self.app_instance.notify("Redirect sent — correcting the running turn.")
         return True
 
@@ -19380,7 +19391,9 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Render local MCP prompt-reduction recommendations."""
         del parse
-        self._clear_console_composer_draft()
+        from ..Console_Modules.command_draft import take_or_clear_command_draft
+
+        take_or_clear_command_draft(self)
         service = getattr(self.app_instance, "unified_mcp_service", None)
         loader = getattr(service, "permission_prompt_recommendations", None)
         if not callable(loader):
