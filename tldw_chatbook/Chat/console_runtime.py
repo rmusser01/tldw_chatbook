@@ -202,10 +202,8 @@ def _native_legacy_hook_module() -> ModuleType:
 def _prepare_legacy_hook_import(runtime: ConsoleRuntime) -> None:
     """Resolve the inert module during an owned read, before engine attachment."""
     try:
-        if (
-            inspect.getattr_static(runtime._app, CONSOLE_RUNTIME_ATTR, None) is runtime
-            and runtime._legacy_hooks_source is None
-        ):
+        published_runtime = inspect.getattr_static(runtime._app, CONSOLE_RUNTIME_ATTR, None)
+        if published_runtime is runtime and runtime._legacy_hooks_source is None:
             _native_legacy_hook_module()
     except Exception:  # noqa: BLE001 -- the original attach site owns import failures
         pass
