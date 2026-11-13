@@ -134,13 +134,17 @@ def _assert_ordinary_completion_settles(db, store, session_id, before) -> None:
     assert store.dispatch_recovery_for_session(session_id) is None
 
 
-def test_destination_mismatch_leaves_the_dispatch_to_ordinary_completion(
+def test_destination_mismatch_writes_nothing_and_stays_fail_closed(
     tmp_path,
 ) -> None:
     """destination_mismatch: the frozen destination refuses before any write.
 
     Since dev's TASK-35582 a run whose target moved to another origin is
     refused by the store's binding check, before settlement is attempted.
+    Nothing is written, but the code is deliberately NOT "unwritten": the
+    refusal says the reply came from somewhere other than the destination the
+    user accepted, so the runtime fails closed instead of completing it as an
+    ordinary reply (review v5r1 F9).
     """
     db, store, session_id, before = _streaming_dispatch(tmp_path)
 
@@ -155,8 +159,13 @@ def test_destination_mismatch_leaves_the_dispatch_to_ordinary_completion(
             continuation_target=_kimi_target("https://api.moonshot.cn/v1"),
         )
 
-    assert _unwritten_code(error) == "destination_mismatch"
-    _assert_ordinary_completion_settles(db, store, session_id, before)
+    code = store_failure_code(error.value)
+    assert code == "destination_mismatch"
+    assert code not in UNWRITTEN_STORE_FAILURES
+    after = db.get_message_by_id("assistant-1")
+    assert after["provider_continuation_json"] is None
+    assert after["version"] == before["version"]
+    assert _checkpoint_count(db) == 1
     db.close()
 
 

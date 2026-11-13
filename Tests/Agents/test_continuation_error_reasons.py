@@ -53,11 +53,14 @@ _CHAT = _REPO_ROOT / "tldw_chatbook" / "Chat"
 _STORE = _CHAT / "console_chat_store.py"
 #: Every function on the store's continuation persist path that raises one of
 #: its fixed failure sentences. Dev moved two of them out of the store
-#: (TASK-35582's binding module, and the dispatch settlement body).
+#: (TASK-35582's binding module, and the dispatch settlement body), and
+#: TASK-37653 put the managed pre-seal (``_presealed_continuation_finalizer``,
+#: applied by ``_continuation_event_owner_scope``) on the path.
 _PERSIST_PATH = {
     _STORE: {
         "persist_provider_continuation_event",
         "_continuation_write_value",
+        "_presealed_continuation_finalizer",
         "ensure_provider_continuation_durable",
     },
     _CHAT / "console_continuation_binding.py": {
@@ -473,23 +476,70 @@ def test_unstored_reasoning_checkpoint_keeps_the_delivered_reply(
 
 
 @pytest.mark.parametrize(
-    "store_text",
+    ("store_text", "store_code"),
     [
         # Raised after the store committed the row: not a clean "unwritten".
-        "Local continuation intent is stale or unavailable; save and retry.",
-        "Dispatch recovery owner changed during settlement.",
+        (
+            "Local continuation intent is stale or unavailable; save and retry.",
+            "local_intent_stale",
+        ),
+        ("Dispatch recovery owner changed during settlement.", "settlement_owner_changed"),
+        # Raised after the managed finalizer ran (TASK-37653's pre-seal).
+        (
+            "Continuation owner changed while sealing; reload and retry.",
+            "seal_owner_changed",
+        ),
         # Unknown text: fail closed, as before.
-        "PRIVATE-CANARY",
+        ("PRIVATE-CANARY", UNRECOGNIZED_STORE_FAILURE),
     ],
 )
-def test_possibly_written_checkpoint_still_fails_closed(store_text) -> None:
+def test_possibly_written_checkpoint_still_fails_closed(store_text, store_code) -> None:
     def persist(event) -> None:
         raise RuntimeError(store_text)
 
     outcome, traced = _run_with_trace([_first_final_turn()], persist=persist)
 
     assert outcome.status == RUN_ERROR
-    assert _error_states(outcome)["continuation_error"] == "final_persist_failed"
+    assert _error_states(outcome) == {
+        "continuation_error": "final_persist_failed",
+        "continuation_store_failure": store_code,
+    }
+    assert not [
+        step for step in traced if step.summary == "Reasoning not preserved for replay"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("store_text", "store_code"),
+    [
+        ("Durable continuation host target is unavailable.", "host_target_unavailable"),
+        ("Durable continuation destination is unavailable.", "destination_unavailable"),
+        ("Provider continuation destination mismatch.", "destination_mismatch"),
+        ("Provider continuation binding cannot be erased.", "binding_erased"),
+        (
+            "Managed continuation finalizer is unavailable.",
+            "managed_finalizer_unavailable",
+        ),
+    ],
+)
+def test_destination_binding_refusals_still_fail_closed(store_text, store_code) -> None:
+    """TASK-35582's binding checks guard the destination the user accepted.
+
+    They refuse before any write, but a refusal means the checkpoint names a
+    different provider, origin or binding than the accepted dispatch, so the
+    run must not quietly complete as an ordinary reply (review v5r1 F9).
+    """
+
+    def persist(event) -> None:
+        raise RuntimeError(store_text)
+
+    outcome, traced = _run_with_trace([_first_final_turn()], persist=persist)
+
+    assert outcome.status == RUN_ERROR
+    assert _error_states(outcome) == {
+        "continuation_error": "final_persist_failed",
+        "continuation_store_failure": store_code,
+    }
     assert not [
         step for step in traced if step.summary == "Reasoning not preserved for replay"
     ]

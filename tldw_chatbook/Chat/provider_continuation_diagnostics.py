@@ -46,6 +46,11 @@ STORE_FAILURE_CODES: Mapping[str, str] = MappingProxyType(
         ),
         # _continuation_write_value: the managed seal (dev TASK-35582).
         "Managed continuation seal is unavailable.": "managed_seal_unavailable",
+        # _presealed_continuation_finalizer (dev TASK-37653): the owner moved
+        # between the pre-seal and the locked write.
+        "Continuation owner changed while sealing; reload and retry.": (
+            "seal_owner_changed"
+        ),
         # console_continuation_binding.continuation_event_value.
         "Continuation revision conflict.": "revision_conflict",
         "Unsupported continuation event.": "unsupported_event",
@@ -96,12 +101,16 @@ STORE_FAILURE_CODES: Mapping[str, str] = MappingProxyType(
 PROJECTION_FAILED = "projection_failed"
 
 #: Failures raised before the store wrote the continuation or settled the
-#: dispatch (a failed terminal settlement is one atomic, rolled-back write; the
-#: host-target and destination binding checks run before any write). The
+#: dispatch (a failed terminal settlement is one atomic, rolled-back write),
+#: for which keeping the delivered reply loses only reasoning replay. The
 #: durability-barrier codes, ``settlement_owner_changed`` and
 #: ``persistence_owner_changed`` are absent on purpose: they can follow a
-#: commit. So is ``managed_seal_unavailable``: it is raised after the managed
-#: finalizer ran, whose own effects this module cannot vouch for.
+#: commit. So are ``managed_seal_unavailable`` and ``seal_owner_changed``:
+#: both are raised after the managed finalizer ran, whose own effects this
+#: module cannot vouch for. TASK-35582's host-target, destination and binding
+#: refusals are absent too: they also run before any write, but each says the
+#: checkpoint names another provider, origin or binding than the dispatch the
+#: user accepted, and dev built them to fail closed (review v5r1 F9).
 #: ``UNRECOGNIZED_STORE_FAILURE`` is absent too, so anything unknown keeps
 #: failing closed.
 UNWRITTEN_STORE_FAILURES = frozenset(
@@ -118,11 +127,6 @@ UNWRITTEN_STORE_FAILURES = frozenset(
         "terminal_settlement_failed",
         "revision_conflict",
         "unsupported_event",
-        "host_target_unavailable",
-        "binding_erased",
-        "managed_finalizer_unavailable",
-        "destination_unavailable",
-        "destination_mismatch",
     }
 )
 
