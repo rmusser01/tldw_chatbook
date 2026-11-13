@@ -591,6 +591,9 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-38948: the subscription background-readiness file (sandboxed,
     # ~6 s serial), which ran on no PR lane.
     "Tests/Chat/test_subscription_background_readiness.py",
+    # TASK-40323: the first-run wizard's subscription-readiness file
+    # (sandboxed), which ran on no lane.
+    "Tests/Wizards/test_first_run_subscription_readiness.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",
@@ -640,6 +643,23 @@ RECOVERED_SUITES_TARGETS = (
     # tests), which pins that a failed regenerate keeps the prior answer and
     # ran on no lane.
     "Tests/Chat/test_console_variant_stream.py",
+    # TASK-40323: the green held-pointer case and stock skill-trust cases
+    # (bootstrap_profile, private subprocesses), which ran on no lane.
+    "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[cancel]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[recancel]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[shutdown]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[denied]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[ready]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[custom]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[local_winner]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[app_winner]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[runtime_dispose]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[runtime_replacement]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[app_closing]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_binding]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_body]",
+    "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[metadata_body]",
 )
 #: Deselected 2026-11-12: red on dev e0186fa10a (console_send_diagnostic
 #: ContextVar token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.

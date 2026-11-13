@@ -725,7 +725,8 @@ def test_character_controller_is_constructed_with_late_bound_screen_edges():
     screen._session = SimpleNamespace(
         _active_native_console_session=lambda: native_session,
         _current_console_conversation_id=lambda: conversation_id,
-        _default_console_session_settings=lambda: default_settings,
+        # db515a71d3 wires the character-chat defaults, not the generic ones.
+        _character_console_session_defaults=lambda: default_settings,
     )
     screen.app_instance.chachanotes_db = character_db
 

@@ -26,7 +26,9 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-pytestmark = pytest.mark.asyncio
+# TASK-40323: `_build_test_app` loads config (`build_test_app_config` ->
+# `load_settings`), which the per-test sandbox refuses with RecoveryRequired.
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 @pytest.fixture()

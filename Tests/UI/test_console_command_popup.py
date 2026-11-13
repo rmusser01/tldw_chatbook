@@ -23,6 +23,11 @@ from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_command_popup import ConsoleCommandPopup
 
+# TASK-40323: the mounted cases build `_build_test_app`, which loads config
+# (`build_test_app_config` -> `load_settings`); the per-test sandbox refuses
+# that with RecoveryRequired, so the whole file keeps the bootstrap profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 SUGGESTIONS = [
     CommandSuggestion(insert_text="/a ", label="/a", description="first"),
     CommandSuggestion(insert_text="/b ", label="/b", description="second"),
@@ -88,9 +93,13 @@ async def test_slash_opens_popup_and_typing_filters():
         # popup offers the registered commands" -- so assert that, plus the
         # six this test was written for, and let honest additions through.
         labels = _popup_labels(popup)
-        assert labels == [
+        commands = [
             f"/{name}" for name in default_console_registry().available_names()
         ]
+        # 0520df15ac (TASK-32954) ships the built-in Character Creator skill,
+        # so the trusted skills' `/skills <name>` rows follow the commands.
+        assert labels[: len(commands)] == commands
+        assert all(label.startswith("/skills ") for label in labels[len(commands) :])
         assert {
             "/prompt",
             "/system",
@@ -122,8 +131,11 @@ async def test_enter_accepts_and_inserts_without_sending():
         await pilot.press("enter")
         await pilot.pause()
         assert composer.draft_text() == "/skills "
-        # No skill candidates configured -> arg-mode list is empty -> hidden.
-        assert not popup.is_open
+        # Arg mode lists the trusted skills, hidden when there are none;
+        # 0520df15ac (TASK-32954) ships a built-in one.
+        names = [skill.name for skill in console._skill._console_skill_candidates]
+        assert popup.is_open == bool(names)
+        assert (_popup_labels(popup) if popup.is_open else []) == names
 
 
 @pytest.mark.asyncio

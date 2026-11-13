@@ -1460,6 +1460,10 @@ jobs:
       # TASK-39153 appends the Library ingest flow file (bootstrap_profile, 13 tests).
       # Round 14: TASK-40316 appends the regenerate variant-stream file
       # (bootstrap_profile, 19 tests), on no lane before.
+      # TASK-40323 adds the first-run wizard's subscription-readiness file
+      # (sandboxed, ~9 s) after the background-readiness one, and, last, the
+      # green held-pointer case and 14 green stock skill-trust cases
+      # (bootstrap_profile; each a private subprocess, ~30-45 s serial).
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -1479,6 +1483,7 @@ jobs:
             Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked \
             Tests/Backup_Recovery/test_config_participant_lifetimes.py \
             Tests/Chat/test_subscription_background_readiness.py \
+            Tests/Wizards/test_first_run_subscription_readiness.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \
@@ -1500,6 +1505,21 @@ jobs:
             Tests/Chat/test_console_automatic_library_preparation.py \
             Tests/integration/test_library_ingest_flow.py \
             Tests/Chat/test_console_variant_stream.py \
+            "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[cancel]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[recancel]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[shutdown]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[denied]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[ready]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[custom]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[local_winner]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[app_winner]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[runtime_dispose]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[runtime_replacement]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[app_closing]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_binding]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[helper_body]" \
+            "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[metadata_body]" \
             --deselect="Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_is_emergency_detachment" \
             --storage-lease-guard \
             --timeout=180 \

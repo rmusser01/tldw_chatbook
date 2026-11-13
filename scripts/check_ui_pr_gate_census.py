@@ -1042,6 +1042,11 @@ MINIMUM_FILES = 2038
 # TASK-40324 (2026-11-12): append the readiness projection's unstarted-worker
 # settlement node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2087
+MINIMUM_FILES = 2081
+# TASK-40323 (2026-11-12): append the Console command-popup file's fourteen
+# green tests and the controller wiring file's 34 tests at the tail. The floor
+# is the measured entry count.
+MINIMUM_FILES = 2135
 
 
 def read_census(path: Path) -> list[str]:
