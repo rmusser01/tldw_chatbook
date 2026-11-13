@@ -414,10 +414,11 @@ a prompt to begin.
 ```
 
 On an empty Media page the keyboard lands on that one button (**Import
-media** or **Show all types**). When an open item's page empties under the
-Reader and the canvas returns to its list by itself, focus that was in the
-Media panes lands there too; focus you had put elsewhere, such as the rail's
-search box, stays where it is.
+media** or **Show all types**), or in the filter box when a typed query found
+nothing. When an open item's page empties under the Reader and the canvas
+returns to its list by itself, focus that was in the Media panes lands there
+too; focus you had put elsewhere, such as the rail's search box, stays where
+it is.
 
 A filtered empty page keeps its submitted type, query, or collection visible
 until you choose the reset action. Loading and failed refreshes do not use this

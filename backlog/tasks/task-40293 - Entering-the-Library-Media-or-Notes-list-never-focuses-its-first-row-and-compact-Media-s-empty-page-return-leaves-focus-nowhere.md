@@ -4,7 +4,7 @@ title: "Entering the Library Media or Notes list never focuses its first row, an
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 07:20'
+updated_date: '2026-11-13 08:14'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -82,3 +82,9 @@ Covering run (shared by the stream's five tasks, final tree): 58 Library UI file
 - Both new nodes are appended at the UI census tail (`MINIMUM_FILES` 2029 -> 2031). Serial times with the lane flags: 7.3 s and 8.4 s call, about 15 s whole, load 19-36.
 - The User Guide sentence now says the return lands only focus that was in the Media panes.
 - Size rows: `library_media_controller.py` 5275 -> 5308 (the file grows 5267 -> 5308). `library_screen.py` is unchanged by this round (a one-line swap at the call site).
+
+**Fix round 2 (review r14lf-rev2).**
+- The landing's retry re-checked only whether focus was stranded, so a later tick could take focus the user had just moved to the Items filter, or land on the hidden Import after a switch to Notes. No test exercised it, and the reviewer saw every realistic run land on the first call, so the retry and its `tries` budget are gone. The single attempt runs in the reset's `call_after_refresh` and lands only while the Media row is the selected route (checked when it is scheduled and when it runs), focus is still stranded, and the target is in `screen.focus_chain` and not pruning.
+- Without the retry, the compact, queued-grip and wide nodes passed 12/12 in each of 3 rounds (`-n 4 --dist each`, 4 copies of each, load 16-22).
+- The User Guide sentence now also names the filter box, where an empty page lands when a typed query found nothing.
+- Size row: `library_media_controller.py` 5308 -> 5307.
