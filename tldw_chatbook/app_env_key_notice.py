@@ -39,6 +39,25 @@ class EnvKeyNoticeMixin:
         self._env_key_notice_message = notice.message  # F10: 'Use X' dismisses it
         self._persist_env_key_notice_flag()
 
+    def dismiss_env_key_notice(self) -> None:
+        """Remove the env-key launch toast, and only that toast (review F10).
+
+        Called when a Get started card offer commits, so the toast stops
+        naming the old unkeyed default. Textual has no public way to remove
+        one toast, so this reads the app's notification collection and is a
+        no-op if that ever changes; a stale toast never fails the commit.
+        """
+        message = getattr(self, "_env_key_notice_message", None)
+        notifications = getattr(self, "_notifications", None)
+        unnotify = getattr(self, "_unnotify", None)
+        if not message or notifications is None or not callable(unnotify):
+            return
+        try:
+            for notification in [n for n in notifications if n.message == message]:
+                unnotify(notification)
+        except Exception:  # noqa: BLE001 - a stale toast never fails the commit
+            logger.debug("env_key_notice_dismiss_failed")
+
     def _schedule_catalog_refresh_then_env_key_notice(self) -> bool:
         """AC#11: schedule the catalog pass, then show the held env-key notice
         unless that pass opened the consent question. One call at mount, so
