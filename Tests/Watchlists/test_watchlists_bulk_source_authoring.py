@@ -144,6 +144,7 @@ async def test_bulk_modal_escape_restores_focus_to_its_launch_action():
         await pilot.press("escape")
         await _until(pilot, lambda: host.screen is screen)
 
+        assert host.screen is screen
         restored = screen.query_one("#sources-add-several-button", Button)
         assert screen.focused is restored
 

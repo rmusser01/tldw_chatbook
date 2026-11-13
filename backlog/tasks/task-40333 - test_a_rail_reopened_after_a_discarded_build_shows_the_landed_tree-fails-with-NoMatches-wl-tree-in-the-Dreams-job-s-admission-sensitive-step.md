@@ -66,4 +66,6 @@ No open task names this test.
 
 **AC#3: 20 of 20.** The step's own command (the five targets, `--timeout=300 --tb=short`, no xdist) through run.sh, four processes at a time, 5 rounds, on head f28f65caf9: 20 of 20 passed, 110 passed each, 345-406 s per run, 1-min load 37-48 at run starts and ends (18 CPUs, other sessions' work plus these four). Before the five extra waits the same command failed 4 of 4 runs (2-4 watchlists nodes each, load 63-70), then 1 of 20 and 1 of 8 as each remaining race showed itself.
 
+**Review r14lt-rev1 (Minor).** `_until` returns silently on timeout, and a suspended screen keeps its own `focused`, so the escape test passed with `BulkSourcesModal.action_cancel` made a no-op. It now asserts `host.screen is screen` after the wait. Red under the no-op cancel (temporary, reverted): `assert BulkSourcesModal() is WatchlistsCollectionsScreen` at `:147`; green after.
+
 **Files.** `Tests/Watchlists/test_watchlists_bulk_source_authoring.py`.
