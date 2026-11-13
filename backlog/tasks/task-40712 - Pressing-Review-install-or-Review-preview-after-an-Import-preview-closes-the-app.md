@@ -72,6 +72,8 @@ Checked on fu/r14-plugins at 4af56eb459 (dev 26b2e677dd plus the docs stream), 2
 
 **Covering run.** `Tests/UI/test_plugins_browse.py` and `Tests/UI/test_plugin_review.py` at `-n 4`, load 53→39: 95 passed, 1 failed. The failure is `test_installed_manager_collects_all_51_exact_root_refs`, which hit pytest-timeout's 300 s while creating 51 saved-data roots under load. It does not open an Import… preview or fail a load, so neither change reaches it. Run alone at HEAD it passes in 187 s, at load 33→29.
 
+**Diagnostic inventory.** The dialog's new load-failure log (`logger.warning("Plugin review load failed: {}", type(error).__name__)`) logs only the exception's type name. Preflight's production diagnostic inventory caught it after this task's first commit, and the pin is updated in a follow-up commit (`Docs/security/production-diagnostic-inventory.json`, owner TASK-494, one call).
+
 **Files.** `tldw_chatbook/UI/Screens/plugins_screen.py`, `tldw_chatbook/Widgets/plugin_review_modal.py`, `Tests/UI/test_plugins_browse.py`, `Docs/User_Guide/plugins.md`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
 <!-- SECTION:NOTES:END -->
 
