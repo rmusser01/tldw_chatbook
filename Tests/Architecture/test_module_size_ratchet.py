@@ -1072,8 +1072,9 @@ _BUDGETS: dict[str, int] = {
     # console_trace_domain_append.py) and its non-contiguous admitted delta.
     # owner decision 2026-10-04 (expand limits), applied 2026-11-13:
     # TASK-34100.3 pre-merge review +2 -- the hook hands the rule the flat
-    # prefix and the retained values it restores after a refused probe.
-    "tldw_chatbook/Chat/console_trace_service.py": 6626,
+    # prefix and the retained values it restores after a refused probe; +1,
+    # the delta's tool-loop overlay is read from the admitted indices.
+    "tldw_chatbook/Chat/console_trace_service.py": 6627,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,

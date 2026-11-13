@@ -2931,10 +2931,11 @@ class ConsoleTraceService:
                 ),
                 messages_payload=message_delta,
                 continuations=continuation_delta,
+                # Positions within the delta, whichever rule chose its indices.
                 tool_loop=tuple(
-                    index - admitted_from
-                    for index in provenance.tool_loop
-                    if index in admitted_indices
+                    position
+                    for position, index in enumerate(admitted_indices)
+                    if index in provenance.tool_loop
                 ),
             )
             delta_values = tuple(values[index] for index in admitted_indices)
