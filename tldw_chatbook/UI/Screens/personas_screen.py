@@ -124,7 +124,6 @@ from ...Character_Chat.visual_identity import (
     publish_visual_identity_candidate,
     resolve_visual_identity,
 )
-from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Actor_Packs.contracts import validate_actor_portrait
 from ...Actor_Packs.controller import (
@@ -14662,21 +14661,26 @@ class PersonasScreen(BaseAppScreen):
         except OSError as exc:
             self._notify(f"Import failed: {exc}", "error")
             return
+        # Lazy: not on the Roleplay route's pre-import path (spec 5.10).
+        from ..Persona_Modules.roleplay_import_parse import (
+            ImportNotJSON,
+            read_world_book_import,
+        )
+
         try:
-            text = await asyncio.to_thread(source.read_text, "utf-8")
+            # Read, parse and normalise in one thread (TASK-33910.44); on dev
+            # only the read did, and a 9 MB book's parse and normalise held
+            # the event loop.
+            data = await asyncio.to_thread(read_world_book_import, source)
         except (OSError, UnicodeDecodeError) as exc:
             logger.opt(exception=True).warning(
                 f"Could not read world-book file {path}."
             )
             self._notify(f"Import failed: {exc}", "error")
             return
-        try:
-            parsed = json.loads(text)
-        except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+        except ImportNotJSON as exc:
             self._notify(f"Import failed: not valid JSON ({exc})", "error")
             return
-        try:
-            data = normalize_world_book_import(parsed)
         except ValueError as exc:
             self._notify(f"Import failed: {exc}", "error")
             return
@@ -14742,30 +14746,29 @@ class PersonasScreen(BaseAppScreen):
         except OSError as exc:
             self._notify(f"Import failed: {exc}", "error")
             return
+        # Lazy: not on the Roleplay route's pre-import path (spec 5.10).
+        from ..Persona_Modules.roleplay_import_parse import (
+            ImportNotJSON,
+            read_dictionary_import,
+        )
+
         try:
-            text = await asyncio.to_thread(source.read_text, "utf-8")
+            # Read and (for .json) parse in one thread (TASK-33910.44); on dev
+            # only the read did, and the parse held the event loop.
+            content = await asyncio.to_thread(read_dictionary_import, source)
         except (OSError, UnicodeDecodeError) as exc:
             logger.opt(exception=True).warning(f"Could not read import file {path}.")
             self._notify(f"Import failed: {exc}", "error")
             return
+        except ImportNotJSON as exc:
+            self._notify(f"Import failed: not valid JSON ({exc})", "error")
+            return
+        except ValueError as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
         suffix = source.suffix.lower()
-        if suffix == ".json":
-            try:
-                parsed = json.loads(text)
-            except (json.JSONDecodeError, RecursionError, ValueError) as exc:
-                self._notify(f"Import failed: not valid JSON ({exc})", "error")
-                return
-            raw = (
-                parsed.get("data")
-                if isinstance(parsed, dict) and "data" in parsed
-                else parsed
-            )
-            if not isinstance(raw, dict):
-                self._notify(
-                    "Import failed: JSON must be a dictionary object.", "error"
-                )
-                return
-            data = dict(raw)
+        if isinstance(content, dict):  # a .json file, parsed
+            data = content
             request = {"data": data}
 
             def _rename(new_name: str) -> None:
@@ -14774,7 +14777,7 @@ class PersonasScreen(BaseAppScreen):
             base_name = str(data.get("name") or "Imported Dictionary")
             importer = service.import_json
         elif suffix in (".md", ".markdown"):
-            request = {"name": source.stem, "content": text}  # name REQUIRED
+            request = {"name": source.stem, "content": content}  # name REQUIRED
 
             def _rename(new_name: str) -> None:
                 request["name"] = new_name
