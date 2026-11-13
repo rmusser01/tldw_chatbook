@@ -3,7 +3,7 @@ id: TASK-40330
 title: "The Library and Console guide pages say a handoff carries a title label, not the transcript, though it stages up to 3,000 characters of it"
 status: Done
 assignee: ['@claude']
-updated_date: '2026-11-13 02:12'
+updated_date: '2026-11-13 03:19'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -60,3 +60,5 @@ Both pages now say what a handoff actually sends: a bounded excerpt of the conte
 **Changes.** `Docs/User_Guide/library/media-and-conversations.md`: the conversation reader paragraph, Stage-a-conversation step 2, and the quirk bullet (renamed "Staging sends an excerpt, not the whole item"). `Docs/User_Guide/console/context-and-rag.md`: the staged-sources paragraph (notes 4,000, media 500, conversations 3,000).
 
 **Contract** (`Tests/Docs/test_console_library_controls_docs.py`): the "stages a reference" pin became "stages an excerpt"; both pages pin the 3,000-character speaker-labelled transcript and the 500-character media excerpt. Red before the page edits: both pages reported the missing fragments (2 failed, 19 passed). Green after: `Tests/Docs/` 32 passed.
+
+**Ruling (coordinator, 2026-11-13):** AC#1's "truncation reported" is met by the pages saying plainly that nothing reports a conversation excerpt's truncation (media truncation is reported on Reader ▸ Info); the code gap (`body_truncated` not carried into the staged launch) is filed as a follow-up at closeout.
