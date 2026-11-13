@@ -1263,9 +1263,10 @@ configured in **F4 ▸ Providers & Models**.
   cannot be saved, the reply is still shown and saved as an ordinary assistant
   message, Send stays available, and the run's trace records **Reasoning not
   preserved for replay** instead of holding the reply behind a
-  response-recovery card. The exception is a reply whose saved reasoning names
-  a different provider endpoint than the one the send was accepted for: that
-  reply still goes to response recovery.
+  response-recovery card. The exception is a reply whose saved reasoning
+  cannot be matched to the provider destination the send was accepted for
+  (for example, a different endpoint): that reply still goes to response
+  recovery.
 - With trace capture on (the default), each turn you send in a saved Kimi chat
   is traced like any other send: its request replays the earlier replies'
   saved reasoning, and **Trace** lists that turn's call with its reply.
