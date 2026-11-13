@@ -59,4 +59,5 @@ Found in round 13 of the 2026-10-23 burn-down (load stream, TASK-39166). Checked
   - Gateway, UI response-rule and preparation files, `-k "auxiliary or rule or helper or exit"`: 93 passed.
   - Builder, deepseek, semantic and first-send preimport files: 92 passed.
   - Module size ratchet passes; `console_runtime.py` is 7,039 lines against its 7,043 row.
-- **Files.** `tldw_chatbook/Chat/response_rules/resources.py`, `tldw_chatbook/Chat/console_runtime.py`, `Tests/Chat/test_response_rules_preparation_custody.py`, `Tests/Chat/test_console_runtime_shutdown.py`.
+- **Diagnostic inventory.** The one added call is `logger.warning("response_rule_helpers_abandoned_at_exit count={} purposes={}", len(purposes), ",".join(purposes))`. It carries a count and the fixed purpose tokens (`learning`/`checking`): no user content, secrets, paths or URLs. Reviewed with `--statements`, then `--write`.
+- **Files.** `tldw_chatbook/Chat/response_rules/resources.py`, `tldw_chatbook/Chat/console_runtime.py`, `Docs/security/production-diagnostic-inventory.json`, `Tests/Chat/test_response_rules_preparation_custody.py`, `Tests/Chat/test_console_runtime_shutdown.py`.
