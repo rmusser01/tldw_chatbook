@@ -204,6 +204,90 @@ class RepositoryKeyCustody:
                     self._protector.delete(account)
             raise
 
+    def reencrypt_profile(self, *, keep_old_account: bool) -> str:
+        """Re-encrypt every row under a fresh encryption key (TASK-40140).
+
+        The integrity key and link state stay; ``key_version`` goes up. The new
+        key goes into a new, unused account first; one transaction then rewrites
+        every row and names that account, so an interruption leaves either the
+        old rows naming the old key or the new rows naming the new one. The old
+        account is deleted only after the new one opens the database, and only
+        when the caller knows no retained restore copy can name it.
+
+        Returns:
+            The new account.
+        """
+
+        from .crypto import EnvelopeCipher
+
+        old = self._require_keys()
+        if old.key_version >= 255:
+            raise ProfileLockedError("Profile key version is exhausted.")
+        new = ProfileKeyMaterial(
+            secrets.token_bytes(32), old.integrity_key, old.key_version + 1
+        )
+        with self._transaction() as connection:
+            old_account = self._reencryption_source(connection, old)
+        account = "personal-context:profile_" + secrets.token_hex(16)
+        self._protector.install(account, new)
+        try:
+            with self._transaction() as connection:
+                if self._reencryption_source(connection, old) != old_account:
+                    raise ProfileLockedError("Profile key account changed.")
+                cipher = EnvelopeCipher(new.encryption_key, key_version=new.key_version)
+                rows = connection.execute(
+                    "SELECT * FROM encrypted_objects"
+                ).fetchall()
+                for row in rows:
+                    key = (row["object_type"], row["object_id"], row["version_id"])
+                    sealed = cipher.encrypt(
+                        self._decrypt_row_authenticated(row), self._aad(*key)
+                    )
+                    connection.execute(
+                        "UPDATE encrypted_objects SET algorithm = ?, nonce = ?, "
+                        "ciphertext = ?, wrapped_dek = ?, key_version = ? "
+                        "WHERE object_type = ? AND object_id = ? AND version_id = ?",
+                        (
+                            sealed.algorithm,
+                            sealed.nonce,
+                            sealed.ciphertext,
+                            sealed.wrap_nonce + sealed.wrapped_dek,
+                            sealed.key_version,
+                            *key,
+                        ),
+                    )
+                connection.execute(
+                    "UPDATE profile_meta SET key_account = ? WHERE singleton = 1",
+                    (account,),
+                )
+                self._authenticate_keys(connection, new)
+        except BaseException:
+            self._keys = old
+            with suppress(Exception):
+                if not self._names_account(account):
+                    self._protector.delete(account)
+            raise
+        # The new account must open the committed database before the old goes.
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            try:
+                self._authenticate_keys(connection, self._protector.load(account))
+            finally:
+                connection.rollback()
+        if not keep_old_account:
+            self._protector.delete(old_account)
+        return account
+
+    def _reencryption_source(self, connection, keys) -> str:
+        """The live account holding exactly ``keys``; never mid-link."""
+        if connection.execute(
+            "SELECT 1 FROM first_link_freeze UNION ALL "
+            "SELECT 1 FROM first_link_rebaseline_commit LIMIT 1"
+        ).fetchone():
+            raise ProfileLockedError("A first link is in progress.")
+        self._authenticate_keys(connection, keys)
+        return self._authenticated_account(connection, keys)
+
     def _add_key_account_column(self, connection: sqlite3.Connection) -> None:
         """v8 -> v9: the empty reference; stamping waits for an authenticated key.
 

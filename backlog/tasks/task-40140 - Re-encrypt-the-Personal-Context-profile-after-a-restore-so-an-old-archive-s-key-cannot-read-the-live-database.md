@@ -1,7 +1,10 @@
 ---
 id: TASK-40140
 title: "Re-encrypt the Personal Context profile after a restore so an old archive's key cannot read the live database"
-status: To Do
+status: Done
+assignee:
+- '@claude'
+updated_date: '2026-11-13 17:55'
 created_date: 2026-11-10 17:13
 labels:
 - follow-up
@@ -38,8 +41,27 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 After a restore that installs a profile key, the profile can be re-encrypted under a fresh encryption key; afterwards every record reads, and the restored key no longer decrypts any row of the live database (red first)
-- [ ] #2 An interruption at any point leaves a database that one stored key opens (old rows with the old key, or new rows with the new key), never one that no stored key opens; a test interrupts at each step
-- [ ] #3 The integrity key, `key_account` semantics and link state are unchanged by re-encryption
-- [ ] #4 The new key goes into a new keyring account without overwriting the old one, and the old account is deleted only after the new one verifies and only if no retained restore copy names it
+- [x] #1 After a restore that installs a profile key, the profile can be re-encrypted under a fresh encryption key; afterwards every record reads, and the restored key no longer decrypts any row of the live database (red first)
+- [x] #2 An interruption at any point leaves a database that one stored key opens (old rows with the old key, or new rows with the new key), never one that no stored key opens; a test interrupts at each step
+- [x] #3 The integrity key, `key_account` semantics and link state are unchanged by re-encryption
+- [x] #4 The new key goes into a new keyring account without overwriting the old one, and the old account is deleted only after the new one verifies and only if no retained restore copy names it
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. `RepositoryKeyCustody.reencrypt_profile(keep_old_account=...)` (the key-custody mixin; `repository.py` is at its line budget): refuse mid-link; authenticate the current key and account; put new material (fresh encryption key, same integrity key, `key_version` + 1) into a new, unused account; in one transaction decrypt-authenticate every `encrypted_objects` row, re-encrypt it under a fresh DEK and the new key, name the new account, and authenticate the manifest with the new key; on failure before commit delete only the unnamed new account. After commit, reopen and authenticate with the new account, then delete the old account unless the caller keeps it.
+2. `Personal_Context.recovery.reencrypt_profile(repository)`: keeps the old account whenever any recovery copy exists (a retained copy may name it); no trigger calls it until the owner decides (open question below).
+3. Tests in `Tests/Personal_Context/test_repository.py`: readable afterwards, old key opens no row, integrity key/tags and other columns unchanged, new account; interruption at each step; retained copy keeps the old account.
+
+## Implementation Notes
+
+**2026-11-13 (round 14, stream pcc).** The re-encryption mechanism is in; what triggers it is still the owner's open question.
+
+- **Mechanism.** `repository_keys.RepositoryKeyCustody.reencrypt_profile` (option B of spec Q2). Every row is decrypted and authenticated under the old key, then sealed under a fresh DEK wrapped by a fresh `encryption_key` with `key_version + 1`; the integrity key, every `integrity_tag` (HMAC over AAD and plaintext) and every other `profile_meta` column stay; link state lives in the sync-state database and is not touched. The new material goes into a new, unused `personal-context:profile_<hex>` account (`install`, set-if-absent; added to `InMemoryProfileKeyProtector` and the protocol), and the one rewrite transaction also names it, so the database always names the key its rows need. A first link in flight (freeze or rebaseline row) refuses. A corrupt row (failing authentication) aborts the whole rewrite, so a profile with such a row cannot be re-encrypted until it is repaired.
+- **Old account (AC#4).** Deleted only after a fresh connection authenticates the committed manifest with the new account, and only when `keep_old_account` is false. `recovery.reencrypt_profile` sets it whenever any recovery copy is listed under the default control root (or the listing fails): rollback copies are encrypted, so whether one names the old account cannot be read, and a later rollback to such a copy would otherwise name a deleted account. A user's own manual copy of the file stays the spec's known ceiling.
+- **Open question for the owner (NEEDS_CONTEXT, not decided here).** Whether re-encryption runs automatically after a replace restore that installed a key, or as a Settings > Personal Context action (or both). Nothing calls `recovery.reencrypt_profile` yet.
+
+**Evidence.** The six new tests fail on base with `AttributeError` (no `reencrypt_profile`). Negative controls, each red and reverted: naming the new account in its own transaction before the rewrite (`before_rewrite` and `mid_rewrite` interruption cases failed: the database named a key its rows did not use), and skipping the row rewrite (`test_reencryption_leaves_the_restored_key_reading_no_row` failed: the old key still opened rows). `Tests/Personal_Context` in full: 673 passed (`-n 4`).
+
+Files: `tldw_chatbook/Personal_Context/{repository_keys.py,key_protector.py,recovery.py}`, `Tests/Personal_Context/test_repository.py`.
+

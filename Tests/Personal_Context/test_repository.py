@@ -1643,3 +1643,200 @@ def test_an_integrity_failure_past_the_manifest_is_not_a_key_mismatch(
     repo = _keyring_repo(db_path, backend)
     assert repo.list_records() == []
     assert repo.list_quarantine()[0].reason_code == "integrity_failure"
+
+
+# TASK-40140: re-encrypt a (restored) profile under a fresh encryption key.
+
+
+def _rows(db_path):
+    with closing(sqlite3.connect(db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        return connection.execute(
+            "SELECT * FROM encrypted_objects ORDER BY object_type, object_id, version_id"
+        ).fetchall()
+
+
+def _opens_with(row, encryption_key) -> bool:
+    from cryptography.exceptions import InvalidTag
+
+    from tldw_chatbook.Personal_Context.crypto import (
+        EncryptedEnvelope,
+        EnvelopeCipher,
+    )
+
+    wrapped = bytes(row["wrapped_dek"])
+    envelope = EncryptedEnvelope(
+        row["algorithm"], bytes(row["nonce"]), wrapped[:12], bytes(row["ciphertext"]),
+        wrapped[12:], row["key_version"],
+    )
+    aad = PersonalContextRepository._aad(
+        row["object_type"], row["object_id"], row["version_id"]
+    )
+    try:
+        EnvelopeCipher(encryption_key, key_version=row["key_version"]).decrypt(
+            envelope, aad
+        )
+    except InvalidTag:
+        return False
+    return True
+
+
+def _restored_profile(tmp_path, record_factory):
+    """A profile whose key sits in a restore's fresh account (TASK-40135)."""
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    records = _profile(db_path, backend, record_factory)
+    protector = KeyringProfileKeyProtector(backend)
+    restored = "personal-context:recovery_" + "d" * 32
+    protector.install(restored, protector.load(_stored_account(db_path)))
+    _set_stored_account(db_path, restored)
+    return db_path, backend, protector, restored, records
+
+
+def test_reencryption_leaves_the_restored_key_reading_no_row(
+    tmp_path, record_factory
+) -> None:
+    """AC#1, #3, #4: every record reads afterwards; the restored key decrypts no
+    row; the integrity key, every integrity tag and every other table stay; the
+    new key is in a new account and the old one goes once the new one opens."""
+    db_path, backend, protector, restored, records = _restored_profile(
+        tmp_path, record_factory
+    )
+    old = protector.load(restored)
+    other_entries = {
+        key: value for key, value in backend.values.items() if key[1] != restored
+    }
+    with closing(sqlite3.connect(db_path)) as connection:
+        before_tags = connection.execute(
+            "SELECT object_type, object_id, version_id, integrity_tag "
+            "FROM encrypted_objects ORDER BY 1, 2, 3"
+        ).fetchall()
+        before_meta = connection.execute(
+            "SELECT profile_id, purge_generation, destroyed, current_manifest_version, "
+            "created_at FROM profile_meta"
+        ).fetchall()
+    assert all(_opens_with(row, old.encryption_key) for row in _rows(db_path))
+
+    account = _keyring_repo(db_path, backend).reencrypt_profile(keep_old_account=False)
+
+    assert account.startswith("personal-context:profile_") and account != restored
+    assert _stored_account(db_path) == account
+    new = protector.load(account)
+    assert new.integrity_key == old.integrity_key
+    assert new.encryption_key != old.encryption_key
+    assert new.key_version == old.key_version + 1
+    assert (_KEYRING_SERVICE, restored) not in backend.values
+    assert {k: v for k, v in backend.values.items() if k[1] != account} == other_entries
+    rows = _rows(db_path)
+    assert not any(_opens_with(row, old.encryption_key) for row in rows)
+    assert {row["key_version"] for row in rows} == {new.key_version}
+    with closing(sqlite3.connect(db_path)) as connection:
+        assert connection.execute(
+            "SELECT object_type, object_id, version_id, integrity_tag "
+            "FROM encrypted_objects ORDER BY 1, 2, 3"
+        ).fetchall() == before_tags
+        assert connection.execute(
+            "SELECT profile_id, purge_generation, destroyed, current_manifest_version, "
+            "created_at FROM profile_meta"
+        ).fetchall() == before_meta
+    reopened = _keyring_repo(db_path, backend)
+    assert [record.record_id for record in reopened.list_records()] == records
+
+
+@pytest.mark.parametrize(
+    "step", ["before_rewrite", "mid_rewrite", "before_verify", "before_delete"]
+)
+def test_an_interrupted_reencryption_leaves_one_stored_key_that_opens_it(
+    tmp_path, record_factory, monkeypatch, step
+) -> None:
+    """AC#2: interrupted at each step, one stored key opens the database (old rows
+    with the old key, or new rows with the new key), never none; before the
+    commit, the new account the database never named is gone again."""
+    from tldw_chatbook.Personal_Context import crypto
+
+    db_path, backend, protector, restored, records = _restored_profile(
+        tmp_path, record_factory
+    )
+    accounts_before = set(backend.values)
+    repo = _keyring_repo(db_path, backend)
+
+    class Interrupted(Exception):
+        pass
+
+    if step == "before_rewrite":
+        source = repo._reencryption_source
+        calls = []
+
+        def second_check_stops(*args):
+            calls.append(1)
+            if len(calls) == 2:
+                raise Interrupted(step)
+            return source(*args)
+
+        monkeypatch.setattr(repo, "_reencryption_source", second_check_stops)
+    elif step == "mid_rewrite":
+        encrypt, calls = crypto.EnvelopeCipher.encrypt, []
+
+        def second_row_stops(self, *args):
+            calls.append(1)
+            if len(calls) == 2:
+                raise Interrupted(step)
+            return encrypt(self, *args)
+
+        monkeypatch.setattr(crypto.EnvelopeCipher, "encrypt", second_row_stops)
+    elif step == "before_verify":
+        load = KeyringProfileKeyProtector.load
+
+        def new_account_stops(self, account):
+            if account != restored:
+                raise Interrupted(step)
+            return load(self, account)
+
+        monkeypatch.setattr(KeyringProfileKeyProtector, "load", new_account_stops)
+    else:
+        delete = KeyringProfileKeyProtector.delete
+
+        def old_account_stops(self, account):
+            if account == restored:
+                raise Interrupted(step)
+            return delete(self, account)
+
+        monkeypatch.setattr(KeyringProfileKeyProtector, "delete", old_account_stops)
+
+    with pytest.raises(Interrupted):
+        repo.reencrypt_profile(keep_old_account=False)
+    monkeypatch.undo()
+
+    named = _stored_account(db_path)
+    key = protector.load(named)
+    rows = _rows(db_path)
+    assert {row["key_version"] for row in rows} == {key.key_version}
+    assert all(_opens_with(row, key.encryption_key) for row in rows)
+    reopened = _keyring_repo(db_path, backend)
+    assert [record.record_id for record in reopened.list_records()] == records
+    if step in {"before_rewrite", "mid_rewrite"}:
+        assert named == restored
+        assert set(backend.values) == accounts_before
+    else:
+        assert named != restored
+        assert set(backend.values) == accounts_before | {(_KEYRING_SERVICE, named)}
+
+
+def test_reencryption_keeps_the_old_account_while_a_recovery_copy_may_name_it(
+    tmp_path, record_factory, monkeypatch
+) -> None:
+    """AC#4: with a retained recovery copy, the old account is never deleted."""
+    from tldw_chatbook.Backup_Recovery import recovery_copies
+    from tldw_chatbook.Personal_Context import recovery
+
+    db_path, backend, protector, restored, _records = _restored_profile(
+        tmp_path, record_factory
+    )
+    monkeypatch.setattr(recovery_copies, "list_recovery_copies", lambda _root: ("copy",))
+    old_value = backend.values[(_KEYRING_SERVICE, restored)]
+
+    account = recovery.reencrypt_profile(_keyring_repo(db_path, backend))
+
+    assert _stored_account(db_path) == account != restored
+    assert backend.values[(_KEYRING_SERVICE, restored)] == old_value

@@ -578,3 +578,22 @@ def verify_restored_keys(plan) -> tuple[str, ...]:
             }
         )
     )
+
+
+def reencrypt_profile(repository) -> str:
+    """TASK-40140: re-encrypt a profile so an old archive's key reads no live row.
+
+    The old account stays while any recovery copy exists: a retained copy may
+    name it, and its later rollback would then open nothing (ADR-126 decision 8).
+    Which trigger runs this (after a restore, or a Settings action) is the
+    owner's call; nothing calls it yet.
+    """
+    from tldw_chatbook.Backup_Recovery.recovery_copies import list_recovery_copies
+    from tldw_chatbook.Backup_Recovery.service_storage import default_control_root
+
+    try:
+        retained = bool(list_recovery_copies(default_control_root()))
+    except Exception:  # noqa: BLE001 - unreadable copies count as retained
+        retained = True
+    return repository.reencrypt_profile(keep_old_account=retained)
+
