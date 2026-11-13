@@ -22,6 +22,7 @@ from contextlib import closing, contextmanager, suppress
 
 from .key_protector import (
     ProfileKeyMaterial,
+    ProfileKeyMaterialInvalidError,
     ProfileLockedError,
     _serialize_material,
     decode_keyring_material,
@@ -203,25 +204,31 @@ class RepositoryKeyCustody:
 
         The entry must still reproduce the record's tag. A bare path account is a
         v8 removal still owed, deleted as dev's retry did. Anything else, or an
-        entry now holding another key (a rewritten row), is never deleted.
+        entry now holding another key (a rewritten row), is never deleted. An
+        unavailable keyring raises and keeps the record; only an absent entry
+        or one that is not a profile key clears it without a deletion.
         """
 
         if not isinstance(record, str) or not record:
             return
         removal = REMOVAL.fullmatch(record)
         account = removal.group(1) if removal else record
-        if KEY_ACCOUNT.fullmatch(account) and self._protector.exists(account):
-            if removal is None:
-                owed = record == self._profile_ref
-            else:
-                try:
-                    material = self._protector.load(account)
-                except ProfileLockedError:  # Invalid material is not the key.
-                    material = None
-                owed = material is not None and hmac.compare_digest(
-                    _removal_tag(material, account), removal.group(2)
-                )
-            if owed:
+        if removal is None:
+            if record == self._profile_ref:
+                self._protector.delete(account)  # Absent entry: a no-op.
+        elif KEY_ACCOUNT.fullmatch(account):
+            # One read on the way in: exists() also reads the secret.
+            try:
+                material = self._protector.load(account)
+            except ProfileKeyMaterialInvalidError:
+                material = None  # An entry that is not a profile key stays.
+            except ProfileLockedError:
+                if self._protector.exists(account):  # Present but unreadable now.
+                    raise
+                material = None  # Already gone: nothing is owed.
+            if material is not None and hmac.compare_digest(
+                _removal_tag(material, account), removal.group(2)
+            ):
                 self._protector.delete(account)
         with self._transaction() as connection:
             connection.execute(

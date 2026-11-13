@@ -1490,3 +1490,64 @@ def test_a_removed_row_rewritten_to_another_account_deletes_nothing(
     assert _keyring_repo(other_path, backend).get_manifest() is not None
     assert _stored_account(db_path) == ""
 
+
+
+class _CountingKeyring(_FailDeleteOnceKeyring):
+    __module__ = "keyring.backends.macOS"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: int | None = None
+        self.fail_read: int | None = None
+
+    def get_password(self, service: str, username: str) -> str | None:
+        if self.reads is not None:
+            self.reads += 1
+            if self.reads == self.fail_read:
+                raise RuntimeError("keychain locked")
+        return super().get_password(service, username)
+
+
+def _removal_pending(tmp_path, backend):
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    service.create_profile()
+    account = _stored_account(db_path)
+    backend.fail_next_delete = True
+    with pytest.raises(ProfileLockedError):
+        service.remove_local_profile(confirm_only_copy=True)
+    return db_path, account, _stored_account(db_path)
+
+
+@pytest.mark.parametrize("failing_read", [1, 2])
+def test_a_keyring_failing_during_the_retry_keeps_the_record_and_the_key(
+    tmp_path, failing_read
+) -> None:
+    """Review r14pca-rev3: an unavailable keyring is never read as invalid
+    material, so the retry never reports a finished removal it did not do."""
+    backend = _CountingKeyring()
+    db_path, account, record = _removal_pending(tmp_path, backend)
+    repo = _keyring_repo(db_path, backend)
+
+    backend.reads, backend.fail_read = 0, failing_read
+    with pytest.raises(ProfileLockedError):
+        PersonalContextService(repo).finish_secure_removal()
+
+    assert _stored_account(db_path) == record
+    assert (_KEYRING_SERVICE, account) in backend.values
+
+
+def test_a_secure_removal_retry_reads_the_key_once_before_deleting(tmp_path) -> None:
+    """Review r14pca-rev3: each keyring read can prompt on macOS; the retry
+    makes one read to check the tag and the delete's own presence check."""
+    backend = _CountingKeyring()
+    db_path, account, _record = _removal_pending(tmp_path, backend)
+    repo = _keyring_repo(db_path, backend)
+
+    backend.reads = 0
+    PersonalContextService(repo).finish_secure_removal()
+
+    assert backend.reads == 2
+    assert (_KEYRING_SERVICE, account) not in backend.values
+    assert _stored_account(db_path) == ""

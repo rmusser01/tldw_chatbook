@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 17:13
-updated_date: '2026-11-13 17:30'
+updated_date: '2026-11-13 18:05'
 labels:
 - follow-up
 - backup
@@ -99,6 +99,16 @@ Schema v9 gives the repository a stored key reference, and every key operation g
 - **Retry.** `_delete_removed_account` deletes only if the entry exists and `load(account)` reproduces the tag.
   - A bare path account (`== _profile_ref`, from the v8 step) keeps dev's behaviour.
   - An absent entry, invalid material or any other value is never deleted; the record is just cleared.
-  - The keyring protector gains `exists()`, so a missing entry is told apart from an unavailable keyring, which still raises and keeps the record.
+  - The keyring protector gains `exists()` to tell a missing entry from an unavailable keyring. (Corrected in rev3, below: as first written, the retry did not keep the record when the keyring failed at the key read.)
 - **Test.** `test_a_removed_row_rewritten_to_another_account_deletes_nothing[bare|retargeted]`: on ab4bdf751d the bare case deletes the other database's key and the retargeted case leaves its record. The honest retry stays covered by `test_link_and_remove_act_only_on_the_account_this_database_names`, now asserting the record shape, and the v8 path case by `test_upgrade_keeps_a_pending_v8_secure_removal`.
+
+**Review r14pca-rev3 fix (2026-11-13).**
+- **Defect.** The rev2 retry caught every `ProfileLockedError` from `load()` as invalid material. A keyring failing at that read (`get_password` raising inside `_read`) therefore cleared the record, kept the key, and reported "Secure removal finished".
+- **Fix.**
+  - `key_protector.ProfileKeyMaterialInvalidError(ProfileLockedError)` is raised by `_deserialize_material` and `decode_keyring_material`, and the retry treats only that subclass as "not the key".
+  - Otherwise it calls `exists()`: an unavailable keyring raises and keeps the record, and only an absent entry clears it.
+  - `load()` now comes first and `exists()` only on that fallback, so a successful retry makes two secret reads (the tag check, then the delete's own presence check) instead of three. A bare path record goes straight to `delete()`, which is a no-op when the entry is absent.
+- **Tests.**
+  - `test_a_keyring_failing_during_the_retry_keeps_the_record_and_the_key[1|2]`: read 2 fails `DID NOT RAISE` on dc60cfa114. Read 1 already raised there, through `exists()`.
+  - `test_a_secure_removal_retry_reads_the_key_once_before_deleting`: on dc60cfa114 it fails with `3 == 2`.
 

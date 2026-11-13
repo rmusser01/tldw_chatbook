@@ -39,6 +39,10 @@ class ProfileLockedError(RuntimeError):
     reason_code = "profile_locked"
 
 
+class ProfileKeyMaterialInvalidError(ProfileLockedError):
+    """A stored entry was read but is not profile key material."""
+
+
 @dataclass(frozen=True, slots=True)
 class ProfileKeyMaterial:
     """Separate per-profile confidentiality and canonical-integrity keys."""
@@ -88,7 +92,7 @@ def _serialize_material(material: ProfileKeyMaterial) -> bytes:
 
 def _deserialize_material(payload: bytes) -> ProfileKeyMaterial:
     if len(payload) != 65 or payload[0] < 1:
-        raise ProfileLockedError("Profile key material is invalid.")
+        raise ProfileKeyMaterialInvalidError("Profile key material is invalid.")
     return ProfileKeyMaterial(payload[1:33], payload[33:65], payload[0])
 
 
@@ -237,11 +241,11 @@ def decode_keyring_material(payload: object) -> ProfileKeyMaterial:
     """Decode one stored keyring value; anything else is invalid material."""
 
     if not isinstance(payload, str) or not payload.startswith(_KEYRING_PREFIX):
-        raise ProfileLockedError("Profile key material is invalid.")
+        raise ProfileKeyMaterialInvalidError("Profile key material is invalid.")
     try:
         decoded = base64.b64decode(payload.removeprefix(_KEYRING_PREFIX), validate=True)
     except (ValueError, TypeError) as exc:
-        raise ProfileLockedError("Profile key material is invalid.") from exc
+        raise ProfileKeyMaterialInvalidError("Profile key material is invalid.") from exc
     return _deserialize_material(decoded)
 
 
