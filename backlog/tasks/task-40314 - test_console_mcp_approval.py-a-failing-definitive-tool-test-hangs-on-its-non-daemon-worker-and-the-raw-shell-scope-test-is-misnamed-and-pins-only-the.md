@@ -3,7 +3,7 @@ id: TASK-40314
 title: "test_console_mcp_approval.py: a failing definitive-tool test hangs on its non-daemon worker, and the raw-shell scope test is misnamed and pins only the fallback copy"
 status: Done
 assignee: ['@claude']
-updated_date: 2026-11-13 02:41
+updated_date: 2026-11-13 03:22
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -56,4 +56,6 @@ The shared helper `_session_scope_line` waits (bounded, 5 s) for the decision Se
 
 Runs: `Tests/UI/test_console_mcp_approval.py` whole file `-n 4`, load 60: 123 passed. The file is already a whole-file UI census entry, so no lane edit.
 
-Files: `Tests/UI/test_console_mcp_approval.py`.
+Lesson: the existing `lessons-testing-evidence.md` entry "An unbounded wait default turns leaked test rounds into post-suite interpreter hangs" (TASK-16789) gains this case: a finite approval timeout is no bound once the card is gone.
+
+Files: `Tests/UI/test_console_mcp_approval.py`, `backlog/docs/lessons-testing-evidence.md`.

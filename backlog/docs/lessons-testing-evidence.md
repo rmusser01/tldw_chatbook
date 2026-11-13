@@ -11014,6 +11014,19 @@ process idles at 0% CPU; macOS `sample` shows `wait_for_thread_shutdown`;
 `kill -ABRT` (with `PYTHONFAULTHANDLER=1`) dumps the stuck thread stacks into
 stderr.
 
+**A finite approval timeout is no bound either (TASK-40314, 2026-11-12).**
+`test_approved_definitive_tool_stays_mounted_until_real_terminal` set
+`mcp_approval_timeout_seconds = 30` and ran its review on a non-daemon
+thread. With a temporary failing assertion before the approval click, the UI
+lane's serial command printed "1 failed in 18.35s" and was still alive 10
+minutes later. The faulthandler dump put the worker in `run_round`'s wait:
+the round's clock counts only while its card is shown, so once `run_test`
+exited the 30 s never ran out. `--timeout=180` cannot catch it, because the
+session has already ended, and xdist hides it, because its workers exit
+without joining. A test that starts a thread which can wait on a round must
+end the round in a `finally` (`begin_shutdown()`, then join) whatever its
+timeout says.
+
 ---
 
 ## A cross-suite ordering failure can be an app KILLING ITSELF, not an object crossing the boundary (task-15860, 2026-08-16)
