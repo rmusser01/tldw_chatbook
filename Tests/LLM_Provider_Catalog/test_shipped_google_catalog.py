@@ -21,34 +21,15 @@ from tldw_chatbook.config import (
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_GOOGLE_CHAT_MODEL,
 )
-
-#: Measured 2026-10-03 with a real key: 404 on generateContent
-#: ("no longer available to new users" / "not found for API version").
-RETIRED_GEMINI_IDS = frozenset(
-    {
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-preview-05-20",
-        "gemini-2.5-pro-preview-05-06",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash-latest",
-    }
+from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    NOT_ANSWERING_GEMINI_IDS,
+    RETIRED_GEMINI_IDS,
 )
 
-#: Listed by Google but not answering a generate call (TASK-34100.2 review
-#: v5r2, G2C-R3-1). Measured 2026-11-12 with the repo's real key, five
-#: 1-output-token calls each over 13 minutes: gemini-flash-latest 0/5 (four
-#: 503 'high demand', one 60 s timeout) and gemini-3.8-flash, the model it
-#: resolves to, 0/5; earlier smoke runs since 2026-10-06 recorded 0/8 and 1/8.
-#: The key was not the cause: gemini-flash-lite-latest and
-#: gemini-3.5-flash-lite answered 5/5 in about a second, with no 429.
-#: Evidence: .worktrees/setup-wizard-ux-qa/evidence/g2cv5-r3-catalog/.
-NOT_ANSWERING_GEMINI_IDS = frozenset({"gemini-flash-latest", "gemini-3.8-flash"})
+# Both pins live beside the Gemini listing, which sorts these ids last
+# (review v5r4, G2C-R4-1); their measurements are recorded there.
+# RETIRED_GEMINI_IDS: 404 on generateContent. NOT_ANSWERING_GEMINI_IDS: every
+# answered call 503 'high demand' with the repo key on 2026-11-12.
 
 
 def test_the_default_gemini_model_is_googles_rolling_alias() -> None:
