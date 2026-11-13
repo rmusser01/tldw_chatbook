@@ -1700,8 +1700,10 @@ def test_no_reviewer_approves_the_shared_sync_owners():
     `runtime.sync_state`, and that is what keeps Notes and Chat sync and the
     Personal Context link from resuming as the restored device. Once both are
     approved, every Sync v2 route sends the restored `device_id` and cursors
-    (probe in TASK-40137's notes). A new or changed approval call waits for
-    that task's ruling on who may approve those two owners, and how."""
+    (probe in TASK-40137's notes). By the owner's ruling (2026-11-12), the
+    only future approvers allowed are TASK-40139's sync-identity review (both
+    owners, with the rebind) and TASK-40711's config review (`config` alone).
+    Any approval, called or passed by reference, is counted here."""
     from tldw_chatbook.MCP.recovery_activation import _OWNERS as mcp_owners
     from tldw_chatbook.Plugins.backup import OWNER as plugins_owner
     from tldw_chatbook.RAG_Search.activation import _REVIEW_OWNERS as rag_owners
@@ -1711,14 +1713,24 @@ def test_no_reviewer_approves_the_shared_sync_owners():
         text = path.read_text(encoding="utf-8")
         if "ActivationStore" not in text:
             continue
-        for node in ast.walk(ast.parse(text)):
-            if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "approve":
-                owner = ", ".join(ast.unparse(arg) for arg in node.args[1:])
+        tree = ast.parse(text)
+        called = {
+            id(node.func): node for node in ast.walk(tree) if isinstance(node, ast.Call)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "approve":
+                call = called.get(id(node))
+                owner = (
+                    ", ".join(ast.unparse(arg) for arg in call.args[1:])
+                    if call
+                    else "<reference>"
+                )
                 calls[(path.relative_to(ROOT).as_posix(), owner)] += 1
     assert calls == Counter(
         {
             ("tldw_chatbook/MCP/recovery_activation.py", "row.owner"): 1,
-            # Its only callers pass "notes.file_notes" (Notes/file_notes_service.py).
+            # review_pairing refuses any other owner than "notes.file_notes"
+            # (Notes/recovery_review.py:253).
             ("tldw_chatbook/Notes/recovery_review.py", "owner"): 1,
             ("tldw_chatbook/Plugins/backup.py", "OWNER"): 1,
             ("tldw_chatbook/RAG_Search/activation.py", "owner"): 1,

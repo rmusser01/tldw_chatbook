@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 17:13
-updated_date: 2026-11-13 03:35
+updated_date: 2026-11-13 04:48
 labels:
 - follow-up
 - security
@@ -71,7 +71,7 @@ What is gated:
 
 ## Implementation Notes
 
-**Summary.** Today a restored profile never syncs Notes or Chat again, as the old device or any other: every server Sync v2 call needs `config` and `runtime.sync_state` approved, and no code approves either. Once both are approved, every route that reaches the server sends the restored `device_id`, cursors and queued outbox. So the restored device would act as the old one. Who may approve the two owners, and through what review, needs an owner ruling (AC#3 unticked; options below). Line numbers are base 26b2e677dd.
+**Summary.** Today a restored profile never syncs Notes or Chat again, as the old device or any other: every server Sync v2 call needs `config` and `runtime.sync_state` approved, and no code approves either. Once both are approved, every route that reaches the server sends the restored `device_id`, cursors and queued outbox. So the restored device would act as the old one. The owner ruled on 2026-11-12 who may approve them (AC#3 below): a sync-identity review that rebinds (TASK-40139) and a separate config review (TASK-40711). Line numbers are base 26b2e677dd.
 
 ### AC#1: which paths go through the gate, and what approves the two owners
 
@@ -138,7 +138,7 @@ The only other owners left unapproved in the approved rows were the ones the six
 - **On the same machine and OS account,** where the key survives, encrypted push and pull also go out as the old device, including the old device's queued outbox.
 - Pulls exclude the device's own changes (`include_own_changes=False`, `local_first_sync_service.py:415`; `excluded_device_id`, `server_sync_service.py:688`). So if the original device is still running, each copy can miss the other's changes.
 
-### AC#3: the ruling (owner decision needed; not decided here)
+### AC#3: the ruling (owner decision 2026-11-12, recorded below)
 
 A finding the ruling must also cover:
 - The spec's plan for TASK-40139 is that a fresh Personal Context link "rebinds Personal Context's device without changing Notes and Chat sync state". That plan cannot hold as the data is shaped today.
@@ -175,6 +175,7 @@ So, option A plus option D:
 - **The gate.** Existing `Tests/Backup_Recovery/test_activation_network_sync.py::test_network_sync_checks_actual_source_before_client_or_replay` (its `inactive` and `config_only` states refuse before any client is built). 43 passed at head (`-n 4`, load 74). That file is in no PR lane.
 - **No reviewer approves them.** New `Tests/Architecture/test_backup_owner_inventory.py::test_no_reviewer_approves_the_shared_sync_owners`, in a lane-run file. It pins the six `approve` call sites with their owner arguments, and checks that the owner sets they draw from exclude `config` and `runtime.sync_state`.
   - Red under two temporary edits, each reverted: an extra `store.approve(..., "runtime.sync_state")` in `Plugins/backup.py` failed the call-site census ("Left contains 1 more item"); adding `"config"` to RAG's `_REVIEW_OWNERS` failed the disjointness check.
+  - Review r14pcb-rev1: the pin also counts `approve` passed by reference (keyed `<reference>`). A temporary `functools.partial(store.approve, witness["generation"])("runtime.sync_state")` in `Plugins/backup.py` read "Left contains 1 more item: ('tldw_chatbook/Plugins/backup.py', '<reference>')"; reverted. Its docstring names TASK-40139 and TASK-40711 as the only approvers the ruling allows.
 
 **The guard to propose (follow-up).** The moment anything approves the two owners, sync resumes as the old device (the AC#2 probe). The proposed follow-up guard is option A's rebind/reset, which must land with whichever approver the ruling chooses. It belongs before or inside TASK-40139.
 
