@@ -1366,7 +1366,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: for the Collections shell's first layout sync: 38165 -> 38169 lines
     #: (measured).
     #: 2026-11-13 restack: both stacked, measured 38180 lines, 1377 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38180, 1377),
+    #: (measured). Review r14ls-rev3: the retry also keeps the widget the
+    #: restore parked focus on, and the rail-sync docstring says when it
+    #: recomposes: 38169 -> 38177 lines (measured).
+    #: 2026-11-13 restack: both stacked, measured 38188 lines, 1377 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38188, 1377),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

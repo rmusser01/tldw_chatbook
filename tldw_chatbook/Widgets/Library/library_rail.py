@@ -531,8 +531,9 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     """
 
     #: task-32219: whether the below-the-fold cue is currently up. Kept on
-    #: the RAIL, not read off the widget, because the rail recomposes on
-    #: every count/evidence/route change -- a cue rebuilt as hidden each
+    #: the RAIL, not read off the widget, because the rail can recompose on
+    #: a count/evidence/route change (``sync_state`` patches in place only
+    #: while its tree's shape is unchanged) -- a cue rebuilt as hidden each
     #: time was reset faster than the post-layout measurement could turn it
     #: on, and live it never appeared at all.
     _fold_cue_visible: bool = False
@@ -688,11 +689,14 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
     ) -> None:
         """Refresh the rail from new state.
 
-        The search placeholder is not synced here: the Library screen
-        refreshes the rail by full ``recompose`` (rebuilding a fresh
-        ``LibraryRail`` whose ``__init__`` recomputes the context-aware
-        placeholder), so a ``sync_state`` placeholder argument would be
-        dead. It is set once at construction instead.
+        Patches rows and Details in place while the tree's shape is
+        unchanged (an EXPANDED or GRADUATED rail with the same lifecycle,
+        onboarding flag, preferences, query, sections and Details rows), and
+        recomposes the rail otherwise.
+
+        The search placeholder is not synced here: the screen's placeholder
+        is the same on every route ("Search Library…"), so it is set once
+        at construction.
 
         Args:
             shell: Latest Library shell display state.

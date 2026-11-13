@@ -3708,9 +3708,10 @@ class LibraryScreen(BaseAppScreen):
         #: instead of dropping its number silently, and only the deadline
         #: kind claims a wait (fix round 1).
         self._library_collections_count_failure: str = ""
-        #: r14ls-rev2: the last recompose restore's focus id, retried by the
-        #: Collections shell's first layout sync once it opens the rail.
-        self._library_collections_focus_retry: str | None = None
+        #: r14ls-rev2/rev3: the last recompose restore's focus id and the
+        #: widget it parked focus on instead, retried by the Collections
+        #: shell's first layout sync once it opens the rail.
+        self._library_collections_focus_retry: tuple[str, Widget | None] | None = None
         self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
             self._collections_state.reader_preferences,
@@ -8937,12 +8938,15 @@ class LibraryScreen(BaseAppScreen):
         unconditional control to fall back to, so it is closed in the
         predicate instead -- it stands down when nothing is there.)
         """
+        self._library_collections_focus_retry = None
         if self._library_focus_channel_owns_this_window():
             return
-        self._library_collections_focus_retry = previous
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             self._restore_library_media_focus(previous)
+        before = self.focused
         super().restore_focus_after_recompose(previous)
+        if previous and self.focused is not before:
+            self._library_collections_focus_retry = (previous, self.focused)
 
     def _library_focus_channel_owns_this_window(self) -> bool:
         """Whether an armed one-shot channel will land focus itself.
@@ -22189,7 +22193,11 @@ class LibraryScreen(BaseAppScreen):
     def _sync_library_rail_state(
         self, rail: LibraryRail, shell: LibraryShellState | None = None
     ) -> None:
-        """Re-sync ``rail`` in place from ``shell`` (default: a fresh one)."""
+        """Re-sync ``rail`` from ``shell`` (default: a fresh one).
+
+        ``LibraryRail.sync_state`` patches it in place when its tree's shape is
+        unchanged and recomposes it otherwise.
+        """
         rail.sync_state(
             shell
             or build_library_shell_state(

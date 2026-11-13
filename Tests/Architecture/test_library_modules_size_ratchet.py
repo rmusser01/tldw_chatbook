@@ -163,8 +163,9 @@ _BUDGETS: dict[str, int] = {
     # (measured). Review r14ls-rev1: the same repaint re-syncs the rail's
     # count and Details in place: 1698 -> 1702 (measured). Review r14ls-rev2:
     # the first layout sync retries the restore's focus id: 1702 -> 1714
-    # (measured).
-    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1714,
+    # (measured). Review r14ls-rev3: only while focus is still on the exact
+    # grip the restore parked it on: 1714 -> 1720 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1720,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to
