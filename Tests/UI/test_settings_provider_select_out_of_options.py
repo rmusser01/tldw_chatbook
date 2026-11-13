@@ -32,7 +32,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
-from tldw_chatbook.state.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.category_panels import PROVIDERS_MODELS_PANEL
 from tldw_chatbook.UI.Speech.speech_settings_contracts import SpeechTTSNavigationTarget
 
 
@@ -176,7 +176,7 @@ async def test_provider_picker_row_the_select_no_longer_offers_does_not_raise():
 async def test_provider_revert_with_a_saved_value_the_select_no_longer_offers():
     """Revert the Providers category while its select has lost the saved value.
 
-    ``_revert_category`` re-reads the saved provider and writes it straight into
+    ``r``'s discard re-reads the saved provider and writes it straight into
     ``#settings-provider-value``; the select's options are the compose-time set.
     """
     host = DestinationHarness(_build_test_app(), "settings")
@@ -199,7 +199,7 @@ async def test_provider_revert_with_a_saved_value_the_select_no_longer_offers():
         )
         await pilot.pause()
 
-        screen._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
+        PROVIDERS_MODELS_PANEL.discard(screen)  # r's discard, after its confirm
         await pilot.pause()
 
         assert host.is_running, "revert took the app down with it"

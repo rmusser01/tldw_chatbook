@@ -43,6 +43,7 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     PROVIDER_MANUAL_SELECT_VALUE,
     SettingsScreen,
 )
+from tldw_chatbook.UI.Settings_Modules.category_panels import PROVIDERS_MODELS_PANEL
 
 _ENTRY = {
     "display_name": "GPU box",
@@ -638,8 +639,6 @@ async def test_home_readiness_computes_a_malformed_default(request, provider):
 @private_profile_test
 async def test_revert_to_a_registry_default_relocks_model_discovery(request):
     """Revert restored the registry id but left llama_cpp's Discover live."""
-    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
-
     host = DestinationHarness(_registry_default_app("custom-ep:gpu-box"), "settings")
     async with host.run_test(size=(180, 50)) as pilot:
         await _settle_settings_mount_storm(pilot)
@@ -662,7 +661,7 @@ async def test_revert_to_a_registry_default_relocks_model_discovery(request):
         screen._refresh_model_discovery_widgets()
         assert not any(button.disabled for button in buttons)
 
-        screen._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
+        PROVIDERS_MODELS_PANEL.discard(screen)  # r's discard, after its confirm
         await _settle_settings_mount_storm(pilot)
         assert screen._provider_widget_value() == "custom-ep:gpu-box"
         assert [button.id for button in buttons if not button.disabled] == []

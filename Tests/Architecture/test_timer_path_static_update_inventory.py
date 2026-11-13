@@ -63,11 +63,21 @@ Framework-armed clocks (``ProgressBar(total=None)``'s 15 Hz repaint,
 sources; they are censused separately in
 ``Tests/Architecture/test_framework_armed_clock_inventory.py``.
 
+Registry dispatch (TASK-1378.2): Settings serves a category through a panel
+looked up in ``CATEGORY_PANELS`` and called by member name
+(``registered.poll(self)``), which a by-name call graph cannot resolve when
+several classes define that member. A call on a name bound from a
+``DISPATCH_REGISTRIES`` lookup (``.get(...)`` or ``[...]``) therefore reaches
+that member on every class registered there; without it the 0.25 s
+subscription poll reached nothing behind the Providers & Models panel.
+
 Known remaining limitation, on purpose: the intra-package call graph still
 cannot cross a constructor-injected *non-clock* callable (e.g. a
 ``repaint_chip=lambda: screen._repaint...`` seam), so reach out of the
 Console_Modules family understates. Clock ROOTS through such seams are what
-TASK-23028 made loud; general graph crossing stays out of scope.
+TASK-23028 made loud; general graph crossing stays out of scope. Likewise, a
+direct call on a registered panel instance (``PROVIDERS_MODELS_PANEL.discard``)
+resolves by name only; none is clock-reachable today (TASK-1378.2).
 """
 
 from __future__ import annotations
@@ -111,6 +121,12 @@ CLOCK_CALLEE_RE = re.compile(r"^_?(?:create|set)_interval$")
 DEFERRAL_SHIMS = frozenset(
     {"call_later", "call_after_refresh", "call_next", "call_from_thread"}
 )
+
+#: Module-level dicts of instances whose values are called by member name
+#: (TASK-1378.2). ``CATEGORY_PANELS`` maps each registered Settings category
+#: to its panel; ``registered = CATEGORY_PANELS.get(c); registered.poll(self)``
+#: reaches every registered panel's ``poll``.
+DISPATCH_REGISTRIES = frozenset({"CATEGORY_PANELS"})
 
 
 # ---------------------------------------------------------------------------
@@ -751,11 +767,14 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "SettingsScreen._update_draft_status_widgets",
         "self.query_one('#settings-selected-category-draft-status', Static)",
     ): "NOT-PER-TICK: the new prompt-summary path passes INTERNAL_PROMPTS only after the config-identity gate or worker completion. Dirty status changes preserve their natural layout.",
+    # TASK-1378.2: the next-chat note write moved from
+    # SettingsScreen._update_draft_status_widgets into the panel's after_change,
+    # reached through the CATEGORY_PANELS registry dispatch.
     (
-        "tldw_chatbook/UI/Screens/settings_screen.py",
-        "SettingsScreen._update_draft_status_widgets",
+        "tldw_chatbook/UI/Settings_Modules/category_panels.py",
+        "ProvidersModelsPanel.after_change",
         "note",
-    ): "NOT-PER-TICK: this write is inside the PROVIDERS_MODELS branch; the new clock-reachable prompt-summary path passes INTERNAL_PROMPTS and cannot execute it. Explicit provider draft edits may change wrapped note height.",
+    ): "NOT-PER-TICK: _update_draft_status_widgets calls this only for Providers & Models (its registry lookup); the clock-reachable prompt-summary path passes INTERNAL_PROMPTS, which has no panel, so it cannot execute it. Explicit provider draft edits may change wrapped note height.",
     (
         "tldw_chatbook/UI/Screens/settings_screen.py",
         "SettingsScreen._update_provider_return_widgets",
@@ -1879,6 +1898,75 @@ class _Module:
         self.enclosing: dict[ast.AST, tuple[str | None, str | None]] = {}
 
 
+def _registry_lookup(expr: ast.AST) -> str | None:
+    """The registry ``expr`` reads (``REG.get(...)`` or ``REG[...]``), if any."""
+    if (
+        isinstance(expr, ast.Call)
+        and isinstance(expr.func, ast.Attribute)
+        and expr.func.attr == "get"
+    ):
+        expr = expr.func.value
+    elif isinstance(expr, ast.Subscript):
+        expr = expr.value
+    else:
+        return None
+    if isinstance(expr, ast.Name) and expr.id in DISPATCH_REGISTRIES:
+        return expr.id
+    return None
+
+
+def _dispatch_registry(func_node: ast.AST, call: ast.Call) -> str | None:
+    """The registry a member call dispatches through, if its receiver is a
+    registry lookup or a name ``func_node`` binds from one."""
+    if not isinstance(call.func, ast.Attribute):
+        return None
+    receiver = call.func.value
+    direct = _registry_lookup(receiver)
+    if direct is not None or not isinstance(receiver, ast.Name):
+        return direct
+    for sub in ast.walk(func_node):
+        if isinstance(sub, ast.NamedExpr):
+            targets, value = [sub.target], sub.value
+        elif isinstance(sub, ast.Assign):
+            targets, value = sub.targets, sub.value
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id == receiver.id for t in targets):
+            if (found := _registry_lookup(value)) is not None:
+                return found
+    return None
+
+
+def _registered_classes(module: "_Module") -> dict[str, list[str]]:
+    """Classes whose instances ``module`` registers in a dispatch registry."""
+    instances: dict[str, str] = {}
+    registries: dict[str, list[str]] = {}
+    for stmt in module.tree.body:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target, value = stmt.targets[0], stmt.value
+        elif isinstance(stmt, ast.AnnAssign):
+            target, value = stmt.target, stmt.value
+        else:
+            continue
+        if not isinstance(target, ast.Name):
+            continue
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+            instances[target.id] = value.func.id
+        if target.id in DISPATCH_REGISTRIES and isinstance(value, ast.Dict):
+            classes = []
+            for item in value.values:
+                if isinstance(item, ast.Name):
+                    cls = instances.get(item.id)
+                elif isinstance(item, ast.Call) and isinstance(item.func, ast.Name):
+                    cls = item.func.id
+                else:
+                    cls = None
+                if cls in module.classes:
+                    classes.append(cls)
+            registries[target.id] = classes
+    return registries
+
+
 def _callee(node: ast.Call) -> str:
     func = node.func
     if isinstance(func, ast.Attribute):
@@ -2233,9 +2321,13 @@ class _CallGraph:
         self.modules = modules
         self.by_method: dict[str, list[tuple[str, str]]] = defaultdict(list)
         self.bases: dict[tuple[str, str], list[str]] = {}
+        #: registry name -> the (module, class) of each instance registered.
+        self.registered: dict[str, list[tuple[str, str]]] = defaultdict(list)
         for dotted, module in modules.items():
             for cls, method in module.methods:
                 self.by_method[method].append((dotted, cls))
+            for registry, classes in _registered_classes(module).items():
+                self.registered[registry].extend((dotted, cls) for cls in classes)
             for cls, node in module.classes.items():
                 names = []
                 for base in node.bases:
@@ -2287,9 +2379,15 @@ class _CallGraph:
                     callee = _callee(call)
                     if not callee:
                         continue
-                    target = self.resolve_anywhere(mod, klass, callee)
-                    if target and (target[0], target[1], target[2]) not in seen:
-                        nxt.append((target, depth + 1))
+                    targets = [self.resolve_anywhere(mod, klass, callee)]
+                    if (registry := _dispatch_registry(node, call)) is not None:
+                        targets.extend(
+                            self.resolve(entry_mod, entry_cls, callee)
+                            for entry_mod, entry_cls in self.registered[registry]
+                        )
+                    for target in targets:
+                        if target and (target[0], target[1], target[2]) not in seen:
+                            nxt.append((target, depth + 1))
             frontier = nxt
 
 
@@ -2812,6 +2910,56 @@ def test_worker_backed_retry_remains_a_clock_root() -> None:
         "RetryWorker.reconcile",
         "self.status",
     ) in census(modules)
+
+
+def test_registry_dispatch_reaches_every_registered_member() -> None:
+    """TASK-1378.2: ``registered = CATEGORY_PANELS.get(c); registered.poll(self)``
+    reaches each registered class's ``poll``. Two classes define ``poll``, so
+    the by-name fallback alone resolves nothing and the write went unseen."""
+    modules = _modules_from_source(
+        """
+        class Panel:
+            def poll(self, screen):
+                screen.status.update("n")
+
+        class OtherPanel:
+            def poll(self, screen):
+                return False
+
+        PANEL = Panel()
+        CATEGORY_PANELS = {"a": PANEL, "b": OtherPanel()}
+
+        class Screen:
+            def on_mount(self):
+                self.set_interval(0.25, self._poll)
+
+            def _poll(self):
+                if (registered := CATEGORY_PANELS.get(self.category)) is not None:
+                    registered.poll(self)
+        """
+    )
+    assert (
+        "tldw_chatbook/timer_census_fixture.py",
+        "Panel.poll",
+        "screen.status",
+    ) in census(modules)
+
+
+def test_settings_subscription_poll_reaches_its_panel(timer_path_census) -> None:
+    """TASK-1378.2: the 0.25 s Settings poll reaches Providers & Models'
+    ``poll`` through the registry, and so the provider test row it repaints."""
+    record = timer_path_census.get(
+        (
+            "tldw_chatbook/UI/Screens/settings_screen.py",
+            "SettingsScreen._update_provider_test_result",
+            "row",
+        )
+    )
+    assert record is not None
+    assert (
+        "[set_interval] settings_screen:SettingsScreen._poll_subscription_readiness"
+        in record["roots"]
+    )
 
 
 def test_deferral_shim_callback_resolves_through() -> None:

@@ -26,10 +26,12 @@ from Tests.UI.test_settings_category_sweep import (
     _settle_settings,
 )
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
+from tldw_chatbook import config as config_module
 from tldw_chatbook.Backup_Recovery.unsaved_editors import (
     UnsavedEditor,
     probe_unsaved_editors,
 )
+from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.state.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
@@ -47,6 +49,8 @@ from tldw_chatbook.UI.Screens.settings_network_defaults import (
 )
 from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
+    PROVIDER_NO_CHANGES_COPY,
+    PROVIDER_SAVED_COPY,
     SettingsScreen,
 )
 from tldw_chatbook.UI.Settings_Modules.category_panels import (
@@ -699,3 +703,336 @@ async def test_network_ca_path_typed_back_after_a_save_is_staged_and_saved(
         screen.action_settings_save_category()
         assert _saved_ssl_verify() == str(first)
         assert screen._category_has_unsaved_changes(_NETWORK) is False
+
+
+# --- Providers & Models' ADR-303 save behaviour (TASK-1378.2) ------------
+# Pinned through the real screen before the category moved onto its
+# registered panel, and unchanged by the move: a staged draft ("Draft — save
+# with s"); an edit marks the rail, counts on the banner (no "revert with r":
+# the scope fills the row) and makes the quit prompt name the category; a
+# category hop keeps it without asking; s saves, r discards after asking.
+
+_PM = SettingsCategoryId.PROVIDERS_MODELS
+_PM_SCOPE = (
+    "Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)"
+)
+_PM_SAVED_TOAST = (
+    "Provider and model settings saved: new chats and open chats nobody has "
+    "used yet take them; chats with work keep their own settings (change them "
+    "in Console with Alt+M)."
+)
+
+
+def _providers_app():
+    """A keyless local provider whose saved model is ``model-a``."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        **app.app_config.get("chat_defaults", {}),
+        "provider": "llama_cpp",
+        "model": "model-a",
+    }
+    api_settings = app.app_config.setdefault("api_settings", {})
+    api_settings["llama_cpp"] = {**api_settings.get("llama_cpp", {}), "model": "model-a"}
+    return app
+
+
+async def _open_providers(host, pilot) -> SettingsScreen:
+    await _settle_settings(pilot)
+    await _click_settings_category(pilot, _PM.value)
+    screen = _active_destination_screen(host)
+    await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+    await _settle_settings(pilot)
+    return screen
+
+
+def _rail_marked(screen) -> bool:
+    rail = screen.query_one(f"#settings-category-{_PM.value}", Button)
+    return str(rail.label).endswith(" *")
+
+
+def _capture_persists(monkeypatch, result) -> list[dict]:
+    """Patch the writer on the settings_screen module, as existing tests do."""
+    calls: list[dict] = []
+
+    def _persist(setup_mutation, **kwargs):
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(
+        settings_screen_module, "persist_provider_settings_atomic", _persist
+    )
+    return calls
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_commit_model_and_copy_are_pinned(request) -> None:
+    """The badge, both scope lines, the guided copy and what s, r and t do."""
+    screen = SettingsScreen(_providers_app())
+    assert screen._persistence_badge(_PM) == "Draft — save with s"
+    assert screen._category_state_scope_text(_PM) == _PM_SCOPE
+    assert screen._guided_action_message(_PM) == "Guided edits: change a field first."
+    assert screen._category_state_banner_text(_PM) == (
+        f"State: No changes · edits save with s | {_PM_SCOPE}"
+    )
+    for action in ("save", "revert", "test"):
+        assert SettingsScreen._category_action_supported(_PM, action) is True
+    assert screen._category_footer_shortcuts(_PM) == (
+        ("s", "save category"),
+        ("r", "revert category"),
+        ("t", "test provider"),
+    )
+
+    draft = SettingsDraft(category=_PM)
+    draft.set_value("model", "model-a", "model-b")
+    screen._settings_drafts[_PM] = draft
+    assert screen._category_has_unsaved_changes(_PM) is True
+    assert screen._guided_action_message(_PM) == "Guided edits: Save or Revert changes."
+    assert screen._category_state_banner_text(_PM) == (
+        f"State: Draft — save with s · 1 unsaved | {_PM_SCOPE}"
+    )
+    assert "Providers & Models" in unsaved_settings_titles(screen)
+
+    revisit = SettingsScreen(_providers_app())
+    revisit.restore_state(screen.save_state())
+    assert revisit._category_has_unsaved_changes(_PM) is True
+
+    # Snapshot preferences live outside the draft and are unsaved edits too.
+    snapshot = SettingsScreen(_providers_app())
+    snapshot._snapshot_preferences_loaded = type(
+        "Loaded", (), {"enabled": True, "keep_count": 5}
+    )()
+    snapshot._snapshot_preferences_raw = (True, "7")
+    assert snapshot._category_has_unsaved_changes(_PM) is True
+    assert "Providers & Models" in unsaved_settings_titles(snapshot)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_edit_marks_the_rail_banner_and_quit_prompt(
+    request,
+) -> None:
+    """Opening is clean (no mount echo is an edit); a typed model marks the
+    rail and banner, the quit prompt names the category, and a hop away and
+    back keeps the edit without asking."""
+    host = DestinationHarness(_providers_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open_providers(host, pilot)
+        model = screen.query_one("#settings-model-value", Input)
+        assert model.value == "model-a"
+        assert screen._category_has_unsaved_changes(_PM) is False
+        assert not _rail_marked(screen)
+        assert "Providers & Models" not in unsaved_settings_titles(screen)
+
+        model.value = "model-b"
+        await pilot.pause()
+        assert screen._category_has_unsaved_changes(_PM) is True
+        assert _rail_marked(screen)
+        banner = screen.query_one("#settings-category-state-banner", Static)
+        assert _static_text(banner) == (
+            f"State: Draft — save with s · 1 unsaved | {_PM_SCOPE}"
+        )
+        assert _static_text(
+            screen.query_one("#settings-selected-category-draft-status", Static)
+        ) == "Unsaved changes"
+
+        quit_flow = host.run_worker(screen.confirm_quit(), exit_on_error=False)
+        await pilot.pause(0.3)
+        prompt = host.screen
+        assert isinstance(prompt, ConfirmationDialog)
+        assert "Providers & Models" in prompt.message
+        await pilot.click("#cancel-button")  # Keep editing
+        await pilot.pause(0.2)
+        assert await quit_flow.wait() is False
+
+        await _click_settings_category(pilot, "appearance")
+        assert screen.active_category == "appearance"  # no leave prompt
+        assert _rail_marked(screen)
+        screen = await _open_providers(host, pilot)
+        assert screen.query_one("#settings-model-value", Input).value == "model-b"
+        assert screen._category_has_unsaved_changes(_PM) is True
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_s_saves_through_the_screens_writer_seam(
+    request, monkeypatch
+) -> None:
+    """``s`` pressed through the pilot reaches a writer patched on the
+    settings_screen module (the idiom four existing files use)."""
+    calls = _capture_persists(monkeypatch, ConfigMutationResult(True, True, None))
+    host = DestinationHarness(_providers_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open_providers(host, pilot)
+        toasts = _capture_toasts(screen, monkeypatch)
+        screen.query_one("#settings-model-value", Input).value = "model-b"
+        await pilot.pause()
+        rail = screen.query_one(f"#settings-category-{_PM.value}", Button)
+        rail.focus()
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert [(c["provider"], c["model"]) for c in calls] == [("llama_cpp", "model-b")]
+        assert (_PM_SAVED_TOAST, "information") in toasts
+        assert screen._provider_save_result == PROVIDER_SAVED_COPY
+        assert screen._category_has_unsaved_changes(_PM) is False
+        assert not _rail_marked(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_save_failure_keeps_the_draft_and_r_discards_after_asking(
+    request, monkeypatch
+) -> None:
+    calls = _capture_persists(
+        monkeypatch, ConfigMutationResult(False, False, "before_replace")
+    )
+    host = DestinationHarness(_providers_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open_providers(host, pilot)
+        toasts = _capture_toasts(screen, monkeypatch)
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "model-b"
+        await pilot.pause()
+        screen.action_settings_save_category()
+        assert len(calls) == 1
+        failure = (
+            "Provider settings not fully applied: the file was not written. "
+            "Draft retained; check config access and retry."
+        )
+        assert toasts == [(failure, "error")]
+        assert screen._category_has_unsaved_changes(_PM) is True
+        assert _rail_marked(screen)
+
+        screen.action_settings_revert_category()
+        await pilot.pause(0.2)
+        prompt = host.screen
+        assert isinstance(prompt, ConfirmationDialog)
+        assert prompt.message == "Discard all unsaved changes to Providers & Models?"
+        await pilot.click("#cancel-button")  # Keep editing
+        await pilot.pause(0.2)
+        assert screen._category_has_unsaved_changes(_PM) is True
+        assert model.value == "model-b"
+
+        toasts.clear()
+        screen.action_settings_revert_category()
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # Discard changes
+        await _settle_settings(pilot)
+        assert screen._category_has_unsaved_changes(_PM) is False
+        assert not _rail_marked(screen)
+        assert ("Settings category changes reverted.", "information") in toasts
+        assert screen.query_one("#settings-model-value", Input).value == "model-a"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_s_and_r_with_nothing_unsaved_say_so(
+    request, monkeypatch
+) -> None:
+    calls = _capture_persists(monkeypatch, ConfigMutationResult(True, True, None))
+    host = DestinationHarness(_providers_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open_providers(host, pilot)
+        toasts = _capture_toasts(screen, monkeypatch)
+        screen.action_settings_save_category()
+        assert calls == []
+        assert toasts == [("No Settings changes to save.", "information")]
+        assert screen._provider_save_result == PROVIDER_NO_CHANGES_COPY
+
+        toasts.clear()
+        screen.action_settings_revert_category()
+        await pilot.pause(0.2)
+        assert not isinstance(host.screen, ConfirmationDialog)
+        assert toasts == [("No Settings changes to revert.", "information")]
+
+
+def _saved_chat_model():
+    """``[chat_defaults] model`` as written to this private profile's config."""
+    return SettingsConfigAdapter().load(force_reload=True)["chat_defaults"]["model"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_model_typed_back_after_a_save_is_staged_and_saved(
+    request,
+) -> None:
+    """1378.1's N6 shape on this category's controls, with the real writer:
+    after another model was saved, typing back the model the card first
+    showed is an edit (rail ``*``, quit guard), and ``s`` writes it."""
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    host = DestinationHarness(_providers_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open_providers(host, pilot)
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "model-b"
+        await pilot.pause()
+        screen.action_settings_save_category()
+        await pilot.pause()
+        assert _saved_chat_model() == "model-b"
+        assert screen._category_has_unsaved_changes(_PM) is False
+
+        model.value = "model-a"
+        await pilot.pause()
+        assert screen._category_has_unsaved_changes(_PM) is True
+        assert _rail_marked(screen)
+        assert "Providers & Models" in unsaved_settings_titles(screen)
+        screen.action_settings_save_category()
+        await pilot.pause()
+        assert _saved_chat_model() == "model-a"
+        assert screen._category_has_unsaved_changes(_PM) is False
+        assert not _rail_marked(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_unreadable_snapshot_preferences_keep_the_reload_revert(
+    request, monkeypatch
+) -> None:
+    """TASK-1378.2 review I1: while snapshot preferences cannot be read, ``r``
+    reloads them, and the Inspector's Revert says so and stays enabled after
+    every refresh of the Save/Revert pair, the card's own deferred one too."""
+    from tldw_chatbook.LLM_Management import snapshot_settings
+
+    def _unreadable(*args, **kwargs):
+        raise ValueError("unreadable snapshot preferences")
+
+    monkeypatch.setattr(snapshot_settings, "load_snapshot_preferences", _unreadable)
+    host = DestinationHarness(_providers_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open_providers(host, pilot)
+        assert screen._snapshot_preferences_unavailable is True
+
+        def revert_state() -> tuple[str, bool]:
+            revert = screen.query_one("#settings-revert-category", Button)
+            return str(revert.label), revert.disabled
+
+        reload = ("Revert (r) — reload preferences", False)
+        assert revert_state() == reload
+        screen._update_guided_action_widgets()  # the card schedules it alone
+        assert revert_state() == reload
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_category_refuses_a_category_its_panel_serves(request) -> None:
+    """TASK-1378.2 review M3: ``_revert_category`` would pop a registered
+    category's draft and toast "reverted" without repainting it; the panel's
+    ``revert`` owns that discard, so the screen's path refuses and the draft
+    stays (on a mounted screen, so the old path runs to its end; rev2 N2)."""
+    host = DestinationHarness(_providers_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _settle_settings(pilot)
+        screen = _active_destination_screen(host)
+        for category in CATEGORY_PANELS:
+            draft = SettingsDraft(category=category)
+            draft.set_value("probe", "saved", "edited")
+            screen._settings_drafts[category] = draft
+            try:
+                screen._revert_category(category)
+            except ValueError as exc:
+                refused = "registered panel" in str(exc)
+            else:
+                refused = False
+            assert refused, category
+            assert screen._settings_drafts.get(category) is draft, category
