@@ -639,7 +639,11 @@ _BUDGETS: dict[str, int] = {
     # (the pair in ``_library_notes_semantic_role``): 7423 -> 7425.
     # 2026-11-13, TASK-40295: a resolved conflict hands focus to the note
     # body: 7425 -> 7427.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7427,
+    # 2026-11-13, TASK-40299: a scroll restore that clamped on an unlaid-out
+    # owner reruns on its layout (``_retry_library_notes_scroll_on_layout``):
+    # 7425 -> 7440 (measured).
+    # 2026-11-13 restack: both changes stacked, measured.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7442,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

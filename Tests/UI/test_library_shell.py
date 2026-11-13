@@ -33298,7 +33298,20 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
             await pilot.pause()
             await pilot.resize_terminal(60, 20)
             await _wait_for_library_notes_compact(screen, pilot, True)
-            await pilot.pause()
+            # TASK-40299: the offset lands once its owner is laid out, which
+            # on a busy loop takes more than one pause after the breakpoint.
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._capture_library_notes_focus_identity().scroll_offset
+                    == before.scroll_offset
+                ),
+                message=lambda: (
+                    f"{semantic_role}: "
+                    f"{screen._capture_library_notes_focus_identity().scroll_offset}"
+                    f" != {before.scroll_offset}"
+                ),
+            )
 
             after = screen._capture_library_notes_focus_identity()
             assert after.semantic_role == semantic_role

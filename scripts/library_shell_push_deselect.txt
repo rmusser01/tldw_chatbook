@@ -6,7 +6,3 @@
 Tests/UI/test_library_shell.py::test_library_shell_note_save_then_back_refreshes_list_title_and_age
 # product defect, TASK-34000.60 (TASK-39152 notes)
 Tests/UI/test_library_shell.py::test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
-# compact Preview scroll memory lost across a breakpoint round trip under load, TASK-40299
-Tests/UI/test_library_shell.py::test_library_note_breakpoint_round_trips_restore_every_region_focus_role
-# compact Preview scroll memory lost across a breakpoint round trip under load, TASK-40299
-Tests/UI/test_library_shell.py::test_library_note_deliberate_scroll_override_replaces_responsive_memory

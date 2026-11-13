@@ -2311,10 +2311,10 @@ class LibraryNotesController:
         self,
         identity: LibraryNotesFocusIdentity,
         guard: _LibraryNotesRestoreGuard | None = None,
-    ) -> None:
-        """Apply only the named owner's portable offset, without changing focus."""
+    ) -> Widget | None:
+        """Apply the owner's offset without moving focus; the owner if it clamped."""
         if not self._library_notes_restore_guard_is_current(guard):
-            return
+            return None
         owner_region = (
             "rail" if identity.stage == "rail" else self._library_notes_focus_region()
         )
@@ -2324,14 +2324,12 @@ class LibraryNotesController:
                 owner = self.query_one("#library-media-row-scroll", Widget)
             except (NoMatches, QueryError):
                 owner = None
-        if owner is not None and identity.scroll_offset is not None:
-            owner.scroll_to(
-                x=identity.scroll_offset[0],
-                y=identity.scroll_offset[1],
-                animate=False,
-                force=True,
-                immediate=True,
-            )
+        if owner is None or identity.scroll_offset is None:
+            return None
+        x, y = identity.scroll_offset
+        owner.scroll_to(x=x, y=y, animate=False, force=True, immediate=True)
+        held = (round(owner.scroll_x), round(owner.scroll_y)) == (x, y)
+        return None if held else owner
     def _release_library_notes_focus_after_snapshot(self) -> None:
         """Complete a Back focus handoff after its source refresh settles."""
         if (
@@ -2831,10 +2829,27 @@ class LibraryNotesController:
             return
         self._library_notes_restoring_focus = True
         try:
-            self._restore_library_notes_scroll_offset(expected, guard)
+            clamped = self._restore_library_notes_scroll_offset(expected, guard)
         finally:
             self._library_notes_restoring_focus = False
+        if clamped is not None:
+            # TASK-40299: on a busy loop the owner can still be unlaid out here
+            # (0 wide, no range) and the offset clamps to 0; rerun on its layout.
+            clamped._library_notes_layout_retry = (expected, guard)
+            if not getattr(clamped, "_library_notes_layout_observed", False):
+                clamped._library_notes_layout_observed = True
+                self.watch(
+                    clamped,
+                    "virtual_size",
+                    partial(self._retry_library_notes_scroll_on_layout, clamped),
+                    init=False,
+                )
         self._record_library_notes_presented_focus(expected, guard)
+    def _retry_library_notes_scroll_on_layout(self, owner: Widget) -> None:
+        """Rerun a clamped after-layout restore once its owner lays out."""
+        retry, owner._library_notes_layout_retry = owner._library_notes_layout_retry, None
+        if retry is not None:
+            self._restore_library_notes_scroll_after_layout(*retry)
     def _record_library_notes_presented_focus(
         self,
         expected: LibraryNotesFocusIdentity,
