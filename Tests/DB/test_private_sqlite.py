@@ -96,6 +96,7 @@ COPY_BACKUP_OWNER_IDS = (
     "recovery.core.library_ingest_jobs",
     "recovery.operations.dreams",
     "recovery.operations.guardian",
+    "recovery.plugins.registry",  # TASK-40132
     "tts.profile_restore_stage",
 )
 OPEN_CONNECTION_BACKUP_OWNER_IDS = (

@@ -1563,6 +1563,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
         ('tldw_chatbook/DB/recovery_operations', '_SubscriptionsAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Notifications/recovery', '_NotificationsAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Notifications/recovery', '_EventsAdapter.capture', "copy_private_sqlite"): 1,
+        ('tldw_chatbook/Plugins/backup', '_Plugins.capture', "copy_private_sqlite"): 1,  # TASK-40132
     })
     actual_calls: Counter[tuple[str, str, str]] = Counter()
     for source_path in PRODUCTION_ROOT.rglob("*.py"):
