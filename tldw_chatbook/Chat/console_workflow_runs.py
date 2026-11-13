@@ -1974,109 +1974,128 @@ class ConsoleWorkflowCoordinator:
                 wake._loop,
             )
             _execution_release_source(self, release_binding)
-            snapshot = await self.service.call(self.service.get, run.workflow_id)
-            definition = next(
-                p
-                for p in snapshot.plans[run.phase.attempt.revision_id - 1].phases
-                if p.id == run.phase.attempt.phase_id
-            )
-            ids = set(await self.service.call(self.service.phase_task_ids, run.phase))
-            pending = [task for task in definition.tasks if task.id in ids]
-            done = set(
-                await self.service.call(
-                    self.service.reviewed_task_ids, run.phase, run.decision
+            try:
+                snapshot = await self.service.call(self.service.get, run.workflow_id)
+                definition = next(
+                    p
+                    for p in snapshot.plans[run.phase.attempt.revision_id - 1].phases
+                    if p.id == run.phase.attempt.phase_id
                 )
-            )
-            while pending and run.control is None and not failed:
-                run.wake.clear()
-                ready = [task for task in pending if set(task.dependencies) <= done]
-                if not ready:
-                    raise ValueError("workflow dependencies blocked")
-                # Native finite preparation uses OPAQUE custody. Observe its
-                # existing admission gate before entering, without claiming it.
-                activity = self.runtime.worktree_activity
-                activity._prune_recovery()
-                with activity._lock:
-                    busy = bool(
-                        activity._claims
-                        or activity._waves
-                        or activity._recovery
-                        or activity._ready_manual
+                ids = set(
+                    await self.service.call(self.service.phase_task_ids, run.phase)
+                )
+                pending = [task for task in definition.tasks if task.id in ids]
+                done = set(
+                    await self.service.call(
+                        self.service.reviewed_task_ids, run.phase, run.decision
                     )
-                if not busy:
-                    for task in ready:
-                        if run.control is not None:
-                            break
-                        if task.id in run.preparations:
-                            continue
-                        await self._accounting(run, "resume")
-                        resolution = next(
-                            r
-                            for r in run.phase._execution_resolutions
-                            if goal_provider_ref(r) == task.target
-                        )
-                        run.preparations[task.id] = await prepare_workflow_reply(
-                            self.controller._agent_bridge,
-                            phase=run.phase,
-                            task_id=task.id,
-                            binding=run.binding,
-                            resolution=resolution,
-                            confirm_project_instruction_dispatch=self.controller._confirm_project_instruction_dispatch,
-                        )
-                        item = run.preparations[task.id]
-                        run.preparation_returns.append(
-                            (
-                                item,
-                                item.authorization,
-                                item.authorization._native_preparation[0],
-                                item.native,
-                                item.configuration,
-                                item.source,
-                                item._lifetime,
-                                item._source_scope,
-                                item._finite_reads,
-                            )
-                        )
-                if run.control is not None:
-                    break
-                selected = self._wave_ready(
-                    run,
-                    [run.preparations[t.id] for t in ready if t.id in run.preparations],
                 )
-                if run.control is not None:
-                    break
-                if not selected:
-                    await self._accounting(run, "quiesce")
-                    if run.control is not None or run.wake.is_set():
-                        continue
-                    if self._wave_ready(
+                while pending and run.control is None and not failed:
+                    run.wake.clear()
+                    ready = [task for task in pending if set(task.dependencies) <= done]
+                    if not ready:
+                        raise ValueError("workflow dependencies blocked")
+                    # Native finite preparation uses OPAQUE custody. Observe its
+                    # existing admission gate before entering, without claiming it.
+                    activity = self.runtime.worktree_activity
+                    activity._prune_recovery()
+                    with activity._lock:
+                        busy = bool(
+                            activity._claims
+                            or activity._waves
+                            or activity._recovery
+                            or activity._ready_manual
+                        )
+                    if not busy:
+                        for task in ready:
+                            if run.control is not None:
+                                break
+                            if task.id in run.preparations:
+                                continue
+                            await self._accounting(run, "resume")
+                            resolution = next(
+                                r
+                                for r in run.phase._execution_resolutions
+                                if goal_provider_ref(r) == task.target
+                            )
+                            run.preparations[task.id] = await prepare_workflow_reply(
+                                self.controller._agent_bridge,
+                                phase=run.phase,
+                                task_id=task.id,
+                                binding=run.binding,
+                                resolution=resolution,
+                                confirm_project_instruction_dispatch=self.controller._confirm_project_instruction_dispatch,
+                            )
+                            item = run.preparations[task.id]
+                            run.preparation_returns.append(
+                                (
+                                    item,
+                                    item.authorization,
+                                    item.authorization._native_preparation[0],
+                                    item.native,
+                                    item.configuration,
+                                    item.source,
+                                    item._lifetime,
+                                    item._source_scope,
+                                    item._finite_reads,
+                                )
+                            )
+                    if run.control is not None:
+                        break
+                    selected = self._wave_ready(
                         run,
                         [
                             run.preparations[t.id]
                             for t in ready
                             if t.id in run.preparations
                         ],
-                    ):
+                    )
+                    if run.control is not None:
+                        break
+                    if not selected:
+                        await self._accounting(run, "quiesce")
+                        if run.control is not None or run.wake.is_set():
+                            continue
+                        if self._wave_ready(
+                            run,
+                            [
+                                run.preparations[t.id]
+                                for t in ready
+                                if t.id in run.preparations
+                            ],
+                        ):
+                            continue
+                        await run.wake.wait()
                         continue
-                    await run.wake.wait()
-                    continue
-                await self._accounting(run, "resume")
-                wave = await run_workflow_wave(run.phase, selected, _retain_waits=True)
-                run.waves.append(_quiescence_wave._workflow_wave_return(wave))
-                for item in wave.unlaunched:
-                    if wave.wait_footprint is not None:
-                        run.wait_footprints[item] = wave.wait_footprint
-                snapshot = await self.service.call(self.service.get, run.workflow_id)
-                results = {result.attempt_id: result for result in snapshot.results}
-                for item, _receipt in wave.receipts:
-                    result = results.get(item.authorization.claim.id)
-                    failed |= result is None or result.status != "completed"
-                    done.add(item.task_id)
-                    pending = [task for task in pending if task.id != item.task_id]
-                    run.preparations.pop(item.task_id)
-                    run.wait_footprints.pop(item, None)
-                _metadata_source(self)
-                await self._publish(run.workflow_id)
+                    await self._accounting(run, "resume")
+                    wave = await run_workflow_wave(
+                        run.phase, selected, _retain_waits=True
+                    )
+                    run.waves.append(_quiescence_wave._workflow_wave_return(wave))
+                    for item in wave.unlaunched:
+                        if wave.wait_footprint is not None:
+                            run.wait_footprints[item] = wave.wait_footprint
+                    snapshot = await self.service.call(
+                        self.service.get, run.workflow_id
+                    )
+                    results = {result.attempt_id: result for result in snapshot.results}
+                    for item, _receipt in wave.receipts:
+                        result = results.get(item.authorization.claim.id)
+                        failed |= result is None or result.status != "completed"
+                        done.add(item.task_id)
+                        pending = [task for task in pending if task.id != item.task_id]
+                        run.preparations.pop(item.task_id)
+                        run.wait_footprints.pop(item, None)
+                    _metadata_source(self)
+                    await self._publish(run.workflow_id)
+            except Exception:
+                # TASK-40718: a failure that left no workflow work live retires
+                # below as a failed phase, so the chat gets its claim back.
+                # Settlement re-proves the return; live work keeps custody.
+                if self.service._has_live_workflow_resources(run.workflow_id):
+                    raise
+                logger.exception("Native workflow phase failed")
+                failed = True
             cleanup_error = None
             try:
                 await self._accounting(run, "cleanup")

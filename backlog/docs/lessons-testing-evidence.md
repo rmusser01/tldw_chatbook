@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A private-child journey shows only its last 1000 characters, so the teardown's error hides the first failure (TASK-40718, 2026-11-13)
+
+**Incident.** The first reproduction of the wedged workflow chat ran through `Tests/Backup_Recovery/test_home_citation_retirement._run`, which reports only the child's last 1000 characters of output. The child's `finally: await rig.close()` raised `workflow_original_shutdown_unresolved`, and that traceback filled the window. The real first failure (an assertion, and a `native_checkpoint_missing` from the wrong trigger) was invisible: the setup had dropped task-1 from every `phase_task_ids` read, including the one inside `reviewed_task_ids`, so the phase failed before it reached "workflow dependencies blocked". Printing the child's whole `restart-output.log` from the test on failure showed both at once.
+
+**What to do.** When a `_run` journey fails, read the child's whole log (`tmp_path / "restart-output.log"`) before trusting the error shown: a teardown that refuses retained custody always fails after the assertion that caused it. Before patching a service read to create a failure, grep for every caller of that read, including calls from inside other service methods.
+
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
 **Incident.** `test_migration_immutable_failure_retains_complete_destination[True]` monkeypatched `os.close` and expected 6 closes after a failed view close, "Admission also owns two directory pins for a file-backed view." It failed `assert 4 == 6` on dev. A first-parent bisect over 905 commits (a `git archive` tree per step, one 4 s node) named 5a915a43e5, a test-only commit that moved `Tests/DB` to the bootstrap profile. Stacks recorded in the spy showed the two missing closes came from the `chatbook-storage-admission` hold thread (`admission._lock` and `native_files.pinned_directory`), which a per-test profile's admission happened to run in that window. The cleanup under test closed the same 4 descriptors under both profiles.

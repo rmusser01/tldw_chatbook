@@ -34,9 +34,9 @@ The handler's comment says a physical failure cannot shed custody. A failure tha
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A phase that fails without leaving workers running, for example on blocked dependencies, releases its claim, and the chat accepts a new turn without a restart.
+- [x] #1 A phase that fails without leaving workers running, for example on blocked dependencies, releases its claim, and the chat accepts a new turn without a restart.
 - [ ] #2 Reconcile on a failed execution phase whose workers have all returned succeeds and records the review.
-- [ ] #3 A failed phase whose workers may still be live is still refused with `workflow_resources_still_live`.
+- [x] #3 A failed phase whose workers may still be live is still refused with `workflow_resources_still_live`.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,3 +49,21 @@ ADR required: no. Reason: the failure path reuses the existing failed-phase sett
 4. AC #2 (reconcile after the retained phase's workers return) needs a decision about what reconcile records; probe and report.
 5. Mutation checks, covering files base vs head, preflight, Tests/Architecture.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+`ConsoleWorkflowCoordinator._execute` now catches an ordinary exception from the phase body. When `WorkflowRunService._has_live_workflow_resources` still sees work for the workflow (a wave, an open preparation, an admitted owner, a live native thread), it re-raises and the old handler keeps custody. Otherwise the phase is marked failed and runs the existing retirement tail: cleanup accounting, preparation close, `settle_execution_phase(outcome="failed")`, publish and `_release`. Those steps re-prove the physical return themselves, so a refusal anywhere in them still retains custody. A blocked phase now ends like a phase whose task failed: `paused` (stored `awaiting_resume`), resumable, and the chat gets its intake claim and primary token back. Cancellation is not caught.
+
+Tests (`Tests/Chat/test_workflow_failed_phase_release.py`, native rig in a private child):
+- `blocked_phase`: task-2 depends on task-1 and the driver's task read omits task-1. On base the run stayed `recovery_required` in `_runs`, a new turn was refused ("A turn is already preparing."), reconcile raised `workflow_resources_still_live`, and runtime disposal raised `workflow_original_shutdown_unresolved`. Now the run is released, the status is `paused` and a new turn is accepted. Making the handler always re-raise fails it again.
+- `live_worker_failure`: the driver's wave wait raises while task-1's worker is held. The run stays retained, reconcile refuses with `workflow_resources_still_live`, and the failed-phase retirement is never attempted. Removing the live-resource check fails it, because the driver then attempts cleanup and close over live work (settlement still refuses, so custody held either way).
+
+AC #2 is open: it needs a decision. After a retained phase's workers return, `_has_live_workflow_resources` is false, but reconcile refuses because the run has no `prepared`. The stored workflow was never put into recovery (`awaiting_approval`; `recovery_required` exists only in memory), so `resolve_recovery` answers `recovery_unavailable`, and the phase's native attempt is still `accepted`. Reconcile could either retire it as a failed phase (resumable, nothing reviewed) or record a durable execution recovery and close it as reviewed history (a new service step like `record_returned_planning`).
+
+Scope note: any ordinary exception from the phase body with nothing live now settles as a failed phase, not only blocked dependencies. That includes admission refusals such as `AutomaticWorkRefused("wall_budget")` raised before launch, which on base wedged the chat as `recovery_required`. Failures in the retirement tail itself (cleanup accounting, close, settlement, publish, release) still retain custody as before.
+
+Evidence (load 30-65 on 18 CPUs, so most native child tests time out on both trees): 13 covering workflow files, base 58 failed / 136 passed against head 71 / 123. Every head-only node was rerun alongside base at the same load. 16 of them fail on base too. `partial-resume` passes 2/2 on both when run alone, and `capture` plus the notification journey pass on head serially. `cleanup-expired` fails on both trees at the same assertion ("readiness wait never armed": the 10 s wall budget runs out before the wait is armed). Its full child logs show base then wedging (`recovery_required`, shutdown unresolved) while head settles the phase as `paused`. The two wave-probe nodes never enter the coordinator, and base raises their "workflow close wave changed" in sibling tests. The diagnostic inventory gained one constant-text `logger.exception("Native workflow phase failed")`; the pin was regenerated after reading it.
+
+Files: `Chat/console_workflow_runs.py`, `Tests/Chat/test_workflow_failed_phase_release.py`, `Docs/security/production-diagnostic-inventory.json`, `backlog/docs/lessons-testing-evidence.md`.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
