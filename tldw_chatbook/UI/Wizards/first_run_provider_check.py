@@ -12,12 +12,14 @@ listing Settings' key check sends (TASK-33005.4) -- and reads the settled
 outcome through Settings' own ``key_check_probe_result``, so the wizard and
 Settings give one verdict and Next can reuse the listing.
 
-A provider whose model list answers without a valid key (OpenRouter,
-Hugging Face, Novita) is never reported as 'Key works' from that listing:
-only ``ModelDiscoveryResult.key_verified`` -- set by TASK-34100.2's
-authenticated checks (OpenRouter /api/v1/key, Hugging Face whoami-v2) --
-can confirm it. Until that lands, those providers say plainly that the key
-is checked on the first message.
+A provider whose model list answers without a valid key (the provider
+records' ``public_model_listing``: OpenRouter, Hugging Face, NVIDIA NIM,
+Novita) is never reported as 'Key works' from that listing: only
+``ModelDiscoveryResult.key_verified`` -- set by TASK-34100.2's authenticated
+checks (OpenRouter /api/v1/key, Hugging Face whoami-v2) -- can confirm it.
+NVIDIA NIM and Novita have no such check, so they say plainly that the key is
+checked on the first message. A key the provider rejects is shown with the
+provider's own reason when it gave one (TASK-34100.2 AC#3).
 
 The localhost connection probe ('Test connection') moved here whole from
 ``first_run_provider_step.py``.
@@ -38,6 +40,7 @@ from textual import on
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input
 
+from tldw_chatbook.UI.Wizards import first_run_key_check as key_check
 from tldw_chatbook.UI.Wizards import first_run_model_discovery as model_discovery
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards.first_run_provider_detection import tls_failure_line
@@ -265,6 +268,7 @@ class ProviderCheckStep(ProviderListStep):
                     )
             if rejected:  # review provider-03: the error sits under the field
                 line, note, _refusal = self._rejected_key_copy()
+                line = key_check.with_provider_reason(line, outcome)  # TASK-34100.2 AC#3
                 self._set_key_note(note, error=True)
             # Drop 'Key staged' / 'Press Check key' once a check has run
             # (cross-cutting-07; review round 1, live F6).

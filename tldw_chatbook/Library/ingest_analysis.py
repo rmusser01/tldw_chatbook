@@ -8,7 +8,11 @@ the app's *existing* configured analysis default into something the
 pipeline can act on:
 
 * the provider comes from ``[analysis_defaults] provider`` -- the same
-  config the Media viewer's analysis panel already reads as its default;
+  config the Reader's Generate reads as its default --
+  and, while ``[analysis_defaults]`` provider/model still equal the shipped
+  template, from ``[chat_defaults]`` instead (TASK-34100.2 AC#8,
+  ``effective_analysis_defaults``): setup writes only the chat default, so
+  analysis follows the model the user actually connected;
 * readiness + credential resolution go through
   ``Chat/provider_readiness.get_provider_readiness`` -- the one definition
   of "this provider can actually be called" shared with Console, covering
@@ -92,6 +96,49 @@ def chat_dispatch_name(provider: Optional[str]) -> Optional[str]:
     return normalized_handlers.get(provider_config_key(provider))
 
 
+def effective_analysis_defaults(
+    app_config: Mapping[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """``[analysis_defaults]`` as analysis should use them (TASK-34100.2 AC#8).
+
+    Every profile carries the shipped template's ``[analysis_defaults]``
+    (OpenAI / gpt-4o), while setup writes only ``[chat_defaults]``. So while
+    the provider and model still equal the shipped template, analysis follows
+    the chat provider and model; a value the user set is never replaced.
+    Nothing is written -- this is a read-side rule.
+
+    Args:
+        app_config: The loaded app configuration mapping.
+
+    Returns:
+        The effective defaults (a copy) and whether they follow the chat
+        default.
+    """
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    raw = app_config.get("analysis_defaults") if isinstance(app_config, Mapping) else None
+    defaults = dict(raw) if isinstance(raw, Mapping) else {}
+    template = DEFAULT_CONFIG_FROM_TOML.get("analysis_defaults", {})
+    chat = app_config.get("chat_defaults") if isinstance(app_config, Mapping) else None
+    chat = chat if isinstance(chat, Mapping) else {}
+    chat_provider = str(chat.get("provider") or "").strip()
+    untouched = (
+        provider_config_key(str(defaults.get("provider") or ""))
+        == provider_config_key(str(template.get("provider") or ""))
+        and str(defaults.get("model") or "").strip()
+        == str(template.get("model") or "").strip()
+    )
+    if not (untouched and chat_provider):
+        return defaults, False
+    defaults["provider"] = chat_provider
+    chat_model = str(chat.get("model") or "").strip()
+    if chat_model:
+        defaults["model"] = chat_model
+    else:
+        defaults.pop("model", None)
+    return defaults, True
+
+
 @dataclass(frozen=True)
 class IngestAnalysisResolution:
     """Outcome of resolving the configured analysis provider.
@@ -157,8 +204,7 @@ def resolve_ingest_analysis_provider(
         The resolution -- see :class:`IngestAnalysisResolution`.
     """
     config: Mapping = app_config if isinstance(app_config, Mapping) else {}
-    defaults = config.get("analysis_defaults")
-    defaults = defaults if isinstance(defaults, Mapping) else {}
+    defaults, follows_chat = effective_analysis_defaults(config)
     provider = str(defaults.get("provider") or "").strip()
 
     if not provider:
@@ -216,13 +262,24 @@ def resolve_ingest_analysis_provider(
             or ANALYSIS_DEFAULT_SYSTEM_PROMPT,
         )
 
+    # TASK-34100.2 AC#8 (coverage-17): say why this provider is involved --
+    # the chat model analysis follows, or analysis's own [analysis_defaults]
+    # -- instead of steering the user to get a key for it.
+    from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+    named = provider_display_name(provider_config_key(provider)) or provider
+    model = _optional_str(defaults.get("model"))
+    pair = f"{named} · {model}" if model else named
+    source = "your chat model" if follows_chat else "its own default"
+    where = "" if follows_chat else ", set under [analysis_defaults]"
     return IngestAnalysisResolution(
         provider=provider,
         api_key=None,
         ready=False,
         short_reason=f"{provider} is not ready ({readiness.reason})",
         hint=(
-            f"Analyze after import is on, but {readiness.user_message} "
+            f"Analyze after import is on, but analysis uses {source} "
+            f"({pair}{where}), and {named} is not ready ({readiness.reason}). "
             "Imports will run without analysis."
         ),
     )

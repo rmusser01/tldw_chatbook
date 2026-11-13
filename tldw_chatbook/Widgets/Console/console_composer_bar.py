@@ -56,6 +56,7 @@ from tldw_chatbook.Utils.input_validation import (
 )
 
 from ...Chat.console_display_state import (
+    CONSOLE_BLOCKER_MODEL_LIMITS,
     ConsoleAttachmentBlock,
     QUEUE_REASON_PREPARING,
     QUEUE_REASON_RECEIVED_PREPARING,
@@ -481,6 +482,25 @@ def send_button_width_for(label: str) -> int:
 
     widest = max(cell_len(variant) for variant in _SEND_BUTTON_LABEL_VARIANTS)
     return max(6, max(widest, cell_len(label)) + 2)
+
+
+class ConsoleSendReasonStrip(Static):
+    """The Send disabled-reason strip (``#console-send-disabled-reason``).
+
+    TASK-34100.2 review v5r4 (G2C-R4-3, LV3-1): a full context window's strip
+    links Chat settings' Max tokens, so it carries its own way out
+    (TASK-21145) without the setup wizard. Its click posts the request the
+    transcript's **Fix model limits** posts; the screen's provider recovery
+    opens Chat settings focused on Max tokens.
+    """
+
+    def action_fix_model_limits(self) -> None:
+        """Open the capacity fix, as the transcript's Fix model limits does."""
+        from tldw_chatbook.UI.Workbench.workbench_widgets import (
+            WorkbenchActionRequested,
+        )
+
+        self.post_message(WorkbenchActionRequested("provider-recovery"))
 
 
 class ComposerControlButton(Button):
@@ -2384,6 +2404,11 @@ class ConsoleComposerBar(Horizontal):
                     "[@click=app.run_setup_wizard]$reason ›[/]",
                     reason=reason,
                 )
+            elif self.has_class("console-composer-limits-blocked"):
+                # `ConsoleSendReasonStrip.action_fix_model_limits` (G2C-R4-3).
+                reason_content = Content.from_markup(
+                    "[@click=fix_model_limits]$reason ›[/]", reason=reason
+                )
             else:
                 reason_content = Content(reason)
             if strip.content != reason_content:
@@ -2778,6 +2803,16 @@ class ConsoleComposerBar(Horizontal):
             # Recovery is resolved at its own controls, not the setup wizard.
             and not dispatch_recovery_blocked,
             "console-composer-setup-blocked",
+        )
+        # TASK-34100.2 review v5r4 (G2C-R4-3): a full context window's strip
+        # opens Chat settings on Max tokens instead.
+        self.set_class(
+            effective_send_blocked
+            and console_blocked_reason(setup_blocked_reason).code
+            == CONSOLE_BLOCKER_MODEL_LIMITS
+            and not wake_turn_active
+            and not dispatch_recovery_blocked,
+            "console-composer-limits-blocked",
         )
         reason = build_console_disabled_reason(
             action_id="send",
@@ -7015,7 +7050,7 @@ class ConsoleComposerBar(Horizontal):
             # SEND_REASON_MAX_WIDTH) whenever Send is blocked or the draft is
             # empty, sitting on this same single row between the 1fr draft
             # and the fixed actions row so it never adds composer height.
-            disabled_reason = Static(
+            disabled_reason = ConsoleSendReasonStrip(
                 "",
                 id="console-send-disabled-reason",
                 classes="console-send-disabled-reason",

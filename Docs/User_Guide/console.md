@@ -118,9 +118,11 @@ Top to bottom:
   streaming — and the reason shows inline next to it (e.g. "Send blocked —
   choose a model to continue ›"), so you never have to hover to find out
   why. When setup is the blocker, that reason is clickable and opens the
-  setup wizard directly. A staged image the model can't read is not setup:
-  the reason reads "Send blocked — this model can't accept images" and is not
-  a link. Pressing Enter while Send is blocked keeps the draft and writes
+  setup wizard directly. A full context window is not setup: "Send blocked —
+  fix model limits to continue ›" opens Chat settings with the cursor in
+  **Max tokens**, as **Fix model limits** does, and never the setup wizard.
+  A staged image the model can't read is not setup either: the reason reads
+  "Send blocked — this model can't accept images" and is not a link. Pressing Enter while Send is blocked keeps the draft and writes
   the reason as a System row. That row names the first thing that blocks the
   send: when none of the staged Library evidence is available, it says so,
   even if provider setup is also unfinished.
@@ -354,24 +356,95 @@ while Console was not on screen, or in a tab you were not viewing. A dialog
 open over Console (Switch model, Rename, the command palette) does not count
 as hidden.
 
+If you skipped setup because a provider key is exported in your shell (for
+example `ANTHROPIC_API_KEY`) but new chats still use a provider without a
+key, the card also lists each provider whose key it found, one button each
+(up to three): **Found ANTHROPIC_API_KEY · Use Anthropic**. Choosing one makes
+that provider and its default model the chat default, reading the key from
+the environment variable (only the variable's name is saved, never the key),
+in one save, and this chat moves onto it. If the save fails, nothing changes
+and a notice says so. A provider you already set up with a saved key is not
+offered: its saved key is the one chats use, and choosing the environment
+variable instead would replace it.
+
 **Readiness words.** Every model surface — the header's status badge, the
 Model section's status line, this card's current step, the
 Switch model rows, Chat settings and the Settings test result — says the
-same one of four things for the same connection:
+same one of five things for the same connection:
 
 | Word | Means |
 |---|---|
 | **Ready · not tested** | Nothing blocks a send, and nothing has been checked this session. |
 | **Ready · reachable 14:01** | A local, URL or custom endpoint answered its model listing at that local time. A cloud key check that accepted the key but did not list this model reads this too. |
-| **Ready · verified 14:01** | The provider accepted a cloud key in an authenticated model listing that listed this model, or a paid generation test of this model succeeded, at that time. A test of one model never verifies another, and a listing alone never means generation was tested. In Switch model each row reads its own model this way, so one key check can show some of a provider's rows verified and others reachable. |
-| **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out", "untrusted cert" (the server's certificate isn't trusted — add your CA in Settings ▸ Network), "plain http" (an https address on a plain-HTTP server) or "no model". A setup blocker is named before a failed test: with no model chosen, a refused server still reads "no model". |
+| **Key verified 14:01** | The provider accepted a cloud key at that local time, through an authenticated model listing that listed this model or the provider's own key check. Nothing was generated, so this proves the key, not a reply. In Switch model each row reads its own model this way, so one key check can show some of a provider's rows Key verified and others reachable. |
+| **Ready · verified 14:01** | A paid generation test of this model succeeded at that time. A test of one model never verifies another. |
+| **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out", "untrusted cert" (the server's certificate isn't trusted — add your CA in Settings ▸ Network), "plain http" (an https address on a plain-HTTP server), "no model", "window too small" or "model not found". A setup blocker is named before a failed test: with no model chosen, a refused server still reads "no model". |
 
 The words carry the state; colour only repeats it (the Model section line
 turns red when Not ready). While an emergency stop (see Keyboard & commands)
 is active the header badge reads **Held · emergency stop** instead, because
-no send can start until it is cleared. A provider whose model list is public, such as
-OpenRouter, stays "Ready · not tested" after its list loads, because the list
-proves nothing about your key.
+no send can start until it is cleared. A provider whose model list is public proves
+nothing about your key by listing it. OpenRouter and Hugging Face get a
+separate authenticated key check instead, so a rejected or expired key reads
+"Not ready · key rejected". Any key check counts, not only a send: if setup's
+check, Settings' **Test Provider** or the startup model-list check got a 401,
+the chat reads "Not ready · key rejected" ("… rejected this API key when it
+was checked") before you send anything. A new key starts clean, and a check
+that accepts the key, or a reply, clears it. NVIDIA NIM and
+Novita have no such check: they read "models listed; key not checked" and
+stay "Ready · not tested".
+
+"Not ready · window too small" means the chat's reply reservation (Max
+tokens) leaves no room for your message in the model's context window; its
+fix action is **Fix model limits**, which opens Chat settings with the
+cursor in **Max tokens**, and the composer reads "Send blocked — fix model
+limits to continue ›"; clicking that line opens the same place, never the
+setup wizard. The composer still takes your message: a new
+profile's empty chat shows the word, its reason ("Replies reserve 200,000 of
+gpt-4o's 128,000-token context window…") and **Fix model limits** on one
+line instead of the Get started card, and your draft is kept while you lower
+Max tokens. Once a first reply has arrived on this profile, an empty chat
+(a new tab, or after a restart) shows only **Fix model limits** under "No
+messages yet."; the header word and the composer line still name the reason.
+In the model switcher, a row is judged with the Max tokens typed in its
+values strip, so the row turns "Not ready · window too small" as you type a
+value Enter would refuse. **Save as model default** and **Default for new
+chats** apply the pair to this chat too, so they refuse that value the same
+way: the switcher says "… lower Max tokens, then save it as a default.", and
+Chat settings dims both buttons and names the reason above the footer
+("Unavailable: Replies reserve 200,000 of gpt-4o's …"). The same check runs before every
+send, so this word appears before a send is refused, not after. When the
+model's window is only estimated (no catalog entry and no size reported by
+the server), the reply reservation never takes more than about half of that
+estimate, so a first message always fits; a Max tokens that already leaves
+that much room is sent unchanged. A window a local server reported (llama.cpp's
+`-c`, Ollama's loaded context) is trusted for one minute and until you save
+that provider's settings: restart the server with a larger context and the
+word clears within a minute, or at once when you save a setting of that
+provider. Saving anything else (another provider, a screen's layout) keeps
+it. It also counts only for the server that reported it: another server
+serving the same model id starts from its own window.
+
+A send that fails also changes the word. If the provider rejects the key on
+a message (401), the chat reads "Not ready · key rejected"; if it cannot find
+the model (404), "Not ready · model not found". These words explain the last
+failure but never lock the composer, not even before a new profile's first
+reply: an empty chat shows the word and its reason on one line instead of the
+Get started card. Send again to retry; a reply clears them, as does saving
+any of that provider's settings (its key, endpoint or models). Saving
+anything else, such as another provider or the app's own state when you
+visit a screen, keeps them. A 403 changes nothing, because it is often
+about one message or model rather than the key.
+
+A rate limit (429) says so, with the provider's own reason when it gives one,
+for example "Provider error from Google Gemini: rate limit exceeded. Status:
+429. Google Gemini says: You exceeded your current quota… Free-tier limit: 20
+requests per day for gemini-3.8-flash. Retry in 38527s." A captured chat
+(trace capture on, the default) does not retry a failed model request inside
+the run, and does not switch to a provider listed in `[console]
+agent_fallback_providers`: the provider's error ends the run, and you send
+again when the limit allows. Turn capture off for a chat and its runs retry a
+429 or 5xx a couple of times first, then try the fallback providers.
 
 A known connection failure blocks sending too. When a connection test of
 this chat's server — **Test connection & list models** in Chat settings, or
@@ -948,18 +1021,38 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
 - **NOT RUNNING**, a line naming the local servers you never set up that
   refused (it goes on to a second line when the names do not fit): a provider still at its shipped settings (such as TabbyAPI on
   `localhost:8080`) that is not this chat's, the default's or a recent
-  chat's provider. They are checked like any other local server, so one
-  that is running reads "Ready · reachable" under READY PROVIDERS instead.
-  An untouched local server with no model chosen (vLLM, llama.cpp,
-  koboldcpp, Oobabooga, llamafile) is checked too: when it is running, it
-  lists the models it serves, and when it refuses, it is named here.
-  Change a provider's settings or use it, and its refusal is a NEEDS SETUP
-  row again. MLX-LM is a server too, but no model listing can check it, so
-  while it is still at its shipped settings, unused and listing no models,
-  it is named here as "MLX-LM (Apple silicon) (not checked)" rather than
-  under READY PROVIDERS: nothing knows whether it is running, and opening
-  the list again does not check it either. Typing in Find filters these
-  names as it filters every group: "tabby" keeps TabbyAPI only.
+  chat's provider. The shipped sample sections (TabbyAPI's `tabby-model`,
+  vLLM's `vllm-model-x`, MLX-LM and the other placeholder local servers)
+  carry `template_sample = true` in `config.toml`, and stay here, never under
+  READY PROVIDERS, even when something else answers on their port without
+  listing models. They are checked like any other local server, so one
+  that is running and lists its models reads "Ready · reachable" under READY
+  PROVIDERS instead. An untouched local server with no model chosen (vLLM,
+  llama.cpp, koboldcpp, Oobabooga, llamafile) is checked too: when it is
+  running, it lists the models it serves, and when it refuses, it is named
+  here. Change a provider's settings or use it, and its refusal is a NEEDS
+  SETUP row again. A sample counts as one only while it carries the marker
+  and still holds the shipped address and model. Saving the provider in
+  Settings or setup writes `template_sample = false`. Pointing it at your
+  own address or model makes it yours as well, whether you edit
+  `config.toml` by hand (`api_url`, or `api_base_url`, `api_base` or
+  `base_url`, which a send uses first) or use Chat settings' **Save endpoint
+  & use model**. From then on it is listed like any provider you set up,
+  never here, whether its server answered, refused or (a keyed server, or
+  MLX-LM) was never checked. MLX-LM is the exception to the address keys: a
+  send to it goes to its `host` and `port` (127.0.0.1 and 8080 unless you
+  set them) and never reads `api_url`, so point it at your server with
+  `host` and `port`; an `api_url` edit alone leaves it a sample. A provider
+  section your `config.toml` already had before this marker existed counts
+  as a sample only while the address a send would use and the model are
+  still the ones the old template shipped; once you changed either, it is
+  yours. Nothing in your file is rewritten. MLX-LM is a server too, but no
+  model listing can check it, so while it is still at its shipped settings,
+  unused and listing no models, it is named here as
+  "MLX-LM (Apple silicon) (not checked)" rather than under READY PROVIDERS:
+  nothing knows whether it is running, and opening the list again does not
+  check it either. Typing in Find filters these names as it filters every
+  group: "tabby" keeps TabbyAPI only.
 
 Each row shows the model, the provider's name, its context size, readiness
 and last use. A size no catalog knows reads `?` (unknown), never a guess;
@@ -967,8 +1060,16 @@ once a chat uses that model, the Context view of Chat settings names the size
 it assumes. Readiness comes from your configuration plus any connection test of that provider's connection this
 session, in the same words as the rest of the Console: "Ready · not tested",
 "Ready · reachable 14:01" once a local server's model listing answered,
-"Ready · verified 14:01" once a cloud key was accepted, or "Not ready · no
-key" (or another reason, such as "refused :9099" after a refused test).
+"Key verified 14:01" once a cloud key check accepted the key and listed
+that row's model (a row it did not list reads "Ready · reachable"), or
+"Not ready · no key" (or another reason, such as "refused :9099" after a refused test, or
+"window too small" for one model whose reply reservation fills its window;
+that row is judged on its own, and the provider's other models stay Ready).
+This chat's own row uses this chat's Max tokens, the same value the header
+judges; other rows use the value the model would start with. A "window too
+small" row ends with "lower Max tokens below": Enter on it refuses ("Replies
+fill … context window: lower Max tokens, then Enter.") and moves to the Max
+tokens field, and once the value leaves room, Enter applies the model.
 Opening the list also checks, in the background, each local server it lists
 that needs no key and runs on this computer or a private-network address
 (llama.cpp, Ollama, vLLM and the like): at most three at a time, each with

@@ -89,6 +89,48 @@ _STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"}) | {
 }
 
 
+def _record_key_check_verdict(
+    provider_key: str, api_key: str | None, result: ModelDiscoveryResult
+) -> None:
+    """Hand a key check's verdict to Console readiness (TASK-34100.2 review F4).
+
+    Setup's authenticated check rejected an OpenRouter key while the Console
+    header read 'Ready · not tested' until a send came back 401. Every key
+    check (setup, Settings 't', the startup refresh) runs through
+    ``discover_models``, so its verdict is recorded here: a 401 rejects the
+    key; a listing that proves the key (an authenticated listing, or a public
+    one whose key check passed) clears a rejection. Anything else -- a 403, a
+    5xx, a network failure, a public list that proves nothing -- records
+    nothing.
+    """
+    if not api_key:
+        return
+    error = result.error
+    rejected = (
+        result.status == "error"
+        and error is not None
+        and error.kind == "missing_credentials"
+        and error.category == "unauthorized"
+    )
+    if not rejected and result.status != "success":
+        return
+    from tldw_chatbook.Chat.console_session_settings import CONSOLE_SEND_OUTCOMES
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
+    )
+
+    if (
+        not rejected
+        and provider_key in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
+        and result.key_verified is not True
+    ):
+        return
+    try:
+        CONSOLE_SEND_OUTCOMES.record_key_check(provider_key, api_key, rejected=rejected)
+    except Exception:  # noqa: BLE001 - readiness bookkeeping never fails discovery
+        logger.debug("provider_key_check_verdict_record_failed")
+
+
 class LocalLLMProviderCatalogService:
     """Expose local provider/model settings without coupling them to server state."""
 
@@ -680,6 +722,7 @@ class LocalLLMProviderCatalogService:
             endpoint=endpoint,
             api_key=api_key,
         )
+        _record_key_check_verdict(provider_key, api_key, result)
         if use_shared_cache and result.status == "success":
             self.discovery_cache.replace(
                 provider_list_key,

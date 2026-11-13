@@ -540,7 +540,12 @@ def test_guard_reports_a_dropped_table(loaded_settings, derived_reads):
     missing = missing_tables(dropped, derived_reads)
 
     assert list(missing) == ["analysis_defaults"]
-    assert missing["analysis_defaults"], "the dropped table must name its read sites"
+    # TASK-34100.2 AC#8 (rewritten on purpose): Reader Generate and the
+    # ingest job read the table through one resolver,
+    # Library/ingest_analysis.py's effective_analysis_defaults (the Media
+    # panel that also read it went with TASK-38605's Widgets/Media purge, so
+    # this holds on dev too: a regression pin for the one resolver).
+    assert any("ingest_analysis.py" in site for site in missing["analysis_defaults"])
 
 
 def test_pre_existing_drops_register_is_exact(loaded_settings, derived_reads):
@@ -698,7 +703,19 @@ def test_propagation_follows_imports_not_names():
 # TASK-36943.3 (2026-11-03): three comment-only ADR renumberings (146->343,
 # 147->344, 090->332) re-pinned on purpose.
 # TASK-39147: pin the seven commented native workflow settings.
-_TEMPLATE_SHA256 = "ad3b71654cb68a64e3a32fc58328aa7d9341556b64f78429432c1e91c90cdcd7"
+# TASK-34100.2 (2026-11-05, rebased onto dev 29592ecc9b; again 2026-11-12 onto
+# dev 4b90eb860b, over TASK-39147's workflow settings): re-pinned on purpose
+# for the template edits it carried in config.py's literal before the move --
+# the retired OpenAI/Anthropic/Google catalog ids and Google's model replaced
+# (AC#6, AC#17), the Gemini rolling-alias vision row, `template_sample = true`
+# on the placeholder local sections (AC#9) and `streaming = true` on Custom /
+# Custom 2 (AC#10). Review IV-1 (2026-11-05): the four OpenAI ids the live
+# smoke found retired replaced in the [providers] OpenAI list, re-pinned on
+# purpose. Review v5r2 G2C-R3-1 (2026-11-12): Google's default is now
+# gemini-flash-lite-latest, and the two ids whose every answered call came
+# back 503 'high demand' with the repo key that day (gemini-flash-latest,
+# gemini-3.8-flash) left the [providers] Google list; re-pinned on purpose.
+_TEMPLATE_SHA256 = "d0736a68d915f8008c4a51524b2345853829eab317b6c769dfc8dd8c06cb7bcf"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 

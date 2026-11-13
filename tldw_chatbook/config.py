@@ -772,6 +772,174 @@ def deep_merge_dicts(base: Dict, update: Dict) -> Dict:
     return merged
 
 
+#: The endpoint keys a send reads, in the order it reads them -- the same
+#: tuple as ``Chat/console_provider_endpoints._ENDPOINT_SETTING_KEYS`` (a test
+#: pins the two equal; config.py cannot import the Chat package). A sample's
+#: identity is the endpoint a send would use, not its ``api_url`` alone
+#: (TASK-34100.2 review round 1, R1-2: ``api_base_url`` outranks it).
+TEMPLATE_SAMPLE_ENDPOINT_KEYS: tuple[str, ...] = (
+    "api_base_url",
+    "api_base",
+    "base_url",
+    "api_url",
+    "api_endpoint",
+    "endpoint",
+    "router_base_url",
+    "huggingface_router_base_url",
+)
+
+#: The endpoint and model each placeholder section shipped with before the
+#: ``template_sample`` marker existed: identical in all 484 revisions of the
+#: template on dev (TASK-34100.2 pass 3, re-scanned in review round 1). Every
+#: profile created before the marker carries these tables without the key, so
+#: they are recognised by these frozen values, never by today's template
+#: (review round 1, R1-3: a later template edit must not turn an old profile's
+#: samples into "the user's"). Never edit a value here to follow a template
+#: change -- old profiles keep the old value.
+PRE_MARKER_TEMPLATE_SAMPLES: Mapping[str, Mapping[str, str]] = (
+    {
+        section: {"api_url": api_url, "model": model}
+        for section, (api_url, model) in {
+            "vllm": ("http://localhost:8000/v1/chat/completions", ""),
+            "aphrodite": ("http://localhost:2242/v1/chat/completions", "aphrodite-engine"),
+            "tabbyapi": ("http://localhost:8080/v1/chat/completions", "tabby-model"),
+            "custom": ("http://localhost:1234/v1/chat/completions", "custom-model-alpha"),
+            "custom_2": ("http://localhost:5678/v1/chat/completions", "custom-model-gamma"),
+            "local_llamacpp": ("http://localhost:8001/v1/chat/completions", "custom-model-gamma"),
+            "local_vllm": ("http://localhost:8008/v1/chat/completions", "custom-model-gamma"),
+            "local_ollama": ("http://localhost:5678/v1/chat/completions", "custom-model-gamma"),
+            "local_mlx_lm": ("http://localhost:5678/v1/chat/completions", "custom-model-gamma"),
+        }.items()
+    }
+)
+
+
+#: Sample sections whose send never reads the URL keys: ``chat_with_mlx_lm``
+#: builds ``http://{host}:{port}/v1`` from its table (these defaults), and the
+#: Console forwards it no base URL. Both table spellings are listed, the
+#: template's and the switcher's (TASK-34100.2 review v5r2, G2C-R3-3).
+TEMPLATE_SAMPLE_HOST_PORT_DEFAULTS: Mapping[str, tuple[str, int]] = {
+    "local_mlx_lm": ("127.0.0.1", 8080),
+    "mlx_lm": ("127.0.0.1", 8080),
+}
+
+
+def _template_sample_identity(
+    table: Mapping[str, Any], *, section: Optional[str] = None
+) -> tuple[Optional[str], Any]:
+    """The endpoint a send of ``table`` would use, and the model it names.
+
+    Args:
+        table: The provider table (merged over the template's).
+        section: Its ``api_settings`` section; one in
+            ``TEMPLATE_SAMPLE_HOST_PORT_DEFAULTS`` is identified by the
+            host/port URL its handler builds, never by ``api_url``.
+    """
+    host_port = TEMPLATE_SAMPLE_HOST_PORT_DEFAULTS.get(section or "")
+    if host_port is not None:
+        host, port = host_port
+        endpoint = f"http://{table.get('host', host)}:{table.get('port', port)}/v1"
+        return endpoint, table.get("model")
+    endpoint = next(
+        (
+            value.strip()
+            for key in TEMPLATE_SAMPLE_ENDPOINT_KEYS
+            if isinstance(value := table.get(key), str) and value.strip()
+        ),
+        None,
+    )
+    return endpoint, table.get("model")
+
+
+def holds_template_sample_identity(
+    table: Mapping[str, Any],
+    template_table: Mapping[str, Any],
+    pre_marker_table: Optional[Mapping[str, Any]] = None,
+    *,
+    section: Optional[str] = None,
+) -> bool:
+    """Whether a provider table still points at its template sample.
+
+    Compares the endpoint a send would use (``TEMPLATE_SAMPLE_ENDPOINT_KEYS``,
+    first non-blank wins, as the Console reads them) and the model, of the
+    table merged over the template's: a key the table lacks inherits the
+    template's value, an endpoint alias the template never set (the user's
+    ``api_base_url``) outranks the template's ``api_url``. Other keys
+    (``streaming``, a tuned temperature) drift with the template or with taste
+    and never make the placeholder endpoint the user's. The sample is today's
+    template table or, for a profile written before the marker, the values
+    old templates shipped (``PRE_MARKER_TEMPLATE_SAMPLES``).
+
+    Args:
+        table: The user's (or merged) provider table.
+        template_table: The shipped template's table for the same section.
+        pre_marker_table: The section's ``PRE_MARKER_TEMPLATE_SAMPLES`` entry,
+            if it has one.
+        section: The table's ``api_settings`` section. MLX-LM's send uses
+            its ``host``/``port``, so that pair is its endpoint (review v5r2,
+            G2C-R3-3).
+
+    Returns:
+        Whether the table's endpoint and model equal one of the samples'.
+    """
+    identity = _template_sample_identity({**template_table, **table}, section=section)
+    samples = (template_table, pre_marker_table) if pre_marker_table else (template_table,)
+    return any(
+        identity == _template_sample_identity(sample, section=section)
+        for sample in samples
+    )
+
+
+def settle_pre_marker_template_samples(user_config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Mark the user's own pre-marker provider tables before the default merge.
+
+    TASK-34100.2 (AC#9, review round 1 F4): the template marks its placeholder
+    local sections ``template_sample = true``, and saving one writes
+    ``false``. A table that exists in the user's file WITHOUT the key was
+    written before the marker existed: hand-edited, saved by an older build,
+    or copied whole from an older template on first run. One whose endpoint
+    or model differs from the sample's is the user's, so it reads ``false``
+    instead of inheriting the template's ``true`` in the merge. One that
+    still holds the sample's endpoint and model (pass 3: every profile
+    created before the marker carries those tables; review round 1: the
+    endpoint a send would use, matched against the frozen pre-marker values
+    as well as today's template) keeps the template's marker, as does a table
+    the file never had. Only pre-marker tables are
+    compared; a table with the key is decided by the key. Read-side only --
+    nothing is written.
+
+    Args:
+        user_config: The raw mapping parsed from the user's config file.
+
+    Returns:
+        ``user_config`` itself when nothing needs marking, else a shallow
+        copy whose affected ``api_settings`` tables carry ``false``.
+    """
+    template = DEFAULT_CONFIG_FROM_TOML.get("api_settings")
+    api_settings = user_config.get("api_settings")
+    if not isinstance(template, dict) or not isinstance(api_settings, dict):
+        return user_config
+    pre_marker = [
+        name
+        for name, table in api_settings.items()
+        if isinstance(table, dict)
+        and "template_sample" not in table
+        and isinstance(template.get(name), dict)
+        and template[name].get("template_sample") is True
+        and not holds_template_sample_identity(
+            table, template[name], PRE_MARKER_TEMPLATE_SAMPLES.get(name), section=name
+        )
+    ]
+    if not pre_marker:
+        return user_config
+    settled = dict(user_config)
+    settled["api_settings"] = {
+        **api_settings,
+        **{name: {**api_settings[name], "template_sample": False} for name in pre_marker},
+    }
+    return settled
+
+
 def get_encryption_module():
     """Lazily load and return the encryption module."""
     global _ENCRYPTION_MODULE
@@ -3635,6 +3803,15 @@ def _load_settings_uncached(
     return config_dict
 
 
+#: TASK-34100.2 AC#6 (gap-03): a Google rolling alias. Every pinned id this
+#: app shipped (gemini-2.5-flash and older) was retired upstream and 404s on
+#: generateContent; the alias moves with Google instead of rotting. Review
+#: v5r2 (G2C-R3-1): the Flash-Lite alias. On 2026-11-12, with the repo key,
+#: it answered all 7 calls; every gemini-flash-latest call that got an HTTP
+#: answer was 503 'high demand' (the rest timed out), with no 429.
+#: ``Helper_Scripts/smoke_shipped_model_ids.py`` re-checks the catalog live.
+DEFAULT_GOOGLE_CHAT_MODEL = "gemini-flash-lite-latest"
+
 # --- Define API Models (Combined Cloud & Local) ---
 # (Keep your existing API_MODELS_BY_PROVIDER and LOCAL_PROVIDERS dictionaries)
 API_MODELS_BY_PROVIDER = {
@@ -3643,15 +3820,15 @@ API_MODELS_BY_PROVIDER = {
         "gpt-5.6-sol",
         "gpt-5.6-luna",
         "gpt-4.1-2025-04-14",
-        "o4-mini-2025-04-16",
+        "gpt-5.4-mini-2026-03-17",  # IV-1: o4-mini-2025-04-16 404s since 2026-11
         "o3-2025-04-16",
-        "o3-mini-2025-01-31",
-        "o1-2024-12-17",
-        "chatgpt-4o-latest",
+        "gpt-5-mini-2025-08-07",  # IV-1: replaces o3-mini-2025-01-31
+        "gpt-5.5-2026-04-23",  # IV-1: replaces o1-2024-12-17
+        "chat-latest",  # AC#17: chatgpt-4o-latest was retired 2026-02-17
         "gpt-4o-2024-11-20",
         "gpt-4o-2024-08-06",
         "gpt-4.1-mini-2025-04-14",
-        "gpt-4.1-nano-2025-04-14",
+        "gpt-5.4-nano-2026-03-17",  # IV-1: replaces gpt-4.1-nano-2025-04-14
         "gpt-4o-mini-2024-07-18",
     ],
     "Anthropic": [
@@ -3659,17 +3836,17 @@ API_MODELS_BY_PROVIDER = {
         "claude-opus-5",
         "claude-fable-5",
         "claude-haiku-4-5",
-        "claude-opus-4-20250514",
-        "claude-sonnet-4-20250514",
-        "claude-3-7-sonnet-20250219",
-        "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku-20241022",
-        "claude-3-5-sonnet-20240620",
-        "claude-3-haiku-20240307",
-        "claude-3-opus-20240229",
-        "claude-3-sonnet-20240229",
-        "claude-2.1",
-        "claude-2.0",
+        # TASK-34100.2 AC#17: the eleven older ids answered 404 on 2026-10-04;
+        # these are the ids Anthropic's own model list returned that day.
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+        "claude-fable-5-1",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+        "claude-sonnet-4-5",
+        "claude-opus-4-5",
     ],
     "Cohere": [
         "command-a-03-2025",
@@ -3693,15 +3870,13 @@ API_MODELS_BY_PROVIDER = {
         "llama3-70b-8192",
         "llama3-8b-8192",
     ],
+    # TASK-34100.2 AC#6, re-checked 2026-11-12: every id here answered a
+    # 1-output-token generateContent call that day; the shipped default leads.
     "Google": [
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-preview-05-20",
-        "gemini-2.5-pro-preview-05-06",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
-        "gemini-1.5-pro",
+        "gemini-flash-lite-latest",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
     ],
     "HuggingFace": [
         "openai/gpt-oss-120b",
@@ -3792,13 +3967,19 @@ def _merge_user_config_over_shipped_defaults(
     ``streaming`` is left out of the merged view and readers bridge the legacy
     value as before.
 
+    TASK-34100.2 (AC#9): a pre-marker provider table the user changed reads
+    ``template_sample = false`` instead of inheriting the template's ``true``
+    (``settle_pre_marker_template_samples``).
+
     Args:
         user_config: The user's raw (parsed, migrated) config file.
 
     Returns:
         A new merged mapping; neither input is modified.
     """
-    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(user_config))
+    merged = deep_merge_dicts(
+        DEFAULT_CONFIG_FROM_TOML, dict(settle_pre_marker_template_samples(user_config))
+    )
     user_chat_defaults = user_config.get("chat_defaults")
     if (
         isinstance(user_chat_defaults, Mapping)

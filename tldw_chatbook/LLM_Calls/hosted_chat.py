@@ -690,7 +690,15 @@ def hosted_chat_request(
     wire_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     allowed_tool_call_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn | HostedChatStream:
-    """Run one hosted Chat-Completions request through the shared boundary."""
+    """Run one hosted Chat-Completions request through the shared boundary.
+
+    ``allowed_tool_call_keys`` is a record's own allowance for extra keys on
+    a non-streaming tool-call item (OpenRouter's ``index``, TASK-34100.2);
+    it defaults off, and each key follows its ``_TOOL_CALL_ALLOWANCE_RULES``
+    rule. ``wire_normalizer`` is the call-owned provider normalizer
+    (ADR-179) that runs before the strict checks; OpenRouter's repeated
+    terminal usage choice is handled there, not in the engine.
+    """
     response = owned_json_post(
         config=config,
         route="chat/completions",
@@ -1061,6 +1069,27 @@ def _check_top_level_extras(
             raise HostedChatProtocolError(f"Hosted Chat {label}.")
 
 
+#: Allowanced keys whose documented value is a LIST of objects, so the scalar
+#: or mapping rule above would refuse every real reply carrying them.
+#: OpenRouter's ``reasoning_details`` (a reasoning model's structured
+#: reasoning, on the message and on stream deltas) is the one such key
+#: (TASK-34100.2 AC#16). It applies only to a provider that allowlists the
+#: key; the value is validated, then dropped like every allowance.
+_LIST_OF_OBJECTS_ALLOWANCES = frozenset({"reasoning_details"})
+
+
+def _list_of_objects_value_is_valid(value: object) -> bool:
+    """Value rule for ``_LIST_OF_OBJECTS_ALLOWANCES``: null, or a list of
+    shape-safe mappings (a bare string or number inside fails closed)."""
+    if value is None:
+        return True
+    return (
+        isinstance(value, list)
+        and all(isinstance(item, Mapping) for item in value)
+        and _json_shape_is_safe(value)
+    )
+
+
 def _check_level_extras(
     mapping: Mapping[str, Any],
     *,
@@ -1068,19 +1097,27 @@ def _check_level_extras(
     allowed: frozenset[str],
     tolerant: bool,
     label: str,
+    rules: Mapping[str, Callable[[object], bool]] | None = None,
 ) -> None:
-    """Check unknown keys at the choice or message/delta level.
+    """Check unknown keys at the choice, message/delta or tool-call level.
 
     A key in ``allowed`` (the record's level-keyed allowance) must follow
-    the value rule and is dropped from the normalized turn. Tolerant mode
-    also drops null-valued unknowns; unknown non-null keys fail closed.
+    the value rule and is dropped from the normalized turn. ``rules`` names
+    a stricter rule for a key at this level (a tool call's ``index``).
+    Tolerant mode also drops null-valued unknowns; unknown non-null keys
+    fail closed.
     """
     unknown = set(mapping) - known
     if not unknown:
         return
     for key in unknown:
         if key in allowed:
-            if not _level_allowance_value_is_valid(mapping.get(key)):
+            valid = (rules or {}).get(key) or (
+                _list_of_objects_value_is_valid
+                if key in _LIST_OF_OBJECTS_ALLOWANCES
+                else _level_allowance_value_is_valid
+            )
+            if not valid(mapping.get(key)):
                 raise HostedChatProtocolError(f"Hosted Chat {label}.")
         elif not (tolerant and mapping.get(key) is None):
             raise HostedChatProtocolError(f"Hosted Chat {label}.")
@@ -1418,6 +1455,20 @@ def _validate_finish(
     return normalized
 
 
+def _tool_call_index_is_valid(value: object) -> bool:
+    """An ``index`` on a tool-call item: an int (not a bool) in range."""
+    return type(value) is int and 0 <= value < _MAX_TOOL_CALLS
+
+
+#: Value rules for the keys a record may allow on a non-streaming
+#: ``message.tool_calls`` item. OpenRouter numbers each call with ``index``,
+#: as a stream delta does (TASK-34100.2 review F4). A key a record allows
+#: without a rule here follows the scalar-or-mapping allowance rule.
+_TOOL_CALL_ALLOWANCE_RULES: dict[str, Callable[[object], bool]] = {
+    "index": _tool_call_index_is_valid,
+}
+
+
 def _normalize_tool_calls(
     value: object,
     *,
@@ -1442,13 +1493,16 @@ def _normalize_tool_calls(
             # Tolerant profile (controller ruling a): call objects may carry
             # extra keys (ollama emits ``index``); id/type/function stay
             # mandatory and extras are dropped, never passed through. A strict
-            # record may allow named extras (Fireworks: ``index``, ``name``).
+            # record may allow named extras (Fireworks: ``index``, ``name``;
+            # OpenRouter: ``index``), each validated by its
+            # ``_TOOL_CALL_ALLOWANCE_RULES`` rule, then dropped.
             _check_level_extras(
                 raw_call,
                 known=_REQUIRED_TOOL_CALL_KEYS,
                 allowed=allowed_keys,
                 tolerant=False,
                 label="tool call is malformed",
+                rules=_TOOL_CALL_ALLOWANCE_RULES,
             )
         call_id = _required_metadata(raw_call.get("id"), "tool ID")
         if raw_call.get("type") != "function" or call_id in call_ids:

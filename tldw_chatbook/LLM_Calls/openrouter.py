@@ -89,11 +89,54 @@ _FINISH_POLICY = OpenRouterFinishPolicy()
 
 
 # Official response annotations, never universal hosted-parser fields.
+# Each is validated, then dropped -- never passed through -- and any other
+# unknown key still fails closed (no tolerant profile). TASK-34100.2 AC#16
+# recorded real replies (Tests/fixtures/openrouter_live_replies.json): the
+# message and stream delta also carry ``refusal`` (null; a refusal's text
+# becomes the reply, see ``_surface_refusal``), a reasoning model
+# sends ``reasoning_details`` as a list of objects (hosted_chat's
+# ``_LIST_OF_OBJECTS_ALLOWANCES`` rule), and a non-streaming tool call numbers
+# each ``message.tool_calls`` item with ``index`` (an int in range,
+# ``_TOOL_CALL_ALLOWANCE_RULES``). The stream's repeated terminal usage choice
+# is ``_OpenRouterWireNormalizer``'s.
 _OPENROUTER_RESPONSE_KEYS = frozenset(
     {"provider", "service_tier", "openrouter_metadata"}
 )
 _OPENROUTER_CHOICE_KEYS = frozenset({"native_finish_reason", "logprobs"})
-_OPENROUTER_MESSAGE_KEYS = frozenset({"reasoning", "reasoning_details"})
+_OPENROUTER_MESSAGE_KEYS = frozenset({"refusal", "reasoning", "reasoning_details"})
+_OPENROUTER_TOOL_CALL_KEYS = frozenset({"index"})
+
+
+def _surface_refusal(choice: Mapping[str, Any], field: str) -> Mapping[str, Any]:
+    """Make a model's refusal its reply text (TASK-34100.2 pre-merge review M-1).
+
+    An OpenAI-family model that declines answers ``content: null`` with its
+    reason in ``refusal`` (a stream sends it in ``delta.refusal``). Dropping
+    it, as the allowance does, left a reply with no text that the finish
+    policy refused as inconsistent: a protocol error in place of the model's
+    own words.
+
+    Args:
+        choice: One response or stream choice.
+        field: ``"message"`` (non-streaming) or ``"delta"`` (streaming).
+
+    Returns:
+        ``choice`` itself when it carries no refusal text, else a copy whose
+        ``content`` is the refusal and which has no ``refusal`` key.
+
+    Raises:
+        HostedChatProtocolError: The refusal is not a string, or it sits
+            beside text in the same message or delta.
+    """
+    body = choice.get(field)
+    if not isinstance(body, Mapping) or body.get("refusal") is None:
+        return choice  # a null refusal is validated and dropped by the allowance
+    refusal = body["refusal"]
+    if not isinstance(refusal, str) or body.get("content") not in (None, ""):
+        raise HostedChatProtocolError("OpenRouter refusal is malformed.")
+    surfaced = {key: value for key, value in body.items() if key != "refusal"}
+    surfaced["content"] = refusal
+    return {**choice, field: surfaced}
 
 
 class _OpenRouterWireNormalizer:
@@ -132,6 +175,10 @@ class _OpenRouterWireNormalizer:
         logprobs = choice.get("logprobs")
         if logprobs is not None and not isinstance(logprobs, Mapping):
             raise HostedChatProtocolError("OpenRouter logprobs are malformed.")
+        surfaced = _surface_refusal(choice, "delta" if self._streaming else "message")
+        if surfaced is not choice:
+            choice = surfaced
+            response = {**response, "choices": [choice]}
         if not self._streaming:
             return response
         finish = choice.get("finish_reason")
@@ -387,6 +434,7 @@ def chat_with_openrouter(
             allowed_extra_keys=_OPENROUTER_RESPONSE_KEYS,
             allowed_choice_keys=_OPENROUTER_CHOICE_KEYS,
             allowed_message_keys=_OPENROUTER_MESSAGE_KEYS,
+            allowed_tool_call_keys=_OPENROUTER_TOOL_CALL_KEYS,
             wire_normalizer=_OpenRouterWireNormalizer(streaming=current_streaming),
         )
     except HostedChatProtocolError:

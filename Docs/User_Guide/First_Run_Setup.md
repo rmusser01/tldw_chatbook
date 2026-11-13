@@ -208,8 +208,10 @@ provider that answered without a usable list says what it answered instead:
 that it won't list models for this key (HTTP 403, which never keeps you on
 the step: the key may still chat, though the tracker shows Provider with
 **!** rather than ✓), an error with its status code, or an
-empty list. OpenRouter, Hugging Face and Novita list models
-without a valid key, so that list can't confirm one. A rejected key (a 401)
+empty list. OpenRouter, Hugging Face, NVIDIA NIM and Novita list models
+without a valid key, so that list can't confirm one; OpenRouter and Hugging
+Face are checked at their own key endpoint instead (see [How setup checks
+your key](#how-setup-checks-your-key)). A rejected key (a 401)
 keeps you on the Provider step, with the reason under the key field; for an
 exported key the fix is **Store a different key for this app** (or another
 provider), and **Skip — connect later** stays available — it skips even
@@ -251,6 +253,47 @@ soon as you edit that field.
   tracker then marks it – instead of ✓).
 - **Full setup** — also walks through RAG/embeddings, built-in tools, notes
   sync, appearance, and key encryption.
+
+## How setup checks your key
+
+On the Provider step, **Check key** (or Enter in the key field) checks the
+key now; it is also checked when you press **Next →**. For most cloud
+providers the check is the provider's own model list, which only answers a
+valid key. Some providers need more than that:
+
+- **Google Gemini**: Google's own model list is the key check, so setup
+  lists Gemini's chat models and reads "✓ Key works — Google Gemini
+  returned 15 models." A wrong key reads "✗ Google Gemini rejected this
+  key: API key not valid. Please pass a valid API key." The Model step
+  lists the shipped default (`gemini-flash-lite-latest`) first and the
+  rest in Google's order, except that ids Google still lists but which
+  did not serve a new key when last checked come last: the retired
+  `gemini-2.5-*` ids, which answer 404, and `gemini-flash-latest` and
+  `gemini-3.8-flash`, which answered 503 "This model is currently
+  experiencing high demand" on 2026-11-12. They are still listed, since
+  your key may be served.
+- **Anthropic**: its authenticated model list. "✓ Key works — Anthropic
+  returned 13 models." A wrong key reads "✗ Anthropic rejected this key.";
+  when a provider gives its own reason for refusing a key, setup adds it
+  after a colon.
+- **OpenRouter** and **Hugging Face**: their model lists answer any key, so
+  setup asks each provider's key endpoint. "✓ Key works — OpenRouter
+  returned 466 models.", or "✗ OpenRouter rejected this key: User not
+  found." The Model step quotes the same reason, and so does its **Continue
+  anyway?** question.
+- **NVIDIA NIM** and **Novita AI**: the model list answers without a valid
+  key and there is no key endpoint, so the key is not checked until your
+  first message. Setup says the list "can't confirm this one here" and never
+  shows ✓; the summary reads "– Provider — nvidia (key not checked)".
+
+The summary's Provider row shows ✓ for OpenRouter and Hugging Face only when
+their key check passed in this run of setup. If it didn't run (for example,
+you continued without one), the row reads "(key not checked)" too.
+
+The Model step also says what else the model is used for. While
+`[analysis_defaults]` still has its shipped values, it reads "Document
+analysis and summaries (Library import, Reader) use this model too."
+If you set your own analysis model, it names that model instead.
 
 ## What each step does
 
@@ -704,6 +747,45 @@ setup with your choices intact.
   Carry it as described above instead.
 - A folder gets "Choose the archive file, not a folder."
 - Changing the archive path clears either message.
+
+## Local servers stream
+
+Console streams every provider's replies by default (`[chat_defaults]
+streaming`; see [Console](console.md)), so a local OpenAI-compatible server
+set up here (llama.cpp, Ollama, vLLM, LM Studio through **Custom
+OpenAI-compatible**, and the other local servers) shows its first reply as it
+is written. Setup also turns that provider's own `streaming` on, and the
+shipped Custom and Custom 2 sections start with it on, so the provider's own
+setting agrees. A server that cannot stream still answers through the
+non-streaming path.
+
+## If a provider key is already exported
+
+If your shell already exports a provider key (for example
+`ANTHROPIC_API_KEY`), chatbook skips the wizard and opens Console. If it asks
+**Check model lists online?**, that question comes first; once you answer
+it, one notice says what it found:
+
+- "Found OPENAI_API_KEY — you're ready to chat with OpenAI · *model*" only
+  when new chats would actually work: their provider has a key, nothing else
+  blocks a send, and the model's context window has room for a message.
+- Otherwise it names the key and why new chats can't use it yet, for example
+  "Found ANTHROPIC_API_KEY, but new chats use OpenAI, which has no key", and
+  points at Console's **Get started** card, which offers **Use Anthropic**
+  (see [Console](console.md#first-run-the-get-started-card)) and **Set up
+  provider**. Choosing **Use Anthropic** removes this notice, since it is no
+  longer true. A provider whose key is already saved in your settings is not
+  offered; its saved key stays the one chats use.
+- When the key is for the provider new chats already use but something else
+  stops a send, the notice names that instead. If the model's replies would
+  fill its whole context window, it says "Use Fix model limits on Console's
+  empty chat." If a past message to that model was refused (a rejected key,
+  or a model that no longer exists), it says "Console's empty chat says what
+  to change."
+
+Your provider settings and chat default don't change until you choose one;
+the only thing saved at launch is that the notice was shown, so it appears
+once. The full setup is still in Settings ▸ Diagnostics ▸ Run setup wizard.
 
 ## Running it again
 

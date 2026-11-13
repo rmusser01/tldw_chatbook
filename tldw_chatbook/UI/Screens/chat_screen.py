@@ -191,6 +191,7 @@ from ..Console_Modules.wiring import (
     environment_scope_stamp,
     console_view_hooks as _console_view_hooks,
 )
+from ..Console_Modules import setup_card_offers
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
 from ..Console_Modules import wiring
@@ -400,7 +401,6 @@ from ...Chat.console_display_state import (
 )
 from ...Chat.console_onboarding_state import (
     ConsoleSetupCardState,
-    build_console_detected_server_action,
     build_console_setup_card_state,
     coerce_console_first_send_completed,
     env_keyed_provider_for_recovery,
@@ -4621,6 +4621,8 @@ class ChatScreen(BaseAppScreen):
         elif action_id == CONSOLE_SETUP_MODAL_LOOK_AGAIN_WORKBENCH_ACTION:
             self._console_local_discovery_started = False  # TASK-34100.6
             self._maybe_start_console_local_discovery()
+        elif setup_card_offers.is_env_key_offer(action_id):  # TASK-34100.2 AC#12
+            await setup_card_offers.apply_env_key_offer(self, action_id)
         elif action_id == CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION:
             # task-32140: the "Get started" card's needs-no-provider action
             # -- same destination as the command-palette "new_note" quick
@@ -13930,12 +13932,7 @@ class ChatScreen(BaseAppScreen):
                 self._pending_console_launch_context
             ),
         )
-        modal.sync_detected_server_action(
-            build_console_detected_server_action(
-                self._console_detected_local_server,
-                card_mode=card_state.mode,
-            )
-        )
+        setup_card_offers.sync_setup_card_offers(self, modal, card_state)
         blocking = modal.is_blocking
         self._apply_console_setup_block(blocking)
         if blocking:

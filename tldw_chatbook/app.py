@@ -409,6 +409,7 @@ from tldw_chatbook.app_feature_glue import (
     FeatureGlueMixin,
     setup_owns_startup_networking,  # noqa: F401 -- re-export
 )
+from tldw_chatbook.app_env_key_notice import EnvKeyNoticeMixin
 
 if TYPE_CHECKING:
     from tldw_chatbook.Terminal.backend import TerminalBackend
@@ -816,6 +817,7 @@ class TldwCli(
     ServiceWiringMixin,
     LifecycleMixin,
     NavigationMixin,
+    EnvKeyNoticeMixin,  # before FeatureGlueMixin: wraps its consent handler
     FeatureGlueMixin,
     ThemeVariableDefaultsMixin,  # TASK-33003.6 ruling 15: guard-name fallback
     App[None],
@@ -3719,25 +3721,19 @@ class TldwCli(
                     severity="information",
                     timeout=8,
                 )
-            elif action == "none" and (
-                env_key_names := env_keys_that_silenced_first_run(
+            elif action == "none" and env_keys_that_silenced_first_run(
+                self.app_config, os.environ
+            ):
+                # TASK-21147: say once that env keys skipped setup. TASK-34100.2
+                # AC#7/#11: honest copy from the shared readiness verdict, held
+                # until the model-list consent question is answered.
+                from tldw_chatbook.Chat.console_onboarding_state import (
+                    build_env_key_first_launch_notice,
+                )
+
+                self._pending_env_key_notice = build_env_key_first_launch_notice(
                     self.app_config, os.environ
                 )
-            ):
-                # TASK-21147 (UAT E-1): the env-key install skipped the
-                # wizard silently — say so exactly once, and where the
-                # wizard's other value (voice, tools, encryption) lives.
-                shown = ", ".join(env_key_names[:2]) + (
-                    " (and more)" if len(env_key_names) > 2 else ""
-                )
-                self.notify(
-                    f"Found {shown} — you're ready to chat. Run setup any "
-                    "time: Settings ▸ Diagnostics ▸ Run setup wizard.",
-                    title="Provider key detected",
-                    severity="information",
-                    timeout=10,
-                )
-                self._persist_env_key_notice_flag()
         except Exception as exc:
             logger.error(
                 "First-run startup action failed (error_type={})",
@@ -3784,44 +3780,6 @@ class TldwCli(
             title="Profile already open",
             severity="warning",
             timeout=10,
-        )
-
-    def _persist_env_key_notice_flag(self) -> None:
-        """Record the one-time env-key notice (TASK-21147, UAT E-1)."""
-
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            ENV_KEY_NOTICE_KEY,
-            WIZARD_STATE_SECTION,
-        )
-
-        app_config = self.app_config
-        if isinstance(app_config, dict):
-            app_config.setdefault(WIZARD_STATE_SECTION, {})[ENV_KEY_NOTICE_KEY] = True
-
-        def _write() -> None:
-            from tldw_chatbook.config import save_settings_to_cli_config
-
-            try:
-                saved = save_settings_to_cli_config(
-                    {WIZARD_STATE_SECTION: {ENV_KEY_NOTICE_KEY: True}}
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to persist env-key notice flag "
-                    f"(category=persistence, error_type={type(exc).__name__})"
-                )
-                return
-            if not saved:
-                logger.warning(
-                    "Failed to persist env-key notice flag "
-                    "(category=persistence, error_type=save_returned_false)"
-                )
-
-        self.run_worker(
-            _write,
-            thread=True,
-            group="first-run-env-key-notice-flag",
-            exit_on_error=False,
         )
 
     def _push_first_run_wizard(self) -> None:
@@ -4354,10 +4312,8 @@ class TldwCli(
 
         # Schedule after splash and the initial screen, before optional startup
         # offers; ADR-020 consent owns this launch when it is still required.
-        self._schedule_startup_model_catalog_refresh()
-        if not wizard_offered and not getattr(
-            self, "_startup_model_catalog_consent_required", False
-        ):
+        consent_pending = self._schedule_catalog_refresh_then_env_key_notice()
+        if not wizard_offered and not consent_pending:
             # Spec 2026-08-17 §5.4: wizard wins; .SKILLS offer defers to next launch.
             self._maybe_offer_project_skills_import()
         try:

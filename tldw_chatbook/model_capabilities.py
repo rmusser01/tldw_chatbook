@@ -64,6 +64,8 @@ DEFAULT_MODEL_PATTERNS = {
     ],
     "Google": [
         {"pattern": r"gemini.*vision", "vision": True},
+        # TASK-34100.2: the rolling aliases the Google catalog now ships.
+        {"pattern": r"gemini-(pro|flash|flash-lite)-latest", "vision": True},
         {
             "pattern": r"gemini-[0-9.]+-(pro|flash)",
             "vision": True,
@@ -113,19 +115,20 @@ DEFAULT_MODEL_CAPABILITIES = {
     "gpt-4o-mini": {"vision": True, "max_images": 10, "context_window": 128000},
     "gpt-5.6-terra": {"vision": True, "max_images": 10},
     "gpt-4.1-2025-04-14": {"vision": True, "max_images": 10, "context_window": 1047576},
-    "o4-mini-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
+    # TASK-34100.2 IV-1: o4-mini-2025-04-16, o3-mini-2025-01-31 and
+    # gpt-4.1-nano-2025-04-14 were retired (404, 2026-11-05); their rows went
+    # with them. The replacements' windows come from the same estimate as
+    # gpt-5.6-terra's, as no measured window is recorded here for them.
+    "gpt-5.4-mini-2026-03-17": {"vision": True, "max_images": 10},
     "o3-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
-    "o3-mini-2025-01-31": {"vision": True, "max_images": 10, "context_window": 200000},
+    "gpt-5-mini-2025-08-07": {"vision": True, "max_images": 10},
     "gpt-4.1-mini-2025-04-14": {
         "vision": True,
         "max_images": 10,
         "context_window": 1047576,
     },
-    "gpt-4.1-nano-2025-04-14": {
-        "vision": True,
-        "max_images": 10,
-        "context_window": 1047576,
-    },
+    "gpt-5.4-nano-2026-03-17": {"vision": True, "max_images": 10},
+    "gpt-5.5-2026-04-23": {"vision": True, "max_images": 10},
     # Anthropic
     "claude-3-opus-20240229": {
         "vision": True,
@@ -1245,10 +1248,21 @@ def get_context_window(provider: str, model: str) -> Optional[int]:
     return get_model_capabilities().get_context_window(provider, model)
 
 
+#: Bumped by every reload, so memos of catalog lookups (Console readiness's
+#: capacity check, TASK-34100.2) can tell a reloaded catalog from the old one.
+_capabilities_reloads = 0
+
+
+def capabilities_reload_count() -> int:
+    """How many times the capabilities were reloaded in this process."""
+    return _capabilities_reloads
+
+
 def reload_capabilities():
     """Reload model capabilities from configuration."""
-    global _global_capabilities
+    global _global_capabilities, _capabilities_reloads
     _global_capabilities = None
+    _capabilities_reloads += 1
     logger.info("Model capabilities reloaded from configuration")
 
 

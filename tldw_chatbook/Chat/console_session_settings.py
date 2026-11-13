@@ -110,6 +110,8 @@ from tldw_chatbook.config import (
     DEFAULT_CONFIG_FROM_TOML,
     ProviderSettingsError,
     is_encrypted_config_value,
+    PRE_MARKER_TEMPLATE_SAMPLES,
+    holds_template_sample_identity,
     provider_settings_for_key,
     resolve_provider_api_key,
 )
@@ -125,6 +127,7 @@ if TYPE_CHECKING:
     # Imported lazily at call sites: custom_endpoint_registry imports this
     # module for URL normalization, so a module-level import would cycle.
     from tldw_chatbook.Chat.custom_endpoint_registry import CustomEndpointEntry
+    from tldw_chatbook.Chat.console_request_capacity import ConsoleRequestCapacity
     from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 
@@ -175,6 +178,10 @@ ConsoleSettingsBlockerCode = Literal[
     "endpoint_unreachable",
     "active_run",
     "readiness_unknown",
+    # TASK-34100.2 AC#2 (new-cross-cutting-01): model-level blockers.
+    "capacity_exhausted",
+    "key_rejected_on_send",
+    "model_unavailable",
 ]
 ConsoleSettingsRecoveryAction = Literal[
     "select_provider",
@@ -186,6 +193,7 @@ ConsoleSettingsRecoveryAction = Literal[
     "select_model",
     "retry_connection",
     "wait_for_active_run",
+    "adjust_model_limits",
 ]
 _CONSOLE_OPERABILITY_VALUES = frozenset({"ready_to_send", "not_ready"})
 _CONSOLE_SETTINGS_BLOCKER_VALUES = frozenset(
@@ -201,6 +209,9 @@ _CONSOLE_SETTINGS_BLOCKER_VALUES = frozenset(
         "endpoint_unreachable",
         "active_run",
         "readiness_unknown",
+        "capacity_exhausted",
+        "key_rejected_on_send",
+        "model_unavailable",
     }
 )
 _CONSOLE_SETTINGS_RECOVERY_VALUES = frozenset(
@@ -214,6 +225,7 @@ _CONSOLE_SETTINGS_RECOVERY_VALUES = frozenset(
         "select_model",
         "retry_connection",
         "wait_for_active_run",
+        "adjust_model_limits",
     }
 )
 _BLOCKER_RECOVERY_ACTION = {
@@ -227,7 +239,18 @@ _BLOCKER_RECOVERY_ACTION = {
     "model_missing": "select_model",
     "active_run": "wait_for_active_run",
     "readiness_unknown": "review_provider_settings",
+    "capacity_exhausted": "adjust_model_limits",
+    "key_rejected_on_send": "configure_credential",
+    "model_unavailable": "select_model",
 }
+#: Model-level blockers (TASK-34100.2): the provider is set up and keyed, but
+#: this model cannot take a turn. The switcher groups such a provider with the
+#: ready ones and judges each model row on its own.
+MODEL_LEVEL_BLOCKERS = frozenset({"capacity_exhausted", "model_unavailable"})
+#: Blockers a past send recorded (TASK-34100.2 review F2): they say why the
+#: last send failed on every surface, but never refuse the next send -- that
+#: send is the retry, and its reply clears them (``refuses_turn``).
+SEND_OUTCOME_BLOCKERS = frozenset({"key_rejected_on_send", "model_unavailable"})
 _BLOCKER_PRECEDENCE = {
     "provider_missing": 0,
     "provider_unsupported": 1,
@@ -236,9 +259,12 @@ _BLOCKER_PRECEDENCE = {
     "endpoint_not_saved": 4,
     "credential_missing": 5,
     "model_missing": 6,
+    "capacity_exhausted": 6.5,
     "credential_rejected": 7,
     "endpoint_unreachable": 7,
     "active_run": 8,
+    "key_rejected_on_send": 8.5,
+    "model_unavailable": 8.5,
 }
 _CONFIGURATION_ISSUE_BLOCKER = {
     "provider_missing": "provider_missing",
@@ -547,6 +573,19 @@ class ConsoleSettingsReadiness:
     #: the Endpoint line: "needs_scheme" (an address the contract refuses only
     #: for lacking http:// or https://) or "invalid"; ``None`` when it is not.
     invalid_endpoint: Literal["needs_scheme", "invalid"] | None = None
+
+    @property
+    def refuses_turn(self) -> bool:
+        """Whether this verdict refuses a new turn (a send, or Apply in settings).
+
+        False when ready, or when the only blocker is a past send's outcome
+        (``SEND_OUTCOME_BLOCKERS``): the next send is the retry (TASK-34100.2
+        review round 1, F2). ``console_display_state`` gates the composer on this.
+        """
+        return (
+            self.operability != "ready_to_send"
+            and self.blocker not in SEND_OUTCOME_BLOCKERS
+        )
 
     def __post_init__(self) -> None:
         """Normalize legacy construction and reject contradictory typed states."""
@@ -2009,6 +2048,7 @@ def build_console_settings_readiness(
         and _endpoint_differs_for_provider(provider_key, base_url, provider_settings)
     )
     model_missing = normalize_console_model_value(settings.model) is None
+    send_outcome: ConsoleSendOutcome | None = None
 
     blocker: ConsoleSettingsBlockerCode | None
     recovery_action: ConsoleSettingsRecoveryAction | None
@@ -2043,10 +2083,31 @@ def build_console_settings_readiness(
         blocker, recovery_action = "credential_missing", "configure_credential"
     elif model_missing:
         blocker, recovery_action = "model_missing", "select_model"
+    # TASK-34100.2 AC#2: what Console's send preflight would refuse, from the
+    # same inputs, then how this model's last real send ended. Evaluated only
+    # when nothing above blocks: the capacity check reads the model catalog,
+    # which loads the config on its first use.
+    elif console_reply_capacity_exhausted(
+        provider_key,
+        str(settings.model),
+        _reply_max_tokens(settings, app_config, provider_key),
+        _send_endpoint(provider_key, base_url, provider_settings),
+    ):
+        blocker, recovery_action = "capacity_exhausted", "adjust_model_limits"
     elif snapshot.endpoint == "unreachable":
         blocker, recovery_action = _endpoint_failure_blocker(snapshot.category)
     elif active_run:
+        # Before the soft send outcomes: a retry in flight is a run, and the
+        # run keeps Settings from mutating mid-turn (review round 1).
         blocker, recovery_action = "active_run", "wait_for_active_run"
+    elif (
+        send_outcome := CONSOLE_SEND_OUTCOMES.outcome_for(
+            provider_key, str(settings.model), readiness.api_key
+        )
+    ) in {"unauthorized", "key_check_rejected"}:
+        blocker, recovery_action = "key_rejected_on_send", "configure_credential"
+    elif send_outcome == "not_found":
+        blocker, recovery_action = "model_unavailable", "select_model"
     else:
         blocker, recovery_action = None, None
 
@@ -2088,6 +2149,16 @@ def build_console_settings_readiness(
         label = "Not ready"
         reason = str(snapshot.category or "error").replace("_", " ")
         detail = f"{display_name} failed its last connection test ({reason})."
+    elif blocker in MODEL_LEVEL_BLOCKERS | {"key_rejected_on_send"}:
+        label = "Not ready"
+        detail = _model_level_blocker_detail(
+            blocker,
+            display_name,
+            str(settings.model),
+            _reply_max_tokens(settings, app_config, provider_key),
+            provider_key, key_checked=send_outcome == "key_check_rejected",
+            endpoint=_send_endpoint(provider_key, base_url, provider_settings),
+        )
     elif blocker is not None:
         label = "Not ready"
         detail = readiness.user_message
@@ -2534,6 +2605,20 @@ def _custom_endpoint_declared_credential(
     return None
 
 
+def _send_endpoint(
+    provider_key: str, base_url: str | None, provider_settings: Mapping[str, object]
+) -> str | None:
+    """The endpoint a send for this chat goes to (``None`` when none resolves).
+
+    The connection identity and the server-reported window (pass 2) both key
+    on it, so it is one rule.
+    """
+    endpoint = effective_provider_endpoint(provider_key, base_url, provider_settings)
+    if endpoint is None and provider_key in {"llama_cpp", "local_llamacpp"}:
+        endpoint = DEFAULT_LLAMACPP_BASE_URL  # The origin a new chat sends to.
+    return endpoint
+
+
 def _console_connection_identity(
     provider_key: str,
     base_url: str | None,
@@ -2556,9 +2641,7 @@ def _console_connection_identity(
         resolve_entry_credential,
     )
 
-    endpoint = effective_provider_endpoint(provider_key, base_url, provider_settings)
-    if endpoint is None and provider_key in {"llama_cpp", "local_llamacpp"}:
-        endpoint = DEFAULT_LLAMACPP_BASE_URL  # The origin a new chat sends to.
+    endpoint = _send_endpoint(provider_key, base_url, provider_settings)
     connection = canonical_connection_identity(provider_key, endpoint)
     if connection is None:
         return None
@@ -2663,6 +2746,78 @@ def provider_left_at_shipped_default(
         )
     except ProviderSettingsError:
         return False
+
+
+def provider_is_template_sample(
+    app_config: Mapping[str, object], provider_key: str
+) -> bool:
+    """Whether this provider's table carries the template-sample marker.
+
+    TASK-34100.2 AC#9 (entry-exit-handoff-23): the shipped template marks its
+    placeholder local sections (TabbyAPI's ``tabby-model``, vLLM's
+    ``vllm-model-x``, MLX-LM, the Custom slots...) ``template_sample = true``,
+    and saving the provider writes it ``false``. In an already-merged mapping
+    this reads the marker only; the loader infers it for a table written
+    before the marker existed, from its endpoint and model against the frozen
+    ``PRE_MARKER_TEMPLATE_SAMPLES`` (``settle_pre_marker_template_samples``).
+    Owner ruling 2026-11-05 ("Values decide"): a marked table counts as a
+    sample only while ``provider_holds_template_sample_values`` holds too, so
+    callers ask both.
+
+    Args:
+        app_config: The live configuration snapshot.
+        provider_key: A canonical provider key.
+
+    Returns:
+        Whether the provider's table is still marked as a template sample.
+    """
+    try:
+        table = provider_settings_for_key(app_config.get("api_settings"), provider_key)
+    except ProviderSettingsError:
+        return False
+    return isinstance(table, Mapping) and table.get("template_sample") is True
+
+
+def provider_holds_template_sample_values(
+    app_config: Mapping[str, object], provider_key: str
+) -> bool:
+    """Whether this provider still points at its template sample's endpoint
+    and model (TASK-34100.2 pass 3).
+
+    The switcher asks this of a provider ``provider_is_template_sample``
+    already marks (owner ruling 2026-11-05, "Values decide"): a marked table
+    is a sample only while this holds, so one the user pointed at their own
+    endpoint or model by hand is theirs and keeps its own row, reached,
+    refused or never contacted, while one whose other keys merely drifted
+    with the template (a profile written before the marker still holds
+    Custom's old ``streaming = false``) is a sample still. It never decides
+    the marker itself. The endpoint is the one a send would use, so a marked
+    table sent to the user's own ``api_base_url`` is theirs (review round 1,
+    R1-2), and a sample from an older template still matches its frozen
+    values (R1-3).
+
+    Args:
+        app_config: The live configuration snapshot.
+        provider_key: A canonical provider key.
+
+    Returns:
+        Whether the provider's endpoint and model equal the template's.
+    """
+    try:
+        table = provider_settings_for_key(app_config.get("api_settings"), provider_key)
+        template = provider_settings_for_key(
+            DEFAULT_CONFIG_FROM_TOML.get("api_settings"), provider_key
+        )
+        pre_marker = provider_settings_for_key(PRE_MARKER_TEMPLATE_SAMPLES, provider_key)
+    except ProviderSettingsError:
+        return False
+    return (
+        isinstance(table, Mapping)
+        and isinstance(template, Mapping)
+        and holds_template_sample_identity(
+            table, template, pre_marker or None, section=provider_key
+        )
+    )
 
 
 def custom_endpoint_missing_key_readiness(
@@ -2825,6 +2980,10 @@ _NOT_READY_REASONS: Mapping[str, str] = MappingProxyType(
         "endpoint_unreachable": "unreachable",
         "active_run": "run active",
         "readiness_unknown": "check settings",
+        # TASK-34100.2 AC#2: the reply reservation fills the model's window.
+        "capacity_exhausted": "window too small",
+        "key_rejected_on_send": "key rejected",
+        "model_unavailable": "model not found",
     }
 )
 #: A known connection failure says what happened ("refused" gains the port).
@@ -2871,8 +3030,9 @@ def readiness_words(readiness: ConsoleSettingsReadiness) -> str:
             observation time of current evidence, TASK-33005.2).
 
     Returns:
-        'Ready · not tested', 'Ready · reachable HH:MM', 'Ready · verified
-        HH:MM' or 'Not ready · <reason>'.
+        'Ready · not tested', 'Ready · reachable HH:MM', 'Key verified HH:MM'
+        (a listing accepted the key; TASK-34100.2), 'Ready · verified HH:MM'
+        (a reply arrived) or 'Not ready · <reason>'.
     """
     if readiness.operability == "ready_to_send":
         return _ready_words(
@@ -2898,6 +3058,9 @@ def verdict_readiness_words(
     evidence: object = None,
     *,
     subscription_status: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    max_tokens: int | None = None,
 ) -> str:
     """Return the same word for a setup verdict (Settings' test result).
 
@@ -2907,10 +3070,46 @@ def verdict_readiness_words(
             just-settled ``ProviderProbeResult``): its time, connection and
             key/generation facts.
         subscription_status: The Claude subscription state, if any.
+        provider: The provider readiness key under test; with ``model``, a
+            Ready verdict is judged for that model too (TASK-34100.2 AC#2:
+            the same capacity blocker the Console and switcher read).
+        model: The model under test.
+        max_tokens: The reply maximum that model would be sent with.
 
     Returns:
-        One of the four words.
+        The readiness word.
     """
+    word = _setup_verdict_words(snapshot, evidence, subscription_status)
+    if provider and not word.startswith("Not ready"):
+        return model_level_not_ready_words(provider, model, max_tokens) or word
+    return word
+
+
+def model_level_not_ready_words(
+    provider: str, model: str | None, max_tokens: int | None
+) -> str | None:
+    """The model-level 'Not ready' word for one provider/model pair, or None.
+
+    TASK-34100.2 AC#2: the reply reservation fills the model's window
+    ('window too small'), or the model's last send got a 404 ('model not
+    found'). One rule for the switcher rows and Settings' Readiness row.
+    """
+    model_id = normalize_console_model_value(model)
+    if not model_id:
+        return None
+    if console_reply_capacity_exhausted(provider, model_id, max_tokens):
+        return f"Not ready · {_NOT_READY_REASONS['capacity_exhausted']}"
+    if CONSOLE_SEND_OUTCOMES.outcome_for(provider, model_id, None) == "not_found":
+        return f"Not ready · {_NOT_READY_REASONS['model_unavailable']}"
+    return None
+
+
+def _setup_verdict_words(
+    snapshot: ProviderReadinessSnapshot,
+    evidence: object,
+    subscription_status: str | None,
+) -> str:
+    """The provider-level word for a setup verdict (no model-level check)."""
     code = provider_readiness_verdict(snapshot).code
     # AC#8: rank blockers as the Console does (_BLOCKER_PRECEDENCE) --
     # configuration, then a missing model, then a failed test. The verdict
@@ -2945,7 +3144,11 @@ def verdict_readiness_words(
 
 
 def model_readiness_words(
-    readiness: ConsoleSettingsReadiness, model: str | None
+    readiness: ConsoleSettingsReadiness,
+    model: str | None,
+    *,
+    provider: str | None = None,
+    max_tokens: int | None = None,
 ) -> str:
     """Return the readiness word for ``model`` on ``readiness``'s connection.
 
@@ -2954,17 +3157,46 @@ def model_readiness_words(
     returned, and a paid test only the model it sent, so each row is worded
     from the evidence for its own model.
 
+    TASK-34100.2 AC#2: a provider blocked only at the model level
+    (``MODEL_LEVEL_BLOCKERS``) is set up and keyed, so each of its models
+    gets its own verdict too: with ``provider`` given, a row whose model
+    cannot take a turn says why (``model_level_not_ready_words``), and every
+    other row reads the provider's Ready word.
+
     Args:
         readiness: One provider's built readiness.
         model: The row's model id (``None`` reads ``readiness`` as built).
+        provider: The row's provider readiness key; given, the row's own
+            model-level blockers are judged (capacity, a past 404).
+        max_tokens: The response maximum this row would send with.
 
     Returns:
         The same word ``readiness_words`` gives a readiness built for
         ``model``.
     """
-    evidence = readiness.evidence
-    if readiness.operability != "ready_to_send" or evidence is None or not model:
+    if not model or (
+        readiness.operability != "ready_to_send"
+        and readiness.blocker not in MODEL_LEVEL_BLOCKERS
+    ):
         return readiness_words(readiness)
+    if provider:
+        blocked = model_level_not_ready_words(provider, model, max_tokens)
+        if blocked is not None:
+            return blocked
+    elif readiness.operability != "ready_to_send":
+        return readiness_words(readiness)
+    evidence = readiness.evidence
+    if evidence is None:
+        # No current evidence: nothing confirms this row's model.
+        return _ready_words(
+            readiness.connection,
+            readiness.endpoint,
+            readiness.credential,
+            readiness.generation,
+            readiness.observed_at,
+            readiness.generation_observed_at,
+            "unconfirmed",
+        )
     tested = evidence.for_model(model)
     return _ready_words(
         readiness.connection,
@@ -2993,11 +3225,11 @@ def _ready_words(
 ) -> str:
     """Qualify Ready by what was observed, and when (local HH:MM).
 
-    'verified': a successful paid test (its time), or a cloud key its
-    authenticated listing accepted (the listing's time) for a model that
-    listing returned (``model`` facet 'confirmed', TASK-33005.11). Another
-    model under that accepted key reads 'reachable': the server answered, but
-    nothing says this model will. 'reachable': a local, URL or custom
+    'verified': a successful paid test (its time). 'Key verified' (TASK-34100.2
+    AC#2): a cloud key its authenticated listing accepted (the listing's
+    time) for a model that listing returned (``model`` facet 'confirmed',
+    TASK-33005.11). Another model under that accepted key reads 'reachable':
+    the server answered, but nothing says this model will. 'reachable': a local, URL or custom
     endpoint answered its listing -- even with a key, since a self-hosted
     server may ignore it. A public cloud listing (OpenRouter) proves
     nothing: 'not tested'.
@@ -3021,7 +3253,13 @@ def _ready_words(
         and connection.provider_key not in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
     )
     if accepted and not local:
-        return f"Ready · {'verified' if model == 'confirmed' else 'reachable'} {when}"
+        # TASK-34100.2 AC#2: a listing proves the key, never a reply, so the
+        # word names its scope -- on every surface (Settings, header,
+        # switcher). TASK-33005.11: it vouches only for a model it listed;
+        # another model under that accepted key reads 'reachable'.
+        if model == "confirmed":
+            return f"Key verified {when}"
+        return f"Ready · reachable {when}"
     if endpoint == "reachable" and local:
         return f"Ready · reachable {when}"
     return READY_NOT_TESTED
@@ -3500,3 +3738,531 @@ class ConsoleAssistantStartup:
     assistant_id: str = "console"
     persona_memory_mode: str | None = None
     notice: str = ""
+
+
+# ---------------------------------------------------------------------------
+# TASK-34100.2 AC#2 (new-cross-cutting-01): "first chat works" readiness.
+# The verdict covered credentials and connection only, so the header, Settings
+# and the switcher said "Ready" above a model every send was refused on. Two
+# facts close that gap: the reply capacity Console's send preflight computes
+# (from the same resolvers), and how the current model's last real send ended.
+# ---------------------------------------------------------------------------
+
+#: Last send outcomes that take a model out of Ready until its inputs change.
+#: ``key_check_rejected`` is a key check's 401 (setup, Settings 't'), recorded
+#: by the shared catalog service (review round 2, F4).
+ConsoleSendOutcome = Literal["unauthorized", "not_found", "key_check_rejected"]
+#: How long a server-reported context window stands for readiness: the
+#: gateway's ``console_context_window.METADATA_SUCCESS_TTL`` (not imported --
+#: that module loads the HTTP client and the egress guard; a test pins the two
+#: equal).
+OBSERVED_WINDOW_TTL_SECONDS = 60
+#: Only a 401 rejects a key (owner ruling 2026-10-02, PR #2958): a 403 is
+#: often about one message or model (OpenRouter's moderation, a model
+#: permission, a region limit), so it records nothing (review round 1, F1).
+_SEND_OUTCOME_BY_STATUS: Mapping[int, ConsoleSendOutcome] = MappingProxyType(
+    {401: "unauthorized", 404: "not_found"}
+)
+
+
+def _send_outcome_provider_key(provider: object) -> str:
+    """The readiness key a provider spelling resolves to (one key per surface)."""
+    return _readiness_key_for_spelling(str(provider or "").strip())
+
+
+@functools.lru_cache(maxsize=512)
+def _readiness_key_for_spelling(raw: str) -> str:
+    """Memoized: identity resolution walks every handler key (TASK-18909)."""
+    identity = resolve_console_provider_identity(
+        _canonical_chat_provider_id(raw),
+        handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    )
+    return identity.readiness_key or provider_config_key(raw)
+
+
+class ConsoleSendOutcomes:
+    """Process-wide record of how real sends ended, per provider.
+
+    A 401 rejects the KEY (kept per provider and credential revision, so a
+    new key starts clean); a 404 loses the MODEL (kept per provider and
+    model). Either stands only while that provider's own settings are the
+    ones it was recorded under (``_provider_settings_scope``): saving its
+    key, endpoint or any of its settings clears it, so a composer blocked on
+    it is never a dead end, while an unrelated save -- the first reply's
+    onboarding flag, the Library rail's state, another provider -- keeps it
+    (pass-2 review round 1, F8: keyed to the GLOBAL generation, one click on
+    Library put a 404'd model back to 'Ready · not tested'). A later
+    successful reply clears it too. It also keeps the context window a
+    serving endpoint reported for a model, so the offline capacity check sees
+    the window the send preflight used -- but only under the provider
+    settings it was seen with, and only as long as the gateway's own
+    metadata cache would keep it (``OBSERVED_WINDOW_TTL_SECONDS``). A capacity
+    blocker refuses at the composer, so no send can refresh a stale window;
+    without the expiry a server restarted with a larger context stayed 'window
+    too small' until the app restarted (review round 2, R2-3).
+    """
+
+    def __init__(self, clock: Callable[[], float] | None = None) -> None:
+        from threading import Lock
+        from time import monotonic
+
+        self._lock = Lock()
+        self._clock = clock or monotonic
+        #: Each value is the provider settings scope it was recorded under.
+        self._unauthorized: dict[tuple[str, int], str] = {}
+        self._not_found: dict[tuple[str, str], str] = {}
+        #: Keys a key check rejected. Not tied to the config generation:
+        #: setup's own commit publishes one right after its check. A new key
+        #: is a new revision, so it starts clean.
+        self._rejected_keys: set[tuple[str, int]] = set()
+        #: (tokens, verified, provider settings scope, expiry on ``_clock``,
+        #: the endpoint that reported it -- "" when unknown).
+        self._windows: dict[
+            tuple[str, str], tuple[int, bool, str, float, str]
+        ] = {}
+
+    @staticmethod
+    def _generation() -> int:
+        """The runtime config publication counter, read without importing.
+
+        Readiness must stay config-import free (it runs before the config
+        module is loaded in some callers); an unloaded config has published
+        nothing, so the counter reads 0.
+        """
+        import sys
+
+        config_module = sys.modules.get("tldw_chatbook.config")
+        reader = getattr(config_module, "get_runtime_config_generation", None)
+        return reader() if callable(reader) else 0
+
+    @classmethod
+    def _scope(cls, provider_key: str) -> str:
+        """What a recorded outcome for ``provider_key`` depends on.
+
+        A fingerprint of that provider's own published settings table, read
+        without importing config; memoized per config generation, so a
+        readiness build costs one dict lookup.
+        """
+        return _provider_settings_scope(provider_key, cls._generation())
+
+    def record_status(
+        self, provider: object, model: object, api_key: object, status_code: object
+    ) -> None:
+        """Record a failed send's HTTP status (only 401 and 404 are kept)."""
+        outcome = (
+            _SEND_OUTCOME_BY_STATUS.get(status_code) if type(status_code) is int else None
+        )
+        model_id = str(model or "").strip()
+        if outcome is None or not model_id:
+            return
+        key = _send_outcome_provider_key(provider)
+        scope = self._scope(key)
+        with self._lock:
+            if outcome == "unauthorized":
+                self._unauthorized[(key, connection_credential_revision(api_key))] = (
+                    scope
+                )
+            else:
+                self._not_found[(key, model_id)] = scope
+
+    def record_success(self, provider: object, model: object, api_key: object) -> None:
+        """A reply arrived: this key and this model are not known to fail."""
+        key = _send_outcome_provider_key(provider)
+        revision = connection_credential_revision(api_key)
+        with self._lock:
+            self._unauthorized.pop((key, revision), None)
+            self._rejected_keys.discard((key, revision))
+            self._not_found.pop((key, str(model or "").strip()), None)
+
+    def record_key_check(
+        self, provider: object, api_key: object, *, rejected: bool
+    ) -> None:
+        """Record a key check's verdict on this key (review round 2, F4).
+
+        Args:
+            provider: The provider the key was checked for.
+            api_key: The key that was checked (never stored; only its
+                credential revision is).
+            rejected: True for a 401 (the key is rejected), False for a
+                check that proved the key (it clears any rejection).
+        """
+        if not api_key:
+            return
+        entry = (
+            _send_outcome_provider_key(provider),
+            connection_credential_revision(api_key),
+        )
+        with self._lock:
+            if rejected:
+                self._rejected_keys.add(entry)
+            else:
+                self._rejected_keys.discard(entry)
+                self._unauthorized.pop(entry, None)
+
+    def outcome_for(
+        self, provider: object, model: object, api_key: object
+    ) -> ConsoleSendOutcome | None:
+        """The outcome that still stands for this provider, model and key."""
+        key = _send_outcome_provider_key(provider)
+        scope = self._scope(key)
+        with self._lock:
+            if (
+                self._unauthorized.get((key, connection_credential_revision(api_key)))
+                == scope
+            ):
+                return "unauthorized"
+            if (key, connection_credential_revision(api_key)) in self._rejected_keys:
+                return "key_check_rejected"
+            if self._not_found.get((key, str(model or "").strip())) == scope:
+                return "not_found"
+        return None
+
+    def record_window(
+        self,
+        provider: object,
+        model: object,
+        tokens: object,
+        verified: object,
+        *,
+        endpoint: object = None,
+    ) -> None:
+        """Keep the window a serving endpoint reported (server metadata).
+
+        Args:
+            provider: The provider the send resolved to.
+            model: The model the window belongs to.
+            tokens: The reported context window.
+            verified: Whether the window is the server's own figure.
+            endpoint: The endpoint that reported it (pass 2): another server
+                serving the same model id never inherits it.
+        """
+        if type(tokens) is not int or tokens <= 0 or not str(model or "").strip():
+            return
+        key = (_send_outcome_provider_key(provider), str(model).strip())
+        record = (
+            tokens,
+            bool(verified),
+            self._scope(key[0]),
+            self._clock() + OBSERVED_WINDOW_TTL_SECONDS,
+            _window_endpoint(provider, endpoint),
+        )
+        with self._lock:
+            self._windows[key] = record
+
+    def window_for(
+        self, provider: object, model: object, endpoint: object = None
+    ) -> tuple[int, bool] | None:
+        """The reported window that still stands for this model, if any.
+
+        Args:
+            provider: The provider being judged.
+            model: The model being judged.
+            endpoint: The endpoint a send would use. A window reported by a
+                different endpoint does not stand for it; a reader that does
+                not know its endpoint (``None``) accepts the record.
+
+        Returns:
+            ``(tokens, verified)``, or ``None``.
+        """
+        key = (_send_outcome_provider_key(provider), str(model or "").strip())
+        scope = self._scope(key[0])
+        now = self._clock()
+        with self._lock:
+            record = self._windows.get(key)
+            if record is None:
+                return None
+            tokens, verified, seen_scope, expires_at, reported_by = record
+            if seen_scope != scope or now >= expires_at:
+                del self._windows[key]
+                return None
+        # Only a recorded window reads the endpoint: first paint's empty ledger
+        # never loads the provider setup facts (PR #3517 CI, ADR-097).
+        wanted = _window_endpoint(provider, endpoint) if reported_by else ""
+        if wanted and wanted != reported_by:
+            return None  # another server's window; kept for its own chats
+        return tokens, verified
+
+    def clear(self) -> None:
+        """Forget everything (tests)."""
+        _catalog_capacity_inputs_for.cache_clear()
+        _provider_settings_scope.cache_clear()
+        with self._lock:
+            self._unauthorized.clear()
+            self._not_found.clear()
+            self._rejected_keys.clear()
+            self._windows.clear()
+
+
+@functools.lru_cache(maxsize=256)
+def _provider_settings_scope(provider_key: str, generation: int) -> str:
+    """Fingerprint one provider's published settings table (memoized).
+
+    Read from the config module's published ``settings`` when it is loaded
+    (never imported or reloaded here); the provider's own table only, through
+    the Console's one lookup, so a custom endpoint is its registry entry.
+    When the table cannot be read, or the lookup finds none (a provider with
+    no settings table, such as 'mistral'), the fingerprint falls back to the
+    generation, i.e. any save retires the outcome -- the pre-round-1 rule.
+    A constant fingerprint would let only a reply or a restart clear it.
+
+    Args:
+        provider_key: The readiness key of the provider.
+        generation: The config publication counter (the memo key only).
+
+    Returns:
+        A short hex digest; equal digests mean the settings are unchanged.
+    """
+    import hashlib
+    import sys
+
+    config_module = sys.modules.get("tldw_chatbook.config")
+    published = getattr(config_module, "settings", None)
+    if not isinstance(published, Mapping):
+        return f"generation:{generation}"
+    try:
+        table = console_provider_settings(published, provider_key)
+        if not table:
+            return f"generation:{generation}"
+        encoded = json.dumps(table, sort_keys=True, default=str)
+    except Exception:  # noqa: BLE001 - a fingerprint must never break readiness
+        return f"generation:{generation}"
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
+
+
+def _window_endpoint(provider: object, endpoint: object) -> str:
+    """One spelling per serving endpoint, so a window matches its own server.
+
+    The provider's canonical connection endpoint when the contract can read
+    it (the identity Chat settings keys a connection by), else the stripped
+    URL without a trailing slash; ``""`` when unknown.
+    """
+    if not isinstance(endpoint, str) or not endpoint.strip():
+        return ""
+    url = endpoint.strip()
+    connection = canonical_connection_identity(_send_outcome_provider_key(provider), url)
+    if connection is not None:
+        return connection[1]
+    return url.rstrip("/").lower()
+
+
+#: The one process-wide ledger the gateway writes and readiness reads.
+CONSOLE_SEND_OUTCOMES = ConsoleSendOutcomes()
+
+
+def _catalog_generation() -> tuple[int, int]:
+    """What the catalog memo depends on, read without importing anything.
+
+    Settings saves a model's context window and reloads the model catalog
+    (``reload_capabilities``), and every config save publishes a new runtime
+    generation; either one must reach readiness without a restart (review
+    round 1, F3).
+    """
+    import sys
+
+    capabilities = sys.modules.get("tldw_chatbook.model_capabilities")
+    reloads = getattr(capabilities, "capabilities_reload_count", None)
+    return (
+        reloads() if callable(reloads) else 0,
+        ConsoleSendOutcomes._generation(),
+    )
+
+
+def _catalog_capacity_inputs(provider: str, model: str) -> tuple[int, bool, int | None]:
+    """The catalog window and output cap for one model, memoized per catalog."""
+    return _catalog_capacity_inputs_for(provider, model, _catalog_generation())
+
+
+@functools.lru_cache(maxsize=1024)
+def _catalog_capacity_inputs_for(
+    provider: str, model: str, _generation: tuple[int, int]
+) -> tuple[int, bool, int | None]:
+    """The catalog window and output cap for one model (memoized).
+
+    Readiness is built hundreds of times per Console screen switch
+    (TASK-18909); these catalog lookups are the only non-trivial part of the
+    capacity check. ``_generation`` keys the memo to the catalog it read.
+    """
+    from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+    window = resolve_context_window(provider, model)
+    output_cap = None
+    try:
+        from tldw_chatbook.model_capabilities import get_model_capabilities
+
+        caps = get_model_capabilities().get_model_capabilities(provider, model)
+        for name in ("max_output_tokens", "output_token_limit", "provider_output_cap"):
+            value = caps.get(name)
+            if type(value) is int and value > 0:
+                output_cap = value
+                break
+    except Exception:  # noqa: BLE001 -- optional catalog never blocks readiness
+        output_cap = None
+    return window.tokens, window.verified, output_cap
+
+
+def console_reply_capacity(
+    provider: str, model: str, max_tokens: int | None, endpoint: str | None = None
+) -> "ConsoleRequestCapacity":
+    """Console's request capacity for one model, offline.
+
+    The same inputs the send preflight uses -- the serving endpoint's
+    reported window when one was seen, else ``resolve_context_window`` --
+    through the same ``resolve_request_capacity`` (which caps the reply
+    reservation for an estimated window, AC#1).
+
+    Args:
+        provider: Provider readiness key.
+        model: The selected model id.
+        max_tokens: The configured response maximum, or ``None`` for the
+            Console default reservation.
+        endpoint: The endpoint a send would use; a server-reported window
+            counts only for the endpoint that reported it.
+
+    Returns:
+        The resolved capacity.
+    """
+    from tldw_chatbook.Chat.console_request_capacity import resolve_request_capacity
+
+    tokens, verified, output_cap = _catalog_capacity_inputs(provider, model)
+    observed = CONSOLE_SEND_OUTCOMES.window_for(provider, model, endpoint)
+    if observed is not None:
+        tokens, verified = observed
+    requested = max_tokens if type(max_tokens) is int and max_tokens > 0 else None
+    return resolve_request_capacity(
+        context_window_tokens=tokens,
+        context_window_verified=verified,
+        provider_output_cap_tokens=output_cap,
+        requested_response_tokens=requested,
+    )
+
+
+def _reply_max_tokens(
+    settings: ConsoleSessionSettings,
+    app_config: Mapping[str, object],
+    provider_key: str,
+) -> int | None:
+    """The response maximum a send of these settings would reserve.
+
+    A blank Max tokens means 'inherit': the applied chat takes the value the
+    defaults resolve for this provider and model (a model profile, the
+    provider table, ``[chat_defaults]``), so readiness judges that value,
+    not the Console default reservation (review round 1, F6: a blank read
+    'Ready' in Chat settings while the applied chat inherited 200,000 and
+    read 'Not ready · window too small').
+    """
+    if settings.max_tokens is not None:
+        return settings.max_tokens
+    return default_reply_max_tokens(app_config, provider_key, settings.model)[0]
+
+
+def default_reply_max_tokens(
+    app_config: Mapping[str, object], provider_key: str, model: str | None
+) -> tuple[int | None, bool]:
+    """The response maximum a new chat of this pair reserves, and its source.
+
+    The one default chain the Console builds a new chat with (a model
+    profile, the Console's saved provider defaults, ``[chat_defaults]``, the
+    provider table), so Settings' Test Provider judges the same value as the
+    header and the switcher (TASK-34100.2 review round 1, F1: it read only the
+    provider's ``max_tokens`` and said 'Key verified' for a model whose saved
+    200,000-token model default the Console called 'window too small').
+
+    Args:
+        app_config: The configuration snapshot (Settings passes its draft).
+        provider_key: The provider's canonical key.
+        model: The model a new chat would use.
+
+    Returns:
+        ``(max_tokens, from_model_default)``: the value (None when the lookup
+        fails or nothing sets one) and whether this model's own saved default
+        (``model_defaults.<model>.max_tokens``) is what sets it.
+    """
+    try:
+        value = build_target_default_console_session_settings(
+            app_config, provider_key, model
+        ).max_tokens
+        layer = resolve_console_value_layers(
+            app_config, provider_key, model, ("max_tokens",)
+        )["max_tokens"]
+    except Exception:  # noqa: BLE001 - readiness never fails on a lookup
+        return None, False
+    return value, layer is ConsoleValueLayer.MODEL_DEFAULT
+
+
+def console_reply_capacity_exhausted(
+    provider: str, model: str, max_tokens: int | None, endpoint: str | None = None
+) -> bool:
+    """Whether the reply reservation leaves this model no input at all.
+
+    Exactly the send preflight's "Response reservation and safety margin
+    leave no model input capacity" refusal (TASK-34100.2 AC#2).
+    """
+    try:
+        capacity = console_reply_capacity(provider, model, max_tokens, endpoint)
+    except (TypeError, ValueError):
+        return False
+    return (
+        capacity.context_window_tokens is not None
+        and capacity.effective_input_ceiling_tokens == 0
+    )
+
+
+def _model_level_blocker_detail(
+    blocker: str,
+    display_name: str,
+    model: str,
+    max_tokens: int | None,
+    provider_key: str,
+    *,
+    key_checked: bool = False,
+    endpoint: str | None = None,
+) -> str:
+    """Plain words for a model-level blocker, naming the fix."""
+    if blocker == "capacity_exhausted":
+        capacity = console_reply_capacity(provider_key, model, max_tokens, endpoint)
+        return (
+            f"Replies reserve {capacity.effective_response_tokens:,} of {model}'s "
+            f"{capacity.context_window_tokens or 0:,}-token context window, so no "
+            "room is left for your message. Lower the response maximum or "
+            "choose another model."
+        )
+    if blocker == "key_rejected_on_send" and key_checked:
+        return (
+            f"{display_name} rejected this API key when it was checked. "
+            "Update the key, then send again."
+        )
+    if blocker == "key_rejected_on_send":
+        return (
+            f"{display_name} rejected the API key on the last message to {model}. "
+            "Update the key, then send again."
+        )
+    return (
+        f"{display_name} could not find {model} on the last message (HTTP 404). "
+        "Choose another model, or check the endpoint."
+    )
+
+
+def default_save_refusal(
+    readiness: ConsoleSettingsReadiness,
+    default_readiness: ConsoleSettingsReadiness,
+) -> str:
+    """Why Chat settings' default actions are unavailable, or ``""``.
+
+    TASK-34100.2 pass 3 review round 1 (F3): 'Save as model default' and
+    'Make default for new chats' also apply the pair to this chat, so a draft
+    whose replies fill its model's window is refused as Apply and the
+    switcher refuse it, in the capacity verdict's own words; otherwise a
+    pair that cannot send natively is refused as before.
+
+    Args:
+        readiness: The open draft's verdict (its own Max tokens).
+        default_readiness: The future-chat verdict for the draft's pair.
+
+    Returns:
+        The 'Unavailable: ...' copy, or an empty string when saving is fine.
+    """
+    if readiness.blocker == "capacity_exhausted":
+        return f"Unavailable: {readiness.detail}"
+    if not default_readiness.native_send_supported:
+        return f"Unavailable: {default_readiness.detail}"
+    return ""

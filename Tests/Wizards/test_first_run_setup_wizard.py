@@ -5307,12 +5307,25 @@ async def test_mounted_settings_aware_builtin_discovery_uses_exact_runtime_host_
             model_step = container.steps[model_index]
             row = model_step.query_one("#setup-model-option-0", RadioButton)
             assert getattr(row, "_model_id", None) == "runtime-model"
-            assert len(requests) == 1
-            assert str(requests[0].url) == expected_models_url
-            assert requests[0].headers["Authorization"] == (
+            # TASK-34100.2 AC#3: Hugging Face's router listing answers any
+            # key, so the key is proved at whoami-v2 -- exactly once for the
+            # router host the record's key check serves, and never for a key
+            # meant for another host (api-inference; review round 1, F11).
+            # The listing itself goes out once.
+            listing = [r for r in requests if r.url.path != "/api/whoami-v2"]
+            key_checks = [r for r in requests if r.url.path == "/api/whoami-v2"]
+            checks_this_host = (
+                provider_key == "huggingface"
+                and httpx.URL(expected_models_url).host == "router.huggingface.co"
+            )
+            assert len(key_checks) == (1 if checks_this_host else 0)
+            assert all(r.url.host == "huggingface.co" for r in key_checks)
+            assert len(listing) == 1
+            assert str(listing[0].url) == expected_models_url
+            assert listing[0].headers["Authorization"] == (
                 f"Bearer {credential_canary}"
             )
-            assert requests[0].url.host == httpx.URL(expected_models_url).host
+            assert listing[0].url.host == httpx.URL(expected_models_url).host
             assert shared_cache.snapshot_count == 0
             assert (
                 wizard.app_instance.app_config["api_settings"] == before["api_settings"]
@@ -5509,10 +5522,14 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
             assert current_key.connection_identity[1].startswith(
                 f"https://{changed_host}/"
             )
-            assert [request.url.host for request in requests] == [
-                initial_host,
-                changed_host,
-            ]
+            # TASK-34100.2 AC#3: Hugging Face's router listing answers any
+            # key, so the key is proved once at huggingface.co's whoami-v2;
+            # the listings themselves still go to exactly these two hosts.
+            assert [
+                request.url.host
+                for request in requests
+                if request.url.path != "/api/whoami-v2"
+            ] == [initial_host, changed_host]
 
             manual = model_step.query_one("#setup-model-custom", Input)
             manual.value = "identity-a-model"

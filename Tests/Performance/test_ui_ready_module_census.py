@@ -190,7 +190,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: `Agents.ordinary_tree`, `Agents.workflow_task_scope`,
 #: `Chat.console_ordinary_tree` and `Workspaces.worktree_activity` (dev is at
 #: 1040); measured.
-MAX_TLDW_MODULES_AT_UI_READY = 1040
+#: 1040 -> 1043 (2026-11-13, owner decision 2026-10-04 (expand limits),
+#: TASK-34100.2, PR #3517): three residents the first-chat work needs by
+#: first paint. `app_env_key_notice` is a `TldwCli` base class (see the
+#: import-weight row). `Chat.console_request_capacity` is the capacity rule
+#: readiness applies at compose (`console_reply_capacity`), split out of the
+#: resident `console_prepared_request` so readiness need not import the
+#: request builder. `UI.Console_Modules.setup_card_offers` is the Get started
+#: card's offer sync, out of `chat_screen.py` for its size ratchet; it first
+#: runs on the UI thread just after ready (10 calls in the first second,
+#: measured), so a lazy import would land on that frame. Same-probe warm boot:
+#: dev 26b2e677dd 1039, this branch 1042 (+3). Its other three new residents
+#: (`LLM_Calls.chat_transport_retry`, `LLM_Calls.provider_reason`,
+#: `Provider_Contract.provider_setup_facts`) were deferred; see
+#: ABSENT_AT_READY_MODULES.
+MAX_TLDW_MODULES_AT_UI_READY = 1043
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
@@ -374,6 +388,13 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.UI.LLM_Management.vllm_setup",
     "tldw_chatbook.LLM_Calls.anthropic_subscription",
     "tldw_chatbook.Chat.console_trace_regex_worker",
+    # PR #3517 CI (TASK-34100.2, ADR-097): a send's transport retry and a
+    # 429's provider reason are send-time work (Tests/Packaging/
+    # test_first_chat_boot_closure.py), and readiness interprets an endpoint
+    # only when a window was recorded, which never happens before a send.
+    "tldw_chatbook.LLM_Calls.chat_transport_retry",
+    "tldw_chatbook.LLM_Calls.provider_reason",
+    "tldw_chatbook.Provider_Contract.provider_setup_facts",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount

@@ -81,6 +81,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     attach_thinking_history as attach_thinking_history,
     build_console_request as build_console_request,
     prepare_provider_request as prepare_provider_request,
+    estimated_window_reply_cap as estimated_window_reply_cap,
     positive_token_cap as positive_token_cap,
     resolve_request_capacity as resolve_request_capacity,
     thaw_json,
@@ -152,6 +153,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_SEND_OUTCOMES,
     custom_endpoint_missing_key_readiness,
     configured_provider_model,
     console_provider_settings,
@@ -1825,6 +1827,28 @@ def _tool_definition_rejection_copy(
         provider_message,
         tools,
     )
+
+
+def _record_send_failure(resolution: object, exc: BaseException) -> None:
+    """Record a failed send's HTTP status for readiness (TASK-34100.2 AC#2).
+
+    Only the status is read -- never the message -- and a status the ledger
+    does not keep (anything but 401 or 404) records nothing. A 403 is never
+    kept: only a 401 rejects a key (owner ruling, PR #2958).
+    """
+    status = getattr(exc, "status_code", None)
+    if type(status) is not int:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    try:
+        CONSOLE_SEND_OUTCOMES.record_status(
+            getattr(resolution, "provider", ""),
+            getattr(resolution, "model", None),
+            getattr(resolution, "api_key", None),
+            status,
+        )
+    except Exception:  # noqa: BLE001 - readiness bookkeeping never masks the failure
+        logger.debug("console_send_outcome_record_failed")
 
 
 def _provider_error_copy_with_model_recovery(
@@ -4357,7 +4381,29 @@ class ConsoleProviderGateway:
             # the verified value.
             window = self._get_context_windows().cached(target)
             self._schedule_context_window_refresh(target)
-            resolution = replace(resolution, context_window=window)
+            if window.source == "server metadata":
+                # TASK-34100.2 review round 2 (R2-3): every send path resolves
+                # here; the Agents path reaches prepare_chat_request only with
+                # trace capture on, so readiness never saw the server's window.
+                CONSOLE_SEND_OUTCOMES.record_window(
+                    target.family,
+                    target.model,
+                    window.tokens,
+                    window.verified,
+                    endpoint=target.endpoint,
+                )
+            resolution = replace(
+                resolution,
+                context_window=window,
+                # TASK-34100.2 review F1: capped once, here, so the Agents
+                # fit check, history bounding and the wire max_tokens all
+                # reserve the reply the send preflight and readiness use.
+                max_tokens=(
+                    min(resolution.max_tokens, estimated_window_reply_cap(window.tokens))
+                    if resolution.max_tokens is not None and not window.verified
+                    else resolution.max_tokens
+                ),
+            )
         resolution = replace(
             resolution,
             endpoint_provenance=selection.endpoint_provenance,
@@ -6667,8 +6713,11 @@ class ConsoleProviderGateway:
                             yield emission.item
                 completed = True
                 return
-        except Exception:
+        except Exception as exc:
             provider_failed = True
+            # TASK-34100.2 AC#2: a 401 or 404 takes this key or model out of
+            # Ready on every surface until something changes (never a 403).
+            _record_send_failure(resolution, exc)
             await _settle_trace_response(
                 trace_call_boundary,
                 response_accumulator.items,
@@ -6683,6 +6732,10 @@ class ConsoleProviderGateway:
             )
             raise
         finally:
+            if completed:
+                CONSOLE_SEND_OUTCOMES.record_success(
+                    resolution.provider, resolution.model, resolution.api_key
+                )
             if not provider_failed:
                 await _settle_trace_response(
                     trace_call_boundary,

@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
 WORD = re.compile(
     r"Ready · not tested"
     r"|Ready · (reachable|verified) \d\d:\d\d"
+    r"|Key verified \d\d:\d\d"
     r"|Not ready · [a-z][a-zA-Z :0-9]*"
 )
 #: An aware LOCAL time, so the expected HH:MM never depends on the machine's zone.
@@ -170,7 +171,8 @@ def test_a_cloud_key_accepted_by_its_listing_reads_verified():
 
     assert readiness.credential == "listing_accepted"
     assert readiness.generation == "not_tested"
-    assert readiness_words(readiness) == "Ready · verified 09:07"
+    # TASK-34100.2 AC#2: named for what the listing proved -- the key.
+    assert readiness_words(readiness) == "Key verified 09:07"
 
 
 def _accepted_listing_owner(*model_ids: str) -> ProviderConnectionEvidence:
@@ -209,14 +211,20 @@ def test_a_key_check_verifies_only_the_models_its_listing_returned():
     unlisted = _openai_readiness("gpt-5.6-terra", owner)
 
     assert (listed.model, unlisted.model) == ("confirmed", "unconfirmed")
-    assert readiness_words(listed) == "Ready · verified 09:07"
+    # TASK-34100.2 AC#2 (rewritten on purpose): a listing proves the key, not
+    # a reply, so the listed model reads 'Key verified', never 'Ready ·
+    # verified'.
+    assert readiness_words(listed) == "Key verified 09:07"
     assert readiness_words(unlisted) == "Ready · reachable 09:07"
     # The setup verdict reads its Model facet the same way.
-    for facet, word in (("confirmed", "verified"), ("unconfirmed", "reachable")):
+    for facet, word in (
+        ("confirmed", "Key verified"),
+        ("unconfirmed", "Ready · reachable"),
+    ):
         assert verdict_readiness_words(
             _snapshot(endpoint="reachable", model=facet),
             owner.evidence_for(OPENAI),
-        ) == f"Ready · {word} 09:07"
+        ) == f"{word} 09:07"
 
 
 def test_one_provider_readiness_words_each_listed_model_by_its_own_listing():
@@ -229,7 +237,7 @@ def test_one_provider_readiness_words_each_listed_model_by_its_own_listing():
     for representative in ("gpt-4o", "gpt-5.6-terra"):
         provider_readiness = _openai_readiness(representative, owner)
         assert model_readiness_words(provider_readiness, "gpt-4o") == (
-            "Ready · verified 09:07"
+            "Key verified 09:07"  # TASK-34100.2 AC#2 (rewritten on purpose)
         )
         assert model_readiness_words(provider_readiness, "gpt-5.6-terra") == (
             "Ready · reachable 09:07"
@@ -564,8 +572,9 @@ def test_verified_by_a_paid_test_reads_the_time_of_that_test(monkeypatch):
     (
         # Keyless: the listing still reads "reachable" for the untested model.
         ("llama_cpp", LLAMA, LLAMA_CONFIG, {}, "Ready · reachable 09:00"),
-        # Keyed: the accepted key listing still reads "verified" at its time.
-        ("openai", OPENAI, OPENAI_CONFIG, {"key_accepted": True}, "Ready · verified 09:00"),
+        # Keyed: the accepted key listing still reads "key verified" at its
+        # time (TASK-34100.2: a listing proves the key, never a reply).
+        ("openai", OPENAI, OPENAI_CONFIG, {"key_accepted": True}, "Key verified 09:00"),
     ),
 )
 def test_a_paid_test_verifies_only_the_model_it_tested(
@@ -604,11 +613,21 @@ def test_a_paid_test_verifies_only_the_model_it_tested(
     assert word("model-b") == other
 
 
-def test_a_public_listing_never_records_an_accepted_key():
+@pytest.mark.parametrize(
+    ("provider", "endpoint"),
+    [
+        ("nvidia", "https://integrate.api.nvidia.com/v1"),
+        ("novita", "https://api.novita.ai/openai/v1"),
+    ],
+)
+def test_a_public_listing_never_records_an_accepted_key(provider, endpoint):
     """AC#4 (review round 1): held by the record, not by producer discipline.
-    OpenRouter's /models answers any key, so key_accepted proves nothing."""
-    key = "sk-or-test-readiness-words"
-    identity = _identity("openrouter", "https://openrouter.ai/api/v1", key)
+    These /models routes answer any key and the provider has no key check, so
+    key_accepted proves nothing. (TASK-34100.2: OpenRouter and Hugging Face
+    left this set -- discovery checks their key at /api/v1/key and whoami-v2,
+    and ``key_check_probe_result`` accepts only after that check passed.)"""
+    key = "sk-test-readiness-words-public-listing"
+    identity = _identity(provider, endpoint, key)
     app = type("App", (), {})()
     store = ProviderTestEvidenceStore(lambda: app)
     store.settle(
@@ -616,11 +635,54 @@ def test_a_public_listing_never_records_an_accepted_key():
         ProviderProbeResult("reachable", ("model-a",), key_accepted=True),
     )
     readiness = _console(
-        "openrouter",
-        {"api_settings": {"openrouter": {"api_key": key}}},
+        provider,
+        {"api_settings": {provider: {"api_key": key, "api_base_url": endpoint}}},
         store.evidence_for(identity),
     )
 
     assert store.evidence_for(identity).credential == "present_unverified"
     assert readiness.credential == "present_unverified"
     assert readiness_words(readiness) == "Ready · not tested"
+
+
+@pytest.mark.parametrize(
+    ("provider", "endpoint"),
+    [
+        ("openrouter", "https://openrouter.ai/api/v1"),
+        ("huggingface", "https://router.huggingface.co/v1"),
+    ],
+)
+@pytest.mark.parametrize("key_check_passed", [False, True])
+def test_a_checked_public_listing_accepts_a_key_only_through_its_key_check(
+    provider, endpoint, key_check_passed
+):
+    """TASK-34100.2 review round 1 (C8): the record still holds the line for
+    OpenRouter and Hugging Face. Their listing answers any key, so a listing
+    result may accept a key only when it says the provider's authenticated key
+    check passed -- not because one producer (``key_check_probe_result``)
+    happens to be careful."""
+    key = "sk-test-readiness-words-checked-listing"
+    identity = _identity(provider, endpoint, key)
+    app = type("App", (), {})()
+    store = ProviderTestEvidenceStore(lambda: app)
+    store.settle(
+        store.begin(identity),
+        ProviderProbeResult(
+            "reachable",
+            ("model-a",),
+            key_accepted=True,
+            key_check_passed=key_check_passed,
+        ),
+    )
+    readiness = _console(
+        provider,
+        {"api_settings": {provider: {"api_key": key, "api_base_url": endpoint}}},
+        store.evidence_for(identity),
+    )
+
+    if key_check_passed:
+        assert readiness.credential == "listing_accepted"
+        assert readiness_words(readiness).startswith("Key verified ")
+    else:
+        assert readiness.credential == "present_unverified"
+        assert readiness_words(readiness) == "Ready · not tested"

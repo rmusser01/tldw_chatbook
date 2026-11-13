@@ -991,7 +991,15 @@ MINIMUM_FILES = 2023
 MINIMUM_FILES = 2028
 # TASK-40720 (2026-11-13): append the native sync admission file at the tail.
 # The floor is the measured entry count.
-MINIMUM_FILES = 2029
+# TASK-34100.2 (rebased 2026-11-12 onto dev 4b90eb860b's 2028 entries)
+# appends 3 whole-file entries at the tail: test_switcher_capacity_rows.py
+# (the switcher's 'window too small' rows and Fix model limits),
+# test_console_env_key_card.py (the Get started card's env-key offers and
+# their one atomic commit) and test_template_sample_switcher.py (AC#9:
+# shipped samples never read Ready). Appended, so no other entry changes
+# shard. Rebased 2026-11-13 onto dev 1455ceeb96 (2029 entries, TASK-40720's
+# tail entry first): the floor is the measured entry count, 2029 + 3 = 2032.
+MINIMUM_FILES = 2032
 
 
 def read_census(path: Path) -> list[str]:

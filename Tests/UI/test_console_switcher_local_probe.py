@@ -645,7 +645,9 @@ async def test_the_not_running_line_wraps_so_every_name_shows_whole(
     assert not any(line.endswith("…") for line in lines), lines
 
 
-async def test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers(servers):
+async def test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers(
+    servers, monkeypatch
+):
     """Capture findings 5 (1): one fresh launch of 05d's profile at 211x44 drew
     a blank row under "MLX-LM (Apple silicon) (not checked)", gone after a
     resize. Each probe answer rebuilds the rows, and a server that leaves READY
@@ -660,6 +662,11 @@ async def test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers(ser
     and the scrollbar's own layout refresh happens to clear the stale box:
     the shrinking steps are the case.)"""
     servers.hold = threading.Event()
+    # TASK-34100.2 AC#9 keeps a marked template sample out of READY until a
+    # probe answers, so the "behind" rows below would never be READY rows.
+    # This test is about the list's cached box, not that grouping: it reads
+    # the samples as unmarked, the grouping it was written against.
+    monkeypatch.setattr(popover_module, "provider_is_template_sample", lambda *_: False)
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = build(
@@ -861,7 +868,8 @@ async def test_rows_read_verified_only_for_the_models_the_key_check_listed(reque
 
     models = ("gpt-4o", "gpt-5.6-terra")
     words = {
-        "gpt-4o": "Ready · verified 09:07",
+        # TASK-34100.2 AC#2 (rewritten on purpose): a listing proves the key.
+        "gpt-4o": "Key verified 09:07",
         "gpt-5.6-terra": "Ready · reachable 09:07",
     }
     app = _harness()
