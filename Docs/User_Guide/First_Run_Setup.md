@@ -264,7 +264,14 @@ valid key. Some providers need more than that:
 - **Google Gemini**: Google's own model list is the key check, so setup
   lists Gemini's chat models and reads "✓ Key works — Google Gemini
   returned 15 models." A wrong key reads "✗ Google Gemini rejected this
-  key: API key not valid. Please pass a valid API key."
+  key: API key not valid. Please pass a valid API key." The Model step
+  lists the shipped default (`gemini-flash-lite-latest`) first and the
+  rest in Google's order, except that ids Google still lists but which
+  did not serve a new key when last checked come last: the retired
+  `gemini-2.5-*` ids, which answer 404, and `gemini-flash-latest` and
+  `gemini-3.8-flash`, which answered 503 "This model is currently
+  experiencing high demand" on 2026-11-12. They are still listed, since
+  your key may be served.
 - **Anthropic**: its authenticated model list. "✓ Key works — Anthropic
   returned 13 models." A wrong key reads "✗ Anthropic rejected this key.";
   when a provider gives its own reason for refusing a key, setup adds it

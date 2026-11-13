@@ -183,6 +183,38 @@ _GOOGLE_NON_CHAT_ID_TOKENS = (
     "imagen",
     "veo",
 )
+#: Gemini ids Google retired for new users: generateContent answered 404
+#: ("no longer available to new users" / "not found for API version") with
+#: the repo's key on 2026-10-03, and again for gemini-2.5-flash and
+#: gemini-2.5-flash-lite on 2026-11-12. models.list still returns some of
+#: them, so the listing sorts them last; it never hides them, since a key
+#: Google still serves (an older or paid one) may answer (review v5r4,
+#: G2C-R4-1). The shipped catalog and the code fallbacks name none of them.
+RETIRED_GEMINI_IDS = frozenset(
+    {
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-preview-05-20",
+        "gemini-2.5-pro-preview-05-06",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash-latest",
+    }
+)
+#: Gemini ids Google lists that did not serve the repo's key (TASK-34100.2
+#: review v5r2, G2C-R3-1). On 2026-11-12, of 8 one-output-token calls each,
+#: every one that got an HTTP answer was 503 UNAVAILABLE "This model is
+#: currently experiencing high demand" (gemini-flash-latest 7, gemini-3.8-flash,
+#: the model it resolves to, 6; the rest timed out at 60 s), with no 429,
+#: while gemini-flash-lite-latest answered all 8 in about a second. Earlier
+#: smoke runs from 2026-10-03 mixed answers, 503s and timeouts. Sorted last
+#: like the retired ids, never hidden: another key may be served. Evidence:
+#: .worktrees/setup-wizard-ux-qa/evidence/g2cv5-r3-catalog/, g2cv5-v3-catalog/.
+NOT_ANSWERING_GEMINI_IDS = frozenset({"gemini-flash-latest", "gemini-3.8-flash"})
 #: Longest provider reason kept for an error message (gap-01: the provider's
 #: own words, bounded and scrubbed of the key that was sent).
 _PROVIDER_REASON_MAX_CHARS = 160
@@ -945,13 +977,21 @@ def _is_google_chat_model(model: Mapping[str, Any]) -> bool:
     )
 
 
-def _google_model_rank(model_id: str) -> tuple[int, int]:
-    """Rolling aliases first, the shipped default leading (TASK-34100.2)."""
+def _google_model_rank(model_id: str) -> int:
+    """The shipped default first, then Google's order, then the pinned ids.
+
+    Only the default is promoted (review v5r4, G2C-R4-1): promoting every
+    ``-latest`` alias put ``gemini-flash-latest`` right under it. An id in
+    ``RETIRED_GEMINI_IDS`` or ``NOT_ANSWERING_GEMINI_IDS`` sorts last; the
+    sort is stable, so each group keeps the order Google listed it in.
+    """
     from tldw_chatbook.config import DEFAULT_GOOGLE_CHAT_MODEL
 
     if model_id == DEFAULT_GOOGLE_CHAT_MODEL:
-        return (0, 0)
-    return (1, 0) if model_id.endswith("-latest") else (2, 0)
+        return 0
+    if model_id in RETIRED_GEMINI_IDS or model_id in NOT_ANSWERING_GEMINI_IDS:
+        return 2
+    return 1
 
 
 async def _discover_google_models(
@@ -968,7 +1008,7 @@ async def _discover_google_models(
     URL), so a listing that answers also verifies the key, and Google's 400
     ``API_KEY_INVALID`` is a rejected key in Google's own words. Only
     generateContent chat models are kept -- no TTS, image, embedding or
-    preview ids -- with the rolling aliases first.
+    preview ids -- with the shipped default first (``_google_model_rank``).
     """
     endpoint_fingerprint = fingerprint_endpoint(endpoint)
 

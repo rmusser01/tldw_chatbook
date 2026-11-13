@@ -468,7 +468,8 @@ another host (a proxy or a dedicated endpoint), that host's key is never sent
 to OpenRouter's key check. NVIDIA NIM and Novita have no such check, so they
 read "models listed; key not checked" and stay "Ready · not tested". Google Gemini is listed from Google's
 own model list (chat models only), which needs a valid key, so that listing
-is its key check. A provider with no non-billable listing says "No
+is its key check; it lists the shipped default first and Google's retired
+or (when last checked) unserved ids last, as setup does. A provider with no non-billable listing says "No
 non-billable key check is available" and sends nothing, as does a provider
 with no model list in `[providers]`. The same holds when a send would not go where the listing
 would: Hugging Face (its sends still take the endpoint from the legacy `[API]`

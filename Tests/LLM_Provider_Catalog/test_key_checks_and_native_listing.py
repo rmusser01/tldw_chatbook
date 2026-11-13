@@ -428,12 +428,72 @@ async def test_gemini_lists_chat_models_only_and_verifies_the_key() -> None:
     assert result.status == "success"
     assert result.key_verified is True
     ids = [model.model_id for model in result.models]
-    assert ids[0] == "gemini-flash-latest"  # the rolling alias leads
+    # Review v5r4 (G2C-R4-1): no rolling alias leads any more; only the
+    # shipped default is promoted, and the order is pinned below.
     assert set(ids) == {"gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash"}
     request = seen[0]
     assert request.headers["x-goog-api-key"] == "AIza-test-google-key"
     assert "Authorization" not in request.headers
     assert "key=" not in str(request.url)  # the key never rides in the URL
+
+
+#: Google's own order, trimmed from models.list as served on 2026-11-12: a
+#: dated id ahead of the rolling aliases, with ids Google still lists but
+#: that did not serve the repo key that day (404, or 503 'high demand')
+#: mixed in, and the shipped default in the middle.
+_GOOGLE_LISTING_ORDER = (
+    "gemini-2.5-flash",  # 404 'no longer available to new users'
+    "gemini-3.5-flash",
+    "gemini-2.5-pro",  # 404
+    "gemini-pro-latest",
+    "gemini-flash-latest",  # 503 'high demand' on every answered call
+    "gemini-flash-lite-latest",  # the shipped default
+    "gemini-3.8-flash",  # 503 'high demand' on every answered call
+    "gemini-3.1-flash-lite",
+)
+
+
+@pytest.mark.asyncio
+async def test_gemini_promotes_only_the_shipped_default_and_lists_known_bad_ids_last() -> None:
+    """Review v5r4 (G2C-R4-1, LV3-2): setup's Model step and the Settings
+    listing put ``gemini-flash-latest`` in row 2, under the recommended
+    default, because every ``-latest`` alias was promoted over dated ids. It
+    is one of the ids that came back 503 'high demand' on every answered
+    call with the repo key on 2026-11-12, and the 2.5 ids answer 404 for a
+    new key. Now only the shipped default is promoted; the rest keep
+    Google's order, and an id the shipped pins name (retired or not serving)
+    sorts last -- still listed, since another key may be served."""
+    from tldw_chatbook.config import DEFAULT_GOOGLE_CHAT_MODEL
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        NOT_ANSWERING_GEMINI_IDS,
+        RETIRED_GEMINI_IDS,
+    )
+
+    listing = [
+        {"name": f"models/{model_id}", "supportedGenerationMethods": ["generateContent"]}
+        for model_id in _GOOGLE_LISTING_ORDER
+    ]
+    result, _seen = await _discover(
+        "google",
+        _GOOGLE_BASE,
+        {f"{_GOOGLE_BASE}/models": httpx.Response(200, json={"models": listing})},
+        api_key="AIza-test-google-key",
+    )
+
+    assert DEFAULT_GOOGLE_CHAT_MODEL == "gemini-flash-lite-latest"
+    assert {"gemini-2.5-flash", "gemini-2.5-pro"} <= RETIRED_GEMINI_IDS
+    assert {"gemini-flash-latest", "gemini-3.8-flash"} == NOT_ANSWERING_GEMINI_IDS
+    assert result.status == "success"
+    assert [model.model_id for model in result.models] == [
+        "gemini-flash-lite-latest",  # the shipped default, the recommended row
+        "gemini-3.5-flash",  # Google's order: no alias boost over a dated id
+        "gemini-pro-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",  # known not to serve a new key: last, not hidden
+        "gemini-2.5-pro",
+        "gemini-flash-latest",
+        "gemini-3.8-flash",
+    ]
 
 
 #: Recorded from Google's models.list on 2026-11-05 (name, displayName and
