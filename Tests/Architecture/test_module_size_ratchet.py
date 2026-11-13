@@ -490,7 +490,10 @@ _BUDGETS: dict[str, int] = {
     # PR 5 fix round 1, 2026-11-12, same owner rule: TASK-33910.51's restore
     # counts the user's list changes instead of comparing values: +5
     # (17,047 -> 17,052).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 17056,
+    # PR 5 fix round 2, 2026-11-12, same owner rule: the restore also needs
+    # the kind the clear left (a deep link sets it uncounted): +6
+    # (17,052 -> 17,058).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17062,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
