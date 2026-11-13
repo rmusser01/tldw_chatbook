@@ -92,8 +92,8 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         ("_reconcile_research_source_held_jobs", "research_source_held_startup"),
         ("deferred_actor_pack_recovery", "actor_pack_recovery"),
         ("deferred_actor_pack_staging_sweep", "actor_pack_staging_sweep"),
-        # TASK-34100.5.3.2: the one-time light-surface upgrade check (first
-        # staggered member; a thread worker, recorded once done).
+        # TASK-34100.5.3.2: the one-time light-surface upgrade check (second
+        # staggered member, after recovery; a thread worker, recorded once done).
         ("_run_full_agent_tools_upgrade", "full-agent-tools-upgrade"),
         ("restore_ingest_jobs", "ingest_restore"),
         ("resume_startup", "research_source_association_startup"),
