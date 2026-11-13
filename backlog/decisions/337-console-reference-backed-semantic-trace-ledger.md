@@ -910,6 +910,14 @@ implementing change and is subject to the owner's review of that change.
 
 ### Amendment proposed 2026-11-12: append in each domain for replayed reasoning (pending owner approval)
 
+> **PROPOSED -- NOT APPROVED.** This section is a proposal awaiting the
+> owner's decision. The branch that implements it
+> (`fix/task-34100.3-moonshot-continuation`) must not merge until the owner
+> approves this amendment; approval is TASK-34100.3.1 AC#2. If it is
+> declined, the planner hook in `Chat/console_trace_service.py` and
+> `Chat/console_trace_domain_append.py` come out, and turn 3+ of a saved Kimi
+> chat with capture on goes back to "Trace capture blocked".
+
 Status: proposed with its implementing change (TASK-34100.3, folding in
 TASK-34100.3.1). It needs the owner's approval before it ships.
 
@@ -951,9 +959,18 @@ schema, retention, codec, registry or witness is added. An edited, removed or
 reordered recorded entry, a new checkpoint on an earlier reply, an untyped
 continuation, or interleaved domains falls through to the existing rules, which
 refuse it as before. The rule lives in `Chat/console_trace_domain_append.py`.
-Its negative controls are in `Tests/Chat/test_console_trace_domain_append.py`.
+Its rule-level negative controls are in
+`Tests/Chat/test_console_trace_domain_append.py`.
+`Tests/Chat/test_console_trace_domain_append_planner.py` drives the real
+planner (`prepare_current_surface_delta`) over a real ledger, warm and cold:
+it admits exactly the new entries of each domain and reads the ledger back as
+the request sent, and it still refuses an edited saved message the ledger
+never recorded, new bytes for a recorded revision, changed checkpoint bytes,
+reordered checkpoints, a second checkpoint on an earlier reply and a dropped
+replay, plus the tool-loop, Continue and Regenerate routes, live native
+custody and a completed project-context turn.
 `Tests/UI/test_console_trace_retry_refusal.py` drives a really dropped replay
-through the real planner and records that it is still refused.
+through the mounted Console and records that it is still refused.
 
 The same change drains the reply's pending trace settlement when the final
 continuation's atomic dispatch settlement completes it. That path set the reply
