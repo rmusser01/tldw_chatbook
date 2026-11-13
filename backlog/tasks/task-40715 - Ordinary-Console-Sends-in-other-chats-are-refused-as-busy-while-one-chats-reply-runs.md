@@ -1,0 +1,41 @@
+---
+id: TASK-40715
+title: "Ordinary Console Sends in other chats are refused as 'Workspace activity is busy' while one chat's reply runs"
+status: To Do
+created_date: 2026-11-13 06:45
+labels:
+- follow-up
+- console
+- bug
+- workspaces
+priority: high
+references:
+- tldw_chatbook/Chat/console_ordinary_tree.py
+- tldw_chatbook/Workspaces/worktree_activity.py
+- tldw_chatbook/Agents/ordinary_tree.py
+- https://github.com/rmusser01/tldw_chatbook/pull/3480
+dependencies: []
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Found in the 2026-11-10 review of PR #3480 (TASK-39147, native phased workflows), which merged on 2026-11-12. It is still present on dev 7579f75ea9, re-checked on 2026-11-13 by reading the code. Line numbers are that tree's, and paths are under `tldw_chatbook/` unless they start with `Tests/`.
+
+**Why.** On macOS and Linux with default settings, while one chat's reply is running, Send in any other chat is refused with "Workspace activity is busy; retry after it finishes." (`Chat/console_chat_controller.py:10165`). A probe on 2026-11-12 (dev e0186fa10a) reproduced it with a second chat.
+
+**Cause.**
+- `Chat/console_ordinary_tree.py` `_capture_maximum` marks a turn's worktree footprint opaque when the run budget allows sub-agents and `spawn_subagent` is advertised and allowed (:540-545).
+- `max_subagents` defaults to 2 (`Agents/agent_models.py:892`), and the Console does not make it configurable (`Chat/console_agent_bridge.py:578-583`).
+- `install_skill` with a skills service (:551) and MCP-eligible non-ephemeral sessions (:457-481) also make the footprint opaque.
+- `Workspaces/worktree_activity.py:145-146` makes an opaque footprint conflict with every other footprint. So `_prelaunch` (:410-417) returns no claim, and `Agents/ordinary_tree.py:626` raises `CapacityRefused("worktree_activity_busy")`.
+
+Windows skips the ordinary tree entirely (`Chat/console_ordinary_tree.py:67`). So does a chat that is not agent-eligible, such as a character chat or a send with a prefill.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 With default configuration, Sends in two different chats run at the same time, with no busy refusal and two provider calls.
+- [ ] #2 Turns whose workspace footprints really overlap are still serialized: the fix does not drop the conflict check.
+- [ ] #3 A regression test sends from two non-ephemeral chats back to back and gets two provider calls.
+<!-- AC:END -->
