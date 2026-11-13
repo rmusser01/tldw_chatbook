@@ -3,7 +3,7 @@ id: TASK-40315
 title: "The Buddy approval modal drops the captured approval view, so a shell row's session scope would read the generic per-tool copy"
 status: Done
 assignee: ['@claude']
-updated_date: 2026-11-13 02:48
+updated_date: 2026-11-13 03:58
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -53,5 +53,7 @@ The new test proves the same path running. `test_buddy_raw_shell_round_states_th
 **A trap the test hit.** A row the card has mounted can hold a decision Select that has not mounted yet (`value` is `Select.NULL`). A choice set then landed, but never reached the scope line, and the first red read the Deny copy for that reason. The shared helper `_session_scope_line` now waits, bounded, for the Select to mount before choosing.
 
 Covering run (`-n 4`, load 62): `Tests/UI/test_buddy_conversation_modal.py`, `Tests/Persona_Buddy/test_buddy_modal_poll_gating.py`, `Tests/UI/test_buddy_management_journey.py` and `Tests/UI/test_buddy_v1_qualification_capture.py`: 76 passed, 1 failed. The failure, `test_cold_home_saved_buddy_bootstraps_only_after_explicit_open`, fails the same way with the base modal (a child process's 5 s `until` deadline under load). The User Guide quotes no scope copy for Buddy. `console/agent-runs-and-tools.md` already says raw-shell grants cover the Console chat, which the modal now matches.
+
+Two other files read the modal and are red on base too, with the same nodes when the base modal is restored: `Tests/UI/test_polling_static_update_idempotence.py::test_buddy_conversation_poll_keeps_unchanged_text[True|False]` ("Unchanged conversation repaints") and `Tests/Architecture/test_timer_path_static_update_inventory.py::test_no_timer_path_update_defaults_to_layout_true` plus `::test_clock_root_set_is_pinned`. The inventory's offenders are all `Settings_Widgets/project_index_binding_card.py` rows. None is on this change's path.
 
 Files: `tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py`, `Tests/UI/test_console_mcp_approval.py`.
