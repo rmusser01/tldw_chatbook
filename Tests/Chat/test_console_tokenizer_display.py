@@ -45,6 +45,8 @@ async def test_original_exact_custom_mapping_is_prepared_or_stays_unavailable(
             models.WordLevel({"[UNK]": 0, "hello": 1}, unk_token="[UNK]")
         )
         tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+        # The manager creates its folder on first write (TASK-34100.16.1).
+        (tmp_path / "tokenizers").mkdir(exist_ok=True)
         tokenizer.save(str(tmp_path / "tokenizers" / "fixture.json"))
     await asyncio.to_thread(manager.add_mapping, "fixture-model", "fixture")
     request = display.capture_tokenizer_preparation("fixture-model", "OpenAI")
