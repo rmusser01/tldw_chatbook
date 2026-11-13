@@ -1064,6 +1064,11 @@ MINIMUM_FILES = 2029
 # TASK-40328 (2026-11-13): append the Collections rail-press recompose node at
 # the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2140
+MINIMUM_FILES = 2134
+MINIMUM_FILES = 2030
+# TASK-40328 review r14ls-rev1 (2026-11-13): append the cancelled pane-repaint
+# node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2141
 
 
 def read_census(path: Path) -> list[str]:

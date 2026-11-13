@@ -1357,7 +1357,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-13, TASK-40298 review r14lf-rev1: the rail F6 target moves to
     #: ``library_rail.py`` and the Artifacts shell shares it: 38185 -> 38175
     #: lines, 1376 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38175, 1376),
+    #: 2026-11-13, TASK-40328 review r14ls-rev1: one rail-sync helper
+    #: (``_sync_library_rail_state``) shared by the two entry/snapshot
+    #: reconciles and the Collections entry load, which repaints the rail's
+    #: count in place: 38164 -> 38165 lines, 1376 -> 1377 methods (measured).
+    #: 2026-11-13 restack: both stacked, measured 38176 lines, 1377 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38176, 1377),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

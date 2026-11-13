@@ -202,8 +202,8 @@ async def recompose_capture_panes(
     """Re-render the mounted capture panes from ``presentation`` (TASK-40328).
 
     Only the scope rows and the Items and Work panes recompose, never the
-    screen, and only when their presentation changed; a control the rebuild
-    removed is focused again by id.
+    screen, and only when their presentation changed or their last recompose
+    never finished; a control the rebuild removed is focused again by id.
 
     Args:
         screen: The Library screen (a ``BaseAppScreen``) hosting the panes.
@@ -220,7 +220,7 @@ async def recompose_capture_panes(
     panes = [
         pane
         for pane in (*scopes, items.first(), work.first())
-        if pane.presentation != presentation
+        if pane.presentation != presentation or getattr(pane, "_half_built", False)
     ]
     focused = screen.focused
     owned = focused is not None and any(
@@ -230,7 +230,11 @@ async def recompose_capture_panes(
     for pane in panes:
         screen.release_mouse_capture_for_teardown()
         pane.presentation = presentation
+        # Until its recompose completes: a cancelled entry worker can leave the
+        # pane half rebuilt, and an identical repaint must not skip it then.
+        pane._half_built = True
         await pane.recompose()
+        pane._half_built = False
     screen.sweep_stale_mouse_capture()
     # Textual moved focus off the removed widget; put it back by id.
     if focus_id and getattr(screen.focused, "id", None) != focus_id:

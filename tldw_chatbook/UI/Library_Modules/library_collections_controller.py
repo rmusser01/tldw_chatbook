@@ -428,6 +428,10 @@ class LibraryCollectionsController:
         presentation = self._library_collections_capture_presentation()
         if not await recompose_capture_panes(self._screen, presentation):
             self._refresh_library_collections_capture_reader()
+        elif (rail := self._screen._active_library_rail()) is not None:
+            # The rail row and Details read the count this load produced; the
+            # retired whole-screen recompose used to repaint them (r14ls-rev1).
+            self._screen._sync_library_rail_state(rail)
         self.call_after_refresh(
             self._sync_library_collections_reader_layout_from_shell
         )

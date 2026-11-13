@@ -4,7 +4,7 @@ title: "A Library Collections rail press recomposes the whole screen three times
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 05:13'
+updated_date: '2026-11-13 07:06'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -53,4 +53,8 @@ Found in round 13 of the 2026-10-23 burn-down (cred stream review r13c-rev2, mea
 - **Lane.** New node in `scripts/ui_pr_gate_census.txt` (tail): 8.2 s call, 19.1 s total serial with the UI lane's flags at load 46.
 - **Size.** `library_collections_controller.py` 1689 -> 1698 (+9, measured); pin raised by exactly that with a dated comment in `Tests/Architecture/test_library_modules_size_ratchet.py`. The pane logic went to the widget module to keep this small.
 - Files: `tldw_chatbook/UI/Library_Modules/library_collections_controller.py`, `tldw_chatbook/Widgets/Library/library_collections_capture_reader.py`, `Tests/UI/test_library_collection_reader_journeys.py`, `Tests/UI/test_library_collections_capture_reader.py`, `Tests/UI/test_library_collections_characterization.py`, `Tests/Architecture/test_library_modules_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+- **Fix round 1 (review r14ls-rev1, 2026-11-13).**
+  - *Rail count and Details went stale* (task-32103's contradiction back): the loader's whole-screen recomposes had been the only thing repainting the rail row label and the Details sentence after the page loaded. After each in-place pane repaint, `_sync_library_collections_capture_panes` now re-syncs the rail in place from a fresh shell through `LibraryScreen._sync_library_rail_state`, a helper extracted from (and now used by) the entry and snapshot reconciles' identical `rail.sync_state(...)` calls. The Collections scope rows the rail's row-context factory builds now read the live presentation, so a rail-only recompose cannot rebuild them from the presentation captured at compose time. The rail-press test is parametrized: `late_capture` (a capture saved after the prefetch: the painted row must read "(3)") and `failed_prefetch` (the painted row must leave "(—)" for "(2)" and `#library-details-body` must drop "Collections count unavailable"); both read the painted widgets. Red on ec10ee34fa: "Rail row reads '▸ Collections (2)', the canvas (3)" and "Rail row reads '▸ Collections (—)', the canvas (2)"; green after (load 39-41).
+  - *A cancelled repaint could strand a blank pane*: `presentation` was assigned before `await pane.recompose()`, so a cancel mid-recompose left the pane empty and an identical repaint skipped it. Each pane is now marked `_half_built` until its recompose completes, and a marked pane is rebuilt whatever its presentation. New census node `test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next` (cancels the repaint task from inside the Items pane's recompose, then repaints with the same presentation): red without the mark ("An identical repaint left the pane with 0 rows"), green with it; 6.4 s call / 11.9 s total serial at load 34.
+  - *Size.* `library_collections_controller.py` 1698 -> 1702 and `library_screen.py` 38164 -> 38165 lines, 1376 -> 1377 methods (measured; the screen helper replaced two 7-line calls); both pins raised by exactly that with dated comments. The rail-press node now runs 7.0 s + 6.6 s call / 21.3 s total serial at load 36.
 

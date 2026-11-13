@@ -366,8 +366,9 @@ async def test_saved_highlight_survives_failed_refresh_without_resubmitting_draf
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+@pytest.mark.parametrize("rail_count", ["late_capture", "failed_prefetch"])
 async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
-    monkeypatch,
+    rail_count, monkeypatch
 ):
     """TASK-40328: the capture loads re-render the reader panes, not the screen.
 
@@ -375,10 +376,17 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
     recompose (rail, canvas and reader re-mounted three times, about
     0.64-0.80 s of UI-loop CPU), on top of the route change's own one.
     Counts ``compose_content`` passes instead of timing the press.
+
+    Those recomposes were also what repainted the rail with the count the
+    load produced (review r14ls-rev1): the painted Collections row and the
+    Details line must show it, for a capture saved after the rail's prefetch
+    and after a failed prefetch (task-32103's contradiction).
     """
+    from textual.widgets import Static
+
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-    app, _scope, _identities = await _seed()
+    app, scope, _identities = await _seed()
     host = LibraryProductionCSSHarness(app)
     composes = []
     compose_content = LibraryScreen.compose_content
@@ -387,10 +395,37 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
         composes.append(screen)
         return compose_content(screen)
 
+    def row_label() -> str:
+        return str(screen.query_one("#library-row-browse-collections", Button).label)
+
     monkeypatch.setattr(LibraryScreen, "compose_content", counting_compose_content)
     async with host.run_test(size=(170, 48)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        await _wait_for_condition(
+            pilot, lambda: "(2)" in row_label(), message="Prefetch never painted"
+        )
+        if rail_count == "late_capture":
+            await scope.save_capture(
+                CaptureSaveRequest(
+                    scope.active_authority.key,
+                    "https://example.test/gamma",
+                    title="Gamma",
+                    text_content="Readable Gamma body.",
+                )
+            )
+        else:
+            screen._library_collections_prefetched_total = None
+            screen._library_collections_count_authority = scope.active_authority.key
+            screen._library_collections_count_failure = "error"
+            await screen.recompose()
+            await _wait_for_condition(
+                pilot, lambda: "(\u2014)" in row_label(), message="No failed count"
+            )
+            assert "Collections count unavailable" in str(
+                screen.query_one("#library-details-body", Static).render()
+            )
+        expected = "(3)" if rail_count == "late_capture" else "(2)"
         composes.clear()
         screen.query_one("#library-row-browse-collections", Button).press()
 
@@ -411,6 +446,66 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
         await pilot.pause()
         await pilot.pause()
         assert len(composes) <= 1, f"{len(composes)} Library recomposes for one press"
-        title = screen.query_one("#library-collections-reader-title")
-        assert "Beta" in str(title.render()) or "Alpha" in str(title.render())
-        assert len(screen.query(".library-collections-item-row")) == 2
+        title = str(screen.query_one("#library-collections-reader-title").render())
+        assert any(name in title for name in ("Alpha", "Beta", "Gamma")), title
+        assert len(screen.query(".library-collections-item-row")) == int(expected[1])
+        await _wait_for_condition(
+            pilot,
+            lambda: expected in row_label(),
+            message=lambda: f"Rail row reads {row_label()!r}, the canvas {expected}",
+        )
+        details = str(screen.query_one("#library-details-body", Static).render())
+        assert "Collections count unavailable" not in details, details
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+async def test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next():
+    """TASK-40328 review r14ls-rev1: a cancelled repaint never strands a pane.
+
+    The exclusive entry worker is cancelled when the rail is pressed again,
+    possibly while a pane is mid-recompose: its old children are already
+    being removed and the new ones never mount. The next repaint must rebuild
+    that pane even when it carries the very same presentation.
+    """
+    import dataclasses
+
+    from tldw_chatbook.Widgets.Library.library_collections_capture_reader import (
+        recompose_capture_panes,
+    )
+
+    app, _scope, _identities = await _seed()
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open(host, pilot)
+        items = screen.query_one("#library-collections-items")
+
+        def rows() -> int:
+            return len(items.query(".library-collections-item-row"))
+
+        assert rows() == 2
+        presentation = dataclasses.replace(
+            screen._collections_controller._library_collections_capture_presentation(),
+            action_status="restarted",
+        )
+        original_recompose = items.recompose
+
+        async def cancelled_mid_recompose() -> None:
+            asyncio.get_running_loop().call_soon(asyncio.current_task().cancel)
+            await original_recompose()
+
+        items.recompose = cancelled_mid_recompose
+        repaint = asyncio.create_task(recompose_capture_panes(screen, presentation))
+        with pytest.raises(asyncio.CancelledError):
+            await repaint
+        del items.recompose
+        await _wait_for_condition(
+            pilot, lambda: rows() == 0, message="The cancel left the old rows"
+        )
+
+        await recompose_capture_panes(screen, presentation)
+        await _wait_for_condition(
+            pilot,
+            lambda: rows() == 2,
+            message=lambda: f"An identical repaint left the pane with {rows()} rows",
+        )

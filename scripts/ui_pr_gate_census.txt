@@ -3078,3 +3078,6 @@ Tests/UI/test_library_media_reader_match_nav_t22209.py::test_find_toggle_keeps_b
 # TASK-40328 (2026-11-13): a Collections rail press recomposes the Library at
 # most once and loads its captures into the reader panes in place.
 Tests/UI/test_library_collection_reader_journeys.py::test_rail_press_recomposes_library_once_and_loads_captures_in_place
+# TASK-40328 review r14ls-rev1 (2026-11-13): a pane repaint cancelled
+# mid-recompose is rebuilt by the next, identical one.
+Tests/UI/test_library_collection_reader_journeys.py::test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next

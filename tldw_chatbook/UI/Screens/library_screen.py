@@ -12751,13 +12751,7 @@ class LibraryScreen(BaseAppScreen):
                     onboarding_all_empty=self._library_onboarding_all_empty,
                 )
             else:
-                rail.sync_state(
-                    shell,
-                    self._library_rail_preferences(),
-                    query=self._library_rail_search_value(),
-                    lifecycle=self._library_lifecycle,
-                    onboarding_all_empty=self._library_onboarding_all_empty,
-                )
+                self._sync_library_rail_state(rail, shell)
                 self._sync_workspaces_rail_body(rail)
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
@@ -13222,13 +13216,7 @@ class LibraryScreen(BaseAppScreen):
             else None
         )
         try:
-            rail.sync_state(
-                shell,
-                self._library_rail_preferences(),
-                query=self._library_rail_search_value(),
-                lifecycle=self._library_lifecycle,
-                onboarding_all_empty=self._library_onboarding_all_empty,
-            )
+            self._sync_library_rail_state(rail, shell)
             self._sync_workspaces_rail_body(rail)
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
@@ -15798,7 +15786,7 @@ class LibraryScreen(BaseAppScreen):
                 row_context_factory=lambda row: (
                     (
                         LibraryCollectionsScopeRows(
-                            presentation,
+                            self._library_collections_capture_presentation(),
                             id="library-collections-scopes",
                         ),
                     )
@@ -22192,6 +22180,22 @@ class LibraryScreen(BaseAppScreen):
             self._gather_library_onboarding_evidence(generation),
             group="library_onboarding_evidence",
             exclusive=True,
+        )
+
+    def _sync_library_rail_state(
+        self, rail: LibraryRail, shell: LibraryShellState | None = None
+    ) -> None:
+        """Patch ``rail`` from ``shell`` (default: a fresh one) and live inputs."""
+        rail.sync_state(
+            shell
+            or build_library_shell_state(
+                self._build_library_shell_input(),
+                selected_row_id=self._library_selected_row_id,
+            ),
+            self._library_rail_preferences(),
+            query=self._library_rail_search_value(),
+            lifecycle=self._library_lifecycle,
+            onboarding_all_empty=self._library_onboarding_all_empty,
         )
 
     def _sync_library_rail_lifecycle_presentation(self) -> None:
