@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 08:17
+updated_date: 2026-11-13 15:53
 labels:
 - follow-up
 - tests
@@ -136,3 +136,13 @@ Found in round 13 of the 2026-10-23 burn-down (send stream, TASK-38948's coverin
     - `test_session_verified_adoption_edges_are_late_bound` 9.7 s
     - `test_context_spend_keeps_real_screen_proofs_and_live_module_callbacks` 6.8 s
     - `test_context_spend_re_resolves_runtime_framework_and_checked_timer_entry` 6.8 s
+
+**Review r14ti-rev2 fixes (2026-11-13).**
+- **The `_watch_value` half of the exit gate now has a test.** New `test_a_card_whose_scope_label_composes_after_app_exit_began_keeps_its_value`. It sets `_exit` as the scope control's `SelectCurrent` composes, so `#label` never mounts. It then checks there is no crash and that `set_confirmation(replace(confirmation(), selected_scope="chat_only"))` lands on `chat_only`. Red with only the `_watch_value` gate reverted (`NoMatches: '#label' on SelectCurrent`); green after.
+- **The round-2 test now flips `_exit` back in a `finally`.**
+- **`_retired()` no longer needs an active app.** Outside one it returns False, so the stock behaviour applies; `NoActiveAppError` is imported from `textual.message_pump`, as `chat_screen.py` does. New `test_a_scope_select_value_can_be_set_outside_any_app` is red with the guard reverted (`NoActiveAppError`) and green after. It lives in the archive-cards file, a whole-file census entry, because `Tests/Widgets/test_prune_safe_select.py` is on no lane.
+- **Docstrings** (class, `_retired`, `_watch_value`) now name `App._exit`, say `Select.Changed` is not posted while retired, and say Textual never resets `_exit` (only tests clear it). I did not add `App._exit` to `_require_internals`: it is an instance attribute set in `App.__init__`, and a rename would raise `AttributeError` in `_retired` anyway.
+- **Serial lane times** for the archive-cards file's three new tests: 0.1 s each, setup + call + teardown. The whole file took 8.05 s at load 28.
+- **Runs at `-n 4`, load 25-39.**
+  - Archive cards, `test_prune_safe_select.py` and the two Watchlists `PruneSafeSelect` users: 126 passed, 8 failed. The 8 are the Watchlists RecoveryRequired failures already seen with the change reverted.
+  - Stock skill-trust file: 15 passed, 2 failed (`[send_enter]`, `[send_button]`, as before).

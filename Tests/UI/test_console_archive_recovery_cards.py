@@ -971,16 +971,68 @@ async def test_a_card_composed_after_app_exit_began_never_crashes_and_keeps_its_
     app = HostApp()
     latest = confirmation()
     async with app.run_test() as pilot:
-        card = ArchiveRecoveryConfirmCard()
-        await app.query_one("#console-archive-recovery").mount(card)
-        await pilot.pause()
-        scope = card.query_one("#recovery-scope", Select)
-        assert scope.is_mounted and not scope.query(SelectOverlay)
-        assert app._exception is None, "the scope control's own mount crashed"
-        assert card.set_confirmation(latest) is True
-        assert app._exception is None
-        assert [value for _label, value in scope._options if value != Select.NULL] == [
-            "chat_only",
-            "chat_and_workspace",
-        ]
-        app._exit = False  # Let run_test's own teardown run as usual.
+        try:
+            card = ArchiveRecoveryConfirmCard()
+            await app.query_one("#console-archive-recovery").mount(card)
+            await pilot.pause()
+            scope = card.query_one("#recovery-scope", Select)
+            assert scope.is_mounted and not scope.query(SelectOverlay)
+            assert app._exception is None, "the scope control's own mount crashed"
+            assert card.set_confirmation(latest) is True
+            assert app._exception is None
+            assert [
+                value for _label, value in scope._options if value != Select.NULL
+            ] == ["chat_only", "chat_and_workspace"]
+        finally:
+            app._exit = False  # Let run_test's own teardown run as usual.
+
+
+@pytest.mark.asyncio
+async def test_a_card_whose_scope_label_composes_after_app_exit_began_keeps_its_value(
+    monkeypatch,
+):
+    """TASK-40323 (review r14ti-rev2): the `_watch_value` half of the exit gate.
+
+    When `App._exit` lands after the scope control has mounted its
+    `SelectCurrent` but before that composes `#label`, a stock `Select`
+    raises `NoMatches('#label')` on its next value change.
+    """
+    from dataclasses import replace
+
+    from textual.containers import Vertical
+    from textual.widgets._select import SelectCurrent
+
+    class HostApp(App):
+        def compose(self):
+            yield Vertical(id="console-archive-recovery")
+
+    real_compose = SelectCurrent.compose
+
+    def compose_as_exit_begins(current):
+        current.app._exit = True  # What App.exit and TldwCli._shutdown set.
+        return real_compose(current)
+
+    monkeypatch.setattr(SelectCurrent, "compose", compose_as_exit_begins)
+    app = HostApp()
+    async with app.run_test() as pilot:
+        try:
+            card = ArchiveRecoveryConfirmCard()
+            await app.query_one("#console-archive-recovery").mount(card)
+            await pilot.pause()
+            scope = card.query_one("#recovery-scope", Select)
+            assert not scope.query("#label")
+            chosen = replace(confirmation(), selected_scope="chat_only")
+            assert card.set_confirmation(chosen) is True
+            assert app._exception is None
+            assert scope.value == "chat_only"
+        finally:
+            app._exit = False
+
+
+def test_a_scope_select_value_can_be_set_outside_any_app():
+    """Review r14ti-rev2: the exit gate must not need an active app."""
+    from tldw_chatbook.Widgets.prune_safe_select import PruneSafeSelect
+
+    select = PruneSafeSelect([("A", "a"), ("B", "b")])
+    select.value = "b"  # Raised NoActiveAppError when `_retired` read `self.app`.
+    assert select.value == "b"
