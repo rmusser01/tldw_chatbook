@@ -3,7 +3,8 @@
 TASK-38969: the index's screen table and F-key lists stopped at F7 after F8
 Plugins and F9 Kanban shipped, and two captures still fetched fonts from
 cdnjs. TASK-38970: two pages lost their screenshots; every image link must
-resolve.
+resolve. TASK-40329: the README's destinations table drifted the same way,
+out of reach of the guide-only checks.
 """
 
 from __future__ import annotations
@@ -17,10 +18,13 @@ from tldw_chatbook.UI.Navigation.shell_destinations import (
     MCP_COMPATIBILITY_SHORTCUT,
     SHELL_DESTINATION_SHORTCUTS,
     get_shell_destination,
+    resolve_shell_route,
 )
 
 GUIDE = Path(__file__).resolve().parents[2] / "Docs" / "User_Guide"
 INDEX = GUIDE / "index.md"
+README = GUIDE.parents[1] / "README.md"
+README_KEY_RE = re.compile(r"\*\*(Ctrl\+\d|F\d+)\*\*")
 IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 TABLE_KEY_RE = re.compile(r"Ctrl\+\d|F\d+")
 LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)#]+)")
@@ -64,6 +68,52 @@ def test_index_nav_table_matches_the_shell_shortcut_map() -> None:
         assert links, f"{key} row has no page link: {cell!r}"
         for _text, target in links:
             assert (INDEX.parent / target).is_file(), f"{key} row links to {target}"
+
+
+def _readme_destination_table() -> dict[str, str]:
+    """Map each row of the README's "Application destinations" table to its destination cell."""
+    section = README.read_text(encoding="utf-8").split("## Application destinations", 1)[1]
+    rows: dict[str, str] = {}
+    for line in section.split("\n## ", 1)[0].splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and (key := README_KEY_RE.fullmatch(cells[0])):
+            rows[key.group(1).lower()] = cells[1]
+    return rows
+
+
+def test_readme_destination_table_matches_the_shell_shortcut_map() -> None:
+    table = _readme_destination_table()
+    expected = {
+        key: get_shell_destination(destination_id).label
+        for destination_id, key in SHELL_DESTINATION_SHORTCUTS.items()
+    }
+    # The compatibility keys land in another destination; the cell names it first.
+    for key, route in (
+        (ARTIFACTS_COMPATIBILITY_SHORTCUT, "artifacts"),
+        (MCP_COMPATIBILITY_SHORTCUT, "mcp"),
+    ):
+        expected[key] = get_shell_destination(resolve_shell_route(route).destination_id).label
+    wrong = {
+        key: (label, table.get(key))
+        for key, label in expected.items()
+        if (table.get(key) or "").split(" ▸ ")[0] != label
+    }
+    assert set(table) == set(expected) and not wrong, (
+        f"README destinations table differs from the shipped map: expected/found "
+        f"{wrong}, extra rows {sorted(set(table) - set(expected))}"
+    )
+
+
+def test_readme_prose_hotkeys_match_the_shell_shortcut_map() -> None:
+    shortcut = {
+        get_shell_destination(destination_id).label: key
+        for destination_id, key in SHELL_DESTINATION_SHORTCUTS.items()
+    }
+    prose = " ".join(README.read_text(encoding="utf-8").split())
+    mentions = re.findall(r"\*\*(\w+)\*\* with \*\*(Ctrl\+\d|F\d+)\*\*", prose)
+    assert mentions, "the README's 'open X with KEY' sentences were not found"
+    wrong = [(label, key) for label, key in mentions if shortcut.get(label) != key.lower()]
+    assert not wrong, f"README names the wrong key for a destination: {wrong}"
 
 
 def _f_keys(run: str) -> list[str]:
