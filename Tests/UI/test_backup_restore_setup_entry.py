@@ -698,15 +698,21 @@ async def test_a_typed_path_with_an_unknown_home_never_takes_the_app_down(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["approved", "refused_lease"])
 async def test_restored_profiles_settings_review_approves_config_alone(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, outcome
 ):
     """TASK-40711: while the current profile's `config` awaits review,
-    Restored profiles names what stays off and offers Approve settings. The
-    button approves the shown generation's `config` through the service, then
-    the review goes and `runtime.sync_state` is still listed as pending.
+    Restored profiles names what stays off, says approval covers every profile
+    that recovery restored, and offers Approve settings. The button approves
+    the shown generation's `config` through the service, then the review goes
+    and `runtime.sync_state` is still listed as pending.
 
-    The service's two current-profile methods are stand-ins here; the real
+    ``refused_lease``: the real ``approve_config`` meets a refused storage
+    lease. The message names the service's issue code, not a profile change,
+    and the review stays.
+
+    The service's current-profile summary is a stand-in here; the real
     approval is pinned against an actual activation binding in
     Tests/Architecture/test_backup_owner_inventory.py.
     """
@@ -715,6 +721,7 @@ async def test_restored_profiles_settings_review_approves_config_alone(
 
     from textual.widgets import Button
 
+    from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
 
     pending = ["config", "runtime.sync_state"]
@@ -738,10 +745,16 @@ async def test_restored_profiles_settings_review_approves_config_alone(
         approved.append(generation)
         pending.remove("config")
 
+    def refused(*args, **kwargs):
+        raise bootstrap.RecoveryRequired("storage_admission_unavailable")
+
     service = RecoveryService(tmp_path / "control")
     monkeypatch.setattr(service, "current_requirements", current_requirements)
-    monkeypatch.setattr(service, "approve_config", approve_config)
     monkeypatch.setattr(service, "profiles", lambda: ())
+    if outcome == "approved":
+        monkeypatch.setattr(service, "approve_config", approve_config)
+    else:
+        monkeypatch.setattr(storage_admission, "acquire_storage", refused)
     app = _harness(service)
     try:
         async with app.run_test(size=(100, 36)) as pilot:
@@ -757,10 +770,26 @@ async def test_restored_profiles_settings_review_approves_config_alone(
                 "model-catalog auto-refresh and workspace change tracking stay off"
                 in review
             )
+            assert "covers every profile this recovery restored" in review
             assert "It does not resume server sync." in review
             button = screen.query_one("#backup-approve-config", Button)
             assert str(button.label) == "Approve settings"
             button.press()
+            async with asyncio.timeout(10):
+                while not _text(screen, "#backup-message"):
+                    await pilot.pause(0.02)
+            message = _text(screen, "#backup-message")
+            if outcome == "refused_lease":
+                code = service.issue_code(
+                    bootstrap.RecoveryRequired("storage_admission_unavailable")
+                )
+                assert message == (
+                    "Settings review unavailable: "
+                    f"{service.issue_message(code)} ({code})"
+                )
+                assert "profile changed" not in message
+                assert pending == ["config", "runtime.sync_state"]
+                return
             async with asyncio.timeout(10):
                 while screen.query("#backup-config-review"):
                     await pilot.pause(0.02)
@@ -768,6 +797,6 @@ async def test_restored_profiles_settings_review_approves_config_alone(
             assert not screen.query("#backup-approve-config")
             summary = _text(screen, "#backup-current-requirements")
             assert "• runtime / sync state" in summary and "• config" not in summary
-            assert "Server sync stays off." in _text(screen, "#backup-message")
+            assert "Server sync stays off." in message
     finally:
         service.close()

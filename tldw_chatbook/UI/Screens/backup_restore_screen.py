@@ -907,12 +907,17 @@ class BackupRestoreScreen(Screen):
                 and "config" in current["pending_owners"]
             ):
                 # TASK-40711: `config` alone; sync identity has its own review.
+                # Approval is per generation, so it covers every profile that
+                # recovery restored (one generation per replace operation).
                 widgets.append(
                     Static(
-                        "Settings review\nUntil you approve this profile's restored "
-                        "settings, model-catalog auto-refresh and workspace change "
-                        "tracking stay off. Approving turns both back on (catalog "
-                        "refresh from the next start). It does not resume server sync.",
+                        "Settings review\nUntil you approve the restored settings, "
+                        "model-catalog auto-refresh and workspace change tracking "
+                        "stay off. Approving covers every profile this recovery "
+                        "restored and turns both back on (catalog refresh from the "
+                        "next start). Local model files and speech start-up also need "
+                        "these settings, besides their own reviews. It does not "
+                        "resume server sync.",
                         id="backup-config-review",
                         markup=False,
                     )
@@ -1029,8 +1034,12 @@ class BackupRestoreScreen(Screen):
                 "Settings approved. Workspace change tracking can run now; "
                 "model-catalog auto-refresh runs from the next start. Server sync stays off."
             )
-        except (OSError, ValueError, RuntimeError):
-            message = "Settings review unavailable: the current profile changed. Review it again."
+        except (OSError, ValueError, RuntimeError) as error:
+            if str(error) == "config_review_changed":
+                message = "Settings review unavailable: the current profile changed. Review it again."
+            else:
+                code = self.service.issue_code(error)
+                message = f"Settings review unavailable: {self.service.issue_message(code)} ({code})"
         self._deliver(app, self._config_approval_done, revision, message)
 
     def _config_approval_done(self, revision, message):

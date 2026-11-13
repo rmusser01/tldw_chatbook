@@ -1885,3 +1885,62 @@ def test_the_config_review_turns_config_consumers_back_on_and_never_sync(
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
     _run(tmp_path, state, "config_review", script=_CONFIG_REVIEW, timeout=90)
+
+
+def _ungated_sync_client_routes(text):
+    """ServerSyncService methods that reach `_require_client` without `_sync_call`."""
+    tree = ast.parse(text)
+    (service,) = (
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ServerSyncService"
+    )
+    gated, ungated = set(), set()
+    for method in service.body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any(
+            isinstance(node, ast.Attribute) and node.attr == "_require_client"
+            for node in ast.walk(method)
+        ):
+            continue
+        decorated = any(
+            ast.unparse(getattr(decorator, "func", decorator)) == "_sync_call"
+            for decorator in method.decorator_list
+        )
+        (gated if decorated else ungated).add(method.name)
+    return gated, ungated
+
+
+def test_every_server_sync_client_route_holds_the_activation_gate():
+    """TASK-40711 review r14cfg-rev1: the settings review approves `config`
+    alone, and the config-review test pins the sync refusal on one route
+    (`get_changes`). Every other route to the sync client must hold the same
+    `_sync_call` gate, which needs `runtime.sync_state` too. The two private
+    helpers are reached only from gated methods (TASK-40137's notes)."""
+    text = (ROOT / "tldw_chatbook/Sync_Interop/server_sync_service.py").read_text(
+        encoding="utf-8"
+    )
+    gated, ungated = _ungated_sync_client_routes(text)
+    assert {"get_changes", "send_changes", "push_v2_envelopes"} & gated, gated
+    assert ungated <= {
+        "__init__",
+        "_require_client",
+        "_push_v2_envelopes",
+        "_pull_v2_envelopes",
+    }, ungated
+
+
+def test_only_the_settings_review_calls_approve_config():
+    """TASK-40711 review r14cfg-rev1: `RecoveryService.approve_config`
+    approves `config` for every profile its generation restored, so only
+    Backup & Restore's reviewed **Approve settings** may call it."""
+    uses = Counter()
+    for path in sorted((ROOT / "tldw_chatbook").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "approve_config" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.Attribute) and node.attr == "approve_config":
+                uses[path.relative_to(ROOT).as_posix()] += 1
+    assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})

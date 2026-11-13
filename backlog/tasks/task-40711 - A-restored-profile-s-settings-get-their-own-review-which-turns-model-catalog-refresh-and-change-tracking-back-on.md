@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-13 03:35
-updated_date: 2026-11-13 15:58
+updated_date: 2026-11-13 17:01
 labels:
 - follow-up
 - backup
@@ -51,7 +51,7 @@ Filed in round 14 of the 2026-10-23 burn-down from TASK-40137's findings and own
 **Summary.** Backup & Restore ▸ **Restored profiles** ▸ **Current profile** (the existing post-restore review surface) now carries a settings review while the current generation's `config` is pending: a **Settings review** note saying model-catalog auto-refresh and workspace change tracking stay off until approval, and that approving does not resume server sync, then **Approve settings**. The button calls the new `RecoveryService.approve_config(generation)` on a worker, which approves `config` alone and nothing else. Server sync keeps refusing with `sync_activation_required` until `runtime.sync_state` is approved, which only TASK-40139's sync-identity review may do.
 
 **Approach and decisions.**
-- `approve_config` (`Backup_Recovery/recovery_service.py`, beside `current_requirements`) holds the selected profile's storage lease, re-reads that profile's activation witness, and refuses with `config_review_changed` unless the witness is still the generation the summary showed, requires `config`, and is a live paired witness (`_witnesses`). Then it calls `ActivationStore.approve(generation, "config")`. It approves the selected profile's own witness only, not other witnesses that share its storage. In that rare case `config` stays refused, which fails closed.
+- `approve_config` (`Backup_Recovery/recovery_service.py`, beside `current_requirements`) holds the selected profile's storage lease, re-reads that profile's activation witness, and refuses with `config_review_changed` unless the witness is still the generation the summary showed, requires `config`, and is a live paired witness (`_witnesses`). Then it calls `ActivationStore.approve(generation, "config")`. Approvals are per generation and store: a replace restore binds every profile it restored to one generation in one store (`replacement.py:1639`, `control_records.py:614-620`, rollback `replacement.py:2586-2594`), and witnesses that share a namespace share the generation and store. So one approval covers every profile that recovery restored, and the review copy and docs say so. Only a different-generation witness that is relevant through root overlap stays refused, which fails closed.
 - Placement and copy follow the nearest approvers (no ruling covered them): the button sits under the Current profile summary it reviews, and its label follows **Approve local model** / **Approve RAG owners**. The "named reason" is that note, plus `config` in the summary's pending owners (`current_requirements()["pending_owners"]`). The consumers' own refusals are unchanged: catalog scheduling returns False, and change tracking's capture raises "native initialization source unavailable".
 - Model-catalog auto-refresh is scheduled only at startup or setup completion (`app.py`), so after approval it runs from the next start. The note and the success message say so. Change tracking passes its gate at once.
 - The pin keeps its name, `test_no_reviewer_approves_the_shared_sync_owners`, so TASK-40139's parallel edit of it still merges. It gains one row, `("tldw_chatbook/Backup_Recovery/recovery_service.py", "'config'")`, appended at the tail, and its docstring says the sync-identity review adds its own row.
@@ -65,6 +65,15 @@ Filed in round 14 of the 2026-10-23 burn-down from TASK-40137's findings and own
   - Red against HEAD's screen: `AssertionError: no settings review`.
   - Green after; serial about 3 s (`-p no:xdist --timeout=180 --durations=0`, load 17).
 - **The pin (AC#4).** Red with a temporary stray `store.approve(witness["generation"], "config")` in `Plugins/backup.py`: "Left contains 1 more item: ('tldw_chatbook/Plugins/backup.py', \"'config'\")". Reverted; green.
+
+**Review r14cfg-rev1 (five Minor items), fixed:**
+- A failed approval names the cause. "the current profile changed. Review it again." is kept only for `config_review_changed`. Anything else uses the screen's convention, `Settings review unavailable: {issue_message(code)} ({code})` with `code = service.issue_code(error)`.
+  - New case `test_restored_profiles_settings_review_approves_config_alone[refused_lease]` runs the real `approve_config` against a refused `acquire_storage`.
+  - Red with the old blanket copy restored: the message read "...the current profile changed..." where "...(backup_operation_failed)" was expected.
+- The review note now says approval covers every profile that recovery restored. Both cases were red against the previous copy.
+- Docs and note now name the other `config` consumers. Local model files need `config` + `models.artifacts`: activate, acquire, install (`Model_Artifacts/maintenance.py:100-104`) and download (`:123-127`). Speech start-up needs `config` + `models.artifacts` + `tts.profile_store` + `tts.voices` (`app_speech.py:986-994`). Each also needs its own review, so settings approval alone does not turn them on. RAG's `ordinary_configuration` uses `ordinary_only=True`, so a `config` approval does not change it.
+- `test_every_server_sync_client_route_holds_the_activation_gate`: every `ServerSyncService` method that references `_require_client` carries `_sync_call`, except `__init__`, `_require_client`, `_push_v2_envelopes` and `_pull_v2_envelopes`. Red with `@_sync_call` removed from `list_v2_conflicts` in memory: "Extra items in the left set: 'list_v2_conflicts'".
+- `test_only_the_settings_review_calls_approve_config`: the only `approve_config` attribute use under `tldw_chatbook/` is in `UI/Screens/backup_restore_screen.py`, once. Red with a temporary stray `service.approve_config(generation)` in `Plugins/backup.py`: "Left contains 1 more item: {'tldw_chatbook/Plugins/backup.py': 1}". Reverted.
 
 **Runs.**
 - `Tests/Architecture/test_backup_owner_inventory.py`, serial: 28 passed.
