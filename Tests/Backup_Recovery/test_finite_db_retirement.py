@@ -510,3 +510,253 @@ async def test_owned_callback_remains_admitted_after_last_repository_read(offloa
     await call(body)
     assert observed == [True], "the complete callback must own admission"
     assert not worker_leases(db)
+
+
+def _console_stores(tmp_path):
+    """Real ChaChaNotes and Media stores, as Console's app attributes hold them."""
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    db = CharactersRAGDB(tmp_path / "notes.db", "test")
+    media = MediaDatabase(tmp_path / "media.db", client_id="test")
+    return db, media
+
+
+def _local_pause_drains():
+    """What a backup's local pause needs: no live lease on any thread."""
+    import time
+
+    pause = storage._begin_local_pause()
+    try:
+        return pause.drain(time.monotonic() + 1.0)
+    finally:
+        pause.resume()
+
+
+# TASK-34100.16.1 review v5r2 (R2-1): each read Console's retrieval-scope picker
+# makes when it opens or filters, by the lister method that issues it.
+_SCOPE_PICKER_READS = {
+    "notes_list_notes": lambda spl, app: spl.build_notes_source_lister(
+        app, user_id="test-user"
+    )._candidate_rows(text=""),
+    "notes_keywords_batch": lambda spl, app: spl.build_notes_source_lister(
+        app, user_id="test-user"
+    )._tags_for_batch(("1",)),
+    "media_keywords_batch": lambda spl, app: spl.build_media_source_lister(
+        app
+    )._keywords_for_media(("1",)),
+    "tag_vocabulary_both_stores": lambda spl, app: spl.build_keyword_tag_lister(app)(""),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read", sorted(_SCOPE_PICKER_READS))
+async def test_console_scope_picker_reads_retire_their_worker_connections(
+    tmp_path, local_root, read
+):
+    """Opening Console's retrieval-scope picker leaves no pool-thread handle.
+
+    TASK-34100.16.1 review v5r2 (R2-1): the picker's listers ran bare
+    ``asyncio.to_thread`` reads on the app's ChaChaNotes and Media stores
+    (``list_notes``, ``get_keywords_for_notes_batch``,
+    ``fetch_keywords_for_media_batch``, ``get_keyword_usage_stats``,
+    ``_notes_tag_usage``). Each kept its connection, so the local pause could
+    not drain and an idle Create backup ended in ``admission_timeout``.
+    """
+    from tldw_chatbook.Chat import scope_picker_listers as spl
+
+    db, media = _console_stores(tmp_path)
+    db.add_note("Alpha", "body")
+    db.close_connection()  # setup's own main-thread handle is not under test
+    media.close_connection()
+    app = SimpleNamespace(chachanotes_db=db, media_db=media, notes_scope_service=None)
+    try:
+        await _SCOPE_PICKER_READS[read](spl, app)
+
+        leaked = [str(lease.resource_path) for lease in worker_leases(db) + worker_leases(media)]
+        assert leaked == [], f"{read} kept its worker connection"
+        assert _local_pause_drains(), "a backup's local pause could not drain"
+    finally:
+        db.close_connection()
+        media.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "worker",
+    [
+        "_console_dictionary_attach_worker",
+        "_console_dictionary_detach_worker",
+        "_console_worldbook_attach_worker",
+        "_console_worldbook_detach_worker",
+    ],
+)
+async def test_console_rail_pickers_retire_their_worker_connections(
+    tmp_path, local_root, worker
+):
+    """Console's dictionary and world-book pickers leave no pool-thread handle.
+
+    TASK-34100.16.1 review v5r2 (R2-1): the dictionary attach/detach pickers
+    listed their rows with a bare ``asyncio.to_thread`` on the app's
+    ChaChaNotes store, and the world-book pickers beside them did the same for
+    their lists and for the attach/detach write. The world-book cases pick a
+    book, so the write runs too.
+    """
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    db = CharactersRAGDB(tmp_path / "notes.db", "test")
+    conversation = db.add_conversation({"title": "Rail"})
+    books = WorldBookManager(db)
+    book = books.create_world_book("Lore")
+    if worker == "_console_worldbook_detach_worker":
+        books.associate_world_book_with_conversation(conversation, book)
+    db.close_connection()  # setup's own main-thread handle is not under test
+    notices = []
+
+    async def push_screen_wait(screen):
+        return book if "worldbook" in worker else None
+
+    async def refreshed():
+        return None
+
+    screen = SimpleNamespace(
+        _character=SimpleNamespace(
+            _current_console_rail_conversation_id=lambda: conversation
+        ),
+        app_instance=SimpleNamespace(
+            chachanotes_db=db,
+            notify=lambda *args, **kwargs: notices.append(args),
+            push_screen_wait=push_screen_wait,
+        ),
+        _retrieval=SimpleNamespace(
+            refresh_active_world_books_summary=refreshed,
+            refresh_active_dictionaries_summary=refreshed,
+        ),
+        _console_dictionary_dialog_active=True,
+        _console_worldbook_dialog_active=True,
+    )
+    try:
+        await getattr(ChatScreen, worker)(screen)
+
+        assert not [n for n in notices if "failed" in str(n).lower()], notices
+        assert not worker_leases(db), f"{worker} kept its worker connection"
+        assert _local_pause_drains(), "a backup's local pause could not drain"
+        if worker == "_console_worldbook_attach_worker":
+            attached = WorldBookManager(db).get_world_books_for_conversation(
+                conversation, enabled_only=False
+            )
+            assert [row["id"] for row in attached] == [book]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "leg", ["search_media_fts5", "search_conversations_fts5", "search_notes_fts5"]
+)
+async def test_console_rag_search_legs_retire_their_worker_connections(
+    tmp_path, local_root, leg
+):
+    """Console's RAG search legs leave no pool-thread handle on the app stores.
+
+    TASK-34100.16.1 review v5r2 (R2-1): the reviewer's "same shape, not
+    probed" path. ``pipeline_functions_simple``'s FTS legs, which Console's
+    RAG pipeline runs, searched the app's live stores on bare executor threads.
+    """
+    from tldw_chatbook.RAG_Search import pipeline_functions_simple as legs
+
+    db, media = _console_stores(tmp_path)
+    db.add_note("Alpha", "hello world")
+    conversation = db.add_conversation({"title": "hello"})
+    db.add_message({"conversation_id": conversation, "sender": "user", "content": "hello world"})
+    media.add_media_with_keywords(
+        title="hello", media_type="document", content="hello world", keywords=["k"]
+    )
+    db.close_connection()  # setup's own main-thread handle is not under test
+    media.close_connection()
+    app = SimpleNamespace(chachanotes_db=db, media_db=media)
+    try:
+        if leg == "search_media_fts5":
+            results = await legs.search_media_fts5(app, "hello", keyword_filter=["k"])
+        else:
+            results = await getattr(legs, leg)(app, "hello")
+
+        assert results, f"{leg} found nothing; the read under test did not run"
+        leaked = [str(lease.resource_path) for lease in worker_leases(db) + worker_leases(media)]
+        assert leaked == [], f"{leg} kept its worker connection"
+        assert _local_pause_drains(), "a backup's local pause could not drain"
+    finally:
+        db.close_connection()
+        media.close_connection()
+
+
+def _bare_offloads(tree, allowed):
+    """Executor offloads whose callable is not a self-retiring wrapper."""
+    import ast
+
+    offloads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"to_thread", "run_in_executor"}
+    ]
+    bare = [
+        (node.lineno, ast.unparse(node.args[0]) if node.args else "")
+        for node in offloads
+        if not (
+            node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in {"run_finite_local_worker", *allowed}
+        )
+    ]
+    return offloads, bare
+
+
+@pytest.mark.parametrize(
+    "module,functions,allowed,minimum",
+    [
+        ("tldw_chatbook.Chat.scope_picker_listers", None, (), 5),
+        # rerank_results loads and runs a model; it touches no store.
+        ("tldw_chatbook.RAG_Search.pipeline_functions_simple", None, ("rerank_results",), 7),
+        (
+            "tldw_chatbook.UI.Screens.chat_screen",
+            (
+                "_console_dictionary_attach_worker",
+                "_console_dictionary_detach_worker",
+                "_console_worldbook_attach_worker",
+                "_console_worldbook_detach_worker",
+            ),
+            (),
+            6,
+        ),
+    ],
+)
+def test_console_store_offloads_retire_their_worker_handles(
+    module, functions, allowed, minimum
+):
+    """Structural guard for R2-1: Console's picker and RAG store offloads retire.
+
+    TASK-34100.16.1 review v5r2 widened the notes-only guard above to the
+    Console surfaces the review found: the retrieval-scope picker, the RAG FTS
+    legs it scopes, and the dictionary and world-book rail pickers.
+    """
+    import ast
+    import importlib
+    import inspect
+
+    source = inspect.getsource(importlib.import_module(module))
+    tree = ast.parse(source)
+    if functions is not None:
+        found = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in functions
+        }
+        assert set(found) == set(functions)
+        tree = ast.Module(body=list(found.values()), type_ignores=[])
+    offloads, bare = _bare_offloads(tree, allowed)
+
+    assert len(offloads) >= minimum
+    assert bare == []

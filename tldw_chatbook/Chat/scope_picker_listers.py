@@ -36,6 +36,7 @@ import asyncio
 from collections.abc import Mapping
 from typing import Any
 
+from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 from tldw_chatbook.DB.Client_Media_DB_v2 import fetch_keywords_for_media_batch
 from tldw_chatbook.Library.library_fts_query import build_fts_match_query
 from tldw_chatbook.Chat.rag_scope import (
@@ -157,7 +158,7 @@ class _MediaSourceLister:
             return {}
         try:
             keywords_by_id = await asyncio.to_thread(
-                fetch_keywords_for_media_batch, db, int_ids
+                run_finite_local_worker, fetch_keywords_for_media_batch, db, int_ids
             )
         except Exception:
             return {}
@@ -364,7 +365,7 @@ class _NotesSourceLister:
             return [dict(row) for row in rows or () if isinstance(row, Mapping)]
         try:
             rows = await asyncio.to_thread(
-                db.list_notes, limit=_NOTES_FETCH_CAP, offset=0
+                run_finite_local_worker, db.list_notes, limit=_NOTES_FETCH_CAP, offset=0
             )
         except Exception:
             return []
@@ -390,7 +391,7 @@ class _NotesSourceLister:
             return {}
         try:
             keywords_by_id = await asyncio.to_thread(
-                db.get_keywords_for_notes_batch, list(note_ids)
+                run_finite_local_worker, db.get_keywords_for_notes_batch, list(note_ids)
             )
         except Exception:
             return {}
@@ -499,6 +500,11 @@ def build_keyword_tag_lister(app: Any) -> TagLister:
     overall top-used tags, a non-empty ``query`` returns a case-insensitive
     substring match over that same unioned vocabulary. All I/O runs off the
     UI loop via ``asyncio.to_thread``.
+
+    TASK-34100.16.1 review v5r2: every store read in this module runs through
+    ``run_finite_local_worker``. A bare executor read keeps that pool thread's
+    connection, whose lease a backup's local pause never revokes, so an idle
+    Create backup after opening the picker ended in ``admission_timeout``.
     """
 
     # task-32804.12: the unioned usage vocabulary does not depend on `query`
@@ -516,7 +522,9 @@ def build_keyword_tag_lister(app: Any) -> TagLister:
         media_db = getattr(app, "media_db", None)
         if media_db is not None:
             try:
-                stats = await asyncio.to_thread(media_db.get_keyword_usage_stats)
+                stats = await asyncio.to_thread(
+                    run_finite_local_worker, media_db.get_keyword_usage_stats
+                )
             except Exception:
                 stats = []
             for row in stats or ():
@@ -534,7 +542,9 @@ def build_keyword_tag_lister(app: Any) -> TagLister:
         chachanotes_db = getattr(app, "chachanotes_db", None)
         if chachanotes_db is not None:
             try:
-                notes_counts = await asyncio.to_thread(_notes_tag_usage, chachanotes_db)
+                notes_counts = await asyncio.to_thread(
+                    run_finite_local_worker, _notes_tag_usage, chachanotes_db
+                )
             except Exception:
                 notes_counts = {}
             for text, usage in notes_counts.items():
