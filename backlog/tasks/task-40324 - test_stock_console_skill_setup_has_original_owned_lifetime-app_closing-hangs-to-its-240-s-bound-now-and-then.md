@@ -54,7 +54,7 @@ How it gets there:
 - `warm()` then waits forever, and `pending` would also block every later refresh.
 - Under the shipped app's eager task factory, `Worker._start`'s `create_task` runs the read's first step at once, so a cancel lands inside its `try`. That is reasoned from Textual's `Worker._start`, not measured. A probe that installed the eager factory in this fixture stopped earlier, at the fixture's discovery-producer wait (12 of 12), so it says nothing either way.
 
-**Fix (product).** `ConsoleReadinessConfigProjection.run` adds a done-callback to the refresh worker's task, following `raw_cli.py`'s `cancel_unstarted` precedent. A read that is still the projection's `_handoff_read` when its task ends never ran its own `finally`. `_settle_unstarted` clears `pending`, retires its identity handoff, and sets `_settled`. A read that ran is a no-op there.
+**Fix (product).** `ConsoleReadinessConfigProjection.run` adds a done-callback to the refresh worker's task, following `raw_cli.py`'s `cancel_unstarted` precedent. A read that is still the projection's `_handoff_read` when its task ends never ran its own `finally`. `_settle_unstarted` clears `pending`, retires its identity handoff, and sets `_settled`. A read that ran is a no-op there. The identity retirement there is advisory, as in `_refresh`'s `finally`, so `_settled` is set even if it raises. Rechecked four-wide afterwards: 4 of 4, load 15.
 
 **Tests.**
 - New: `Tests/UI/test_console_readiness_config_projection.py::test_a_refresh_worker_cancelled_before_its_first_step_still_settles`. Red before the fix ("warm() waited on a read that never ran"); green after. It is at the census tail (`MINIMUM_FILES` 2039 after TASK-40322's split). Serial lane time 7.8 s at load 48.

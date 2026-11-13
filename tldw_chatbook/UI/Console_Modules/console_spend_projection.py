@@ -551,8 +551,12 @@ class ConsoleReadinessConfigProjection:
 
         self._handoff_read = None
         self.pending = False
-        _finish_identity_config_read(self, read, False)
-        self._settled.set()
+        try:
+            _finish_identity_config_read(self, read, False)
+        except BaseException:  # noqa: BLE001 - advisory, as in _refresh's finally
+            pass
+        finally:
+            self._settled.set()
 
     def _retired(self) -> bool:
         return bool(
