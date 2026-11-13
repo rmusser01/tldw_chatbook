@@ -1476,17 +1476,20 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
 #: this count was 416 there too).
 _LIBRARY_INIT_LAMBDAS = 416
 #: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
-#: 706 in 57 files.
-#: - 594 calls on the class, public handlers included (the review's 370 named
-#:   private `_x(fake_self, ...)` calls only). 60 of them call static or
-#:   class-method helpers (no fake self) and 3 are
+#: 724 in 59 files.
+#: - 602 calls: 594 on the class, public handlers included (the review's 370
+#:   named private `_x(fake_self, ...)` calls only), and 8 `.__wrapped__(...)`.
+#:   60 of them call static or class-method helpers (no fake self) and 3 are
 #:   `LibraryScreen.__new__(LibraryScreen)` constructions.
-#: - 112 bindings to a fake: 110 `MethodType` (10 through `getattr`),
-#:   1 `partial`, 1 `.__get__`.
+#: - 122 bindings to a fake: 110 `MethodType` (10 through `getattr`),
+#:   1 `partial`, 1 `.__get__`, and 10 fake-class attributes (`m = C.m`).
 #: Every one reaches the screen class from a test instead of the code's owner,
 #: so read the number as "test sites coupled to LibraryScreen", not as fake
 #: selves. A static helper lowers it by moving to its owner.
-_LIBRARY_UNBOUND_TEST_CALLS = 706
+#: Not counted (known limit): 18 references handed to something that calls
+#: them later with the fake, 16 `_press(fake, LibraryScreen.x)` and 2
+#: `asyncio.to_thread(LibraryScreen.x, ...)`; and a class held in a variable.
+_LIBRARY_UNBOUND_TEST_CALLS = 724
 
 
 def _library_init_lambdas() -> int:
@@ -1514,10 +1517,15 @@ def _unbound_class_calls(source: str, class_name: str) -> int:
 
     A method reference is ``C.m``, ``mod.C.m``, ``Alias.m`` after
     ``from mod import C as Alias``, or ``getattr(C, name)``. Counts a call of
-    one (``C.m(...)``), a binding of one (``MethodType(C.m, fake)``,
-    ``partial(C.m, ...)``, either spelling qualified or bare, and
-    ``C.m.__get__(...)``), and the same inside any string constant that
-    parses as Python (a test's subprocess child program).
+    one (``C.m(...)``, ``C.m.__wrapped__(...)``), a binding of one
+    (``MethodType(C.m, fake)``, ``partial(C.m, ...)``, either spelling
+    qualified or bare, ``C.m.__get__(...)``, and ``m = C.m`` in a class body),
+    and the same inside any string constant that parses as Python (a test's
+    subprocess child program).
+
+    Not counted: a reference handed to a helper or executor that calls it
+    later with the fake (``_press(fake, C.m)``, ``asyncio.to_thread(C.m, ...)``),
+    and a class held in a variable.
     """
     tree = ast.parse(source)
     names = {class_name} | {
@@ -1556,11 +1564,16 @@ def _unbound_class_calls(source: str, class_name: str) -> int:
                 )
                 or (
                     isinstance(func, ast.Attribute)
-                    and func.attr == "__get__"
+                    and func.attr in ("__get__", "__wrapped__")
                     and is_method(func.value)
                 )
             ):
                 count += 1
+        elif isinstance(node, ast.ClassDef):
+            count += sum(
+                isinstance(stmt, (ast.Assign, ast.AnnAssign)) and is_method(stmt.value)
+                for stmt in node.body
+            )
         elif (
             isinstance(node, ast.Constant)
             and isinstance(node.value, str)
@@ -1630,8 +1643,13 @@ def test_unbound_library_screen_calls_in_tests_match_their_pin() -> None:
         ("partial(Probe._x, f)()", 1),
         ("functools.partial(getattr(Probe, name), f)", 1),
         ("Probe._x.__get__(f)", 1),
+        ("Probe._x.__wrapped__(fake)", 1),
+        ("getattr(mod.Probe, name).__wrapped__(fake)", 1),
+        ("class Fake:\n    _x = Probe._x", 1),
+        ("class Fake:\n    _x: object = getattr(mod.Probe, '_x')", 1),
         ("Probe(fake); Probe._x; getattr(Probe, name); fake._x()", 0),
         ("MethodType(fake._x, f); partial(print, Probe); fake._x.__get__(f)", 0),
+        ("fake._x.__wrapped__(f)\nclass Fake:\n    _x = fake._x\nsaved = Probe._x", 0),
         ("'``Probe._x(fake)`` in prose'", 0),
     ],
 )
