@@ -76,6 +76,7 @@ CONNECTION_BACKUP_OWNER_IDS = (
 COPY_BACKUP_OWNER_IDS = (
     "recovery.rag_indexing",
     "recovery.recovered_media",
+    "recovery.plugins.registry",
     "recovery.files.tts",
     "recovery.operations.workspaces",
     "recovery.operations.agent_runs",
