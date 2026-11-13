@@ -266,7 +266,11 @@ def compose_speech_step(step: "SpeechSetupStep") -> Iterator[Widget]:
             )
             if not step._runtime_installed():
                 with Horizontal(classes="setup-rag-extras-row"):
-                    yield Static(engines.PARAKEET_EXTRAS_PACKAGE, markup=False)
+                    yield Static(
+                        engines.PARAKEET_EXTRAS_PACKAGE,
+                        classes="setup-extras-package",
+                        markup=False,
+                    )
                     yield Button(
                         "Copy package name",
                         id="setup-speech-copy-extras",

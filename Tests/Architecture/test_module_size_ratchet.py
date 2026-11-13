@@ -1038,7 +1038,12 @@ _BUDGETS: dict[str, int] = {
     # config-write switch interval, republishes through the full reload and
     # takes root-level dotted [tools] keys); 2026-11-23, ported onto dev
     # b31e3e9241 (round 24): dev's 8,932 plus 145, exact measurement 9,077.
-    "tldw_chatbook/config.py": 9077,
+    # 2026-11-12, TASK-34100.13 (owner decision 2026-10-04, expand limits):
+    # +3, the three-line comment saying TLDW_REDUCE_MOTION / NO_MOTION apply
+    # where motion is read, never in the saved table (review F5); 2026-11-23,
+    # ported onto fu/r24-p3519 (round 24): its 9,077 plus 3, exact
+    # measurement 9,080.
+    "tldw_chatbook/config.py": 9080,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

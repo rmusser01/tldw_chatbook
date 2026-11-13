@@ -134,6 +134,7 @@ class RagStep(SetupStep):
                     yield Static(
                         rag_state.RAG_EXTRAS_PACKAGE,
                         id="setup-rag-extras-package",
+                        classes="setup-extras-package",
                         markup=False,
                     )
                     yield Button(
