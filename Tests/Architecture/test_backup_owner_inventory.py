@@ -1135,12 +1135,13 @@ def test_actor_pack_persona_images_preview_and_validate_with_persona_artwork(
     ] == ["references_unavailable"]
 
 
-def _actor_pack_activation_on_profile(tmp_path, monkeypatch):
-    """TASK-40304: a persona Actor Pack review on a configured file-backed profile.
+def _actor_pack_activation_on_profile(tmp_path, monkeypatch, actor_kind="persona"):
+    """TASK-40304: an Actor Pack review on a configured file-backed profile.
 
-    Activating it publishes into both captured trees: ``visual_identities/
-    actor_packs/<digest>/`` (shared visual) and ``actor_packs/<digest>/
-    persona-runtime/`` (persona runtime).
+    Activating a persona pack publishes into both captured trees:
+    ``visual_identities/actor_packs/<digest>/`` (shared visual) and
+    ``actor_packs/<digest>/persona-runtime/`` (persona runtime). A character
+    pack publishes only the shared visual.
     """
     from Tests.Actor_Packs.test_actor_pack_activation import (
         _persona_runtime_section,
@@ -1189,12 +1190,15 @@ def _actor_pack_activation_on_profile(tmp_path, monkeypatch):
         PersonaActorPackCoordinator(repository, local_service),
         importer,
     )
+    sections = (_shared_visual_section(),)
+    if actor_kind == "persona":
+        sections += (_persona_runtime_section(),)
     review = importer.inspect_archive(
         _write_archive(
-            tmp_path / "persona.tldw-actor-pack",
-            actor_kind="persona",
+            tmp_path / f"{actor_kind}.tldw-actor-pack",
+            actor_kind=actor_kind,
             portable_uuid="123e4567-e89b-42d3-a456-426614174000",
-            sections=(_shared_visual_section(), _persona_runtime_section()),
+            sections=sections,
         )
     )
     trees = (
@@ -1211,11 +1215,35 @@ def _published_files(trees):
     )
 
 
+def _activate_on_worker(activation, review, **kwargs):
+    """Run activation as a finite worker: its own DB connection retires after."""
+    import threading
+
+    from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+    outcome = []
+
+    def run():
+        try:
+            outcome.append(
+                run_finite_local_worker(
+                    activation.activate, review, "create_new", **kwargs
+                )
+            )
+        except BaseException as error:  # noqa: BLE001 - relayed to the test thread.
+            outcome.append(error)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    return worker, outcome
+
+
 def test_actor_pack_activation_refuses_while_a_capture_or_restore_holds_storage(
     tmp_path, monkeypatch
 ):
     """TASK-40304 AC1: the in-process capture/restore pause refuses a new
-    activation with a named, path-free reason before it writes anything."""
+    activation with a named, path-free reason before it reads the store or
+    writes anything."""
     from tldw_chatbook.Actor_Packs.activation import ActorPackActivationError
     from tldw_chatbook.Actor_Packs.import_controller import _error_category
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
@@ -1226,6 +1254,14 @@ def test_actor_pack_activation_refuses_while_a_capture_or_restore_holds_storage(
     db, activation, review, trees = _actor_pack_activation_on_profile(
         tmp_path, monkeypatch
     )
+    reads = []
+    material = activation.importer._activation_material
+
+    def observed_material(*args, **kwargs):
+        reads.append(storage.local_pause_active())
+        return material(*args, **kwargs)
+
+    monkeypatch.setattr(activation.importer, "_activation_material", observed_material)
     try:
         pause = storage._begin_local_pause()
         try:
@@ -1234,6 +1270,8 @@ def test_actor_pack_activation_refuses_while_a_capture_or_restore_holds_storage(
             assert _published_files(trees) == []
         finally:
             pause.resume()
+        # Refused by admission, not by a store read the pause turned away.
+        assert reads == []
         assert raised.value.category == "actor_pack_import_storage_unavailable"
         assert _error_category(raised.value) == raised.value.category
         assert raised.value.cleanup_pending is False
@@ -1251,13 +1289,23 @@ def test_actor_pack_activation_refuses_while_a_capture_or_restore_holds_storage(
         # Nothing was committed either: the same review still activates after.
         result = activation.activate(review, "create_new")
         assert result.actor_kind == "persona"
+        assert reads == [False]
         assert len(_published_files(trees)) == 3
     finally:
         db.close_connection()
 
 
+@pytest.mark.parametrize(
+    ("actor_kind", "cancel", "category"),
+    [
+        ("persona", False, "actor_pack_import_storage_unavailable"),
+        ("character", False, "actor_pack_import_storage_unavailable"),
+        # A user's cancel keeps its own name while a pause is held.
+        ("persona", True, "actor_pack_import_cancelled"),
+    ],
+)
 def test_actor_pack_activation_in_flight_keeps_a_capture_drain_waiting(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, actor_kind, cancel, category
 ):
     """TASK-40304 AC1: a pause that begins after the first asset is published
     cannot drain until the activation has retired, and the activation leaves no
@@ -1273,37 +1321,25 @@ def test_actor_pack_activation_in_flight_keeps_a_capture_drain_waiting(
     )
 
     db, activation, review, trees = _actor_pack_activation_on_profile(
-        tmp_path, monkeypatch
+        tmp_path, monkeypatch, actor_kind
     )
-    first, release = threading.Event(), threading.Event()
+    first, release, cancelled = threading.Event(), threading.Event(), threading.Event()
     publish = activation_module._publish_immutable
 
     def publish_then_wait(*args, **kwargs):
         created = publish(*args, **kwargs)
         if not first.is_set():
+            # Retire the worker's cached ChaChaNotes connection, so only the
+            # activation's own admission can keep a drain waiting.
+            db.close_connection()
             first.set()
             assert release.wait(30)
         return created
 
     monkeypatch.setattr(activation_module, "_publish_immutable", publish_then_wait)
-    outcome = []
-
-    def run():
-        # The finite-worker boundary retires the worker thread's own DB
-        # connection, which a drain otherwise (rightly) keeps waiting for.
-        from tldw_chatbook.Backup_Recovery.participants import (
-            run_finite_local_worker,
-        )
-
-        try:
-            outcome.append(
-                run_finite_local_worker(activation.activate, review, "create_new")
-            )
-        except BaseException as error:  # noqa: BLE001 - relayed to the test thread.
-            outcome.append(error)
-
-    worker = threading.Thread(target=run)
-    worker.start()
+    worker, outcome = _activate_on_worker(
+        activation, review, cancel_requested=cancelled.is_set
+    )
     try:
         assert first.wait(30)
         assert _published_files(trees)
@@ -1313,6 +1349,8 @@ def test_actor_pack_activation_in_flight_keeps_a_capture_drain_waiting(
         try:
             retire_current_thread_caches(pause)
             drained_early = pause.drain(time.monotonic() + 0.3)
+            if cancel:
+                cancelled.set()
             release.set()
             worker.join(30)
             assert not worker.is_alive()
@@ -1324,11 +1362,100 @@ def test_actor_pack_activation_in_flight_keeps_a_capture_drain_waiting(
         assert drained_early is False, "a capture drained over an in-flight activation"
         assert leftover == []
         assert type(outcome[0]) is ActorPackActivationError, outcome
-        assert outcome[0].category == "actor_pack_import_storage_unavailable"
+        assert outcome[0].category == category
         assert outcome[0].cleanup_pending is False
     finally:
         release.set()
         worker.join(30)
+        db.close_connection()
+
+
+def test_actor_pack_pause_after_the_persona_commit_keeps_its_assets(
+    tmp_path, monkeypatch
+):
+    """TASK-40304 review C1: a pause that begins after the persona commit
+    refuses only the intent's cleanup. The activation reports the committed
+    actor with cleanup pending and keeps every published file."""
+    import threading
+    import time
+
+    from tldw_chatbook.Actor_Packs.activation import ActorPackActivationResult
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import (
+        retire_current_thread_caches,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch
+    )
+    committed, release = threading.Event(), threading.Event()
+    repository = activation.persona_coordinator.repository
+    cleanup = repository.cleanup_persona_intent
+
+    def cleanup_after_pause(*args, **kwargs):
+        committed.set()
+        assert release.wait(30)
+        return cleanup(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "cleanup_persona_intent", cleanup_after_pause)
+    worker, outcome = _activate_on_worker(activation, review)
+    try:
+        assert committed.wait(30)
+        at_commit = _published_files(trees)
+        pause = storage._begin_local_pause()
+        try:
+            retire_current_thread_caches(pause)
+            release.set()
+            worker.join(30)
+            assert not worker.is_alive()
+            assert pause.drain(time.monotonic() + 10)
+            after = _published_files(trees)
+        finally:
+            pause.resume()
+        assert len(at_commit) == 3
+        assert after == at_commit, "committed Actor Pack assets were removed"
+        assert type(outcome[0]) is ActorPackActivationResult, outcome
+        assert outcome[0].cleanup_pending is True
+        identity = activation.repository.get_identity_by_portable_uuid(
+            review.portable_uuid
+        )
+        assert identity is not None and identity.local_actor_id == (
+            outcome[0].local_actor_id
+        )
+    finally:
+        release.set()
+        worker.join(30)
+        db.close_connection()
+
+
+def test_actor_pack_store_error_before_commit_removes_published_files(
+    tmp_path, monkeypatch
+):
+    """TASK-40304 review M2: a store error that is not a sqlite3.Error (here
+    CharactersRAGDBError from the character insert) used to escape activation
+    and leave the published shared-visual asset behind."""
+    from tldw_chatbook.Actor_Packs.activation import ActorPackActivationError
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, "character"
+    )
+
+    def refused_insert(*args, **kwargs):
+        assert _published_files(trees)
+        raise CharactersRAGDBError("store refused")
+
+    monkeypatch.setattr(db, "_insert_character_card_in_transaction", refused_insert)
+    try:
+        with pytest.raises(ActorPackActivationError) as raised:
+            activation.activate(review, "create_new")
+        assert raised.value.category == "actor_pack_import_activation_failed"
+        assert raised.value.cleanup_pending is False
+        assert _published_files(trees) == []
+        assert activation.repository.get_identity_by_portable_uuid(
+            review.portable_uuid
+        ) is None
+    finally:
         db.close_connection()
 
 

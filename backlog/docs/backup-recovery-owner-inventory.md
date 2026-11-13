@@ -3211,11 +3211,13 @@ storage admission (`acquire_storage`) on both trees it publishes into,
 `visual_identities/actor_packs/<digest>/` and `actor_packs/<digest>/`, from before
 its first write through its commit or the cleanup of its own files. A capture's or
 restore's local pause refuses a new activation (`actor_pack_import_storage_unavailable`,
-nothing written), a pause that begins mid-activation cannot drain until the
-activation has retired and removed its uncommitted files, and another process's
-maintenance makes the activation wait for native admission. Before, a pause that
-began between two asset writes drained at once and left a published asset with no
-committed row behind.
+nothing written), and a pause that begins mid-activation cannot drain until the
+activation has retired and removed its uncommitted files. In the app, maintenance
+another process requests reaches the activation as this process's local pause, so
+it refuses the same way rather than waiting. A failure after the persona commit
+keeps the files and reports cleanup pending. Before, a pause that began between two
+asset writes drained at once and left a published asset with no committed row
+behind.
 
 Review labels and later rollback (TASK-40305): restore, recovery-copy and
 portable-relocation review name owners through `recovery_service.owner_label`;

@@ -4,7 +4,7 @@ title: "Actor Pack activation writes into captured persona trees without a stora
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 02:44
+updated_date: 2026-11-13 06:00
 labels:
 - follow-up
 - backup
@@ -67,3 +67,19 @@ Files: `tldw_chatbook/Actor_Packs/activation.py`, `tldw_chatbook/UI/Screens/pers
 
 Covering runs (load 64-88): the 3 Architecture files serially, 246 passed. `Tests/Actor_Packs` with `-n 4`: 239 passed, 2 failed. The two failures are `test_actor_pack_export.py::test_archive_matches_independent_golden_bytes[character|persona]`, export golden bytes, which fail the same against base activation.py. The UI/Packaging/Character_Chat activation consumers: 73 passed, 17 failed. All 17 are in `Tests/UI/test_actor_pack_creation_workflow.py` (`RecoveryRequired: raw_source_selection_changed`, the known local trap) and are identical at base.
 
+### Review round 2 (r14act-rev1)
+
+- **C1:** a pause that began after the persona commit made `cleanup_persona_intent` raise `RecoveryRequired`. The new `except RecoveryRequired` then deleted the committed assets: 3 files at commit, 0 after, with the identity committed. `PersonaActorPackCoordinator.create_persona` now treats any failure after its commit as `cleanup_pending=True`; startup `recover()` finishes committed intents. Test: `test_actor_pack_pause_after_the_persona_commit_keeps_its_assets`. It was red with the old narrow catch ("committed Actor Pack assets were removed") and is green now.
+- **I1:** neither test failed with the admission removed. Both now fail when `acquire_storage` is replaced by `nullcontext()`:
+  - The pause test asserts that `_activation_material` is never reached (`assert [True] == []` under the bypass).
+  - The in-flight test's publish hook closes the worker thread's cached ChaChaNotes connection before the pause. Under the bypass all three cases failed with "a capture drained over an in-flight activation".
+- **I2:** under a pause, only `actor_pack_import_review_stale` and `actor_pack_import_activation_failed` are renamed. The in-flight test is now parametrized over persona, character and cancel-under-pause. The cancel case was red with the old rename-everything rule (`'actor_pack_import_storage_unavailable' == 'actor_pack_import_cancelled'`).
+- **M2:** a final `except Exception` in `_activate_admitted` removes the attempt's files and maps to `actor_pack_import_activation_failed`. Every failure that reaches it precedes the commit. Test: `test_actor_pack_store_error_before_commit_removes_published_files` (a `CharactersRAGDBError` from the character insert). It was red without the catch-all, because the error escaped, and is green now.
+- **M1:** the inventory paragraph now says that another process's maintenance reaches the app as a local pause and refuses the activation; it does not wait.
+- **Docs:** the ADR-126 note now distinguishes a failure before commit from one after it.
+
+Runs at load 30-50:
+- Activation tests in the Architecture file: 6 passed with the fix.
+- The same tests under the admission-bypass control: 4 failed. Under the combined C1/M2/I2 controls: 3 failed (one per fix).
+- `Tests/Actor_Packs`, Packaging, Roleplay import and Buddy conversion with `-n 4`: 312 passed, 2 failed. The two are the known export golden-byte failures, also red at base.
+- Ratchets and the inventory file, serially: 243 passed.

@@ -44,6 +44,10 @@ from .repository import ActorPackRepository, ActorPackRepositoryError
 
 # A capture or restore holds profile storage, or it needs recovery first.
 _STORAGE_UNAVAILABLE = "actor_pack_import_storage_unavailable"
+# The categories a pause's refused store reads arrive as.
+_PAUSE_MASKED = frozenset(
+    {"actor_pack_import_review_stale", "actor_pack_import_activation_failed"}
+)
 
 
 class ActorPackActivationError(ValueError):
@@ -159,10 +163,10 @@ class ActorPackActivationService:
         except RecoveryRequired:
             raise ActorPackActivationError(_STORAGE_UNAVAILABLE) from None
         except ActorPackActivationError as exc:
-            if exc.category == _STORAGE_UNAVAILABLE or not storage.local_pause_active():
+            if exc.category not in _PAUSE_MASKED or not storage.local_pause_active():
                 raise
             # A pause that began mid-activation refuses its store reads, which
-            # the importer reports as a stale review; name the actual cause.
+            # surface as a stale review or a failed activation; name the cause.
             raise ActorPackActivationError(
                 _STORAGE_UNAVAILABLE, cleanup_pending=exc.cleanup_pending
             ) from None
@@ -239,6 +243,14 @@ class ActorPackActivationService:
         except RecoveryRequired:
             raise ActorPackActivationError(
                 _STORAGE_UNAVAILABLE, cleanup_pending=_cleanup_published(published)
+            ) from None
+        except Exception:
+            # Every failure reaching here precedes the commit: the character
+            # transaction rolled back, and create_persona never raises after
+            # its commit. Remove this attempt's files before the lease closes.
+            raise ActorPackActivationError(
+                "actor_pack_import_activation_failed",
+                cleanup_pending=_cleanup_published(published),
             ) from None
         return result
 
