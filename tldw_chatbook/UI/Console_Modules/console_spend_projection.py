@@ -20,7 +20,7 @@ from typing import Any
 
 from tldw_chatbook import config as _tldw_config
 
-from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
+from ...DB.assistant_generation_state import assistant_state_allows_provider_history
 from ...Chat.console_chat_controller import (
     ConsoleChatController,
     _CONSOLE_CONTEXT_PRESENTATION_READERS,

@@ -276,6 +276,56 @@ def test_allowlist_has_no_stale_rows() -> None:
     )
 
 
+def test_chachanotes_db_imports_no_chat_module() -> None:
+    """TASK-36949.6: ChaChaNotes_DB imports no ``tldw_chatbook.Chat`` module.
+
+    Every kind counts, ``if TYPE_CHECKING:`` included, unlike the allowlist scan.
+    A backstop also fails on any string literal that names a Chat module,
+    absolute or relative (``".Chat.x"``), which covers ``__import__``,
+    ``import_module`` with a package argument and ``sys.modules`` lookups. A
+    module name computed at runtime cannot be seen statically.
+    """
+    path = REPO_ROOT / PACKAGE / "DB" / "ChaChaNotes_DB.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    chat = f"{PACKAGE}.Chat"
+
+    def is_chat(name: str) -> bool:
+        return name == chat or name.startswith(chat + ".")
+
+    offenders: dict[int, str] = {}
+    for node, kind in _imports(tree):
+        if isinstance(node, ast.Call):
+            names = [node.args[0].value]
+        elif isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        else:
+            base = (
+                ".".join([PACKAGE, "DB"][: 2 - (node.level - 1)] + [node.module or ""])
+                if node.level
+                else node.module or ""
+            ).strip(".")
+            names = [base] + [f"{base}.{alias.name}" for alias in node.names]
+        matched = next((name for name in names if is_chat(name)), None)
+        if matched:
+            offenders[node.lineno] = f"line {node.lineno} ({kind}): {matched}"
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        relative = node.value.lstrip(".") if node.value.startswith(".") else None
+        if is_chat(node.value) or (
+            relative is not None
+            and (relative == "Chat" or relative.startswith("Chat."))
+        ):
+            offenders.setdefault(
+                node.lineno, f"line {node.lineno} (string): {node.value}"
+            )
+    assert not offenders, (
+        "tldw_chatbook/DB/ChaChaNotes_DB.py must not import tldw_chatbook.Chat; move "
+        "pure code down to the DB layer or have the caller pass it in (a port):\n  "
+        + "\n  ".join(offenders[line] for line in sorted(offenders))
+    )
+
+
 def _widgets_screen_imports_at_module_level() -> list[str]:
     """Module-level imports in Widgets/** that target UI/Screens (TASK-36944.8)."""
     found: list[str] = []

@@ -2562,9 +2562,18 @@ def run_web_server(
 
     from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
     from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing
+    from tldw_chatbook.DB.transaction_observer import install_safe_capture_trimmer
+
+    def _trim_safe_capture(blob: bytes) -> bytes | None:
+        # Lazy: the capture codec (~150 modules) loads only when a v52->v53
+        # upgrade meets a stored Safe capture (TASK-36949.6).
+        from tldw_chatbook.Chat.console_exchange_capture import trim_safe_capture_blob
+
+        return trim_safe_capture_blob(blob)
 
     install_semantic_coordination()  # DB-layer port; composition root
     install_chat_sync_hashing()  # DB-layer port; composition root
+    install_safe_capture_trimmer(_trim_safe_capture)  # DB-layer port; composition root
 
     # Load settings from config with defaults
     web_config = get_cli_setting("web_server", default={})

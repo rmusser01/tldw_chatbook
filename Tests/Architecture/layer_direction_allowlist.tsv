@@ -30,9 +30,6 @@ tldw_chatbook.DB.AgentRuns_DB	tldw_chatbook.Provider_Contract.sampling_params	to
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Backup_Recovery.participants	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Backup_Recovery.participants	top
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Character_Chat.portrait_performance	lazy
-tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.assistant_generation_state	lazy
-tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.console_exchange_capture	lazy
-tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.console_library_policy	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Library.library_artifacts_state	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Provider_Contract.provider_continuation	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Provider_Contract.thinking_blocks	lazy
@@ -146,8 +143,8 @@ tldw_chatbook.config	tldw_chatbook.Backup_Recovery.storage_admission	lazy
 tldw_chatbook.config	tldw_chatbook.Backup_Recovery.storage_admission	top
 tldw_chatbook.config	tldw_chatbook.Character_Chat.builtin_pixel_migu	lazy
 tldw_chatbook.config	tldw_chatbook.Character_Chat.visual_identity	lazy
-tldw_chatbook.config	tldw_chatbook.Chat.console_library_policy	lazy
 tldw_chatbook.config	tldw_chatbook.Chat.console_roleplay_identity	lazy
+tldw_chatbook.config	tldw_chatbook.DB.ChaChaNotes_DB	lazy
 tldw_chatbook.config	tldw_chatbook.MCP.credential_bindings	lazy
 tldw_chatbook.config	tldw_chatbook.provider_registry	top
 tldw_chatbook.runtime_policy.bootstrap	tldw_chatbook.Chatbooks.server_chatbook_service	lazy

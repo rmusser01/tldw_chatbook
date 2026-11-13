@@ -380,7 +380,15 @@ def main(argv: list[str]) -> int:
 
     async def run() -> Path:
         from tldw_chatbook.app import TldwCli
+        from tldw_chatbook.Chat.console_exchange_capture import install_safe_capture_trimming
+        from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+        from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing
 
+        # This script builds TldwCli() itself, so it is a composition root and
+        # installs the fail-closed DB-layer ports the app entry points install.
+        install_semantic_coordination()
+        install_chat_sync_hashing()
+        install_safe_capture_trimming()
         arm = before_boot() if before_boot else None
         app = TldwCli()
         if arm:

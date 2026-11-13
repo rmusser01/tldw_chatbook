@@ -25,7 +25,7 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..Internal_Prompts import get_internal_prompt
 from ..Provider_Contract import ChatAPIError
 from .Chat_Functions import chat_api_call
-from .assistant_generation_state import render_exported_assistant_content
+from ..DB.assistant_generation_state import render_exported_assistant_content
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 # Configure logger

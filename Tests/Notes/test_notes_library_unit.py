@@ -12,7 +12,7 @@ from loguru import logger
 import sqlite3
 import pytest
 
-from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDBError as Actual_CharactersRAGDBError,
     ConflictError as Actual_ConflictError,

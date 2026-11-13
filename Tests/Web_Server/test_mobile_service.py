@@ -1590,7 +1590,7 @@ async def test_reading_path_migrates_a_legacy_notes_db_with_the_library_seed(
     import sqlite3
 
     import tldw_chatbook.config as config
-    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 
     notes_path = tmp_path / _NOTES_DB_NAME
     with monkeypatch.context() as v47:

@@ -71,7 +71,7 @@ from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.DB.chachanotes_fts_backfill import (
     backfill_chachanotes_messages_fts,
 )
-from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME

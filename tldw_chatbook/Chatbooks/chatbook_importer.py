@@ -43,7 +43,7 @@ from ..Canvas.repository import (
     CanvasRepository,
 )
 from ..Character_Chat.character_card_formats import detect_and_parse_character_card
-from ..Chat.assistant_generation_state import (
+from ..DB.assistant_generation_state import (
     AssistantGenerationState,
     normalize_assistant_generation_state,
 )
