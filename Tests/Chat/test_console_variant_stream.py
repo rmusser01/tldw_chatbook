@@ -32,6 +32,11 @@ from tldw_chatbook.Chat.thinking_blocks import (
 )
 from Tests.console_provider_doubles import provider_resolution
 
+# TASK-40316: the controller-driven regenerate tests read config through the
+# Console controller, which the per-test sandbox refuses (RecoveryRequired:
+# raw_source_selection_changed); the sibling Console files carry the same mark.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _store_with_answer():
     store = ConsoleChatStore()
