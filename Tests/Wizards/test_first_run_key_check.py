@@ -109,8 +109,8 @@ def _assert_the_typed_key_reached_discovery(scope, provider: str) -> None:
     assert checked[-1]["use_shared_cache"] is False
 
 
-async def _enter_key(provider: str, result: ModelDiscoveryResult):
-    wizard = _wizard_with(result)
+async def _enter_key(provider: str, result: ModelDiscoveryResult, *, wizard=None):
+    wizard = wizard or _wizard_with(result)
     probe = AsyncMock()
     step = _provider_step(wizard=wizard, probe=probe)
     app = _StepHost(step)
@@ -128,14 +128,135 @@ async def _enter_key(provider: str, result: ModelDiscoveryResult):
             await pilot.pause(0.05)
         status = str(step.query_one("#setup-provider-probe-status", Static).renderable)
     scope = wizard.app_instance.llm_provider_catalog_scope_service
-    _assert_the_typed_key_reached_discovery(scope, provider)
+    if isinstance(scope.discover_models, AsyncMock):
+        _assert_the_typed_key_reached_discovery(scope, provider)
     return staged, status, probe, scope
 
 
+def _wizard_with_real_discovery(routes: dict[str, object], seen: list) -> SimpleNamespace:
+    """Review v5r2 TE-2: the wizard over the REAL shared discovery.
+
+    ``_wizard_with`` hands Check key a mocked ``discover_models`` that returns
+    a hand-built result, so Google's models.list and OpenRouter's
+    ``/api/v1/key`` (the checks AC#3 and AC#5 are about) never ran there.
+    Here the app's real scope service, its real
+    ``LocalLLMProviderCatalogService`` and the real
+    ``discover_openai_compatible_models`` run over the shipped template; only
+    the transport is an ``httpx.MockTransport`` (``routes`` maps a URL prefix
+    to its response).
+    """
+    import copy
+
+    import httpx
+
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+    from tldw_chatbook.LLM_Provider_Catalog import (
+        openai_compatible_model_discovery as discovery_module,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.llm_provider_catalog_scope_service import (
+        LLMProviderCatalogScopeService,
+    )
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+
+    config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        for prefix, response in routes.items():
+            if str(request.url).startswith(prefix):
+                return response
+        return httpx.Response(599, json={"error": "unexpected route"})
+
+    async def client(**kwargs) -> ModelDiscoveryResult:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            return await discovery_module.discover_openai_compatible_models(
+                **kwargs, client=http
+            )
+
+    service = LocalLLMProviderCatalogService(
+        settings_loader=lambda: config,
+        provider_catalog_loader=lambda: copy.deepcopy(config["providers"]),
+        discovery_client=client,
+        environ={},
+    )
+    wizard = _wizard_with(_verified("unused"))
+    wizard.app_instance.llm_provider_catalog_scope_service = (
+        LLMProviderCatalogScopeService(local_service=service, server_service=None)
+    )
+    return wizard
+
+
 @pytest.mark.asyncio
-async def test_gemini_enter_checks_the_key_with_google() -> None:
+async def test_gemini_check_key_runs_googles_model_list() -> None:
+    """Review v5r2 TE-2: Check key asks Google's own models.list with the
+    typed key, and its answer is the verdict. Before the fix Gemini had no
+    listing and no key check at all (dev's discovery read it 'unsupported')."""
+    import httpx
+
+    seen: list = []
+    listing = {
+        "models": [
+            {"name": "models/gemini-flash-lite-latest", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-3.5-flash", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-3.8-flash-tts", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/text-embedding-005", "supportedGenerationMethods": ["embedContent"]},
+        ]
+    }
+    wizard = _wizard_with_real_discovery(
+        {
+            "https://generativelanguage.googleapis.com/v1beta/models": httpx.Response(
+                200, json=listing
+            )
+        },
+        seen,
+    )
+
+    _staged, status, probe, _scope = await _enter_key("google", None, wizard=wizard)
+
+    assert status == "✓ Key works — Google Gemini returned 2 models."
+    assert [request.url.path for request in seen] == ["/v1beta/models"]
+    assert seen[0].headers["x-goog-api-key"] == TYPED_KEY
+    probe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_openrouter_key_is_refused_by_openrouters_key_endpoint() -> None:
+    """Review v5r2 TE-2: OpenRouter lists models for any key, so Check key
+    asks ``/api/v1/key`` with the typed key, and OpenRouter's 401 reason is
+    the line. Before the fix the public listing alone read as a pass."""
+    import httpx
+
+    seen: list = []
+    wizard = _wizard_with_real_discovery(
+        {
+            "https://openrouter.ai/api/v1/models": httpx.Response(
+                200, json={"data": [{"id": "openai/gpt-4.1-mini"}]}
+            ),
+            "https://openrouter.ai/api/v1/key": httpx.Response(
+                401, json={"error": {"message": "User not found.", "code": 401}}
+            ),
+        },
+        seen,
+    )
+
+    _staged, status, probe, _scope = await _enter_key("openrouter", None, wizard=wizard)
+
+    assert status == "✗ OpenRouter rejected this key: User not found."
+    assert [str(request.url) for request in seen][-1] == "https://openrouter.ai/api/v1/key"
+    assert seen[-1].headers["Authorization"] == f"Bearer {TYPED_KEY}"
+    assert TYPED_KEY not in status
+    probe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gemini_enter_words_a_verified_listing() -> None:
+    """Pins the WORDING of a verified Gemini listing only: discovery is a
+    mock here (review v5r2 TE-2). The check itself runs in
+    ``test_gemini_check_key_runs_googles_model_list`` above."""
     staged, status, probe, scope = await _enter_key(
-        "google", _verified("google", "gemini-flash-latest", "gemini-3.8-flash")
+        "google", _verified("google", "gemini-flash-lite-latest", "gemini-3.5-flash")
     )
 
     # Rebase onto dev (TASK-34100.6): dev's Check key words the verdict.
