@@ -1013,6 +1013,7 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
         ConsoleLibraryPolicyCandidate,
     )
 
+    from Tests.UI.app_factory import swap_app_aliases
     from tldw_chatbook import config as config_module
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -1030,7 +1031,9 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
     app._wire_chat_conversation_services()
     note_id = db.add_note(title="Lighthouse keeping notes", content=_EVIDENCE)
     library = _EvidenceLibrary(note_id)
-    app.library_rag_search_service = library
+    # Last, so the re-published ``app.services`` carries this DB and the
+    # citation repository the rewiring rebuilt (the evidence capture reads it).
+    swap_app_aliases(app, library_rag_search_service=library)
     requests: list[object] = []
     held_stream = gateway.stream_chat
 

@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, swap_app_aliases
 from Tests.UI.test_console_native_chat_flow import (
     _ReadyResolutionGateway,
     _select_llamacpp_console,
@@ -221,7 +221,9 @@ def _build_app(db_path: Path, send_path: _SendPath):
         build_dictionary_service,
     )
 
-    app.local_chat_dictionary_service = build_dictionary_service(db)
+    # Last, so the re-published ``app.services`` also carries the citation
+    # repository the rewiring above rebuilt (the evidence capture reads it).
+    swap_app_aliases(app, local_chat_dictionary_service=build_dictionary_service(db))
     app.chat_dictionary_scope_service.local_service = app.local_chat_dictionary_service
     gateway = _CitingGateway()
     app.console_provider_gateway_factory = lambda: gateway

@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+from Tests.app_services_doubles import with_alias_services
 
 
 def _controller() -> tuple[ConsoleRetrievalController, SimpleNamespace]:
@@ -29,7 +30,7 @@ def _controller() -> tuple[ConsoleRetrievalController, SimpleNamespace]:
         return state.sync_result
 
     controller = ConsoleRetrievalController(
-        app_instance=SimpleNamespace(),
+        app_instance=with_alias_services(SimpleNamespace()),
         active_native_session=lambda: None,
         current_conversation_id=lambda: None,
         clear_evidence_sent_notice=lambda: None,

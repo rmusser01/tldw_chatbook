@@ -12,7 +12,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, swap_app_aliases
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -29,9 +29,10 @@ from tldw_chatbook.Chat.citation_evidence_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
-    LocalRagContextResult,
     capture_console_staged_evidence_for_chat,
 )
+from tldw_chatbook.RAG_Search.scope_evidence import LocalRagContextResult
+from Tests.app_services_doubles import with_alias_services
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -3184,13 +3185,16 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(
     # TASK-33620.8 (AC#4): evidence carries [S#] labels and a repair
     # contract only when a citation record can cover the reply, so this
     # canonical round trip needs a ready repository (key already loaded).
-    app.citation_trace_repository = CitationTraceRepository(
-        db,
-        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
-        identity_context=load_local_citation_identity_context(db),
-        fingerprint_codec=CitationFingerprintCodec(b"k" * 32),
+    swap_app_aliases(
+        app,
+        citation_trace_repository=CitationTraceRepository(
+            db,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=load_local_citation_identity_context(db),
+            fingerprint_codec=CitationFingerprintCodec(b"k" * 32),
+        ),
+        media_db=_ExistingMediaDBDouble("media-77"),
     )
-    app.media_db = _ExistingMediaDBDouble("media-77")
     captured = []
 
     async def capture(app_instance, launch, *, user_message):
@@ -3269,8 +3273,8 @@ async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context(req
         launch = screen._pending_console_launch_context
         assert launch is not None
 
-    capture_app = SimpleNamespace(
-        chachanotes_db=_ExistingChaChaDBDouble(note_ids={"42"})
+    capture_app = with_alias_services(
+        SimpleNamespace(chachanotes_db=_ExistingChaChaDBDouble(note_ids={"42"}))
     )
     result = await capture_console_staged_evidence_for_chat(
         capture_app, launch, user_message="What should I follow up on?"
@@ -3302,8 +3306,8 @@ async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_cont
         launch = screen._pending_console_launch_context
         assert launch is not None
 
-    capture_app = SimpleNamespace(
-        chachanotes_db=_ExistingChaChaDBDouble(conversation_ids={"conv-9"})
+    capture_app = with_alias_services(
+        SimpleNamespace(chachanotes_db=_ExistingChaChaDBDouble(conversation_ids={"conv-9"}))
     )
     result = await capture_console_staged_evidence_for_chat(
         capture_app, launch, user_message="What did we plan?"

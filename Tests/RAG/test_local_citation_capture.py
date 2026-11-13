@@ -64,6 +64,9 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
     normalize_local_result,
 )
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
+from tldw_chatbook.RAG_Search import scope_evidence as se
+from tldw_chatbook.app_services import ProfileStorage
+from Tests.app_services_doubles import AliasServices, with_alias_services
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
 from tldw_chatbook.RAG_Search.pipeline_types import SearchResult
 
@@ -1046,6 +1049,8 @@ class _CaptureRepository:
 
 
 class _CaptureApp:
+    services = property(AliasServices)
+
     def __init__(self, *, search_mode="plain", repository=None, media_ids=("m1",)):
         self._widgets = {
             "#chat-rag-enable-checkbox": _CaptureWidget(True),
@@ -1146,7 +1151,7 @@ async def test_missing_custom_pipeline_log_includes_safe_context(monkeypatch):
         format="{message}",
     )
     try:
-        results, error = await cre.perform_search_with_pipeline(
+        results, error = await pipeline_builder_simple.perform_search_with_pipeline(
             app=None,
             query="PRIVATE-MISSING-PIPELINE-QUERY",
             sources={"media": True, "conversations": False, "notes": True},
@@ -1222,7 +1227,7 @@ async def test_capture_api_returns_prompt_evidence_set_id_for_every_mode(
     finally:
         loguru_logger.remove(sink_id)
 
-    assert isinstance(captured, cre.LocalRagContextResult)
+    assert isinstance(captured, se.LocalRagContextResult)
     assert captured.context == expected_context
     assert captured.citation_builder is repository.builders[0]
     assert len(captured.citation_builder.evidence_runs) == 1
@@ -1289,7 +1294,7 @@ async def test_pipeline_prompt_evidence_set_id_uses_record_method_return(
 
 
 def test_local_rag_context_result_optional_fields_default_none_and_are_frozen():
-    result = cre.LocalRagContextResult(None, None)
+    result = se.LocalRagContextResult(None, None)
 
     assert result.prompt_evidence_set_id is None
     assert result.citation_repair_contract is None
@@ -1671,9 +1676,9 @@ async def test_console_authority_failure_never_formats_or_captures_evidence(
         return None
 
     if failure == "scope_exception":
-        monkeypatch.setattr(cre, "resolve_scope_for_session", scope_error)
+        monkeypatch.setattr(se, "resolve_scope_for_session", scope_error)
     else:
-        monkeypatch.setattr(cre, "_current_local_evidence_ids", incomplete_rows)
+        monkeypatch.setattr(se, "_current_local_evidence_ids", incomplete_rows)
     if adapter == "staged":
         launch = ConsoleLiveWorkLaunch.from_values(
             source="Library Search/RAG",
@@ -1738,7 +1743,7 @@ async def test_console_builder_unavailable_sends_evidence_without_labels():
 
     from tldw_chatbook.Chat.answer_citations import unrecorded_evidence_text
 
-    assert captured == cre.LocalRagContextResult(
+    assert captured == se.LocalRagContextResult(
         context=unrecorded_evidence_text(["MEDIA — Legacy staged source\nlegacy body"]),
         citation_builder=None,
         citation_repair_contract=None,
@@ -1774,7 +1779,7 @@ async def test_builder_unavailable_pipeline_normalizes_authorizes_and_formats(
     captured = await cre.get_rag_context_capture_for_chat(app, "query")
 
     expected_context = "[S1] MEDIA — Current source\nexact current body"
-    assert captured == cre.LocalRagContextResult(
+    assert captured == se.LocalRagContextResult(
         context=expected_context,
         citation_builder=None,
         citation_repair_contract=CitationRepairContract(
@@ -1825,7 +1830,7 @@ async def test_builder_unavailable_repository_states_return_exact_repair_contrac
         captured = await cre.get_rag_context_capture_for_chat(app, "query")
 
         expected_context = "[S1] MEDIA — Title\nbody"
-        assert captured == cre.LocalRagContextResult(
+        assert captured == se.LocalRagContextResult(
             context=expected_context,
             citation_builder=None,
             citation_repair_contract=CitationRepairContract(
@@ -1893,7 +1898,7 @@ async def test_current_authority_exclusion_does_not_revive_legacy_without_builde
 
     captured = await cre.get_rag_context_capture_for_chat(app, "query")
 
-    assert captured == cre.LocalRagContextResult(None, None)
+    assert captured == se.LocalRagContextResult(None, None)
     assert captured.citation_repair_contract is None
 
 
@@ -1913,10 +1918,10 @@ async def test_prompt_authority_failure_returns_no_context_builder_or_prompt_id(
     )
 
     async def _fail_authority(*_args, **_kwargs):
-        return cre._PromptAuthorizationResult((), False)
+        return se._PromptAuthorizationResult((), False)
 
     monkeypatch.setattr(
-        cre,
+        se,
         "_authorize_local_results_for_prompt",
         _fail_authority,
     )
@@ -1931,7 +1936,7 @@ async def test_prompt_authority_failure_returns_no_context_builder_or_prompt_id(
     finally:
         loguru_logger.remove(sink_id)
 
-    assert captured == cre.LocalRagContextResult(None, None)
+    assert captured == se.LocalRagContextResult(None, None)
     assert captured.prompt_evidence_set_id is None
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert "reason=prompt_authority_failure" in rendered_logs
@@ -1963,7 +1968,7 @@ async def test_pipeline_exception_returns_no_context_or_builder_and_sanitizes_lo
     finally:
         loguru_logger.remove(sink_id)
 
-    assert captured == cre.LocalRagContextResult(
+    assert captured == se.LocalRagContextResult(
         context=None,
         citation_builder=None,
     )
@@ -2133,7 +2138,7 @@ async def test_pipeline_canonical_capture_failure_keeps_exact_repair_contract(
             loguru_logger.remove(sink_id)
 
         expected_context = "[S1] MEDIA — Title\nbody"
-        assert captured == cre.LocalRagContextResult(
+        assert captured == se.LocalRagContextResult(
             context=expected_context,
             citation_builder=None,
             citation_repair_contract=CitationRepairContract(
@@ -2180,7 +2185,7 @@ async def test_legacy_raw_pipeline_fallback_never_gets_repair_contract(monkeypat
 
     captured = await cre.get_rag_context_capture_for_chat(_CaptureApp(), "query")
 
-    assert captured == cre.LocalRagContextResult(raw_context, None)
+    assert captured == se.LocalRagContextResult(raw_context, None)
     assert captured.citation_repair_contract is None
 
 
@@ -2199,7 +2204,7 @@ def test_repair_contract_ordinals_follow_formatted_entries_not_context_reparse()
         max_length=1_000,
     )
 
-    contract = cre._repair_contract_for_local_evidence(formatted)
+    contract = se._repair_contract_for_local_evidence(formatted)
 
     assert contract is not None
     assert contract.allowed_ordinals == tuple(range(1, len(formatted.entries) + 1))
@@ -2214,7 +2219,7 @@ def test_empty_formatted_evidence_has_no_repair_contract():
         omitted_candidate_ranks=(),
     )
 
-    assert cre._repair_contract_for_local_evidence(formatted) is None
+    assert se._repair_contract_for_local_evidence(formatted) is None
 
 
 def test_repair_contract_limit_failure_is_safe_and_logs_no_evidence():
@@ -2236,7 +2241,7 @@ def test_repair_contract_limit_failure_is_safe_and_logs_no_evidence():
         format="{message}",
     )
     try:
-        contract = cre._repair_contract_for_local_evidence(formatted)
+        contract = se._repair_contract_for_local_evidence(formatted)
     finally:
         loguru_logger.remove(sink_id)
 
@@ -2258,12 +2263,12 @@ def test_unsupported_namespace_has_no_repair_contract(monkeypatch):
         omitted_candidate_ranks=(),
     )
     monkeypatch.setattr(
-        cre,
+        se,
         "MarkerNamespace",
         SimpleNamespace(CHATBOOK_S_V1=object()),
     )
 
-    assert cre._repair_contract_for_local_evidence(formatted) is None
+    assert se._repair_contract_for_local_evidence(formatted) is None
 
 
 def test_sensitive_real_database_reads_do_not_log_source_identities(tmp_path):
@@ -2275,7 +2280,7 @@ def test_sensitive_real_database_reads_do_not_log_source_identities(tmp_path):
         tmp_path / "sensitive-chacha.sqlite",
         client_id="sensitive-chacha",
     )
-    app = SimpleNamespace(media_db=media_db, chachanotes_db=chacha_db)
+    storage = ProfileStorage(media=media_db, chachanotes=chacha_db)
     captured_logs = []
     sink_id = loguru_logger.add(
         captured_logs.append,
@@ -2284,30 +2289,30 @@ def test_sensitive_real_database_reads_do_not_log_source_identities(tmp_path):
     )
     try:
         assert (
-            cre._existing_ids_sync(
-                app,
-                cre.SOURCE_TYPE_MEDIA,
+            se._existing_ids_sync(
+                storage,
+                se.SOURCE_TYPE_MEDIA,
                 frozenset({media_sentinel}),
             )
             == frozenset()
         )
         assert (
-            cre._existing_ids_sync(
-                app,
-                cre.SOURCE_TYPE_NOTE,
+            se._existing_ids_sync(
+                storage,
+                se.SOURCE_TYPE_NOTE,
                 frozenset({note_sentinel}),
             )
             == frozenset()
         )
         assert (
-            cre._current_media_evidence_ids_sync(
+            se._current_media_evidence_ids_sync(
                 media_db,
                 frozenset({media_sentinel}),
             )
             == frozenset()
         )
         assert (
-            cre._current_chacha_evidence_ids_sync(
+            se._current_chacha_evidence_ids_sync(
                 chacha_db,
                 frozenset({note_sentinel}),
                 frozenset({conversation_sentinel}),
@@ -2339,7 +2344,7 @@ async def test_fresh_persisted_scope_read_does_not_log_conversation_identity(
             "title": "Private identity log regression",
         }
     )
-    app = SimpleNamespace(chachanotes_db=chacha_db, media_db=None)
+    app = with_alias_services(SimpleNamespace(chachanotes_db=chacha_db, media_db=None))
     session = SimpleNamespace(
         id="session-log-regression",
         persisted_conversation_id=conversation_sentinel,
@@ -2405,7 +2410,7 @@ async def test_request_start_cached_scope_read_does_not_log_conversation_identit
         chacha_db.close_connection()
 
     expected_context = "[S1] MEDIA — Title\nbody"
-    assert captured == cre.LocalRagContextResult(
+    assert captured == se.LocalRagContextResult(
         expected_context,
         None,
         citation_repair_contract=CitationRepairContract(
@@ -2462,7 +2467,7 @@ async def test_cached_scope_read_preserves_guarded_unscoped_semantics(
         (raw_metadata, conversation_id),
     )
     connection.commit()
-    app = SimpleNamespace(chachanotes_db=chacha_db, media_db=None)
+    app = with_alias_services(SimpleNamespace(chachanotes_db=chacha_db, media_db=None))
     session = SimpleNamespace(
         id="cached-guarded-session",
         persisted_conversation_id=conversation_id,

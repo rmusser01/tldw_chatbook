@@ -33,6 +33,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBErro
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     resolve_scope_for_session,
 )
+from Tests.app_services_doubles import with_alias_services
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -346,7 +347,7 @@ def test_console_read_retires_its_worker_handle_after_results_or_sql_failure(
         sql_failure: Make its real SQL fail after worker handle acquisition.
     """
     if reader in {"cached_scope", "fresh_scope"}:
-        app = SimpleNamespace(chachanotes_db=database)
+        app = with_alias_services(SimpleNamespace(chachanotes_db=database))
         session = SimpleNamespace(persisted_conversation_id="conversation")
 
         async def read():

@@ -5,6 +5,7 @@ No complex error handling or effects - just execute steps in order.
 """
 
 import asyncio
+import copy
 from typing import Dict, Any, List, Tuple, Optional
 from loguru import logger
 import sys
@@ -770,3 +771,290 @@ def get_pipeline(pipeline_id: str) -> Optional[Dict[str, Any]]:
         return config
 
     return None
+
+# Search entry points over the built-in and TOML pipelines. They lived in
+# Event_Handlers/Chat_Events/chat_rag_events.py until TASK-36947.3; the
+# pipeline loader maps its built-in function names onto them.
+
+
+async def perform_plain_rag_search(
+    app: Any,
+    query: str,
+    sources: Dict[str, bool],
+    top_k: int = 5,
+    max_context_length: int = 10000,
+    enable_rerank: bool = True,
+    reranker_model: str = "flashrank",
+    keyword_filter_list: Optional[List[str]] = None,
+    diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Perform a plain RAG search using the pipeline system.
+
+    Args:
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-5). Forwarded to ``execute_pipeline`` so every leg
+            self-enforces it; ``None`` performs today's unrestricted search.
+    """
+    logger.info("RAG pipeline starting; mode=plain")
+
+    # Build pipeline configuration (deep copy: steps are nested dicts and the
+    # builtin definition must not be mutated across calls)
+    config = copy.deepcopy(BUILTIN_PIPELINES["plain"])
+    config["parameters"] = {
+        "top_k": top_k,
+        "max_context_length": max_context_length,
+        "keyword_filter": keyword_filter_list,
+    }
+
+    # Adjust reranking step if needed
+    if not enable_rerank:
+        # Remove rerank step
+        config["steps"] = [
+            s for s in config["steps"] if s.get("function") != "rerank_results"
+        ]
+    elif reranker_model != "flashrank":
+        # Update reranker model
+        for step in config["steps"]:
+            if step.get("function") == "rerank_results":
+                step.setdefault("config", {})["model"] = reranker_model
+
+    # Execute pipeline
+    return await execute_pipeline(
+        config, app, query, sources, diagnostics=diagnostics, scope=scope, top_k=top_k
+    )
+
+
+async def perform_full_rag_pipeline(
+    app: Any,
+    query: str,
+    sources: Dict[str, bool],
+    top_k: int = 10,
+    max_context_length: int = 10000,
+    chunk_size: int = 400,
+    chunk_overlap: int = 100,
+    chunk_type: str = "words",
+    include_metadata: bool = True,
+    enable_rerank: bool = True,
+    reranker_model: str = "flashrank",
+    keyword_filter_list: Optional[List[str]] = None,
+    diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Perform a full semantic RAG pipeline using the pipeline system.
+
+    Args:
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-5). Forwarded to ``execute_pipeline`` so every leg
+            self-enforces it; ``None`` performs today's unrestricted search.
+    """
+    logger.info("RAG pipeline starting; mode=semantic")
+
+    # Build pipeline configuration (deep copy: steps are nested dicts and the
+    # builtin definition must not be mutated across calls)
+    config = copy.deepcopy(BUILTIN_PIPELINES["semantic"])
+    config["parameters"] = {
+        "top_k": top_k,
+        "max_context_length": max_context_length,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "chunk_type": chunk_type,
+        "include_metadata": include_metadata,
+        "include_citations": include_metadata,
+    }
+
+    # Adjust reranking step if needed
+    if not enable_rerank:
+        config["steps"] = [
+            s for s in config["steps"] if s.get("function") != "rerank_results"
+        ]
+    elif reranker_model != "flashrank":
+        for step in config["steps"]:
+            if step.get("function") == "rerank_results":
+                step.setdefault("config", {})["model"] = reranker_model
+
+    # Execute pipeline
+    return await execute_pipeline(
+        config, app, query, sources, diagnostics=diagnostics, scope=scope, top_k=top_k
+    )
+
+
+async def perform_hybrid_rag_search(
+    app: Any,
+    query: str,
+    sources: Dict[str, bool],
+    top_k: int = 10,
+    max_context_length: int = 10000,
+    enable_rerank: bool = True,
+    reranker_model: str = "flashrank",
+    chunk_size: int = 400,
+    chunk_overlap: int = 100,
+    chunk_type: str = "words",
+    hybrid_alpha: Optional[float] = None,
+    bm25_weight: Optional[float] = None,
+    vector_weight: Optional[float] = None,
+    keyword_filter_list: Optional[List[str]] = None,
+    diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Perform a hybrid RAG search using the pipeline system.
+
+    The FTS5 and semantic legs are fused via Reciprocal Rank Fusion plus an
+    alpha-weighted blend, matching the tldw_server design. Alpha weights the
+    vector leg: 0 = FTS only, 1 = vector only. The RRF constant k resolves
+    through ``fusion.resolve_rrf_k`` (step config -> active profile ->
+    shipped default (``config.DEFAULT_HYBRID_RRF_K``)); that shipped
+    default is 5 (TASK-4110).
+
+    Alpha precedence: ``hybrid_alpha`` argument -> legacy ``bm25_weight`` /
+    ``vector_weight`` (mapped to ``vector / (bm25 + vector)``) ->
+    ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` config knob (0.7).
+
+    Args:
+        app: The pipeline context ``execute_pipeline`` hands to each step.
+        query: Search query text.
+        sources: Which sources to search (e.g. media/conversations/notes).
+        top_k: Maximum number of fused results to return.
+        max_context_length: Character budget for the formatted context.
+        enable_rerank: Whether to run the reranking step after fusion.
+        reranker_model: Reranker model name when reranking is enabled.
+        chunk_size: Chunk size forwarded to the pipeline parameters.
+        chunk_overlap: Chunk overlap forwarded to the pipeline parameters.
+        chunk_type: Chunking method forwarded to the pipeline parameters.
+        hybrid_alpha: Explicit fusion alpha (0 = FTS only, 1 = vector only);
+            overrides the legacy weights and the config knob.
+        bm25_weight: Legacy FTS-leg weight; mapped onto alpha together with
+            vector_weight when hybrid_alpha is not given.
+        vector_weight: Legacy vector-leg weight; see bm25_weight.
+        keyword_filter_list: Optional keywords the media FTS leg must match.
+        diagnostics: Optional dict receiving the semantic-leg availability
+            state (task-250) so callers can say when results are FTS-only.
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-5). Forwarded to ``execute_pipeline`` so every leg
+            self-enforces it; ``None`` performs today's unrestricted search.
+
+    Returns:
+        Tuple of (result dicts sorted by fused score, formatted context
+        string for the LLM).
+    """
+    logger.info("RAG pipeline starting; mode=hybrid")
+
+    # Map legacy weight parameters onto alpha for backwards compatibility
+    if hybrid_alpha is None and (bm25_weight is not None or vector_weight is not None):
+        bm25 = bm25_weight if bm25_weight is not None else 0.5
+        vector = vector_weight if vector_weight is not None else 0.5
+        total_weight = bm25 + vector
+        if total_weight > 0:
+            hybrid_alpha = vector / total_weight
+    alpha = resolve_hybrid_alpha(hybrid_alpha)
+
+    # Build pipeline configuration (deep copy: steps are nested dicts and the
+    # builtin definition must not be mutated across calls)
+    config = copy.deepcopy(BUILTIN_PIPELINES["hybrid"])
+
+    # Update config
+    config["parameters"] = {
+        "top_k": top_k,
+        "max_context_length": max_context_length,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "chunk_type": chunk_type,
+        "keyword_filter": keyword_filter_list,
+    }
+
+    # Pin the resolved alpha on the fusion step
+    for step in config["steps"]:
+        if step.get("type") == "parallel" and step.get("merge") == "rrf_merge":
+            step["config"] = {**step.get("config", {}), "alpha": alpha}
+
+    # Adjust reranking step if needed
+    if not enable_rerank:
+        config["steps"] = [
+            s for s in config["steps"] if s.get("function") != "rerank_results"
+        ]
+    elif reranker_model != "flashrank":
+        for step in config["steps"]:
+            if step.get("function") == "rerank_results":
+                step.setdefault("config", {})["model"] = reranker_model
+
+    # Execute pipeline
+    return await execute_pipeline(
+        config, app, query, sources, diagnostics=diagnostics, scope=scope, top_k=top_k
+    )
+
+
+async def perform_search_with_pipeline(
+    app: Any,
+    query: str,
+    sources: Dict[str, bool],
+    pipeline_id: str,
+    diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
+    **kwargs,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Perform a search using a specific pipeline ID.
+
+    This allows using custom pipelines defined in TOML files.
+
+    Args:
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-5). Forwarded to ``execute_pipeline`` so every leg
+            self-enforces it, including custom TOML pipeline shapes;
+            ``None`` performs today's unrestricted search.
+    """
+    logger.info("RAG pipeline starting; mode=custom")
+
+    # Get pipeline configuration (from built-ins or TOML)
+    config = get_pipeline(pipeline_id)
+
+    if not config:
+        logger.error(
+            "RAG pipeline unavailable; reason=pipeline_not_found; "
+            f"pipeline_id={pipeline_id}; "
+            f"selected_source_count={sum(bool(value) for value in sources.values())}"
+        )
+        return [], f"Pipeline '{pipeline_id}' not found"
+
+    # Make a copy to avoid modifying the original
+    config = config.copy()
+
+    # Merge any pipeline-specific parameters with runtime parameters
+    pipeline_params = config.get("parameters", {})
+    merged_params = {**pipeline_params, **kwargs}
+
+    # Execute pipeline with merged parameters
+    return await execute_pipeline(
+        config,
+        app,
+        query,
+        sources,
+        diagnostics=diagnostics,
+        scope=scope,
+        **merged_params,
+    )
+
+
+def format_results_for_llm(
+    results: List[Dict[str, Any]], max_chars: int = 10000
+) -> str:
+    """Format search results as context for LLM."""
+    from .pipeline_functions_simple import format_as_context
+
+    # Convert dicts back to SearchResult objects
+    search_results = []
+    for r in results:
+        search_results.append(
+            SearchResult(
+                source=r["source"],
+                id=r["id"],
+                title=r["title"],
+                content=r["content"],
+                score=r.get("score", 1.0),
+                metadata=r.get("metadata", {}),
+            )
+        )
+
+    return format_as_context(search_results, max_chars)
