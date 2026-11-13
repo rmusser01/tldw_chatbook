@@ -2,7 +2,7 @@
 id: TASK-40715
 title: "Ordinary Console Sends in other chats are refused as 'Workspace activity is busy' while one chat's reply runs"
 status: To Do
-created_date: 2026-11-13 06:45
+created_date: 2026-11-13 06:28
 labels:
 - follow-up
 - console
@@ -30,12 +30,13 @@ Found in the 2026-11-10 review of PR #3480 (TASK-39147, native phased workflows)
 - `install_skill` with a skills service (:551) and MCP-eligible non-ephemeral sessions (:457-481) also make the footprint opaque.
 - `Workspaces/worktree_activity.py:145-146` makes an opaque footprint conflict with every other footprint. So `_prelaunch` (:410-417) returns no claim, and `Agents/ordinary_tree.py:626` raises `CapacityRefused("worktree_activity_busy")`.
 
-Windows skips the ordinary tree entirely (`Chat/console_ordinary_tree.py:67`). So does a chat that is not agent-eligible, such as a character chat or a send with a prefill.
+Every turn goes through `admit_ordinary_turn` (`Chat/console_chat_controller.py:10149-10159`), which receives agent eligibility only as a flag. Only Windows skips the tree (`Chat/console_ordinary_tree.py:67`). Because an opaque footprint conflicts in both directions, a character chat or a send with a prefill is refused too while an agent turn runs.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With default configuration, Sends in two different chats run at the same time, with no busy refusal and two provider calls.
-- [ ] #2 Turns whose workspace footprints really overlap are still serialized: the fix does not drop the conflict check.
-- [ ] #3 A regression test sends from two non-ephemeral chats back to back and gets two provider calls.
+- [ ] #1 A turn's footprint becomes opaque only once the turn does something whose footprint cannot be declared, such as spawning a sub-agent or installing a skill. Merely having those tools available does not make it opaque.
+- [ ] #2 With default configuration on macOS or Linux, a Send in a second chat, made while the first chat's provider call is still open, reaches the provider when neither turn has done such a thing.
+- [ ] #3 An opaque claim still conflicts with every other turn in its worktree.
+- [ ] #4 A POSIX regression test holds the first chat's provider call open, then sends from a second chat, both an agent chat and a character chat. Each gets its own provider call.
 <!-- AC:END -->

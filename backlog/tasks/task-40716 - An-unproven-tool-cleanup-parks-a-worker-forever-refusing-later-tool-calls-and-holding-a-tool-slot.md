@@ -2,7 +2,7 @@
 id: TASK-40716
 title: "An unproven tool cleanup parks a worker forever, refusing the run's later tool calls and holding an app-wide tool slot"
 status: To Do
-created_date: 2026-11-13 06:45
+created_date: 2026-11-13 06:28
 labels:
 - follow-up
 - agents
@@ -26,7 +26,7 @@ Found in the 2026-11-10 review of PR #3480 (TASK-39147, native phased workflows)
 - Every later tool call in that run is then refused with `previous_tool_still_running`, because `Agents/execution_capacity.py:336-337` refuses while any tool operation is stopping.
 - The parked operation keeps counting toward the app-wide `max_tool_workers` until the app restarts.
 
-This happens on every platform with the workflow feature off. A probe on 2026-11-12 (dev e0186fa10a) confirmed both effects. The five `Event().wait()` parks arrived with #3480.
+It happens with the workflow feature off. The `agent_service` park needs the ordinary tree's source scope (:2236-2242). Windows skips that tree (`Chat/console_ordinary_tree.py:67`), so there `:2375-2380` finishes the operation instead of parking it. Whether the other five parks are reachable on Windows has not been checked. A probe on macOS on 2026-11-12 (dev e0186fa10a) confirmed both effects. The five `Event().wait()` parks arrived with #3480.
 
 **The parks:**
 - `Agents/agent_service.py:2254-2258`, `retain_unknown_return()`. It is reached from :2322, :2333, :2369, :2371 and :2373 when a source scope or `operation.finish()` exits other than through the tool's own error. Ordinary Console tool calls set that scope (`Chat/console_agent_preparation.py:2306`).
@@ -47,5 +47,5 @@ This happens on every platform with the workflow feature off. A probe on 2026-11
 - [ ] #1 One unproven cleanup no longer makes every later tool call in the same run fail with `previous_tool_still_running`. Later calls either run, or the run ends in a terminal state that names the unproven cleanup.
 - [ ] #2 The app-wide tool-worker slot held for an unproven operation is returned once the operation is proven finished or the user explicitly abandons it, without restarting the app.
 - [ ] #3 No thread or task waits on an event or future that nothing can complete, and the app can still exit while a cleanup is unproven.
-- [ ] #4 A resource whose cleanup is unproven is still never reused while it may be live. The SSH, Raw CLI and native Git tests assert the new behaviour instead of a living parked worker.
+- [ ] #4 A resource whose cleanup is unproven, including its held storage leases (the SSH test's `storage.live` and its `db.agent_runs` source), is still never reused while it may be live. The SSH, Raw CLI and native Git tests assert the new behaviour instead of a living parked worker.
 <!-- AC:END -->
