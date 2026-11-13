@@ -391,3 +391,122 @@ def test_the_terminal_repeat_is_openrouters_allowance_not_the_engines_default() 
     run(normalized=True)
     with pytest.raises(HostedChatProtocolError, match="followed terminal state"):
         run(normalized=False)
+
+
+# --- A refusal is the model's reply (pre-merge review M-1) -------------------
+#
+# An OpenAI-family model that declines answers ``content: null`` with its
+# reason in ``refusal`` (a stream sends it in ``delta.refusal``). The
+# ``refusal`` allowance accepted any scalar and dropped it, so the reply had
+# no text and the finish policy refused it as "OpenRouter finish state is
+# inconsistent": a protocol error in place of the model's own words. Every
+# recorded reply carries ``refusal: null``; the non-null shape below is
+# OpenAI's documented one, not a recording.
+
+_REFUSAL = "I'm sorry, but I can't help with that."
+
+
+def _normalize(message: dict):
+    from tldw_chatbook.LLM_Calls import openrouter
+    from tldw_chatbook.LLM_Calls.hosted_chat import normalize_hosted_chat_response
+
+    return normalize_hosted_chat_response(
+        _body(message),
+        finish_policy=openrouter._FINISH_POLICY,
+        allowed_extra_keys=openrouter._OPENROUTER_RESPONSE_KEYS,
+        allowed_choice_keys=openrouter._OPENROUTER_CHOICE_KEYS,
+        allowed_message_keys=openrouter._OPENROUTER_MESSAGE_KEYS,
+        allowed_tool_call_keys=openrouter._OPENROUTER_TOOL_CALL_KEYS,
+        wire_normalizer=openrouter._OpenRouterWireNormalizer(streaming=False),
+    )
+
+
+def test_a_refusal_is_the_reply_text() -> None:
+    turn = _normalize({"role": "assistant", "content": None, "refusal": _REFUSAL})
+
+    assert turn.text == _REFUSAL
+    assert turn.finish_reason == "stop"
+    assert turn.assistant_message == {"role": "assistant", "content": _REFUSAL}
+
+
+def test_a_dispatched_refusal_reaches_the_caller_as_the_reply() -> None:
+    message = {"role": "assistant", "content": None, "refusal": _REFUSAL}
+
+    result = _send(_response(_body(message)), streaming=False)
+
+    assert result["choices"][0]["message"]["content"] == _REFUSAL
+
+
+def test_a_streamed_refusal_is_the_reply_text() -> None:
+    from tldw_chatbook.LLM_Calls import openrouter
+    from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatStream
+    from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecord
+
+    def event(delta: dict, finish: str | None, **top: object) -> dict:
+        return {
+            "id": "gen-1",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "openai/gpt-4o-mini",
+            "provider": "OpenAI",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": finish,
+                    "native_finish_reason": finish,
+                }
+            ],
+            **top,
+        }
+
+    usage = {"prompt_tokens": 9, "completion_tokens": 9, "total_tokens": 18}
+    events = [
+        event({"role": "assistant", "content": None, "refusal": ""}, None),
+        event({"role": "assistant", "refusal": "I'm sorry, but "}, None),
+        event({"role": "assistant", "refusal": "I can't help with that."}, None),
+        # OpenRouter's recorded ending: the terminal choice, then its repeat
+        # carrying usage (test_a_recorded_real_stream_is_accepted).
+        event({"role": "assistant", "content": ""}, "stop"),
+        event({"role": "assistant", "content": ""}, "stop", service_tier=None, usage=usage),
+    ]
+    stream = HostedChatStream(
+        iter(
+            [SSERecord(event=None, data=json.dumps(item)) for item in events]
+            + [SSERecord(event=None, data="[DONE]")]
+        ),
+        finish_policy=openrouter._FINISH_POLICY,
+        allowed_extra_keys=openrouter._OPENROUTER_RESPONSE_KEYS,
+        allowed_choice_keys=openrouter._OPENROUTER_CHOICE_KEYS,
+        allowed_message_keys=openrouter._OPENROUTER_MESSAGE_KEYS,
+        wire_normalizer=openrouter._OpenRouterWireNormalizer(streaming=True),
+    )
+    list(stream)
+
+    assert stream.terminal_turn.text == _REFUSAL
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # A refusal is a string or null in OpenAI's schema.
+        {"role": "assistant", "content": None, "refusal": 5},
+        {"role": "assistant", "content": None, "refusal": {"reason": "x"}},
+        # Beside text in the same message, it is neither one shape nor the
+        # other; dropping it would hide the model's words.
+        {"role": "assistant", "content": "OK", "refusal": _REFUSAL},
+    ],
+)
+def test_a_refusal_that_is_not_a_lone_string_fails_closed(message: dict) -> None:
+    from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatProtocolError
+
+    with pytest.raises(HostedChatProtocolError, match="OpenRouter refusal"):
+        _normalize(message)
+
+
+def test_a_null_refusal_is_still_validated_and_dropped() -> None:
+    """Control: the recorded shape (passes before and after the fix)."""
+    turn = _normalize({"role": "assistant", "content": "OK", "refusal": None})
+
+    assert turn.text == "OK"
+    assert turn.assistant_message == {"role": "assistant", "content": "OK"}
