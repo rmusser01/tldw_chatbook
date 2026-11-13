@@ -483,6 +483,33 @@ async def test_gemini_lists_no_image_model_under_googles_image_brand() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_drops_a_model_whose_display_name_alone_names_the_image_brand() -> None:
+    """Review v5r2 TE-3: every recorded image model above also carries
+    'banana' or 'image' in its id, so the display-name half of IV-3's filter
+    was unguarded (matching the id alone left every test green). This row is
+    SYNTHETIC: an id with no non-chat token whose display name is the image
+    brand, the shape ``gemini-nano-banana-2.1`` showed an id can take. It is
+    dropped; a chat model's display name drops nothing."""
+    synthetic = [
+        {
+            "name": "models/gemini-3.9-flash-n",
+            "displayName": "Nano Banana 3",
+            "supportedGenerationMethods": ["generateContent"],
+        },
+        _GOOGLE_IMAGE_BRAND_MODELS[-1],  # gemini-3.5-flash, 'Gemini 3.5 Flash'
+    ]
+    result, _seen = await _discover(
+        "google",
+        _GOOGLE_BASE,
+        {f"{_GOOGLE_BASE}/models": httpx.Response(200, json={"models": synthetic})},
+        api_key="AIza-test-google-key",
+    )
+
+    assert result.status == "success"
+    assert [model.model_id for model in result.models] == ["gemini-3.5-flash"]
+
+
+@pytest.mark.asyncio
 async def test_gemini_follows_next_page_tokens() -> None:
     pages = iter(
         [
