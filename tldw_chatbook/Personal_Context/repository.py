@@ -4974,12 +4974,12 @@ class PersonalContextRepository(RepositoryKeyCustody):
                 raise ProfileDestroyedError(
                     "No active Personal Context profile exists."
                 )
-            account = meta["key_account"]  # a removed row keeps it until deleted
+            record = meta["key_account"]  # a removed row keeps its removal record
             if not meta["destroyed"]:  # only after the loaded key authenticates:
                 self._manifest_on_connection(
                     connection, consumer_id="repository.destroy_profile_content"
                 )
-                account = self._authenticated_account(connection, self._keys)
+                record = self._removal_record(connection, self._keys)
                 for table in _PROFILE_CONTENT_TABLES:
                     connection.execute(f"DELETE FROM {table}")
                 connection.execute(
@@ -4989,9 +4989,9 @@ class PersonalContextRepository(RepositoryKeyCustody):
                         key_account = ?
                     WHERE singleton = 1
                     """,
-                    (account,),
+                    (record,),
                 )
         try:
-            self._delete_removed_account(account)
+            self._delete_removed_account(record)
         finally:
             self._keys = None

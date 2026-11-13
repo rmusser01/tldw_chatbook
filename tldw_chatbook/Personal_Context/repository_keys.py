@@ -12,6 +12,8 @@ brought current; it is just never stamped.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
 import secrets
 import sqlite3
@@ -21,11 +23,23 @@ from contextlib import closing, contextmanager, suppress
 from .key_protector import (
     ProfileKeyMaterial,
     ProfileLockedError,
+    _serialize_material,
     decode_keyring_material,
 )
 
 # Any other stored value (a recovery marker, say) names no usable account.
 KEY_ACCOUNT = re.compile(r"personal-context:[0-9a-z_]{1,128}")
+# A removed row's record of what its Remove still owes: the account and a tag
+# bound to the key Remove authenticated (never the key itself).
+REMOVAL = re.compile(r"removal:(personal-context:[0-9a-z_]{1,128}):([0-9a-f]{64})")
+
+
+def _removal_tag(keys: ProfileKeyMaterial, account: str) -> str:
+    return hmac.new(
+        _serialize_material(keys),
+        b"personal-context-removal:" + account.encode(),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 class RepositoryKeyCustody:
@@ -176,17 +190,44 @@ class RepositoryKeyCustody:
                 (self._profile_ref,),
             )
 
-    def _delete_removed_account(self, account: object) -> None:
-        """Delete the account a removal recorded, then forget the record."""
+    def _removal_record(
+        self, connection: sqlite3.Connection, keys: ProfileKeyMaterial | None
+    ) -> str:
+        """What Remove owes: the named account, bound to the key it authenticated."""
 
-        if not (isinstance(account, str) and KEY_ACCOUNT.fullmatch(account)):
+        account = self._authenticated_account(connection, keys)
+        return f"removal:{account}:{_removal_tag(keys, account)}"
+
+    def _delete_removed_account(self, record: object) -> None:
+        """Delete only the key this database's Remove authenticated, then forget it.
+
+        The entry must still reproduce the record's tag. A bare path account is a
+        v8 removal still owed, deleted as dev's retry did. Anything else, or an
+        entry now holding another key (a rewritten row), is never deleted.
+        """
+
+        if not isinstance(record, str) or not record:
             return
-        self._protector.delete(account)
+        removal = REMOVAL.fullmatch(record)
+        account = removal.group(1) if removal else record
+        if KEY_ACCOUNT.fullmatch(account) and self._protector.exists(account):
+            if removal is None:
+                owed = record == self._profile_ref
+            else:
+                try:
+                    material = self._protector.load(account)
+                except ProfileLockedError:  # Invalid material is not the key.
+                    material = None
+                owed = material is not None and hmac.compare_digest(
+                    _removal_tag(material, account), removal.group(2)
+                )
+            if owed:
+                self._protector.delete(account)
         with self._transaction() as connection:
             connection.execute(
                 "UPDATE profile_meta SET key_account = '' "
                 "WHERE singleton = 1 AND destroyed = 1 AND key_account = ?",
-                (account,),
+                (record,),
             )
 
 

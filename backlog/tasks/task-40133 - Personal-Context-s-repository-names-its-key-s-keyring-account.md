@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 17:13
-updated_date: '2026-11-13 16:01'
+updated_date: '2026-11-13 17:30'
 labels:
 - follow-up
 - backup
@@ -91,4 +91,14 @@ Schema v9 gives the repository a stored key reference, and every key operation g
 - The v8 -> v9 step stamps removed rows with the path-derived account, so a v8 secure removal still pending at upgrade is still owed. Test: `test_upgrade_keeps_a_pending_v8_secure_removal` (on the previous commit, `'' == path account` fails).
 - `_new_profile_key` deletes its fresh account only while the database does not name it, so a failure after commit keeps the key. Test: `test_a_failure_after_commit_keeps_the_new_profile_key` (on the previous commit, the key is gone).
 - AC#8: the v7 build's own 6 -> 7 step created the rebaseline table without `target_key_record_id`, so a v1-v6 database it migrated has three more layouts (nine in all). The catalog test now also emulates that step, patching the rebaseline constant to the v7 text while migrating each historical fresh schema; on the previous commit, the listed-versus-built comparison fails.
+
+**Review r14pca-rev2 fix (2026-11-13).** The secure-removal retry had become a regression from dev. It deleted whatever well-formed account a removed row named, so a removed row rewritten to another live database's account deleted that profile's key.
+- **Removal record.** Remove now stores `removal:<account>:<tag>` in `key_account`, where the tag is HMAC-SHA256(serialized key material, `b"personal-context-removal:" + account`).
+  - The tag lives in the existing column, not a new one: `key_account` already means "the account this row's removal still owes", and a new column would change the nine v9 catalogs (AC#8) and need another schema step.
+  - The tag is a MAC, never the key, and nothing logs it or puts it in an issue string.
+- **Retry.** `_delete_removed_account` deletes only if the entry exists and `load(account)` reproduces the tag.
+  - A bare path account (`== _profile_ref`, from the v8 step) keeps dev's behaviour.
+  - An absent entry, invalid material or any other value is never deleted; the record is just cleared.
+  - The keyring protector gains `exists()`, so a missing entry is told apart from an unavailable keyring, which still raises and keeps the record.
+- **Test.** `test_a_removed_row_rewritten_to_another_account_deletes_nothing[bare|retargeted]`: on ab4bdf751d the bare case deletes the other database's key and the retargeted case leaves its record. The honest retry stays covered by `test_link_and_remove_act_only_on_the_account_this_database_names`, now asserting the record shape, and the v8 path case by `test_upgrade_keeps_a_pending_v8_secure_removal`.
 

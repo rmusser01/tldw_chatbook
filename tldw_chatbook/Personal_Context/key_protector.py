@@ -67,6 +67,10 @@ class ProfileKeyProtector(Protocol):
 
     def load(self, profile_ref: str) -> ProfileKeyMaterial: ...
 
+    def exists(self, profile_ref: str) -> bool:
+        """Whether the account holds any entry; raises if the store is unavailable."""
+        ...
+
     def replace(self, profile_ref: str, material: ProfileKeyMaterial) -> None: ...
 
     def delete(self, profile_ref: str) -> None: ...
@@ -123,6 +127,9 @@ class InMemoryProfileKeyProtector:
         except KeyError:
             raise ProfileLockedError("Profile key material is unavailable.") from None
 
+    def exists(self, profile_ref: str) -> bool:
+        return _normalized_ref(profile_ref) in self._materials
+
     def replace(self, profile_ref: str, material: ProfileKeyMaterial) -> None:
         self._materials[_normalized_ref(profile_ref)] = material
 
@@ -169,18 +176,19 @@ class KeyringProfileKeyProtector:
             ) from exc
         return material
 
-    def create(self, profile_ref: str) -> ProfileKeyMaterial:
+    def exists(self, profile_ref: str) -> bool:
         profile_ref = _normalized_ref(profile_ref)
         try:
-            occupied = (
-                self._keyring.get_password(_KEYRING_SERVICE, profile_ref) is not None
-            )
+            return self._keyring.get_password(_KEYRING_SERVICE, profile_ref) is not None
         except Exception as exc:
             raise ProfileLockedError(
                 "The secure profile keyring is unavailable."
             ) from exc
-        if occupied:
+
+    def create(self, profile_ref: str) -> ProfileKeyMaterial:
+        if self.exists(profile_ref):
             raise ProfileLockedError("Profile key account is already in use.")
+        profile_ref = _normalized_ref(profile_ref)
         material = _new_material()
         self.replace(profile_ref, material)
         return material

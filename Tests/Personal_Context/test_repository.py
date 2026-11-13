@@ -1196,7 +1196,8 @@ def test_link_and_remove_act_only_on_the_account_this_database_names(
     backend.fail_next_delete = True
     with pytest.raises(ProfileLockedError):
         service.remove_local_profile(confirm_only_copy=True)
-    assert _stored_account(db_path) == account, "Remove records the account"
+    # Remove records the account, bound to the key it authenticated.
+    assert _stored_account(db_path).startswith("removal:" + account + ":")
     assert (_KEYRING_SERVICE, account) in backend.values
 
     service.finish_secure_removal()
@@ -1451,3 +1452,41 @@ def test_a_failure_after_commit_keeps_the_new_profile_key(tmp_path, monkeypatch)
     account = _stored_account(db_path)
     assert (_KEYRING_SERVICE, account) in backend.values
     assert _keyring_repo(db_path, backend).get_manifest() is not None
+
+
+@pytest.mark.parametrize("rewrite", ["bare", "retargeted"])
+def test_a_removed_row_rewritten_to_another_account_deletes_nothing(
+    tmp_path, rewrite
+) -> None:
+    """Review r14pca-rev2: the secure-removal retry deletes only the key its
+    Remove authenticated (the record's HMAC tag), never whatever account a
+    removed row names later."""
+    backend = _FailDeleteOnceKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    other_path = tmp_path / "b" / "personal-context.db"
+    other_path.parent.mkdir(mode=0o700)
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    service.create_profile()
+    account = _stored_account(db_path)
+    material = backend.values[(_KEYRING_SERVICE, account)]
+    PersonalContextService(_keyring_repo(other_path, backend)).create_profile()
+    other = _stored_account(other_path)
+    backend.fail_next_delete = True
+    with pytest.raises(ProfileLockedError):
+        service.remove_local_profile(confirm_only_copy=True)
+    record = _stored_account(db_path)
+    # The record never carries the key itself.
+    assert material.removeprefix("profile-key-v1:") not in record
+    _, _, tag = record.rpartition(":")
+    _set_stored_account(
+        db_path, other if rewrite == "bare" else f"removal:{other}:{tag}"
+    )
+    before = dict(backend.values)
+
+    PersonalContextService(_keyring_repo(db_path, backend)).finish_secure_removal()
+
+    assert backend.values == before
+    assert _keyring_repo(other_path, backend).get_manifest() is not None
+    assert _stored_account(db_path) == ""
+
