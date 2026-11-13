@@ -1102,9 +1102,11 @@ original = load_plan(Journal(root/'control',operation))
 test_later_execution_restores_old_core_and_preserves_current_files((operation,original,_current(root)),root)
 print('FRESH_NATIVE_LATER_COMPLETE')
 """
+    from Tests.Backup_Recovery.test_config_sibling_capture import _wait_while_busy
+
     log = tmp_path / "fresh-later.log"
     with log.open("w") as stream:
-        result = subprocess.run(
+        process = subprocess.Popen(
             [
                 sys.executable,
                 "-c",
@@ -1115,10 +1117,12 @@ print('FRESH_NATIVE_LATER_COMPLETE')
             ],
             stdout=stream,
             stderr=subprocess.STDOUT,
-            timeout=60,
-            check=False,
         )
-    assert result.returncode == 0, log.read_text()[-7000:]
+        # TASK-40306: the child repeats a whole later rollback, which took 87 s
+        # in-process at load 50 against the old fixed 60 s; it fails only once
+        # it uses no CPU for 60 s (a hang), within the test's own limit.
+        returncode = _wait_while_busy(process, idle=60, timeout=210)
+    assert returncode == 0, log.read_text()[-7000:]
     assert "FRESH_NATIVE_LATER_COMPLETE" in log.read_text()
 
 

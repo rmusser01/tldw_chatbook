@@ -114,7 +114,45 @@ print('CAPTURE_SIBLING_CONTINUITY_COMPLETE',owner,flush=True)
 """
 
 
-def _child(home, script, *arguments, timeout=70, selector=None):
+def _wait_while_busy(process, *, idle, timeout):
+    """Wait until ``process`` exits; kill it once its process tree has used no
+    CPU for ``idle`` seconds (a hang), or at ``timeout`` (TASK-40306).
+
+    A fixed budget fails a loaded run that is only slow; a hung child stops
+    using CPU, however loaded the host is.
+    """
+    import time
+
+    import psutil
+
+    watched = psutil.Process(process.pid)
+    started = still = time.monotonic()
+    used = None
+    try:
+        while True:
+            try:
+                return process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                tree = [watched, *watched.children(recursive=True)]
+                now_used = sum(sum(p.cpu_times()[:2]) for p in tree)
+            except psutil.Error:
+                now_used = used  # A child of the tree exited mid-read.
+            now = time.monotonic()
+            if now_used != used:
+                used, still = now_used, now
+            if now - still > idle or now - started > timeout:
+                raise subprocess.TimeoutExpired(process.args, round(now - started))
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
+def _child(home, script, *arguments, timeout=70, selector=None, idle=None):
+    """Run ``script`` in a child; with ``idle``, ``timeout`` is only a cap and
+    the child fails once it stops using CPU for ``idle`` seconds."""
     repository = Path(__file__).resolve().parents[2]
     environment = dict(
         os.environ,
@@ -126,18 +164,25 @@ def _child(home, script, *arguments, timeout=70, selector=None):
         PYTHONPATH=str(repository),
     )
     log = home / ("capture-" + ("-".join(arguments) or "seed") + ".log")
+    command = [sys.executable, "-X", "faulthandler", "-c", script, *arguments]
     with log.open("w") as output:
-        result = subprocess.run(
-            [sys.executable, "-X", "faulthandler", "-c", script, *arguments],
-            cwd=repository,
-            env=environment,
-            stdout=output,
-            stderr=output,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    assert result.returncode == 0, log.read_text()[-10000:]
+        if idle is None:
+            returncode = subprocess.run(
+                command,
+                cwd=repository,
+                env=environment,
+                stdout=output,
+                stderr=output,
+                text=True,
+                timeout=timeout,
+                check=False,
+            ).returncode
+        else:
+            process = subprocess.Popen(
+                command, cwd=repository, env=environment, stdout=output, stderr=output
+            )
+            returncode = _wait_while_busy(process, idle=idle, timeout=timeout)
+    assert returncode == 0, log.read_text()[-10000:]
     return log.read_text()
 
 
@@ -490,3 +535,23 @@ def test_related_selector_exclusion_never_grants_its_owned_sibling(
         storage._config_capture_sources(root, (selector,), proof)
     assert bootstrap._registry(root) == before
     assert path.read_text() == "{}"
+
+
+@pytest.mark.parametrize("child", ["busy", "idle"])
+def test_child_wait_fails_only_an_idle_child(child):
+    """TASK-40306: a busy child may outlast ``idle``; a child using no CPU may not."""
+    import time
+
+    body = (
+        "import time\nend=time.monotonic()+4\nwhile time.monotonic()<end:pass"
+        if child == "busy"
+        else "import time\ntime.sleep(60)"
+    )
+    process = subprocess.Popen([sys.executable, "-c", body])
+    started = time.monotonic()
+    if child == "busy":
+        assert _wait_while_busy(process, idle=2, timeout=60) == 0
+    else:
+        with pytest.raises(subprocess.TimeoutExpired):
+            _wait_while_busy(process, idle=2, timeout=60)
+        assert process.poll() is not None and time.monotonic() - started < 30
