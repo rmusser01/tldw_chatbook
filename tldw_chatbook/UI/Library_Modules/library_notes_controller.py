@@ -4484,8 +4484,17 @@ class LibraryNotesController:
         reader = getattr(service, "get_note_by_id", None)
         row: Any = None
         if callable(reader):
+            from ...Backup_Recovery.participants import run_finite_local_worker
+
             try:
-                row = await asyncio.to_thread(reader, self._library_notes_user_id(), note_id)
+                # TASK-34100.16.1 review: a bare executor read kept its storage
+                # lease, so Create backup after following a link timed out.
+                row = await asyncio.to_thread(
+                    run_finite_local_worker,
+                    reader,
+                    self._library_notes_user_id(),
+                    note_id,
+                )
             except Exception:  # noqa: BLE001 - refuse, never crash the screen
                 # The target is author-written href text (final fix round,
                 # M-4): the log carries a short fingerprint of it, never the

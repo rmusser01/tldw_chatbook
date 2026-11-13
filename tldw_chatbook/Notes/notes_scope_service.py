@@ -2146,13 +2146,17 @@ class NotesScopeService:
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope is not ScopeType.LOCAL_NOTE:
             raise ValueError("Link candidates are only listed for local notes.")
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        # TASK-34100.16.1 review: the backlinks leak's twin -- a bare executor
+        # read kept its connection, so Create backup after [[ timed out.
         return await asyncio.to_thread(
-            lambda: self.local_notes_service.list_note_link_candidates(
-                self._require_user_id(user_id),
-                query=query,
-                exclude_note_id=exclude_note_id,
-                limit=limit,
-            )
+            run_finite_local_worker,
+            self.local_notes_service.list_note_link_candidates,
+            self._require_user_id(user_id),
+            query=query,
+            exclude_note_id=exclude_note_id,
+            limit=limit,
         )
 
     async def count_notes(
@@ -2204,7 +2208,11 @@ class NotesScopeService:
                             db.close_connection()
 
                 return await asyncio.to_thread(count_in_worker)
-            return await asyncio.to_thread(count, local_user)
+            from tldw_chatbook.Backup_Recovery.participants import (
+                run_finite_local_worker,
+            )
+
+            return await asyncio.to_thread(run_finite_local_worker, count, local_user)
         # Neither the server nor workspace note backends expose a dedicated
         # count-only seam today: ``server_service.list_server_notes`` only
         # surfaces a total as a side effect of fetching a page of notes
