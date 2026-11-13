@@ -1,19 +1,22 @@
 """TASK-34100.3 (gap-02): a Moonshot reasoning reply in a saved Console chat.
 
-Every model Moonshot lists (kimi-k2.6, kimi-k2.7-code, kimi-k2.7-code-highspeed,
-kimi-k3) returns ``reasoning_content`` on a plain reply, so the Moonshot
-adapter attaches a complete reasoning-replay checkpoint to every turn. In a
-saved chat the reply was generated, then thrown away: the turn showed
-"Provider continuation could not be persisted", a recovery panel said delivery
-status was unknown, and the composer stayed blocked. Temporary chats worked.
+Every Kimi model Moonshot lists returns ``reasoning_content`` on a plain
+reply, so the Moonshot adapter attaches a complete reasoning-replay checkpoint
+to every turn. In a saved chat the reply was generated, then thrown away: the
+turn showed "Provider continuation could not be persisted", a recovery panel
+said delivery status was unknown, and the composer stayed blocked. Temporary
+chats worked.
 
-Root cause: the durable dispatch row records the provider destination as a
-credential-free ORIGIN (``https://api.moonshot.ai``), while the continuation
-carries the full base URL (``https://api.moonshot.ai/v1``). The repository
-compared the two for equality, so terminal settlement always reported a
-conflict. The store-level tests passed because they hand-built a destination
-whose identity already carried the ``/v1`` path; nothing drove the path with
-the destination the real gateway computes.
+The original cause: the durable dispatch row recorded the provider destination
+as a credential-free ORIGIN (``https://api.moonshot.ai``), while the
+continuation carried the full base URL (``https://api.moonshot.ai/v1``), and
+the repository compared the two for equality. Dev's TASK-35582 has since fixed
+that comparison (the destination freezes the continuation tuple), so on the
+current base the saved-vs-Temporary matrix below is a regression guard, not a
+reproduction. What this file still proves RED on that base: turn 3+ of a saved
+chat with trace capture on (the ADR-337 per-domain append), each Kimi call's
+trace settling, and the kept reply when the optional checkpoint cannot be
+stored.
 
 These tests mount the real ``ChatScreen`` with its real controller, store,
 runtime, gateway and a file-backed ChaChaNotes database. Only the HTTP call
@@ -60,16 +63,35 @@ from tldw_chatbook.LLM_Calls.moonshot import (
     _moonshot_turn_response,
     resolve_moonshot_request,
 )
+from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.model_capabilities import moonshot_model_returns_reasoning_content
 
 pytestmark = pytest.mark.bootstrap_profile
 
 REPLY = "Kimi reply 34100"
-REASONING = "private reasoning that never reaches the transcript"
+REASONING = "private reasoning"
 SYNTHETIC_KEY = "synthetic-test-key"
 
-# The models Moonshot's /v1/models listed on 2026-10-03 (gap-02 evidence).
-MOONSHOT_MODELS = ("kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k3")
+
+def _reply(call: int) -> str:
+    """The reply the provider gives to its ``call``-th request (1-based)."""
+    return f"{REPLY} #{call}"
+
+
+def _reasoning(call: int) -> str:
+    """The reasoning the provider returns with its ``call``-th reply."""
+    return f"{REASONING} #{call} that never reaches the transcript"
+
+
+# The models Moonshot's /v1/models listed on 2026-11-13 (live, review v5r1).
+MOONSHOT_MODELS = (
+    "kimi-k2.6",
+    "kimi-k2.7-code",
+    "kimi-k2.7-code-highspeed",
+    "kimi-k3",
+    "kimi-k3.1-pro",
+    "kimi-k3.1-pro-highspeed",
+)
 SMOKE_MATRIX = [
     pytest.param("moonshot", model, False, id=f"moonshot-{model}")
     for model in MOONSHOT_MODELS
@@ -101,14 +123,16 @@ def _sse(model: str, *, delta=None, finish=None, usage=None) -> SSERecord:
     return SSERecord(None, json.dumps(body))
 
 
-def _moonshot_stream(model: str, resolution, provider_continuations) -> MoonshotStream:
+def _moonshot_stream(
+    model: str, resolution, provider_continuations, *, reply: str, reasoning: str
+) -> MoonshotStream:
     """The real stream parser over the SSE records Moonshot sends for one reply."""
     records = [
         _sse(
             model,
-            delta={"role": "assistant", "content": "", "reasoning_content": REASONING},
+            delta={"role": "assistant", "content": "", "reasoning_content": reasoning},
         ),
-        _sse(model, delta={"content": REPLY}),
+        _sse(model, delta={"content": reply}),
         _sse(model, finish="stop"),
         _sse(
             model,
@@ -126,6 +150,7 @@ def _moonshot_stream(model: str, resolution, provider_continuations) -> Moonshot
 def _moonshot_adapter(calls: list[dict]):
     def adapter(**kwargs):
         calls.append(kwargs)
+        reply, reasoning = _reply(len(calls)), _reasoning(len(calls))
         resolution = resolve_moonshot_request(
             explicit_api_key=SYNTHETIC_KEY,
             explicit_base_url=kwargs.get("api_base_url"),
@@ -138,17 +163,19 @@ def _moonshot_adapter(calls: list[dict]):
                 resolution.model,
                 resolution,
                 tuple(kwargs.get("provider_continuations") or ()),
+                reply=reply,
+                reasoning=reasoning,
             )
         turn = HostedChatTurn(
-            text=REPLY,
+            text=reply,
             tool_calls=(),
             assistant_message={
                 "role": "assistant",
-                "content": REPLY,
-                "reasoning_content": REASONING,
+                "content": reply,
+                "reasoning_content": reasoning,
             },
             finish_reason="stop",
-            reasoning_content=REASONING,
+            reasoning_content=reasoning,
             usage={"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12},
         )
         return _moonshot_turn_response(
@@ -163,7 +190,7 @@ def _moonshot_adapter(calls: list[dict]):
 def _plain_adapter(calls: list[dict]):
     def adapter(**kwargs):
         calls.append(kwargs)
-        return {"choices": [{"message": {"content": REPLY}}]}
+        return {"choices": [{"message": {"content": _reply(len(calls))}}]}
 
     return adapter
 
@@ -308,17 +335,22 @@ async def _observed(h, session_id: str) -> dict[str, object]:
         timeout=30.0,
         what="the run did not finish",
     )
+    texts = [
+        message.content
+        for message in h.store.messages_for_session(session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    ]
+    latest = texts[-1] if texts else None
     try:
-        await _until(h.pilot, lambda: REPLY in " ".join(_frame_rows(h.host)))
+        await _until(
+            h.pilot,
+            lambda: bool(latest) and latest in " ".join(_frame_rows(h.host)),
+        )
     except AssertionError:
         pass  # recorded as reply_on_screen=False below
     screen = "\n".join(_frame_rows(h.host))
     return {
-        "assistant_texts": [
-            message.content
-            for message in h.store.messages_for_session(session_id)
-            if message.role is ConsoleMessageRole.ASSISTANT
-        ],
+        "assistant_texts": texts,
         "assistant_states": [
             message.status
             for message in h.store.messages_for_session(session_id)
@@ -327,18 +359,66 @@ async def _observed(h, session_id: str) -> dict[str, object]:
         "run_status": h.controller.run_state_for(session_id).status,
         "dispatch_recovery": h.store.dispatch_recovery_for_session(session_id),
         "blocked_copy": [copy for copy in BLOCKED_COPY if copy in screen],
-        "reply_on_screen": REPLY in screen,
+        "reply_on_screen": bool(latest) and latest in screen,
     }
 
 
-EXPECTED = {
-    "assistant_texts": [REPLY],
-    "assistant_states": ["complete"],
-    "run_status": ConsoleRunStatus.COMPLETED,
-    "dispatch_recovery": None,
-    "blocked_copy": [],
-    "reply_on_screen": True,
-}
+def _expected(*replies: str) -> dict[str, object]:
+    """What a user sees after a clean send whose chat holds ``replies``."""
+    return {
+        "assistant_texts": list(replies),
+        "assistant_states": ["complete"] * len(replies),
+        "run_status": ConsoleRunStatus.COMPLETED,
+        "dispatch_recovery": None,
+        "blocked_copy": [],
+        "reply_on_screen": True,
+    }
+
+
+def _replayed(checkpoints) -> list[tuple]:
+    """Each replayed checkpoint's model, state and rounds, in replay order."""
+    return [
+        (
+            checkpoint.model,
+            checkpoint.state,
+            [
+                (round_.assistant_content, tuple(round_.reasoning_blocks))
+                for round_ in checkpoint.rounds
+            ],
+        )
+        for checkpoint in checkpoints
+    ]
+
+
+def _traced(checkpoints) -> list[tuple]:
+    """``_replayed`` for the checkpoint mappings a trace reconstruction holds."""
+    return [
+        (
+            checkpoint["model"],
+            checkpoint["state"],
+            [
+                (round_["assistant_content"], tuple(round_["reasoning_blocks"]))
+                for round_ in checkpoint["rounds"]
+            ],
+        )
+        for checkpoint in checkpoints
+    ]
+
+
+def _kimi_checkpoint(model: str, call: int) -> tuple:
+    """The checkpoint the ``call``-th Kimi reply leaves for replay."""
+    return (model, "complete", [(_reply(call), (_reasoning(call),))])
+
+
+def _saved_checkpoints(database, conversation_id: str) -> list[tuple]:
+    """Each saved reply's own checkpoint, in reply order (``_replayed`` form)."""
+    return [
+        _replayed(
+            (parse_provider_continuation_json(row["provider_continuation_json"]),)
+        )[0]
+        for row in _assistant_rows(database, conversation_id)
+        if row["provider_continuation_json"] is not None
+    ]
 
 
 @pytest.mark.asyncio
@@ -364,8 +444,9 @@ async def test_saved_chat_replies_like_a_temporary_chat(
         await _send_in_temporary_chat(h, "Say hello")
         temporary_view = await _observed(h, temporary_id)
 
-        assert saved_view == EXPECTED
-        assert temporary_view == saved_view
+        assert saved_view == _expected(_reply(1))
+        # The same view, holding the Temporary chat's own (second) reply.
+        assert temporary_view == {**saved_view, "assistant_texts": [_reply(2)]}
         assert len(h.calls) == 2, "each chat must reach the provider exactly once"
 
         # A second turn in the saved chat replays the first reply's saved
@@ -374,7 +455,7 @@ async def test_saved_chat_replies_like_a_temporary_chat(
         await h.console._sync_native_console_chat_ui()
         await _send(h, "And again")
         second_view = await _observed(h, saved.id)
-        assert second_view["assistant_texts"] == [REPLY, REPLY]
+        assert second_view["assistant_texts"] == [_reply(1), _reply(3)]
         assert second_view["blocked_copy"] == []
         assert second_view["dispatch_recovery"] is None
         assert len(h.calls) == 3
@@ -383,11 +464,10 @@ async def test_saved_chat_replies_like_a_temporary_chat(
         reasoning_model = provider == "moonshot" and (
             moonshot_model_returns_reasoning_content(model)
         )
-        replayed = tuple(h.calls[2].get("provider_continuations") or ())
-        assert [
-            (checkpoint.model, checkpoint.state, checkpoint.rounds[-1].reasoning_blocks)
-            for checkpoint in replayed
-        ] == ([(model, "complete", (REASONING,))] if reasoning_model else [])
+        # Only the saved chat's own reply is replayed, never the Temporary one.
+        assert _replayed(h.calls[2].get("provider_continuations") or ()) == (
+            [_kimi_checkpoint(model, 1)] if reasoning_model else []
+        )
 
         conversation_id = next(
             session for session in h.store.sessions() if session.id == saved.id
@@ -397,12 +477,22 @@ async def test_saved_chat_replies_like_a_temporary_chat(
         assistants = [row for row in rows if row["role"] == "assistant"]
         assert [
             (row["content"], row["assistant_generation_state"]) for row in assistants
-        ] == [(REPLY, "complete"), (REPLY, "complete")]
+        ] == [(_reply(1), "complete"), (_reply(3), "complete")]
         # The reasoning is kept for replay on the next turn, never shown.
         assert [
             row["provider_continuation_json"] is not None for row in assistants
         ] == [reasoning_model, reasoning_model]
         assert REASONING not in "\n".join(_frame_rows(h.host))
+        # Each reply keeps its own checkpoint, not a neighbour's.
+        assert [
+            _replayed((parse_provider_continuation_json(row["provider_continuation_json"]),))
+            for row in assistants
+            if row["provider_continuation_json"] is not None
+        ] == (
+            [[_kimi_checkpoint(model, 1)], [_kimi_checkpoint(model, 3)]]
+            if reasoning_model
+            else []
+        )
         assert (
             h.database.get_connection()
             .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
@@ -443,7 +533,7 @@ async def test_unstored_reasoning_checkpoint_keeps_the_reply(
             saved = h.store.ensure_session()
             await _send(h, "Say hello")
 
-            assert await _observed(h, saved.id) == EXPECTED
+            assert await _observed(h, saved.id) == _expected(_reply(1))
             conversation_id = next(
                 session for session in h.store.sessions() if session.id == saved.id
             ).persisted_conversation_id
@@ -456,7 +546,7 @@ async def test_unstored_reasoning_checkpoint_keeps_the_reply(
                     row["provider_continuation_json"],
                 )
                 for row in assistants
-            ] == [(REPLY, "complete", None)]
+            ] == [(_reply(1), "complete", None)]
             assert (
                 h.database.get_connection()
                 .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
@@ -533,7 +623,9 @@ async def test_saved_chat_five_turns_with_trace_capture_on(
                     for message in h.store.messages_for_session(saved.id)
                     if message.role is ConsoleMessageRole.ASSISTANT
                 ]
-                return TRACE_BLOCKED in screen or replies == [REPLY] * turn
+                return TRACE_BLOCKED in screen or replies == [
+                    _reply(call) for call in range(1, turn + 1)
+                ]
 
             await _until(
                 h.pilot, settled, timeout=30.0, what=f"turn {turn} did not settle"
@@ -543,19 +635,22 @@ async def test_saved_chat_five_turns_with_trace_capture_on(
             )
             view = await _observed(h, saved.id)
             assert view["blocked_copy"] == [], f"turn {turn}"
-            assert view["assistant_texts"] == [REPLY] * turn, f"turn {turn}"
+            assert view["assistant_texts"] == [
+                _reply(call) for call in range(1, turn + 1)
+            ], f"turn {turn}"
             assert view["run_status"] is ConsoleRunStatus.COMPLETED, f"turn {turn}"
             assert view["dispatch_recovery"] is None, f"turn {turn}"
         assert len(h.calls) == SAVED_TURNS
 
-        # Each call replays every earlier reply's reasoning, oldest first.
+        # Each call replays every earlier reply's own reasoning, oldest first.
         reasoning_model = provider == "moonshot" and (
             moonshot_model_returns_reasoning_content(model)
         )
         for index, call in enumerate(h.calls):
-            replayed = tuple(call.get("provider_continuations") or ())
-            assert [(item.model, item.state) for item in replayed] == (
-                [(model, "complete")] * index if reasoning_model else []
+            assert _replayed(call.get("provider_continuations") or ()) == (
+                [_kimi_checkpoint(model, earlier) for earlier in range(1, index + 1)]
+                if reasoning_model
+                else []
             ), f"call {index + 1}"
 
         # The trace records each request exactly: one traced call per turn,
@@ -570,6 +665,15 @@ async def test_saved_chat_five_turns_with_trace_capture_on(
             if message.role is ConsoleMessageRole.USER
         ]
         assert len(users) == SAVED_TURNS
+        conversation_id = next(
+            session for session in h.store.sessions() if session.id == saved.id
+        ).persisted_conversation_id
+        saved_checkpoints = _saved_checkpoints(h.database, conversation_id)
+        assert saved_checkpoints == (
+            [_kimi_checkpoint(model, turn) for turn in range(1, SAVED_TURNS + 1)]
+            if reasoning_model
+            else []
+        )
         reader = ConsoleTraceNativeReader(h.database)
         for index, (user, call) in enumerate(zip(users, h.calls, strict=True)):
             traced = reader.read_calls(user.persisted_message_id)
@@ -582,14 +686,19 @@ async def test_saved_chat_five_turns_with_trace_capture_on(
                 (row.get("role"), row.get("content"))
                 for row in call["messages_payload"]
             ], f"turn {index + 1}"
-            assert len(request.get("provider_continuations") or ()) == len(
-                call.get("provider_continuations") or ()
+            # Every replayed checkpoint, in order, with its own reply and
+            # reasoning: a misordered, duplicated or reattached one fails.
+            assert _traced(request.get("provider_continuations") or ()) == (
+                _replayed(call.get("provider_continuations") or ())
+            ), f"turn {index + 1}"
+            # ... and in each slot the checkpoint saved with that reply: the
+            # ledger stores a checkpoint as an artifact, so its position must
+            # name the reply that owns it (turn N carries replies 1..N-1).
+            assert _traced(request.get("provider_continuations") or ()) == (
+                saved_checkpoints[:index]
             ), f"turn {index + 1}"
 
         # A relaunch reads exactly one row per reply, in one unbroken chain.
-        conversation_id = next(
-            session for session in h.store.sessions() if session.id == saved.id
-        ).persisted_conversation_id
         reopened = CharactersRAGDB(tmp_path / "chat.sqlite", "task-34100-3-relaunch")
         try:
             rows = reopened.get_messages_for_conversation(conversation_id, limit=100)
@@ -600,7 +709,7 @@ async def test_saved_chat_five_turns_with_trace_capture_on(
             assert [
                 (row["content"], row["assistant_generation_state"])
                 for row in _assistant_rows(reopened, conversation_id)
-            ] == [(REPLY, "complete")] * SAVED_TURNS
+            ] == [(_reply(call), "complete") for call in range(1, SAVED_TURNS + 1)]
             assert [
                 row["provider_continuation_json"] is not None
                 for row in _assistant_rows(reopened, conversation_id)
@@ -665,7 +774,8 @@ async def test_continue_and_regenerate_keep_one_row_per_reply(
             await _send(h, f"Turn {turn}")
             await _until(
                 h.pilot,
-                lambda turn=turn: [m.content for m in replies()] == [REPLY] * turn,
+                lambda turn=turn: [m.content for m in replies()]
+                == [_reply(call) for call in range(1, turn + 1)],
                 timeout=30.0,
                 what=f"turn {turn} did not reply",
             )
@@ -699,13 +809,25 @@ async def test_continue_and_regenerate_keep_one_row_per_reply(
                 (row["id"], row["parent_message_id"], row["content"]) for row in rows
             ]
             assert len({row["id"] for row in rows}) == 5
-            assert [
+            # One row per provider call: each holds exactly that call's reply.
+            assert sorted(
                 (row["content"], row["assistant_generation_state"]) for row in rows
-            ] == [(REPLY, "complete")] * 5
+            ) == [(_reply(call), "complete") for call in range(1, 6)]
             reasoning_model = provider == "moonshot"
             assert [
                 row["provider_continuation_json"] is not None for row in rows
             ] == [reasoning_model] * 5
+            if reasoning_model:
+                # ... and that call's own checkpoint, never a sibling's.
+                for row in rows:
+                    call = int(row["content"].rsplit("#", 1)[1])
+                    assert _replayed(
+                        (
+                            parse_provider_continuation_json(
+                                row["provider_continuation_json"]
+                            ),
+                        )
+                    ) == [_kimi_checkpoint(model, call)], row["content"]
             assert (
                 reopened.get_connection()
                 .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
