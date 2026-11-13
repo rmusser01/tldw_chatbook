@@ -1,7 +1,7 @@
 ---
 id: TASK-40719
 title: "Skill trust and first-send persistence are decided from caller frames and function identity, against ADR-356 rule 4"
-status: In Progress
+status: Done
 created_date: 2026-11-13 06:28
 labels:
 - follow-up
@@ -50,9 +50,9 @@ If those functions are wrapped, reloaded or patched, skill trust is silently not
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Skill trust is recorded from runtime-owned registration, the same way whoever calls it, with no caller-frame inspection.
-- [ ] #2 The first-send setting is saved whether or not the config check function is wrapped, and no Send path is gated on function or code identity.
-- [ ] #3 An architecture ratchet covering all of `tldw_chatbook/`, not only Chat/, is pinned at the current count and fails on any increase in sites that read caller frames or function, code, default or closure identity.
+- [x] #1 Skill trust is recorded from runtime-owned registration, the same way whoever calls it, with no caller-frame inspection.
+- [x] #2 The first-send setting is saved whether or not the config check function is wrapped, and no Send path is gated on function or code identity.
+- [x] #3 An architecture ratchet covering all of `tldw_chatbook/`, not only Chat/, is pinned at the current count and fails on any increase in sites that read caller frames or function, code, default or closure identity.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,4 +65,16 @@ ADR required: no. ADR-356 rule 4 already decides that function/code identity and
    - Send: a wrapped `submit_draft` (and a wrapped `prepare_hooks_v2`) still shares the attempt's one hook read.
 2. Replace the checks with the runtime state already there: the active publication marker (same thread/task, same app) and the published slot for skill trust; the installed config module, config identity, app/runtime/controller/store, quiescence and the mutation CAS for first send (drop the now-unused config-function identity records); pass the attempt's hook read whenever it exists.
 3. Add a whole-package AST ratchet over `tldw_chatbook/` for caller-frame and function/code/default/closure identity reads, pinned at the post-change counts, with a negative control.
+
+## Implementation Notes
+
+All three named sites now decide from runtime-owned registration and current state (ADR-356 rule 4); no ADR change.
+
+- **Skill trust** (`app_skill_wiring.record_native_skill_trust_candidate`): the `sys._getframe(1)` / `f_code` / `f_locals` match is gone. A candidate is recorded when the publication registered for this app is active on the same thread and task and the app's trust slot holds that candidate. Only the two first-use builders call it, after filling the empty slot; the setter never does. A wrapped getter or initializer is now recorded like the stock one. A setter-installed service, a build on another thread, a build for another app or after the publication, and a non-slot candidate are still not recorded (all pinned).
+- **First-send save** (`Chat/console_received_dispatch._persist_first_send_when_quiescent`): dropped the captured-checker identity gate and the checker itself, which only compared the code/defaults/closures of 20 config writers. The save keeps its current-state guards: installed config module, `current_config_identity()`, app/runtime/controller/store, quiescence and the mutation CAS. Removed the only-use `record_first_send_sources`, `first_send_persistence_source_current` and `_FIRST_SEND_PERSISTENCE_SOURCE`. A wrapped `apply_settings_mutation_to_cli_config` now saves.
+- **Hook-read sharing**: received dispatch (`submit_draft.__func__`) and `console_automatic_submission.prepare_submission_hooks` (`prepare_hooks_v2.__func__`, the same pattern on every Send) now pass the attempt's hook read whenever it exists. Before, a wrapped collaborator made the Send read hook consent a second time. That gate predates #3480 (077e5bfa09).
+- **Ratchet**: `Tests/Architecture/test_code_identity_ratchet.py` scans `tldw_chatbook/**/*.py` and counts, per name, every `Attribute` and exact string `Constant` naming a frame/coroutine field (`_getframe`, `currentframe`, `_current_frames`, `getouterframes`, `extract_stack`, `f_back`, `f_code`, `f_locals`, `f_globals`, `cr_/gi_/ag_code|frame`) or a function identity field (`__func__`, `__code__`, `__defaults__`, `__kwdefaults__`, `__closure__`, `cell_contents`, `__globals__`, `__wrapped__`). Pinned at the post-fix counts (1,938 total; this change removed 17). Includes shape, lookalike, injected-site and whole-package controls.
+- **Tests**: new `test_first_use_build_is_recorded_however_the_trust_service_is_reached` plus four untrusted-path controls (`Tests/Chat/test_console_trust_initializer_ownership.py`), `test_a_wrapped_collaborator_still_shares_the_attempts_one_read` (`Tests/Chat/test_console_send_hook_read_sharing.py`), and `test_viewless_first_send_is_saved_through_a_wrapped_config_writer` (`Tests/UI/test_console_runtime_ownership.py`). All five failing nodes fail on base and pass on head. The survivor test that pinned refusal of a replaced checker now expects the save to go through a wrapped writer. Like every variant in that file, it fails before reaching the save on both trees in this environment (the child never enters).
+- **Scope**: AC #2's "no Send path" was applied to the gates this task names plus the matching `prepare_hooks_v2` gate. Send preparation still has other identity checks, e.g. `_capture_console_skill_trust_source`, `_console_skill_metadata_current` and `console_configuration_preparation`'s `_function_unchanged` guards. The new ratchet caps them; it does not remove them.
+- Files: `tldw_chatbook/app_skill_wiring.py`, `tldw_chatbook/Chat/console_received_dispatch.py`, `tldw_chatbook/Chat/console_automatic_submission.py`, `tldw_chatbook/config.py`, `tldw_chatbook/Backup_Recovery/config_participants.py`, the four test files above and `Tests/Chat/test_console_first_send_survivor_native.py`.
 
