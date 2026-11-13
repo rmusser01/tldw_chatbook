@@ -378,10 +378,19 @@ def console_blocked_reason(value: object) -> ConsoleBlockedReason:
     return ConsoleBlockedReason(str(value or "").strip())
 
 
+#: Blockers whose fix is not in the first-run wizard, so their strip is no
+#: setup link: an image the model can't take, and a reply reservation that
+#: fills the window (fixed in Chat settings' Max tokens; TASK-34100.2 review
+#: v5r2 G2C-R3-2).
+_BLOCKERS_FIXED_OUTSIDE_SETUP = frozenset(
+    {CONSOLE_BLOCKER_IMAGE_UNSUPPORTED, CONSOLE_BLOCKER_MODEL_LIMITS}
+)
+
+
 def console_blocker_opens_setup(reason: object) -> bool:
     """Whether a Send blocker is provider setup (its strip links the wizard)."""
     blocker = console_blocked_reason(reason)
-    return bool(blocker) and blocker.code != CONSOLE_BLOCKER_IMAGE_UNSUPPORTED
+    return bool(blocker) and blocker.code not in _BLOCKERS_FIXED_OUTSIDE_SETUP
 
 
 def console_image_blocker(

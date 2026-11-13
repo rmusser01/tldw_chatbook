@@ -20,7 +20,9 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_BLOCKER_MODEL_LIMITS,
     build_console_disabled_reason,
+    console_blocker_opens_setup,
     console_send_gate_setup_copy as send_blocked_copy,
     console_setup_blocked_reason,
     console_setup_blocker,
@@ -103,6 +105,29 @@ def test_a_full_context_refuses_and_names_its_fix() -> None:
     assert "context window" in setup and "Fix model limits" in setup
     # Rebase onto dev (TASK-33005.7): the strip's copy fits it whole.
     assert _composer_line(readiness) == "Send blocked — fix model limits to continue"
+
+
+def test_a_full_context_blocker_never_opens_the_setup_wizard() -> None:
+    """Review v5r2 G2C-R3-2: 'fix model limits' is fixed in Chat settings.
+
+    The composer turns a blocker that opens setup into a link to the
+    first-run wizard. A capacity blocker's fix is the model's limits in
+    Chat settings (the header's and the switcher's Fix model limits open Max
+    tokens), so its strip must not link to setup. A provider-setup blocker
+    still does.
+    """
+    capacity = console_setup_blocker(_readiness(max_tokens=128_000))
+    setup = console_setup_blocker(
+        build_console_settings_readiness(
+            ConsoleSessionSettings(provider="openai", model="gpt-4o"),
+            app_config={"api_settings": {"openai": {}}},
+            environ={},
+        )
+    )
+
+    assert capacity.code == CONSOLE_BLOCKER_MODEL_LIMITS
+    assert console_blocker_opens_setup(capacity) is False
+    assert console_blocker_opens_setup(setup) is True
 
 
 def test_provider_setup_blockers_keep_their_copy() -> None:

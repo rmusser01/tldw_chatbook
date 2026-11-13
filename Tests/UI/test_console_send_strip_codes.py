@@ -332,3 +332,40 @@ async def test_a_refused_enter_names_the_blocker_the_gate_stopped_on(monkeypatch
             "Console send blocked: Library search has no available evidence. "
             "Review source authority before sending."
         ]
+
+
+@pytest.mark.asyncio
+async def test_a_full_context_strip_names_its_fix_and_never_links_setup(monkeypatch):
+    """TASK-34100.2 review v5r2 G2C-R3-2: the capacity strip is not a setup link.
+
+    A model whose reply reservation fills its context window reads 'Send
+    blocked — fix model limits to continue'. The composer made every blocker
+    but an image refusal a link into the first-run wizard, so this strip
+    opened setup, where no model limit is set. The fix lives in Chat settings
+    (the header's and the switcher's Fix model limits open Max tokens), so
+    the strip names it and links nowhere. Real readiness: an OpenAI key in
+    the environment and gpt-4o, whose 128k catalog window the session's reply
+    maximum fills.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-strip-capacity")
+    _app, host = _ready_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.ensure_session().id
+        store.replace_session_settings(
+            session_id,
+            ConsoleSessionSettings(provider="openai", model="gpt-4o", max_tokens=128_000),
+        )
+        await console._sync_native_console_chat_ui()
+        composer.load_draft("hello")
+        console._sync_console_control_bar()
+        await pilot.pause()
+
+        assert console._console_composer_send_blocker().code == "model_limits"
+        strip = composer.query_one("#console-send-disabled-reason", Static)
+        assert strip.content.plain == "Send blocked — fix model limits to continue"
+        assert "run_setup_wizard" not in strip.content.markup
+        assert not composer.has_class("console-composer-setup-blocked")
+        assert composer.query_one("#console-send-message", Button).disabled

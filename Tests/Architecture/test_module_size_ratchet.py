@@ -101,7 +101,9 @@ _BUDGETS: dict[str, int] = {
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 +22
     # (rebased 2026-11-12 onto dev 4b90eb860b, measured 2,874 -> 2,896).
-    "tldw_chatbook/Chat/console_display_state.py": 2896,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +9 (review v5r2
+    # G2C-R3-2: the capacity blocker opens no setup link; 2,896 -> 2,905).
+    "tldw_chatbook/Chat/console_display_state.py": 2905,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 244 -> 257 (+13), TASK-38585 renders labels literally, not as markup.
