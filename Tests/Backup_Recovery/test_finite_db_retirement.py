@@ -195,6 +195,44 @@ def test_app_retention_never_creates_an_absent_runs_db(tmp_path, local_root):
 
 
 @pytest.mark.asyncio
+async def test_failed_sync_log_prune_still_retires_its_worker_connection(
+    tmp_path, local_root, monkeypatch
+):
+    """A prune that raises after its DELETE still retires its pool-thread handle.
+
+    TASK-38955 runs each prune inside ``operation_owned_connection``; its own
+    test covers the success path. TASK-34100.16.1 review: keep the failure
+    path too, since a kept lease ends every later Create in admission_timeout.
+    """
+    from loguru import logger
+
+    from tldw_chatbook import app_lifecycle
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    chat = CharactersRAGDB(tmp_path / "chat.db", "test")
+    media = MediaDatabase(tmp_path / "media.db", client_id="test")
+    ran = []
+    original = chat.delete_sync_log_entries_older_than
+
+    def prune(cutoff):
+        ran.append(threading.current_thread())
+        original(cutoff)
+        raise ValueError("prune failed after its delete")
+
+    monkeypatch.setattr(chat, "delete_sync_log_entries_older_than", prune)
+    monkeypatch.setattr(app_lifecycle, "get_cli_setting", lambda *args, **kwargs: 90)
+    host = SimpleNamespace(chachanotes_db=chat, media_db=media, loguru_logger=logger)
+    try:
+        await app_lifecycle.LifecycleMixin._perform_sync_log_retention(host)
+
+        assert ran and all(thread is not threading.current_thread() for thread in ran)
+        assert not worker_leases(chat), "the failed prune kept its connection"
+    finally:
+        chat.close_connection()
+        media.close_connection()
+
+
+@pytest.mark.asyncio
 async def test_note_backlinks_lookup_retires_its_worker_connection(tmp_path, local_root):
     """Opening a note's Info leaves no pool-thread handle holding storage.
 
