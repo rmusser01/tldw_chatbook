@@ -1396,7 +1396,7 @@ class SkillRunner(Protocol):
             args: The raw ``args`` string the model passed (the tool
                 schema's single ``args`` property -- see
                 ``SkillToolProvider.load_schema``).
-            spawn: This run's own spawn closure -- ``spawn(task, *,
+            spawn: This run's own ``AgentRunTools.spawn`` -- ``spawn(task, *,
                 allowed_tools=None)`` -- so the rendered skill prompt runs
                 as a normal budget-counted sub-agent of THIS run.
 
@@ -2776,7 +2776,7 @@ class AgentService:
         # Fleet spec §4: the roster of enabled agent definitions for the
         # turn currently in flight -- loaded once per `run_turn` call (see
         # its own comment) and read by `_run_one`'s spawn schema and the
-        # `spawn` closure's name resolution. Empty until the first
+        # `AgentRunTools._spawn` name resolution. Empty until the first
         # `run_turn` call; a service that never calls `run_turn` (none in
         # production) keeps spawn_subagent's identity-path schema.
         self._turn_definitions: list[AgentDefinition] = []
@@ -5152,7 +5152,7 @@ class AgentService:
         # approval surface is available in this session".
         request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
         # ADR-344 (Task 6): the spawn resolver's target, snapshotted onto
-        # this run's row (schema v21). Only the spawn closure passes these
+        # this run's row (schema v21). Only AgentRunTools' spawn path passes these
         # (for children); every other caller keeps the None defaults, and
         # the row's resolved_* columns stay NULL.
         resolved_provider: str | None = None,
@@ -5854,20 +5854,6 @@ class AgentService:
             disclosed_names.update(names)
 
         review_owner = self.registry.resolve_owner_for_name("code_review_prepare")
-        if review_owner is not None and agent_kind != AGENT_KIND_SUBAGENT:
-            from .code_review_tool_provider import CodeReviewToolProvider
-
-            if type(review_owner[1]) is CodeReviewToolProvider:
-                review_adapter = review_owner[1].service
-                previous_capacity = review_adapter.capacity
-                review_adapter.capacity = lambda: dataclasses.replace(
-                    previous_capacity(),
-                    remaining_children=max(
-                        0, config.budget.max_subagents - run_tools.sub_agent_spawns
-                    ),
-                    children_per_turn=config.budget.max_subagents,
-                )
-
         from .agent_run_tools import AgentRunTools
 
         run_tools = AgentRunTools(
@@ -5896,13 +5882,27 @@ class AgentService:
             seeded_steering_with_causes=seeded_steering_with_causes,
         )
 
+        if review_owner is not None and agent_kind != AGENT_KIND_SUBAGENT:
+            from .code_review_tool_provider import CodeReviewToolProvider
+
+            if type(review_owner[1]) is CodeReviewToolProvider:
+                review_adapter = review_owner[1].service
+                previous_capacity = review_adapter.capacity
+                review_adapter.capacity = lambda: dataclasses.replace(
+                    previous_capacity(),
+                    remaining_children=max(
+                        0, config.budget.max_subagents - run_tools.sub_agent_spawns
+                    ),
+                    children_per_turn=config.budget.max_subagents,
+                )
+
         # Skill-aware invoke_tool, built AFTER spawn (it closes over it): a
         # skill-tool call never reaches the registry/ToolProvider.invoke
         # path (SkillToolProvider.invoke raises by design -- Task 11 traced
         # that pre-wiring path as a loud full-run abort). Instead it routes
         # through skill_runner.run, which renders the skill and calls THIS
         # run's spawn -- so it is budget-counted (via spawn's own shared
-        # sub_agent_spawns counter -- see Finding 2 above), cancellable, and
+        # sub_agent_spawns counter -- see Finding 2 in AgentRunTools._spawn), cancellable, and
         # DB-lineage-tracked exactly like a spawn_subagent call.
         run_actor = CurrentRunActor(
             "subagent" if agent_kind == AGENT_KIND_SUBAGENT else "primary",

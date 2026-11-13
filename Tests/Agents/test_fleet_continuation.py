@@ -1036,6 +1036,54 @@ def test_refused_isolated_resume_filters_shell_and_settles_without_child_script(
     assert service._agent_worktrees == {}
 
 
+def test_resume_reads_the_subagent_prompt_through_agent_service(db, monkeypatch):
+    """A patch on ``agent_service.get_internal_prompt`` reaches the resume path,
+    as it reaches the spawn path (``native_host.get_internal_prompt``).
+    TASK-36950.3 review I-1: the moved resume code had bound the name at import."""
+    from tldw_chatbook.Agents import agent_service as agent_service_module
+
+    # Loaded before the patch, as in any process past its first agent run;
+    # a by-value import bound now would miss the patch below.
+    import tldw_chatbook.Agents.agent_run_tools  # noqa: F401
+
+    marker = "resume prompt read through agent_service"
+    real_prompt = agent_service_module.get_internal_prompt
+    monkeypatch.setattr(
+        agent_service_module,
+        "get_internal_prompt",
+        lambda prompt_id: (
+            marker if prompt_id == "agents.subagent_system" else real_prompt(prompt_id)
+        ),
+    )
+    captured_configs = []
+    real_agent_config = agent_service_module.AgentConfig
+
+    def _spy_agent_config(**kwargs):
+        cfg = real_agent_config(**kwargs)
+        captured_configs.append(cfg)
+        return cfg
+
+    monkeypatch.setattr(agent_service_module, "AgentConfig", _spy_agent_config)
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "keep going"},
+        )
+
+    service, _chat, coordinator = make_fleet_service(db, [resume, "resume refused"])
+    original, _old_run_id, _history = _seed_retained_worktree_child(db, coordinator)
+    holder["handle_id"] = original.handle_id
+
+    _run_id, outcome = _run(service, config=ISO_RESUME_CFG)
+    join_fleet_children(service)
+
+    assert outcome.status == RUN_DONE
+    resumed_prompts = [cfg.system_prompt for cfg in captured_configs]
+    assert marker in resumed_prompts
+
+
 class _AgentLessonsCatalogProvider:
     def list_catalog(self):
         return [

@@ -1302,7 +1302,7 @@ class AgentConfig:
     personal_context_block: str = ""
     response_reserve_tokens: int = 2048
     # ADR-344 (TASK-32477 Task 6): the spawn resolver's target for THIS run.
-    # Both stay empty for a primary; ``AgentService``'s spawn closure fills
+    # Both stay empty for a primary; ``AgentRunTools.spawn`` fills
     # them on a child's config from the resolved SpawnTarget.
     base_url: str | None = field(default=None, kw_only=True)
     sampling_params: tuple[tuple[str, object], ...] = field(default=(), kw_only=True)
