@@ -1840,3 +1840,24 @@ def test_reencryption_keeps_the_old_account_while_a_recovery_copy_may_name_it(
 
     assert _stored_account(db_path) == account != restored
     assert backend.values[(_KEYRING_SERVICE, restored)] == old_value
+
+
+def test_the_review_trigger_reencrypts_through_the_service(
+    tmp_path, record_factory, monkeypatch
+) -> None:
+    """TASK-40140 (owner, 2026-11-13): the restored-profile review's
+    `PersonalContextService.reencrypt_after_restore` re-encrypts the open
+    profile, which stays readable; with no recovery copy the old account goes."""
+    from tldw_chatbook.Backup_Recovery import recovery_copies
+
+    db_path, backend, protector, restored, records = _restored_profile(
+        tmp_path, record_factory
+    )
+    monkeypatch.setattr(recovery_copies, "list_recovery_copies", lambda _root: ())
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+
+    account = service.reencrypt_after_restore()
+
+    assert _stored_account(db_path) == account != restored
+    assert (_KEYRING_SERVICE, restored) not in backend.values
+    assert [r.record_id for r in _keyring_repo(db_path, backend).list_records()] == records

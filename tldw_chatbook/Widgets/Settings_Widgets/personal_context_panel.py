@@ -965,8 +965,17 @@ class PersonalContextSettingsPanel(Vertical):
             self.action_link_server()
         elif button_id == "personal-context-restore-review":
             path = self._repository_path(self._service)
+            service = self._service
+
+            def review() -> None:
+                # TASK-40140, owner decision 2026-11-13: re-encrypt first, so a
+                # failure leaves the profile readable and the review offered.
+                service.reencrypt_after_restore()
+                approve_restore_review(path)
+
+            self.notify("Re-encrypting the restored profile under a new key…")
             self._run_mutation(
-                lambda: approve_restore_review(path), "Restored profile reviewed."
+                review, "Restored profile reviewed and re-encrypted under a new key."
             )
         elif button_id.startswith("personal-context-proposal-"):
             self._review_proposal_index(button_id)

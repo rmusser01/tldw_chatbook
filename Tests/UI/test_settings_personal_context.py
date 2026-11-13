@@ -2283,6 +2283,17 @@ async def test_export_and_deleted_labels_keep_literal_metadata(monkeypatch):
 class _RestoredProfileService(_ProfileServiceStub):
     _repository = SimpleNamespace(db_path="restored-personal-context.db")
 
+    def __init__(self, snapshot, *, fail_reencrypt: bool = False) -> None:
+        super().__init__(snapshot)
+        self.fail_reencrypt = fail_reencrypt
+        self.steps: list[str] = []
+
+    def reencrypt_after_restore(self) -> str:
+        self.steps.append("reencrypt")
+        if self.fail_reencrypt:
+            raise RuntimeError("private-key-detail-that-must-never-render")
+        return "personal-context:profile_" + "f" * 32
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("review", ["available", "link_state", "unavailable"])
@@ -2331,3 +2342,56 @@ async def test_restored_profile_review_never_claims_sync_resumes(
         await pilot.pause()
         assert reviewed == ["restored-personal-context.db"]
         assert not panel.query("#personal-context-restore-review-copy")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["reencrypted", "reencrypt_failed"])
+async def test_restored_profile_review_reencrypts_before_it_approves(
+    monkeypatch, outcome
+) -> None:
+    """TASK-40140, owner decision 2026-11-13 ("As part of the restored-profile
+    review"): confirming Review restored profile re-encrypts on a worker, then
+    approves. A failed re-encryption approves nothing, keeps the review
+    offered, and shows the panel's content-free failure copy."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    service = _RestoredProfileService(
+        _ready_snapshot(), fail_reencrypt=outcome == "reencrypt_failed"
+    )
+    monkeypatch.setattr(
+        module,
+        "restore_review",
+        lambda path: None if "approve" in service.steps else recovery.REVIEW_AVAILABLE,
+    )
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+    notices: list[str] = []
+    monkeypatch.setattr(panel, "notify", lambda message, **_: notices.append(message))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert notices[0] == "Re-encrypting the restored profile under a new key…"
+        if outcome == "reencrypted":
+            assert service.steps == ["reencrypt", "approve"]
+            assert notices[-1] == (
+                "Restored profile reviewed and re-encrypted under a new key."
+            )
+            assert not panel.query("#personal-context-restore-review")
+            return
+        assert service.steps == ["reencrypt"]
+        assert notices[-1].startswith("The profile change could not be saved.")
+        assert "private-key-detail" not in " ".join(notices)
+        assert panel.query("#personal-context-restore-review")
+

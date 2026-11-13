@@ -4,7 +4,7 @@ title: "Re-encrypt the Personal Context profile after a restore so an old archiv
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 17:55'
+updated_date: '2026-11-13 19:50'
 created_date: 2026-11-10 17:13
 labels:
 - follow-up
@@ -64,4 +64,15 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 **Evidence.** The six new tests fail on base with `AttributeError` (no `reencrypt_profile`). Negative controls, each red and reverted: naming the new account in its own transaction before the rewrite (`before_rewrite` and `mid_rewrite` interruption cases failed: the database named a key its rows did not use), and skipping the row rewrite (`test_reencryption_leaves_the_restored_key_reading_no_row` failed: the old key still opened rows). `Tests/Personal_Context` in full: 673 passed (`-n 4`).
 
 Files: `tldw_chatbook/Personal_Context/{repository_keys.py,key_protector.py,recovery.py}`, `Tests/Personal_Context/test_repository.py`.
+
+**Owner decision, 2026-11-13 (AskUserQuestion, relayed by the coordinator), on the open question:** "As part of the restored-profile review (Recommended)". The option as put to the owner: "When the user confirms 'Review restored profile', it re-encrypts in the background. One step, and it covers every restore that someone reviews."
+
+**2026-11-13 (round 14, pcc round 2): wired.**
+- **Service.** `PersonalContextService.reencrypt_after_restore` runs `recovery.reencrypt_profile` on the open repository under the lifecycle lock.
+- **Panel.** Confirming **Review restored profile** in Settings > Personal Context notifies "Re-encrypting the restored profile under a new key…". On the panel's mutation worker it then re-encrypts first and approves the review second. On success it shows "Restored profile reviewed and re-encrypted under a new key."
+- **Failure.** It approves nothing, so the review stays offered and can be run again. The rewrite is one transaction, so the profile stays readable. The panel's content-free failure copy is shown.
+- **Tests.**
+  - `Tests/UI/test_settings_personal_context.py::test_restored_profile_review_reencrypts_before_it_approves[reencrypted|reencrypt_failed]`. Red with the panel at the previous head: the first notice was "Restored profile reviewed.".
+  - `Tests/Personal_Context/test_repository.py::test_the_review_trigger_reencrypts_through_the_service`, which uses the real service and repository. Red before the method existed: `AttributeError`.
+- **Docs.** The User Guide's restore paragraph says what confirming does and what a failure leaves.
 

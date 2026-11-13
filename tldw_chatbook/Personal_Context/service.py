@@ -1949,6 +1949,17 @@ class PersonalContextService:
             self._locked_reason = None
             self._profile_present_hint = False
 
+    def reencrypt_after_restore(self) -> str:
+        """Re-encrypt this profile under a fresh key (TASK-40140).
+
+        Owner decision 2026-11-13: part of confirming "Review restored
+        profile". The old key's account stays while a recovery copy may name it.
+        """
+        from .recovery import reencrypt_profile
+
+        with self._destructive_lifecycle_lock:
+            return reencrypt_profile(self._repo())
+
     def finish_secure_removal(self) -> None:
         """Retry key-custody deletion without creating a new profile generation."""
 

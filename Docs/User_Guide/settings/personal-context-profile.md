@@ -376,12 +376,17 @@ Personal Context merge or resolution action in Settings.
   locked (see Troubleshooting). After any restore, Personal Context sync stays
   off, and a restored profile never resumes its old link. Settings > Personal
   Context says sync is off because the profile was restored and shows **Review
-  restored profile**; reviewing confirms the profile on this device and, when the
-  restore brought back the old link, forgets it, so **Link to home server** starts
-  a fresh first link. If the old device is lost, remove it on your server:
-  Chatbook cannot. Sync with your server, for Notes and Chat too, stays off after
-  a restore and never resumes as the old device. When the review cannot be read,
-  Settings says sync stays off and why.
+  restored profile**. Confirming it re-encrypts the profile under a new key in
+  the background, so the key in the backup no longer reads it, then confirms the
+  profile on this device and, when the restore brought back the old link, forgets
+  it, so **Link to home server** starts a fresh first link. If re-encrypting
+  fails, nothing is confirmed, the profile stays readable, and you can review it
+  again. If the old device is lost, remove it on your server: Chatbook cannot.
+  Sync with your server, for Notes and Chat too, stays off after a restore and
+  never resumes as the old device: turn it back on with the **Sync identity
+  review** in Backup & Restore > Restored profiles, which clears the restored
+  device identity first. When the review cannot be read, Settings says sync stays
+  off and why.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that
