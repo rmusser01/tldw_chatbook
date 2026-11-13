@@ -326,6 +326,7 @@ RESTORE_LOCKED = "personal_context_restore_locked"
 # TASK-40136: each locked case is acknowledged before staging writes anything.
 LOCKED_ACKNOWLEDGEMENT = "credential_" + RESTORE_LOCKED + ":"
 KEY_UNVERIFIED = "personal_context_key_unverified"
+KEY_CHECK_UNAVAILABLE = "personal_context_key_check_unavailable"
 _RECOVERY_ACCOUNT = "personal-context:recovery_"
 
 
@@ -341,13 +342,21 @@ def _device_protector():
         return None
 
 
+KEYRING_READ_FAILED = "personal_context_keyring_read_failed"
+
+
 def _stored_value(protector, account: str):
+    """The stored value, or None when the account is empty.
+
+    A keyring that does not answer is never "no key": it refuses, so a restore
+    never plans or stamps a lock (or deletes an entry) on a failed read.
+    """
     from .key_protector import _KEYRING_SERVICE
 
     try:
         return protector._keyring.get_password(_KEYRING_SERVICE, account)
     except Exception:  # noqa: BLE001 - backend errors can contain secret values
-        return None
+        raise ValueError(KEYRING_READ_FAILED) from None
 
 
 def restore_key(connection, *, record_value, target: Path, protector):
@@ -573,7 +582,11 @@ def verify_restored_key(path: Path) -> str | None:
                 return None
             account = row[1]
             protector = _device_protector()
-            value = None if protector is None else _stored_value(protector, account)
+            try:
+                value = None if protector is None else _stored_value(protector, account)
+            except ValueError:
+                # Not answering is not a wrong key: keep the entry, say so.
+                return KEY_CHECK_UNAVAILABLE
             if value is not None and profile_key_opens(connection, account, value):
                 return None
     except (OSError, ValueError, sqlite3.Error):

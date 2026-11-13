@@ -204,6 +204,15 @@ _ISSUE_MESSAGES = {
         "secure keyring to hold its key. The data is kept, and the key stays in "
         "the encrypted restore copy."
     ),
+    "personal_context_key_check_unavailable": (
+        "Personal Context was restored, but the keyring did not answer when its "
+        "key was checked. The data and the new keyring entry are kept; open "
+        "Settings > Personal Context and choose Try again."
+    ),
+    "personal_context_keyring_read_failed": (
+        "The keyring did not answer while Personal Context's key was read, so "
+        "nothing was restored. Unlock the keyring, then review the restore again."
+    ),
     "personal_context_key_unverified": (
         "Personal Context was restored but its key did not open it, so it stays "
         "locked and the new keyring entry was removed. The data is kept; restore "

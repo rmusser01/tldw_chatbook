@@ -1327,3 +1327,32 @@ def test_a_locked_restore_is_acknowledged_before_staging_writes(tmp_path, mode):
         stage_restore(archive, plan, work, Event())
     assert refused.value.issues == ("credential_" + issue,)
     assert not work.exists()
+
+
+def test_a_keyring_that_does_not_answer_is_never_no_key(tmp_path, monkeypatch):
+    """TASK-40135/40136: a failed keyring read refuses the restore step instead of
+    planning a lock, and a failed read after publication keeps the new entry."""
+    from tldw_chatbook.Personal_Context import recovery
+
+    staged, _record, target, backend = _restore_case(tmp_path, monkeypatch, "named")
+    account = _stamp(staged, target, planned=recovery.RESTORE_READABLE + ":" + _KEY)
+    from tldw_chatbook.Personal_Context.key_protector import (
+        KeyringProfileKeyProtector,
+        decode_keyring_material,
+    )
+
+    KeyringProfileKeyProtector(backend).install(
+        account, decode_keyring_material(_record)
+    )
+    _publish(staged, target)
+    before, data = dict(backend.values), staged.read_bytes()
+
+    def silent(*_args):
+        raise RuntimeError("keyring did not answer")
+
+    monkeypatch.setattr(backend, "get_password", silent)
+    with pytest.raises(ValueError, match="^personal_context_keyring_read_failed$"):
+        _stamp(staged, target, planned=recovery.RESTORE_READABLE + ":" + _KEY,
+               account="personal-context:recovery_" + "e" * 32)
+    assert recovery.verify_restored_key(target) == recovery.KEY_CHECK_UNAVAILABLE
+    assert backend.values == before and staged.read_bytes() == data
