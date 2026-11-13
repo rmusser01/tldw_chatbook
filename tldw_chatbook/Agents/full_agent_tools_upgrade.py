@@ -79,8 +79,13 @@ one by one, a tool from an MCP server the user added, a Library tool, a
 ``$skill`` turn -- or saved a sub-agent definition, and a rerun reads those
 as agent use and turns Full agent tools on. Nothing persisted outside the
 workspaces database can tell a rerun from a first run without writing
-config.toml for a profile with no signal (AC#2 forbids that), so this case
-is an open owner decision, recorded in the task notes.
+config.toml for a profile with no signal (AC#2 forbids that). Ruled in
+review v5r2 (G532-R2-2), with no second marker: the check runs once per
+profile as recorded in its workspaces database, and a database replaced
+without that record is checked again (AC#3 says so). An explicit value is
+never changed, a restored pre-upgrade database is a pre-upgrade profile,
+and the scaffolding exclusion above narrows what a rerun can count. A
+first run that failed retries on the next launch's signals the same way.
 """
 
 from __future__ import annotations

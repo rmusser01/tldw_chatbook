@@ -1006,8 +1006,10 @@ def test_a_lost_marker_reruns_the_upgrade_on_todays_signals(profile) -> None:
     before the light surface. Here a profile the first run left light later
     gains a sub-agent definition (Settings > Agents works with Full agent
     tools off), the marker is lost, and the rerun turns Full agent tools on
-    although the user never opted in. Pinned as the current behaviour; the
-    case is an open owner decision (task notes, review v5r1)."""
+    although the user never opted in. Review v5r2 (G532-R2-2) ruled this
+    the scope, with no second marker: AC#3 says a profile whose workspaces
+    database is replaced without the record is checked again, and the
+    explicit "off" above is still never touched."""
     assert _run(profile).outcome is UpgradeOutcome.LIGHT
     _define_subagent(profile)
 

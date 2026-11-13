@@ -99,10 +99,12 @@ the file), and keeps every other byte, your comments and layout included.
 That holds for this one write only: a later settings save rewrites
 config.toml, as every settings save does. A profile with none of them, and
 every new profile, stays on the light set, and its config.toml is left as it
-was. The check runs at most once per profile and never changes a value you
-set yourself, so switching Full agent tools off afterwards keeps it off. If
-it cannot read the profile's data, it changes nothing and tries again at the
-next launch.
+was. The check runs once per profile: the profile's workspaces database
+records that it ran. If that database is replaced, or restored from a copy
+without that record, the check runs again on what the profile holds then.
+It never changes a value you set yourself, so switching Full agent tools off
+afterwards keeps it off, even then. If it cannot read the profile's data, it
+changes nothing and tries again at the next launch or server start.
 
 The Chatbook app runs the check in the background once it is open.
 `tldw-serve` runs it as it starts, before it accepts connections, so a
