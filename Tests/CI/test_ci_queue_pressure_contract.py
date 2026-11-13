@@ -1286,21 +1286,14 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
     assert all_commands.count("pip install") == 1
 
 
-def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
-    """TASK-33621.27: the P0 job is bounded and provisioned like the fast lane.
-
-    It left pr-fast-lane because that job reached 33m41s of its 35-min cap
-    with the P0 block in it (run 38064483856). Its own timeout is sized from
-    that run's figures in the workflow comment; a much larger one would let
-    it hide a hang behind a long wait, a smaller one would fail on a slow
-    runner.
-    """
+def test_console_p0_gate_runs_two_serial_minimal_python_312_profiles() -> None:
+    """TASK-40724: each unchanged invocation has its own bounded runner."""
     p0 = _workflow("derived-artifacts.yml")["jobs"]["console-p0-gate"]
 
-    assert p0["name"] == "Console P0 regression gate"
+    assert p0["name"] == "Console P0 regression gate (${{ matrix.profile }})"
     assert p0["if"] == LANES
     assert p0["runs-on"] == PR_TEST_RUNNER
-    assert p0["timeout-minutes"] == 20
+    assert p0["timeout-minutes"] == 35
     # checkout, setup-python, install, sandboxed, admission-sensitive.
     # TASK-34986 moved PR2921's two Dreams/Guardian steps to dreams-boundary
     # (with them this job measured max 18.7 min of 20 over 76 PR runs).
@@ -1309,7 +1302,10 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
         "Run the sandboxed Console P0 regression tests",
         "Run the admission-sensitive Console P0 regression tests",
     ]
-    assert "strategy" not in p0
+    assert p0["strategy"] == {
+        "fail-fast": False,
+        "matrix": {"profile": ["sandboxed", "admission-sensitive"]},
+    }
     setup = next(
         step for step in p0["steps"] if step.get("uses") == "actions/setup-python@v5"
     )
@@ -1336,7 +1332,8 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
         p0, "Run the admission-sensitive Console P0 regression tests"
     )
     # One red step must not hide the other; a cancelled run stops (round 4).
-    assert admission["if"] == "${{ !cancelled() }}"
+    assert sandboxed["if"] == "${{ !cancelled() && matrix.profile == 'sandboxed' }}"
+    assert admission["if"] == "${{ !cancelled() && matrix.profile == 'admission-sensitive' }}"
     for step, timeout in ((sandboxed, "--timeout=180"), (admission, "--timeout=300")):
         tokens = shlex.split(step["run"].replace("\\\n", " "), comments=True)
         assert tokens[0] == "pytest"
@@ -2104,7 +2101,7 @@ def _assert_dreams_required_steps(workflow: dict) -> None:
     assert job["name"] == "Dreams and Guardian boundary contracts"
     assert job["if"] == LANES
     assert job["runs-on"] == PR_TEST_RUNNER
-    assert job["timeout-minutes"] == 20
+    assert job["timeout-minutes"] == 35
     assert "strategy" not in job
     names = (
         "Run Dreams and Guardian boundary contracts",

@@ -1,10 +1,11 @@
 ---
 id: TASK-40723
 title: Keep self-hosted Python imports working in sanitized child processes
-status: In Progress
+status: Done
 created_date: 2026-11-13 18:37
 assignee:
 - '@codex'
+updated_date: 2026-11-13 19:18
 ---
 
 ## Description
@@ -16,8 +17,8 @@ The first full local CI gate fails because setup-python installs under the runne
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A setup-python interpreter imports installed pytest after LD_LIBRARY_PATH is removed and HOME changes.
-- [ ] #2 Fresh disposable runners use the canonical tool-cache location while private-profile isolation remains unchanged.
-- [ ] #3 The failing project-chat UAT is rerun and the corrected full-gate timing is tracked separately from the failed attempt.
+- [x] #2 Fresh disposable runners use the canonical tool-cache location while private-profile isolation remains unchanged.
+- [x] #3 The failing project-chat UAT is rerun and the corrected full-gate timing is tracked separately from the failed attempt.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -35,9 +36,11 @@ Reason: Repair the guest image toolchain within the accepted runner boundary.
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Reproduced the exact Python 3.12.16 archive failure in a trusted bake VM, then verified pytest imports with LD_LIBRARY_PATH removed and HOME changed after moving the installation to /opt/hostedtoolcache. The runner .env selects that canonical cache and the directory is runner-owned. Added a reusable guest customization script and sanitized-child checks for pinned 3.12.11 and current 3.12. No application fixture changes. Independent review passed; the temporary promotion helper was invoked after blocking systemctl stop completed and its reuse guard was tightened to require explicit inactive state. Fresh fleet is online. Live GitHub qualification and the failing UAT rerun remain pending, so this task stays In Progress.
+Corrected the disposable guest tool-cache location to /opt/hostedtoolcache using runner .env AGENT_TOOLSDIRECTORY and a runner-owned cache directory. The exact official Python archive reproduced missing pytest when LD_LIBRARY_PATH was removed at its relocated path; canonical placement fixed the sanitized child. Removed the incomplete manually seeded proof interpreter after the next attempt exposed a missing pip executable; official setup-python now performs complete runtime installation. Application isolation fixtures unchanged.
 
-Follow-up gate 43485256104 exposed an incomplete preloaded interpreter: setup-python cache initialization could not find pip. Removed the manually seeded Python 3.12.16 tree from a new trusted base; retain only canonical cache configuration and let the official action perform the full installation. Qualification now enables cache: pip to match real lanes. The task remains In Progress pending live cache qualification and UAT.
+Added reproducible guest customization and qualification matching production cache:pip, plus child checks with LD_LIBRARY_PATH removed and HOME changed for pinned3.12.11 and current3.12. Independent review, YAML/shell validation and whitespace checks passed. Live qualification43487941053 succeeded. On full gate43487945840, job132103333488 passed Run project-chat UAT (2m34s), complete evidence validation, the missing-evidence negative control, and artifact retention. No current gate failures at19:16Z; remaining unrelated suites continue. Failed/cancelled attempts43482084755 and43485256104 are retained separately and are not successful full-gate timings.
+
+ADR required:no new ADR; direct repair within ADR-359. Full local suite not run. Bookkeeping is recorded locally without pushing a new head that would restart healthy CI; overall merge and full-gate duration remain under the active monitor.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

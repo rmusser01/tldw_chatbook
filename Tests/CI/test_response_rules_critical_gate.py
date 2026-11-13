@@ -175,7 +175,7 @@ def validate(document):
     commands = {}
     for job_name in sorted(set(STEP_JOBS.values())):
         job = jobs[job_name]
-        assert job["timeout-minutes"] == 20 and len(job["steps"]) == 5
+        assert job["timeout-minutes"] == 35 and len(job["steps"]) == 5
         assert (
             job["if"]
             == "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))"
@@ -191,7 +191,11 @@ def validate(document):
         step = commands[name]
         assert not step.get("continue-on-error", False)
         assert step.get("if") == (
-            None if "sandboxed Console P0" in name else "${{ !cancelled() }}"
+            "${{ !cancelled() && matrix.profile == 'sandboxed' }}"
+            if "sandboxed Console P0" in name
+            else "${{ !cancelled() && matrix.profile == 'admission-sensitive' }}"
+            if "admission-sensitive Console P0" in name
+            else "${{ !cancelled() }}"
         )
         tokens = shlex.split(step["run"].replace("\\\n", " "), comments=True)
         label = (
