@@ -2933,3 +2933,8 @@ Tests/UI/test_console_recovered_image_shutdown.py
 Tests/UI/test_console_configuration_worker_feedback.py::test_actual_send_composes_new_input_while_configuration_reader_is_held
 # TASK-34601.1: background and repeated skill reads cannot claim a spoken Send fixture.
 Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignores_background_and_repeated_fetches
+# TASK-40311 (2026-11-13): three Plugins review dialog tests that now wait for
+# the dialog's load and for each press's handler state instead of one pause.
+Tests/UI/test_plugin_review.py::test_refresh_growth_keeps_focused_action_and_cleaned_status_painted
+Tests/UI/test_plugin_review.py::test_action_inputs_hide_without_losing_drafts_or_keyboard_focus
+Tests/UI/test_plugin_review.py::test_confirmed_profile_save_survives_close_during_child_prune
