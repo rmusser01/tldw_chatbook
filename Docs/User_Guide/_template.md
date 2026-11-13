@@ -97,7 +97,7 @@ there rather than keeping a one-off script.
    async def main() -> None:
        from tldw_chatbook.app import TldwCli
        app = TldwCli()
-       async with app.run_test(size=(200, 50)) as pilot:
+       async with app.run_test(size=(235, 52)) as pilot:
            # --- drive to the state being documented, e.g.: ---
            # await pilot.click("#some-nav-label")
            # await pilot.pause(0.5)
@@ -135,16 +135,10 @@ there rather than keeping a one-off script.
    grep -rl "cdnjs" Docs/User_Guide/images/ && echo "STILL DIRTY" || echo clean
    ```
 
-**Standard size: 200×50 cells.** The live nav survey (Task 1) drove the app
-at 235×52; this recipe deliberately uses a smaller, fixed 200×50 so every
-page's captures are the same size. Verified during the Step 1 experiment
-that 200 columns does *not* clip the 13-item nav bar — every destination
-through "More: Ctrl+P" renders inside the frame. Always pass
-`size=(200, 50)` to `run_test()`. This margin is thin: at 200 columns the
-current 13-item nav bar has only about one column of slack before "More:
-Ctrl+P" gets clipped, so any future nav-label change (renamed/added/removed
-destination) needs a re-check against the fidelity bar for right-edge
-clipping.
+**Standard size: 235×52 cells**, the size `scripts/capture_user_guide.py`
+uses (its `SIZE`) and the size of nearly every capture already in the
+guide. Always pass `size=(235, 52)` to `run_test()` so every page's captures
+match.
 
 **Output path convention:** `Docs/User_Guide/images/<screen>/<name>.svg`,
 where `<screen>` is the same kebab-case slug used for that screen's guide
