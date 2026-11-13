@@ -938,3 +938,49 @@ async def test_a_card_pruned_before_its_scope_control_composes_never_exits_the_a
         await pilot.pause()
         assert not app.query(ArchiveRecoveryConfirmCard)
         assert app.is_running
+
+
+@pytest.mark.asyncio
+async def test_a_card_composed_after_app_exit_began_never_crashes_and_keeps_its_options(
+    monkeypatch,
+):
+    """TASK-40323: a Console sync can mount a card while the app shuts down.
+
+    Once ``App._exit`` is set (``TldwCli._shutdown`` sets it first, and
+    ``App.exit`` does too), ``mount_all`` mounts nothing, so a scope control
+    that composes then gets no ``SelectOverlay``, yet ``Select._on_mount``
+    still runs and the card still reaches ``set_confirmation`` ->
+    ``set_options``. Both looked the overlay up and raised ``NoMatches``,
+    which failed the stock skill-trust controls at their run_test teardown.
+    """
+    from textual.containers import Vertical
+    from textual.widgets._select import SelectOverlay
+
+    class HostApp(App):
+        def compose(self):
+            yield Vertical(id="console-archive-recovery")
+
+    real_compose = Select.compose
+
+    def compose_as_exit_begins(select):
+        if select.id == "recovery-scope":
+            select.app._exit = True  # What App.exit and TldwCli._shutdown set.
+        return real_compose(select)
+
+    monkeypatch.setattr(Select, "compose", compose_as_exit_begins)
+    app = HostApp()
+    latest = confirmation()
+    async with app.run_test() as pilot:
+        card = ArchiveRecoveryConfirmCard()
+        await app.query_one("#console-archive-recovery").mount(card)
+        await pilot.pause()
+        scope = card.query_one("#recovery-scope", Select)
+        assert scope.is_mounted and not scope.query(SelectOverlay)
+        assert app._exception is None, "the scope control's own mount crashed"
+        assert card.set_confirmation(latest) is True
+        assert app._exception is None
+        assert [value for _label, value in scope._options if value != Select.NULL] == [
+            "chat_only",
+            "chat_and_workspace",
+        ]
+        app._exit = False  # Let run_test's own teardown run as usual.

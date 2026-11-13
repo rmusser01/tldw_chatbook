@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 04:57
+updated_date: 2026-11-13 08:17
 labels:
 - follow-up
 - tests
@@ -66,7 +66,7 @@ Found in round 13 of the 2026-10-23 burn-down (send stream, TASK-38948's coverin
   - `[app_closing]`: its hang is TASK-40324's, now fixed.
   - `[send_enter]` and `[send_button]`: "Cold Send did not reach original configuration SQL". There is no received claim, no custody record and no notice, and the draft stays in the composer: the Send never started while the trust build was held.
   - `[mount]`: "Original stock skill trust setup blocked shared UI loop", the 0.35 s loop-progress gate, at load 64-77.
-  - A product crash moves between cases from run to run (local_winner, app_closing, send_enter, cancel): `NoMatches: 'SelectOverlay' on PruneSafeSelect(id='recovery-scope')`. `ArchiveRecoveryConfirmationCard.set_confirmation` calls `set_options` before that Select has composed its overlay.
+  - A product crash moves between cases from run to run (local_winner, app_closing, send_enter, cancel): `NoMatches: 'SelectOverlay' on PruneSafeSelect(id='recovery-scope')`. Fixed in review round 1; see below.
 
 **CI.** No CI has run these files since 2026-10-03, when `test.yml`'s last main-push run was cancelled; they are on no PR lane. The lanes below make this PR's CI the first run. AC#1's CI half and AC#2 stay open until that run is read and the reds below are fixed.
 
@@ -75,7 +75,64 @@ Found in round 13 of the 2026-10-23 burn-down (send stream, TASK-38948's coverin
 - Recovered-suites job (`derived-artifacts.yml` plus `Tests/CI/test_ci_queue_pressure_contract.py`'s mirror): 16 targets. The wizard file goes in the sandboxed block; `[collections]` and the 14 green stock cases go last (bootstrap_profile; each a private subprocess).
   - Locally, serial, `--storage-lease-guard --timeout=180`: 24 passed in 8.0 min at load 38-44. Stock cases took 25-39 s each, `[collections]` 14.5 s.
   - That job took 5.7-7.3 min of its 20 in five recent PR runs, so it should land near 14-15 min.
-  - The `recovery-scope` crash can fail a random stock case there until it is fixed.
 - The Tests/CI contract files pass (193).
 
 **Commits.** fde1a3a362 (the three Performance re-pins). This commit: the popup and visit markers, the popup and wiring re-pins, the lanes, and two `lessons-testing-evidence.md` entries.
+
+**Review r14ti-rev1 fixes (2026-11-13).**
+- **The `recovery-scope` crash (AC#2) is fixed.** The crash was not where my notes above first put it. Its real seam: once `App._exit` is set (`App.exit`, and first thing in `TldwCli._shutdown`), `Widget.mount_all` mounts nothing. A scope control that composes then gets no `SelectOverlay`, but `Select._on_mount` still runs `_setup_options_renderables`, and so does a later `set_confirmation` -> `set_options`.
+  - A Console sync mounting a card during a stock case's `run_test` teardown hit the first of those.
+  - `PruneSafeSelect` now treats `App._exit` as terminal, like `_pruning` and `_closing`: it skips the overlay rebuild and the DOM half of `_watch_value`, and `set_options` still stores the options. One gate covers both paths and every `PruneSafeSelect`. A guard inside `set_confirmation` alone would have missed the `_on_mount` crash.
+  - New `Tests/UI/test_console_archive_recovery_cards.py::test_a_card_composed_after_app_exit_began_never_crashes_and_keeps_its_options`. It sets `_exit` as the scope control composes, checks no crash, calls `set_confirmation` and checks the options. Red at HEAD with the exact message ("No nodes match 'SelectOverlay' on PruneSafeSelect(id='recovery-scope')"); green after.
+  - That file is a whole-file census entry, so no census edit. The 14 stock cases stay on the recovered-suites lane.
+- **Per-entry serial times for the 48 census entries.** Measured in one serial run of all 59 entries this branch added (`-p no:xdist --timeout=180 --durations=0 --durations-min=0`, setup + call + teardown per entry, 73 passed in 167 s, load 19-26, 2026-11-13). The first entry in a process carries the shared import and fixture start-up.
+  - Command popup (14):
+    - `test_popup_show_highlight_accept_hide` 0.3 s
+    - `test_slash_opens_popup_and_typing_filters` 4.5 s
+    - `test_enter_accepts_and_inserts_without_sending` 5.1 s
+    - `test_down_up_navigates_and_tab_accepts` 5.1 s
+    - `test_escape_closes_popup_and_keeps_draft` 5.4 s
+    - `test_skill_entries_and_skills_arg_mode` 5.7 s
+    - `test_popup_does_not_reclaim_workspace_grid_rows` 3.9 s
+    - `test_popup_anchors_above_composer_with_real_css` 4.1 s
+    - `test_popup_anchor_clears_chips_above_composer_by_default` 4.3 s
+    - `test_popup_anchor_clears_composer_with_chips_below` 4.5 s
+    - `test_popup_orders_most_used_command_first` 4.6 s
+    - `test_popup_order_is_registry_order_with_no_usage_data` 4.3 s
+    - `test_command_dispatch_records_usage_token` 4.4 s
+    - `test_unknown_command_dispatch_records_nothing` 4.2 s
+  - Controller wiring (34):
+    - `test_all_six_controllers_are_constructed_with_the_right_classes` 1.4 s
+    - `test_all_eighteen_controllers_are_constructed_with_the_right_classes` 1.1 s
+    - `test_terminal_controller_is_wired_to_late_bound_app_and_console_edges` 1.4 s
+    - `test_selected_console_local_root_accepts_only_ready_status_forms` 0.8 s
+    - `test_selected_console_local_root_rejects_every_non_ready_status` 1.5 s
+    - `test_selected_console_local_root_rejects_wrong_workspace` 0.4 s
+    - `test_selected_console_local_root_rejects_non_local_bindings` 2.2 s
+    - `test_raw_cli_worker_adapter_uses_its_own_group` 1.4 s
+    - `test_review_selection_controller_is_late_bound_without_sibling_objects` 8.0 s
+    - `test_send_price_controller_is_constructed_with_late_bound_screen_edges` 1.5 s
+    - `test_draft_spend_refresh_is_wired_with_late_bound_screen_edges` 1.5 s
+    - `test_realtime_controller_is_wired_late_bound_with_empty_owned_state` 1.2 s
+    - `test_realtime_outgoing_edges_target_controller_after_method_move` 1.2 s
+    - `test_fleet_controller_is_constructed_with_late_bound_screen_edges` 1.3 s
+    - `test_session_first_chat_edges_are_late_bound_and_presentation_only` 2.5 s
+    - `test_session_first_chat_focus_ignores_opaque_token` 2.5 s
+    - `test_retrieval_controller_is_constructed_with_late_bound_screen_edges` 1.3 s
+    - `test_character_controller_is_constructed_with_late_bound_screen_edges` 1.3 s
+    - `test_skill_controller_is_constructed_with_late_bound_screen_edges` 1.2 s
+    - `test_controllers_are_built_in_the_documented_order` 1.5 s
+    - `test_every_controller_holds_the_same_app_instance_as_the_screen` 1.3 s
+    - `test_shared_chat_store_accessor_resolves_to_the_screens_own_store` 1.8 s
+    - `test_shared_chat_store_accessor_is_late_bound` 1.3 s
+    - `test_composer_accessor_is_late_bound` 5.5 s
+    - `test_current_chat_store_accessor_reads_the_live_attribute` 3.9 s
+    - `test_workspace_resolves_the_session_sibling_at_call_time` 1.6 s
+    - `test_dictation_resolves_the_hands_free_sibling_at_call_time` 1.3 s
+    - `test_dictation_session_late_binds_the_app_owned_service_factory` 1.3 s
+    - `test_hands_free_reads_dictation_state_through_the_screen_at_call_time` 1.2 s
+    - `test_hands_free_auto_speak_edges_are_late_bound_and_mount_safe` 1.2 s
+    - `test_prompts_resolves_the_session_sibling_at_call_time` 1.2 s
+    - `test_session_verified_adoption_edges_are_late_bound` 9.7 s
+    - `test_context_spend_keeps_real_screen_proofs_and_live_module_callbacks` 6.8 s
+    - `test_context_spend_re_resolves_runtime_framework_and_checked_timer_entry` 6.8 s

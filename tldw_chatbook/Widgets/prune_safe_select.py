@@ -40,7 +40,8 @@ where `SelectCurrent` exists but its `#label` child does not.
 
 The fix here is deliberately *not* a catch-and-carry-on. It is gated on
 `_pruning`/`_closing`, which mean "Textual has already committed to removing
-this widget from the DOM". A pruning widget is never painted again, so
+this widget from the DOM", and on `App._exit`, past which Textual mounts
+nothing (TASK-40323). A pruning widget is never painted again, so
 declining to initialise it loses nothing: there is no stale-placeholder
 failure mode, because there is no surface left to be stale. Any *other* way
 of arriving at a half-composed `Select` is a different bug and still raises
@@ -153,14 +154,25 @@ class PruneSafeSelect(Select):
         super().__init__(*args, **kwargs)
         _require_internals(self, _GUARDED_FLAGS, "attribute")
 
+    def _retired(self) -> bool:
+        """Pruning, closing, or past the app's mount fence (`App._exit`).
+
+        TASK-40323: once `App._exit` is set (`App.exit`, and first thing in
+        `TldwCli._shutdown`), `Widget.mount_all` mounts nothing, so a `Select`
+        composing then gets no children but `_on_mount` still runs. Terminal
+        like the other two: the app never paints again.
+        """
+        return self._pruning or self._closing or self.app._exit
+
     def _setup_options_renderables(self) -> None:
-        """Skip the `query_one(SelectOverlay)` rebuild while pruning.
+        """Skip the `query_one(SelectOverlay)` rebuild once retired.
 
         Reached from `_on_mount` and from `set_options`. The overlay is a
         child mounted by `Select.compose`, so on a pruned-mid-compose
-        `Select` it may not exist at all.
+        `Select`, or one composed after the app's exit began, it may not
+        exist at all. `set_options` still stores the options first.
         """
-        if self._pruning or self._closing:
+        if self._retired():
             return
         super()._setup_options_renderables()
 
@@ -195,7 +207,7 @@ class PruneSafeSelect(Select):
         back and never re-fires. If this class ever survives such an upgrade,
         that revival path needs an explicit repaint, not just this sync.
         """
-        if self._pruning or self._closing:
+        if self._retired():
             # The one non-DOM statement of `Select._watch_value`.
             self._value = value
             return
