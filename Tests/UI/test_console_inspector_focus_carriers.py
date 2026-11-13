@@ -327,6 +327,11 @@ async def test_the_collapsed_rail_handle_has_a_focus_carrier(size):
         )
         opener = console.query_one("#console-inspector-rail-open", Button)
         assert opener in console.focus_chain, "the handle is not a Tab stop"
+        # The delayed activation restore must retain a user-focused collapsed handle.
+        console.set_focus(opener, scroll_visible=False)
+        console._restore_console_workbench_focus()
+        await pilot.pause()
+        assert host.focused is opener
         unfocused, focused = await _focus_carrier_rows(host, pilot, console, opener)
         assert unfocused != focused, (
             "focusing the collapsed rail's handle changes nothing a keyboard "
