@@ -940,17 +940,12 @@ async def _capture_windows_hook(
     finally:
         try:
             if tree is not None and not settled:
-                cleanup_deadline = time.monotonic() + HOOK_POST_KILL_REAP_TIMEOUT_S
-                try:
-                    controller.kill(tree)
-                except OSError:
-                    # A Job can empty between the completion probe and the kill.
-                    pass
-                remaining = max(0, cleanup_deadline - time.monotonic())
-                if not await controller.wait(tree, timeout=remaining):
+                clock = asyncio.get_running_loop().time
+                cleanup_deadline = clock() + HOOK_POST_KILL_REAP_TIMEOUT_S
+                if not await controller.stop_windows_hook(tree, deadline=cleanup_deadline):
                     raise RuntimeError("Windows hook cleanup unproven")
                 if tasks:
-                    remaining = max(0, cleanup_deadline - time.monotonic())
+                    remaining = max(0, cleanup_deadline - clock())
                     _, pending = await asyncio.wait(tasks, timeout=remaining)
                     if pending:
                         raise RuntimeError("Windows hook pipe cleanup unproven")

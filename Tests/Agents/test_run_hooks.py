@@ -1219,6 +1219,115 @@ class TestEngineHardening:
                 if descendant_handle is not None:
                     _winapi.CloseHandle(descendant_handle)
 
+    @pytest.mark.parametrize("failure", [None, "new member", "lost handle", "incomplete list"])
+    def test_windows_hook_reap_waits_for_member_signal(
+        self, tmp_path, monkeypatch, failure
+    ):
+        from tldw_chatbook.Notes import git_process_containment as containment
+
+        calls = []
+
+        class Reader:
+            async def read(self, size):
+                return b""
+
+        class Writer:
+            def write(self, data):
+                pass
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+        class Process:
+            pid = 17
+            returncode = 0
+            stdin = Writer()
+            stdout = Reader()
+            stderr = Reader()
+
+        class Kernel:
+            def __init__(self):
+                self.killed = False
+                self.probes = 0
+
+            def total_processes(self, job):
+                assert job == 1
+                return 2 + int(self.killed and failure == "new member")
+
+            def active_processes(self, job):
+                assert job == 1
+                if self.killed and failure != "incomplete list":
+                    assert ("close", 42) in calls
+                return int(not self.killed)
+
+            def job_member_pids(self, job, capacity):
+                assert job == 1
+                if failure == "incomplete list":
+                    assert capacity == 2
+                    calls.append("incomplete")
+                    return (), 2
+                pids = (23, 24) if failure == "lost handle" else (23,)
+                return pids, len(pids)
+
+            def open_job_member(self, job, pid):
+                assert job == 1
+                if pid == 24:
+                    calls.append("lost")
+                    raise OSError("member handle unavailable")
+                assert pid == 23
+                calls.append("pin")
+                return 42
+
+            def terminate_job(self, job, code):
+                assert (job, code) == (1, 1)
+                self.killed = True
+                calls.append("kill")
+
+            def process_signaled(self, handle):
+                assert self.killed and handle == 42
+                self.probes += 1
+                calls.append("probe")
+                return self.probes == 2
+
+            def close_handle(self, handle):
+                if handle:
+                    calls.append(("close", handle))
+
+        tree = containment.OwnedProcessTree(
+            Process(), containment._WindowsJobIdentity(1, 17, assigned=True)
+        )
+        backend = containment._WindowsJobObjectController()
+        backend._kernel = Kernel()
+
+        def use_test_kernel(controller):
+            controller._backend = backend
+
+        async def spawn(controller, *argv, cwd):
+            return tree
+
+        monkeypatch.setattr(containment.ProcessTreeController, "__init__", use_test_kernel)
+        monkeypatch.setattr(containment.ProcessTreeController, "spawn_windows_hook", spawn)
+        monkeypatch.setattr(run_hooks, "_capture_hook", run_hooks._capture_windows_hook)
+        spec = HookSpec("PreToolUse", (sys.executable, "-c", "pass"), timeout_s=0.2)
+        engine = _engine(spec)
+        try:
+            blocked = engine.fire("PreToolUse", cwd=str(tmp_path), session_id="s").blocked
+        finally:
+            engine.close()
+
+        if failure == "incomplete list":
+            assert calls == ["incomplete", "kill", ("close", 1)]
+        else:
+            assert calls == [
+                "pin",
+                *(["lost"] if failure == "lost handle" else []),
+                "kill", "probe", "probe", ("close", 42), ("close", 1),
+            ]
+        assert blocked is (failure is not None)
+
     @pytest.mark.parametrize("leader_returncode", [0, None])
     def test_windows_hook_launch_owns_tree_and_uses_original_limits(
         self, tmp_path, monkeypatch, leader_returncode
@@ -1275,6 +1384,15 @@ class TestEngineHardening:
                     tree.process.returncode = 1
                 else:
                     raise OSError("Job exited during kill")
+
+            async def stop_windows_hook(self, tree, *, deadline):
+                try:
+                    self.kill(tree)
+                except OSError:
+                    pass
+                return await self.wait(
+                    tree, timeout=max(0, deadline - asyncio.get_running_loop().time())
+                )
 
             def close(self, tree):
                 assert isinstance(tree, Tree)
