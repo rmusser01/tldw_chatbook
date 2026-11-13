@@ -630,6 +630,46 @@ def test_a_refused_hallucinated_call_does_not_count_as_agent_use(tmp_path):
         workspaces.close()
 
 
+@pytest.mark.parametrize(
+    ("tool", "args", "recorded"),
+    [
+        (
+            "send_to_agent",
+            {"agent_id": "a", "message": "x"},
+            ("failed", "ERROR: Tool not permitted: send_to_agent"),
+        ),
+        ("report_to_supervisor", {"message": "x"}, ("failed", "unavailable")),
+    ],
+    ids=["send-to-agent", "report-to-supervisor"],
+)
+def test_a_refusal_the_loop_records_as_failed_does_not_count_as_agent_use(
+    tmp_path, tool, args, recorded
+):
+    """TASK-34100.5.3.2 review v5r1 (R1-2b), on the real persisted trace.
+
+    Some refusals are not recorded as ``blocked``: ``send_to_agent`` with no
+    fleet is refused before dispatch as ``failed`` "Tool not permitted", and
+    a fleet message tool with no fleet as ``failed`` with the bounded code
+    ``unavailable``. The run log still records the call; neither ran."""
+    from tldw_chatbook.Agents.full_agent_tools_upgrade import detect_agent_feature_use
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [[_fence(tool, args)], ["hi"]]
+    )
+    outcome = _send(bridge, session, assistant_id, _test_resolution())
+    assert [
+        (step.kind, step.tool_outcome, step.result)
+        for step in outcome.steps
+        if step.tool_name == tool and step.kind in {"tool_call", "tool_result"}
+    ] == [("tool_call", None, ""), ("tool_result", *recorded)]
+    workspaces = WorkspaceDB(tmp_path / "upgrade-workspaces.db", client_id="probe")
+    try:
+        assert detect_agent_feature_use(tmp_path / "agent_runs.db", workspaces) is None
+    finally:
+        workspaces.close()
+
+
 class _LiveFleet:
     def live_count(self):
         return 1

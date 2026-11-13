@@ -591,6 +591,146 @@ def test_a_dispatched_call_beside_a_refused_one_still_counts(profile) -> None:
     assert (result.outcome, result.signal) == (UpgradeOutcome.KEPT_ON, SIGNAL_TOOL_CALL)
 
 
+def _succeeded(name: str, call_id: str) -> dict:
+    return {
+        "kind": "tool_result",
+        "tool_name": name,
+        "call_id": call_id,
+        "tool_outcome": "success",
+        "result": "ok",
+    }
+
+
+#: Review v5r1 (R1-2a): an OpenAI-compatible server that omits tool-call ids
+#: gets ``call_<position>`` synthesised afresh every turn
+#: (``native_tools.ensure_tool_call_ids``), so ``call_0`` recurs within one
+#: run. A refusal must be paired with its OWN call, not every call that
+#: happens to share the id.
+_REUSED_ID_RUNS = {
+    "refused-then-dispatched": (
+        {**_tool_call("web_search"), "call_id": "call_0"},
+        _blocked_result("web_search", "call_0"),
+        {**_tool_call("fs_list"), "call_id": "call_0"},
+        _succeeded("fs_list", "call_0"),
+    ),
+    "dispatched-then-refused": (
+        {**_tool_call("fs_list"), "call_id": "call_0"},
+        _succeeded("fs_list", "call_0"),
+        {**_tool_call("web_search"), "call_id": "call_0"},
+        _blocked_result("web_search", "call_0"),
+    ),
+    # Same tool both turns: the second call's own result is not a refusal.
+    "same-tool-refused-then-dispatched": (
+        {**_tool_call("web_search"), "call_id": "call_0"},
+        _blocked_result("web_search", "call_0"),
+        {**_tool_call("web_search"), "call_id": "call_0"},
+        _succeeded("web_search", "call_0"),
+    ),
+}
+
+
+@pytest.mark.parametrize("steps", _REUSED_ID_RUNS.values(), ids=_REUSED_ID_RUNS)
+def test_a_reused_call_id_does_not_let_a_refusal_hide_a_dispatched_call(
+    profile, steps
+) -> None:
+    _record_run(profile, {"kind": "model", "summary": "hi"}, *steps)
+
+    result = _run(profile)
+
+    assert (result.outcome, result.signal) == (UpgradeOutcome.KEPT_ON, SIGNAL_TOOL_CALL)
+
+
+@pytest.mark.parametrize("steps", _REUSED_ID_RUNS.values(), ids=_REUSED_ID_RUNS)
+def test_a_reused_call_id_in_a_pre_v13_json_blob_is_paired_the_same_way(
+    profile, steps
+) -> None:
+    run_id = _record_run(profile)
+    runs = _runs_db(profile)
+    try:
+        with runs.transaction() as connection:
+            connection.execute(
+                "UPDATE agent_runs SET steps = ? WHERE id = ?",
+                (
+                    json.dumps(
+                        [{"index": index, **step} for index, step in enumerate(steps)]
+                    ),
+                    run_id,
+                ),
+            )
+    finally:
+        runs.close()
+
+    assert _run(profile).outcome is UpgradeOutcome.KEPT_ON
+
+
+def test_refusals_that_reuse_one_call_id_every_turn_are_still_not_use(
+    profile,
+) -> None:
+    """The converse: each call's own refusal still pairs when the id recurs."""
+    _record_run(
+        profile,
+        {**_tool_call("web_search"), "call_id": "call_0"},
+        _blocked_result("web_search", "call_0"),
+        {**_tool_call("spawn_subagent"), "call_id": "call_0"},
+        _blocked_result("spawn_subagent", "call_0"),
+    )
+
+    assert _run(profile).outcome is UpgradeOutcome.LIGHT
+
+
+#: Review v5r1 (R1-2b): runtime refusals the loop records as ``failed``, not
+#: ``blocked``, seen on the production bridge's persisted trace for a light
+#: run whose model named the tool anyway (``send_to_agent`` with no fleet:
+#: "Tool not permitted"; a fleet message tool with no fleet: the bounded
+#: refusal code ``unavailable``). Neither ran anything.
+_NOT_STARTED_REFUSALS = {
+    "send-to-agent": {
+        "kind": "tool_result",
+        "tool_name": "send_to_agent",
+        "call_id": "turn-1-call-0",
+        "tool_outcome": "failed",
+        "result": "ERROR: Tool not permitted: send_to_agent",
+    },
+    "report-to-supervisor": {
+        "kind": "tool_result",
+        "tool_name": "report_to_supervisor",
+        "call_id": "turn-1-call-0",
+        "tool_outcome": "failed",
+        "result": "unavailable",
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "refusal", _NOT_STARTED_REFUSALS.values(), ids=_NOT_STARTED_REFUSALS
+)
+def test_a_refusal_recorded_as_failed_is_not_agent_use(profile, refusal) -> None:
+    _record_run(
+        profile,
+        {**_tool_call(refusal["tool_name"]), "call_id": "turn-1-call-0"},
+        refusal,
+    )
+
+    assert _run(profile).outcome is UpgradeOutcome.LIGHT
+
+
+def test_a_dispatched_call_that_failed_still_counts(profile) -> None:
+    """A real dispatch that failed is still use: only refusals are not."""
+    _record_run(
+        profile,
+        {**_tool_call("fs_read"), "call_id": "turn-1-call-0"},
+        {
+            "kind": "tool_result",
+            "tool_name": "fs_read",
+            "call_id": "turn-1-call-0",
+            "tool_outcome": "failed",
+            "result": "ERROR: file not found",
+        },
+    )
+
+    assert _run(profile).outcome is UpgradeOutcome.KEPT_ON
+
+
 def test_a_refused_call_in_a_pre_v13_json_blob_is_not_agent_use(profile) -> None:
     run_id = _record_run(profile)
     runs = _runs_db(profile)
@@ -755,15 +895,20 @@ def test_turning_full_agent_tools_off_after_the_upgrade_stays_off(profile) -> No
     assert light_surface_configured() is True
 
 
-def test_a_lost_marker_reruns_safely(profile) -> None:
-    """Review round 1 (F4-5), recorded decision: the marker lives in the
-    workspaces database, so replacing that database makes the next launch
-    run the upgrade again. That is safe by construction -- it writes only
-    when the raw config has no key at all, only ``true``, and only when the
-    profile shows agent use at that moment; an explicit ``false`` (the user
-    turned it off) is never touched (the test above). The one profile a
-    rerun turns on is a light one that has since gained agent use, which is
-    the owner's own "uses agent features" test."""
+def test_a_lost_marker_reruns_the_upgrade_on_todays_signals(profile) -> None:
+    """The marker lives in the workspaces database, so replacing that
+    database makes the next launch run the upgrade again. A rerun writes
+    only when the raw config has no key at all and only ``true``, so an
+    explicit ``false`` (the user turned it off) is never touched (the test
+    above).
+
+    Review v5r1 (R1-3) corrected round 1's F4-5 claim that this is "safe by
+    construction": the rerun reads TODAY's signals, not only agent use from
+    before the light surface. Here a profile the first run left light later
+    gains a sub-agent definition (Settings > Agents works with Full agent
+    tools off), the marker is lost, and the rerun turns Full agent tools on
+    although the user never opted in. Pinned as the current behaviour; the
+    case is an open owner decision (task notes, review v5r1)."""
     assert _run(profile).outcome is UpgradeOutcome.LIGHT
     _define_subagent(profile)
 

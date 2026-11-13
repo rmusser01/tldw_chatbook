@@ -21,10 +21,11 @@ nothing written to their config.
 * an earlier Console agent run that called a tool outside the light set (a
   ``tool_call``/``spawn`` step of a primary or sub-agent run, in the per-row
   step log or the pre-v13 JSON blob, or any sub-agent run, which only
-  ``spawn_subagent`` creates). A call the loop refused -- a ``blocked``
-  ``tool_result`` for the same ``call_id``, such as the light surface's "Tool
-  not permitted" for a tool a small model named anyway -- was never
-  dispatched and is not use (review round 1, F3-11).
+  ``spawn_subagent`` creates). A call the loop refused -- its own
+  ``tool_result`` is a refusal, such as the light surface's "Tool not
+  permitted" for a tool a small model named anyway -- was never dispatched
+  and is not use (review round 1, F3-11; paired by position, not ``call_id``
+  alone, review v5r1 R1-2).
 
 Runs are read from the Console's ``agent_runs.db`` beside ChaChaNotes and,
 when it exists, the served mobile companion's ``<user_data>/mobile/runs.db``
@@ -55,15 +56,20 @@ light set for this launch and the next launch tries again. Logs name the
 outcome, the first signal found and an exception type; never a path, a tool
 name or other user content.
 
-A lost marker (the workspaces database replaced or deleted) makes the next
-launch run the upgrade again, and that is safe by construction (review round
-1, F4-5): it writes only when the raw config has no
-``full_agent_tools_enabled`` at all, it only ever writes ``true``, and only
-when the profile shows agent use at that moment. A user who turned Full
-agent tools off has the key explicitly ``false``, which is left alone (step
-2). The one profile a rerun can turn on is a light one that has since gained
-a binding, a definition or a dispatched non-light call -- which is exactly
-what the owner's "uses agent features" test asks.
+A lost marker (the workspaces database replaced, rebuilt or restored without
+it) makes the next launch run the upgrade again. A rerun writes only when the
+raw config has no ``full_agent_tools_enabled`` at all and only ``true``, so a
+user who turned Full agent tools off (the key is explicitly ``false``) is
+never switched back on (step 2). It is NOT limited to agent use from before
+the light surface, though (review v5r1 R1-3, correcting round 1's F4-5
+"safe by construction"): a light profile that never opted in can since have
+dispatched non-light calls without Full agent tools -- a tool switched on
+one by one, a tool from an MCP server the user added, a Library tool, a
+``$skill`` turn -- or saved a sub-agent definition, and a rerun reads those
+as agent use and turns Full agent tools on. Nothing persisted outside the
+workspaces database can tell a rerun from a first run without writing
+config.toml for a profile with no signal (AC#2 forbids that), so this case
+is an open owner decision, recorded in the task notes.
 """
 
 from __future__ import annotations
@@ -79,6 +85,7 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Agents.agent_models import MESSAGE_TOOL_NAMES
 from tldw_chatbook.Agents.plain_chat_tool_surface import (
     FULL_AGENT_TOOLS_GATE_KEY,
     LIGHT_SURFACE_TOOL_NAMES,
@@ -132,6 +139,12 @@ _AGENT_RUN_KINDS: tuple[str, ...] = ("primary", "subagent")
 _TOOL_STEP_KINDS: tuple[str, ...] = ("tool_call", "spawn")
 
 
+#: The refusal text the loop records for a call it never started
+#: (``agent_runtime``: ``Tool not permitted: <name>``), with the loop's
+#: ``ERROR: `` prefix.
+_REFUSED_RESULT_TEXT = "ERROR: Tool not permitted:"
+
+
 class UpgradeOutcome(str, enum.Enum):
     """What one run of the upgrade did."""
 
@@ -181,6 +194,55 @@ def _names(rows: Any) -> set[str]:
     return {str(row[1]) for row in rows}
 
 
+def _named_list(prefix: str, values: Collection[str], parameters: dict) -> str:
+    """Bind ``values`` as named SQL parameters; return their placeholders."""
+    names = []
+    for index, value in enumerate(values):
+        parameters[f"{prefix}{index}"] = value
+        names.append(f":{prefix}{index}")
+    return ", ".join(names)
+
+
+def _valid_json(column: str) -> str:
+    return f"(CASE WHEN json_valid({column}) THEN {column} ELSE '{{}}' END)"
+
+
+def _own_result_refused(
+    *, results: str, result: str, between: str, other: str, messages: str
+) -> str:
+    """SQL: the call ``c`` was refused by the loop, so it is not use.
+
+    Its OWN result -- the first ``tool_result`` carrying its ``call_id`` and
+    tool after it, with no other call or result carrying that id in between
+    -- is a refusal. Pairing by position matters because ``call_id`` is not unique
+    in a run: a server that omits ids gets ``call_<position>`` afresh each
+    turn (``native_tools.ensure_tool_call_ids``), review v5r1 R1-2. A refusal
+    is the loop's ``blocked`` outcome, the not-started "Tool not permitted"
+    some runtime tools record as ``failed`` (``send_to_agent`` with no
+    fleet), or any failure of a fleet message tool (each is a bounded
+    refusal code; nothing ran). A call with no ``call_id`` cannot be paired
+    and counts.
+    """
+
+    def field(step: str, name: str) -> str:
+        return f"json_extract({step}, '$.{name}')"
+
+    call_id = field("c.step", "call_id")
+    return (
+        f"COALESCE({call_id}, '') <> '' AND EXISTS (SELECT 1 FROM {results} "
+        f"AND {field(result, 'kind')} = 'tool_result' "
+        f"AND {field(result, 'call_id')} = {call_id} "
+        f"AND {field(result, 'tool_name')} = {field('c.step', 'tool_name')} "
+        f"AND ({field(result, 'tool_outcome')} = 'blocked' "
+        f"OR instr(COALESCE({field(result, 'result')}, ''), :refused_text) = 1 "
+        f"OR ({field(result, 'tool_outcome')} = 'failed' "
+        f"AND {field(result, 'tool_name')} IN ({messages}))) "
+        f"AND NOT EXISTS (SELECT 1 FROM {between} "
+        f"AND {field(other, 'call_id')} = {call_id} "
+        f"AND {field(other, 'kind')} IN ('tool_call', 'spawn', 'tool_result')))"
+    )
+
+
 def _runs_signal(connection: Any, light_names: tuple[str, ...]) -> str | None:
     """The first agent-feature signal in an open runs database, or ``None``."""
     tables = {
@@ -212,41 +274,36 @@ def _runs_signal(connection: Any, light_names: tuple[str, ...]) -> str | None:
         is not None
     ):
         return SIGNAL_SUBAGENT_RUN
-    kinds = ", ".join("?" for _ in _AGENT_RUN_KINDS)
-    step_kinds = ", ".join("?" for _ in _TOOL_STEP_KINDS)
-    light = ", ".join("?" for _ in light_names)
+    parameters: dict[str, str] = {"refused_text": _REFUSED_RESULT_TEXT}
+    kinds = _named_list("run_kind", _AGENT_RUN_KINDS, parameters)
+    step_kinds = _named_list("step_kind", _TOOL_STEP_KINDS, parameters)
+    not_use = _named_list("light", ("", *light_names), parameters)
+    messages = _named_list("message", sorted(MESSAGE_TOOL_NAMES), parameters)
     # The JSON is checked before it is parsed: one malformed row must not
     # turn the whole read into an error. The instr() pre-filters skip the
-    # parse for the (many) steps that cannot be a tool call or a refusal.
+    # parse for the (many) steps that cannot be a tool call or a result.
     tool_step = (
         f"json_extract(c.step, '$.kind') IN ({step_kinds}) "
-        f"AND COALESCE(json_extract(c.step, '$.tool_name'), '') "
-        f"NOT IN ('', {light})"
+        f"AND COALESCE(json_extract(c.step, '$.tool_name'), '') NOT IN ({not_use})"
     )
-    # A call the loop refused (a ``blocked`` tool_result for the same
-    # call_id in the same run) was never dispatched: not use (F3-11). A
-    # call with no call_id (older rows) cannot be paired and counts.
-    refused = (
-        "COALESCE(json_extract(c.step, '$.call_id'), '') <> '' "
-        "AND json_extract({step}, '$.kind') = 'tool_result' "
-        "AND json_extract({step}, '$.tool_outcome') = 'blocked' "
-        "AND json_extract({step}, '$.call_id') = json_extract(c.step, '$.call_id')"
-    )
-    parameters = (*_AGENT_RUN_KINDS, *_TOOL_STEP_KINDS, *light_names)
     if "agent_run_steps" in tables:
-        result_step = "CASE WHEN json_valid(b.payload) THEN b.payload ELSE '{}' END"
         query = (
             "SELECT 1 FROM ("
-            "SELECT s.run_id AS run_id, "
-            "CASE WHEN json_valid(s.payload) THEN s.payload ELSE '{}' END "
-            "AS step FROM agent_run_steps AS s "
+            "SELECT s.run_id AS run_id, s.seq AS pos, "
+            f"{_valid_json('s.payload')} AS step FROM agent_run_steps AS s "
             "JOIN agent_runs AS r ON r.id = s.run_id "
             f"WHERE r.agent_kind IN ({kinds}) "
             "AND (instr(s.payload, 'tool_call') > 0 OR instr(s.payload, 'spawn') > 0)"
-            f") AS c WHERE {tool_step} AND NOT EXISTS ("
-            "SELECT 1 FROM agent_run_steps AS b WHERE b.run_id = c.run_id "
-            "AND instr(b.payload, 'blocked') > 0 AND "
-            + refused.format(step=result_step)
+            f") AS c WHERE {tool_step} AND NOT ("
+            + _own_result_refused(
+                results="agent_run_steps AS b WHERE b.run_id = c.run_id "
+                "AND b.seq > c.pos AND instr(b.payload, 'tool_result') > 0",
+                result=_valid_json("b.payload"),
+                between="agent_run_steps AS m WHERE m.run_id = c.run_id "
+                "AND m.seq > c.pos AND m.seq < b.seq",
+                other=_valid_json("m.payload"),
+                messages=messages,
+            )
             + ") LIMIT 1"
         )
         if connection.execute(query, parameters).fetchone() is not None:
@@ -254,15 +311,22 @@ def _runs_signal(connection: Any, light_names: tuple[str, ...]) -> str | None:
     if "steps" in run_columns:
         query = (
             "SELECT 1 FROM ("
-            "SELECT run.blob AS blob, step.value AS step FROM ("
+            "SELECT run.blob AS blob, step.key AS pos, step.value AS step FROM ("
             "SELECT CASE WHEN json_valid(r.steps) AND json_type(r.steps) = 'array' "
             "THEN r.steps ELSE '[]' END AS blob FROM agent_runs AS r "
             f"WHERE r.agent_kind IN ({kinds}) "
             "AND (instr(r.steps, 'tool_call') > 0 OR instr(r.steps, 'spawn') > 0)"
             ") AS run, json_each(run.blob) AS step WHERE step.type = 'object'"
-            f") AS c WHERE {tool_step} AND NOT EXISTS ("
-            "SELECT 1 FROM json_each(c.blob) AS b WHERE b.type = 'object' AND "
-            + refused.format(step="b.value")
+            f") AS c WHERE {tool_step} AND NOT ("
+            + _own_result_refused(
+                results="json_each(c.blob) AS b WHERE b.type = 'object' "
+                "AND b.key > c.pos",
+                result="b.value",
+                between="json_each(c.blob) AS m WHERE m.type = 'object' "
+                "AND m.key > c.pos AND m.key < b.key",
+                other="m.value",
+                messages=messages,
+            )
             + ") LIMIT 1"
         )
         if connection.execute(query, parameters).fetchone() is not None:
