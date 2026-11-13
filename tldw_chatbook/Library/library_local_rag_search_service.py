@@ -1228,8 +1228,8 @@ class LibraryLocalRagSearchService:
             live = set(await lookup(sorted(candidates), user_id=user_id))
         except Exception as error:
             logger.warning(
-                "Library semantic search could not check its note hits: {}",
-                type(error).__name__,
+                "Library semantic search could not check its note hits: "
+                f"{type(error).__name__}"
             )
             live = set()
             route_notes = (ROUTE_NOTE_NOTE_HITS_UNVERIFIED,)

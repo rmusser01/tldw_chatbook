@@ -1731,7 +1731,7 @@
     },
     {
       "call_count": 7,
-      "diagnostic_digest": "040305b48203e3e95ac7",
+      "diagnostic_digest": "dcfe3300efb15ece2577",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Library/library_local_rag_search_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2186,7 +2186,7 @@
     },
     {
       "call_count": 47,
-      "diagnostic_digest": "b567c3a13f8559ef5528",
+      "diagnostic_digest": "ef333258e5ecc5bf8184",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/ingestion_indexing.py",
       "reason": "remaining Chatbook production diagnostic owner"

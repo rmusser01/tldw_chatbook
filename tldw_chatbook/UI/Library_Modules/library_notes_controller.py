@@ -2255,9 +2255,8 @@ class LibraryNotesController:
             "link-back": "#library-note-link-back",  # TASK-34000.28 N-21
             "use-in-console": "#library-note-use-in-console",  # TASK-34000.29
             # TASK-34000.29 (N-14): see the matching rows in
-            # ``_library_notes_semantic_role``.
-            "select-all": "#library-notes-select-all",
-            "select-clear": "#library-notes-select-clear",
+            # ``_library_notes_semantic_role``; Select all and Clear are the
+            # TASK-39130 rows above.
             "select-actions": "#library-notes-select-actions",
         }.get(role)
         if role.startswith("trash-"):

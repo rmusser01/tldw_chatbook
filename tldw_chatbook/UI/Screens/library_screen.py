@@ -5412,9 +5412,8 @@ class LibraryScreen(BaseAppScreen):
             # TASK-34000.29 (N-12): focus returns here after Use in Console.
             "library-note-use-in-console": "use-in-console",
             # TASK-34000.29 (N-14): the select strip's controls hold focus
-            # across the canvas sync their own press (or a slice page) runs.
-            "library-notes-select-all": "select-all",
-            "library-notes-select-clear": "select-clear",
+            # across the canvas sync their own press (or a slice page) runs;
+            # Select all and Clear are the TASK-39130 rows above.
             "library-notes-select-actions": "select-actions",
             # TASK-34000.29 (N-29): the Trash pager and Back keep focus across
             # the reload a page or a Restore runs; the controller resolves
