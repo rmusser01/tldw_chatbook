@@ -380,6 +380,99 @@ def test_the_one_line_writer_handles_other_table_shapes(
         assert tomllib.loads(expected)["general"]["notes"] == "[tools]\nx"
 
 
+@pytest.mark.parametrize(
+    ("hand_kept", "expected"),
+    [
+        # A header after the dotted keys: the line ends the root keys, and the
+        # comment that introduces ``[general]`` stays with its header.
+        (
+            b"# mine\ntools.read_file_enabled = true   # yes\n\n"
+            b"# General\n[general]\ndefault_tab = 'chat'\n",
+            b"# mine\ntools.read_file_enabled = true   # yes\n"
+            b"tools.full_agent_tools_enabled = true\n\n"
+            b"# General\n[general]\ndefault_tab = 'chat'\n",
+        ),
+        (
+            b"tools.read_file_enabled = true\r\n\r\n[general]\r\nx = 1\r\n",
+            b"tools.read_file_enabled = true\r\n"
+            b"tools.full_agent_tools_enabled = true\r\n\r\n[general]\r\nx = 1\r\n",
+        ),
+        # No table header and no final newline: the line goes at the end.
+        (
+            b"# mine\ntools.read_file_enabled = true",
+            b"# mine\ntools.read_file_enabled = true\n"
+            b"tools.full_agent_tools_enabled = true\n",
+        ),
+        (
+            b"# mine\r\ntools.read_file_enabled = true",
+            b"# mine\r\ntools.read_file_enabled = true\r\n"
+            b"tools.full_agent_tools_enabled = true\r\n",
+        ),
+        # A header-looking line inside a root multi-line string is not the
+        # first header: the line stays out of the user's string.
+        (
+            b'tools.read_file_enabled = true\nnotes = """\n[general]\n"""\n'
+            b"[general]\nx = 1\n",
+            b'tools.read_file_enabled = true\nnotes = """\n[general]\n"""\n'
+            b"tools.full_agent_tools_enabled = true\n[general]\nx = 1\n",
+        ),
+        # TOML allows a sub-table header after the dotted keys.
+        (
+            b"tools.read_file_enabled = true\n[tools.limits]\nmax = 3\n",
+            b"tools.read_file_enabled = true\n"
+            b"tools.full_agent_tools_enabled = true\n[tools.limits]\nmax = 3\n",
+        ),
+    ],
+    ids=[
+        "header-after-a-comment",
+        "crlf",
+        "no-header-no-final-newline",
+        "crlf-no-header-no-final-newline",
+        "string-header-before-the-real-one",
+        "sub-table-header",
+    ],
+)
+def test_the_one_line_writer_takes_root_level_dotted_tools_keys(
+    profile, hand_kept, expected
+) -> None:
+    """Pre-merge review 2026-11-12 (item 1): ``[tools]`` values written as
+    root-level dotted keys (``tools.read_file_enabled = true``, no
+    ``[tools]`` header). TOML forbids a ``[tools]`` header after them, so the
+    appended table never parsed and the writer raised: such a profile failed
+    closed at every launch. The line is now a root-level dotted key too."""
+    from tldw_chatbook.config import insert_absent_cli_config_bool
+
+    profile.config_path.write_bytes(hand_kept)
+
+    assert insert_absent_cli_config_bool("tools", "full_agent_tools_enabled", True)
+
+    assert profile.config_path.read_bytes() == expected
+    assert light_surface_configured() is False
+
+
+def test_a_profile_whose_tools_are_dotted_keys_is_upgraded_not_failed_closed(
+    profile,
+) -> None:
+    hand_kept = (
+        b"# mine\ntools.read_file_enabled = true\n\n[general]\ndefault_tab = 'chat'\n"
+    )
+    profile.config_path.write_bytes(hand_kept)
+    _bind_folder(profile)
+
+    result = _run(profile)
+
+    assert (result.outcome, result.signal) == (
+        UpgradeOutcome.KEPT_ON,
+        SIGNAL_WORKSPACE_BINDING,
+    )
+    assert profile.config_path.read_bytes() == (
+        b"# mine\ntools.read_file_enabled = true\n"
+        b"tools.full_agent_tools_enabled = true\n\n[general]\ndefault_tab = 'chat'\n"
+    )
+    assert _marker_recorded(profile)
+    assert light_surface_configured() is False
+
+
 def test_the_one_line_writer_keeps_the_load_time_config_transforms(profile) -> None:
     """Review v5r1 (R1-4): the write republishes the runtime config. A
     republish from the bare parsed text skipped the transforms the real
