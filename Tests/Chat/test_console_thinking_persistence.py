@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
 )
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 def _thinking(text: str, *, status: str = "complete") -> ThinkingEnvelope:
@@ -1340,7 +1341,7 @@ def test_thinking_edit_reconcile_records_sync_version_hash(tmp_path: Path) -> No
     store, _session_id = _restored_store(db, conversation_id)
 
     class _ReconcileProducer:
-        source = db
+        source = CharactersRAGDBChatSyncSource(db)
 
         def reconcile_chat_message_intent(self, **_kwargs: object) -> dict[str, object]:
             return {

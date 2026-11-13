@@ -18,6 +18,7 @@ from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.tldw_api import SyncV2Envelope
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 @pytest.mark.parametrize(
@@ -50,7 +51,7 @@ def test_state_survives_create_update_delete_and_undelete_projection(
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         scope = {
             "server_profile_id": "server-a",
@@ -181,7 +182,7 @@ def test_barrier_requires_only_atomic_local_projection_not_remote_ack(tmp_path) 
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": generate_dataset_key()},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         store = ConsoleChatStore(
             persistence=ChatPersistenceService(db),
@@ -219,7 +220,7 @@ def test_barrier_blocks_configured_memory_unavailable_and_stale_source(
         memory_producer = ChatSyncV2OutboxProducer(
             state_repository=memory_repo,
             dataset_keys={"dataset-1": generate_dataset_key()},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         memory_store = ConsoleChatStore(
             persistence=ChatPersistenceService(db),
@@ -267,7 +268,7 @@ def test_barrier_blocks_wrong_scope_and_orphaned_receipt(tmp_path, monkeypatch) 
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": generate_dataset_key()},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         wrong_scope = ConsoleChatStore(
             persistence=ChatPersistenceService(db),
@@ -322,7 +323,7 @@ def test_clear_and_later_edit_project_distinct_whole_message_versions(tmp_path) 
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         scope = {
             "server_profile_id": "server-a",
@@ -395,7 +396,7 @@ def test_restore_reconciles_committed_visible_clear_after_projection_failure(
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         scope = {
             "server_profile_id": "server-a",
@@ -425,7 +426,7 @@ def test_restore_reconciles_committed_visible_clear_after_projection_failure(
         restarted_producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=restarted_db,
+            source=CharactersRAGDBChatSyncSource(restarted_db),
         )
         ConsoleChatStore(
             persistence=ChatPersistenceService(restarted_db),
@@ -471,7 +472,7 @@ def test_restore_reconciles_committed_delete_after_projection_failure(tmp_path) 
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         scope = {
             "server_profile_id": "server-a",
@@ -497,7 +498,7 @@ def test_restore_reconciles_committed_delete_after_projection_failure(tmp_path) 
         restarted_producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=restarted_db,
+            source=CharactersRAGDBChatSyncSource(restarted_db),
         )
         ConsoleChatStore(
             persistence=ChatPersistenceService(restarted_db),
@@ -540,7 +541,7 @@ def test_visible_edit_keeps_checkpoint_on_its_exact_new_message_version(
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         scope = {
             "server_profile_id": "server-a",
@@ -590,7 +591,7 @@ def test_delete_is_not_resumable_and_private_owner_undelete_is_projected(
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": generate_dataset_key()},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         scope = {
             "server_profile_id": "server-a",
@@ -649,7 +650,7 @@ def test_committed_delete_projects_exact_sync_v2_tombstone(tmp_path) -> None:
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": generate_dataset_key()},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         deleted_hash = canonical_payload_hash({"deleted": True})
         tombstones = db.soft_delete_message_subtree(message_id, expected_version=1)
@@ -682,7 +683,7 @@ def test_produced_delete_applies_as_idempotent_remote_tombstone(tmp_path) -> Non
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         scope = {
             "server_profile_id": "server-a",
@@ -757,7 +758,7 @@ def test_branch_variants_keep_private_checkpoint_on_distinct_stable_ids(
         producer = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": generate_dataset_key()},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         )
         for message_id in ("variant-message-1", "variant-message-2"):
             assert (

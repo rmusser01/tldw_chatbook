@@ -370,8 +370,10 @@ def _run_module_main() -> None:
 
     _set_launch_cwd()
     from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+    from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing
 
     install_semantic_coordination()  # DB-layer port; composition root
+    install_chat_sync_hashing()  # DB-layer port; composition root
 
     # TASK-34100.4: the master-password unlock is NOT here. app.py's
     # `__main__` guard runs Backup_Recovery.launcher.startup_unlock (strict
@@ -559,8 +561,10 @@ def get_app() -> TldwCli:
         The TldwCli app instance, not yet running.
     """
     from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+    from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing
 
     install_semantic_coordination()  # DB-layer port; composition root
+    install_chat_sync_hashing()  # DB-layer port; composition root
 
     # Configure logging to suppress verbose debug messages early
 
@@ -612,8 +616,10 @@ def main_cli_runner() -> object:
 
     set_launch_cwd()
     from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+    from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing
 
     install_semantic_coordination()  # DB-layer port; composition root
+    install_chat_sync_hashing()  # DB-layer port; composition root
 
     # Configure logging to suppress verbose debug messages early
     import warnings

@@ -55,6 +55,7 @@ from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProd
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 VISIBLE_ANSWER = "VISIBLE-ANSWER-TASK2-CANARY"
@@ -331,7 +332,7 @@ def test_real_durable_owners_keep_thinking_and_private_continuation_separate(
             "thinking_blocks_json": _canonical_thinking(),
         }
         payload_hash = canonical_payload_hash(expected_payload)
-        intent = source.read_committed_chat_sync_intent(
+        intent = CharactersRAGDBChatSyncSource(source).read_committed_chat_sync_intent(
             message_id=message_id,
             message_version=1,
             payload_hash=payload_hash,
@@ -340,7 +341,7 @@ def test_real_durable_owners_keep_thinking_and_private_continuation_separate(
         result = ChatSyncV2OutboxProducer(
             state_repository=state_repository,
             dataset_keys={"dataset-1": dataset_key},
-            source=source,
+            source=CharactersRAGDBChatSyncSource(source),
         ).reconcile_chat_message_intent(
             server_profile_id="server-a",
             authenticated_principal_id="user-a",

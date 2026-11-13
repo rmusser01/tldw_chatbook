@@ -88,6 +88,7 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityDisclosure,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 VISIBLE_ANSWER = "VISIBLE-ANSWER-CANARY"
 DISPLAYABLE_THINKING = "DISPLAYABLE-THINKING-CANARY"
@@ -1103,7 +1104,7 @@ def test_sync_v2_applies_one_complete_generation_then_hydrates(tmp_path) -> None
         result = ChatSyncV2OutboxProducer(
             state_repository=state,
             dataset_keys={"dataset-1": dataset_key},
-            source=source,
+            source=CharactersRAGDBChatSyncSource(source),
         ).reconcile_chat_message_intent(
             server_profile_id="server-a",
             authenticated_principal_id="user-a",

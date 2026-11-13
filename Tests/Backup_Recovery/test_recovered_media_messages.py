@@ -21,6 +21,7 @@ from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery import recovered_media as owner
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing;install_chat_sync_hashing()
 root=Path(os.environ['FIXTURE_ROOT'])
 from tldw_chatbook.app_services import open_chachanotes_db
 db=open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)

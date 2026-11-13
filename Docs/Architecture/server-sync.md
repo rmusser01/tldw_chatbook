@@ -24,6 +24,7 @@ Config: `[tldw_api] base_url` / `auth_token` in config.toml (shipped localhost p
 | `local_first_sync_service.py` | `sync_once` push+pull+apply; push chunking to the server-advertised batch size; per-envelope idempotency keys; partial-failure records and conflict reviews instead of aborting |
 | `notes_organization_sync_service.py` | projects immutable ChaChaNotes organization intents (folders/keywords/collections) into the outbox |
 | `notes_outbox_producer.py` | converts successful local writes into envelopes at mutation time |
+| `chat_sync_source.py` | `CharactersRAGDBChatSyncSource`, the `ChatSyncIntentSource` over one `CharactersRAGDB`: committed-intent readers, restore enumerator and incoming Chat apply, all on the DB's own transaction (moved out of the DB, TASK-36949.4). It installs the DB-layer chat-record hashing port that tombstone writers call inside their write transaction |
 | `sync_state_repository.py` | durable SQLite state (`tldw_chatbook_sync_state.db`): the `sync_v2_local_outbox` table, profile/mirror state |
 | `manual_sync_control.py` | preview / run-once / organization adoption; reads `sync_log` heads as durable dependency ids |
 | `runtime_policy/server_context.py`, `server_credentials.py` | active-server context + credential store (keyring-backed) |

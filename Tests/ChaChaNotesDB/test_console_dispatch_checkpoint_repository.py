@@ -44,6 +44,7 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 TERMINAL_RECEIPT = "44444444-4444-4444-8444-444444444444"
@@ -1079,7 +1080,7 @@ def test_state_cas_commits_versions_state_hash_and_sync_intent(tmp_path: Path) -
     assert result.committed_message_version == 2
     assert result.committed_payload_hash == expected_hash
     assert (
-        db.read_committed_chat_sync_intent(
+        CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
             message_id=inserted.assistant_message_id,
             message_version=2,
             payload_hash=expected_hash,
@@ -1188,7 +1189,7 @@ def test_terminal_settlement_is_atomic_and_returns_committed_proof(
         assistant["deleted"],
     ) == ("finished", TERMINAL_METADATA, "complete", 2, 0)
     assert (
-        db.read_committed_chat_sync_intent(
+        CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
             message_id=inserted.assistant_message_id,
             message_version=2,
             payload_hash=expected_hash,
@@ -1306,7 +1307,7 @@ def test_continuation_handoff_atomically_transfers_ownership_and_sync_intent(
         ConsoleDispatchResultStatus.NOT_FOUND
     )
     assert (
-        db.read_committed_chat_sync_intent(
+        CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
             message_id=inserted.assistant_message_id,
             message_version=3,
             payload_hash=expected_hash,

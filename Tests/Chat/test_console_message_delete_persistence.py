@@ -11,6 +11,10 @@ import pytest
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
+from tldw_chatbook.Sync_Interop.chat_sync_source import (
+    CharactersRAGDBChatSyncSource,
+    chat_record_payload_hash,
+)
 
 # The real ChatScreen/store goes through config-participant admission, which the
 # per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
@@ -114,10 +118,10 @@ def test_restored_rows_are_committed_sync_intents():
     for row in restored:
         live = db.get_message_by_id(row["message_id"])
         assert live is not None and live["version"] == row["version"]
-        intent = db.read_committed_chat_sync_intent(
+        intent = CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
             message_id=row["message_id"],
             message_version=row["version"],
-            payload_hash=CharactersRAGDB._chat_sync_payload_hash_from_row(live),
+            payload_hash=chat_record_payload_hash(live),
         )
         assert intent is not None
 

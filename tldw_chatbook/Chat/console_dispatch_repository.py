@@ -661,7 +661,7 @@ class ConsoleDispatchRepository:
                 row,
                 allow_writes=allow_writes,
             )
-        return self.db._coordinate_semantic_mutation(
+        return self.db.coordinate_semantic_mutation(
             cursor,
             message_id=assistant_id,
             creation_reason="dispatch_reconcile",
@@ -1029,7 +1029,7 @@ class ConsoleDispatchRepository:
             ).fetchone()
             if exists is None:
                 return self._cas_state_uncoordinated(transition)
-            return self.db._coordinate_semantic_mutation(
+            return self.db.coordinate_semantic_mutation(
                 cursor,
                 message_id=transition.assistant_message_id,
                 creation_reason="dispatch_state",
@@ -1151,7 +1151,7 @@ class ConsoleDispatchRepository:
             ).fetchone()
             if exists is None:
                 return self._settle_with_assistant_uncoordinated(settlement)
-            return self.db._coordinate_semantic_mutation(
+            return self.db.coordinate_semantic_mutation(
                 cursor,
                 message_id=settlement.assistant_message_id,
                 creation_reason="dispatch_settlement",
@@ -1386,7 +1386,7 @@ class ConsoleDispatchRepository:
             ).fetchone()
             if exists is None:
                 return self._handoff_to_provider_continuation_uncoordinated(handoff)
-            return self.db._coordinate_semantic_mutation(
+            return self.db.coordinate_semantic_mutation(
                 cursor,
                 message_id=handoff.assistant_message_id,
                 creation_reason="continuation_handoff",
@@ -1510,7 +1510,7 @@ class ConsoleDispatchRepository:
                     expected_state=expected_state,
                     provider_continuation_json=provider_continuation_json,
                 )
-            return self.db._coordinate_semantic_mutation(
+            return self.db.coordinate_semantic_mutation(
                 cursor,
                 message_id=assistant_message_id,
                 creation_reason="continuation_normalize",

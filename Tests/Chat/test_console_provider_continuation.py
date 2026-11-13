@@ -40,6 +40,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 from Tests.console_provider_doubles import provider_resolution
 
 
@@ -263,7 +264,7 @@ def _enable_sync(tmp_path, database, store):
     store.sync_v2_chat_producer = ChatSyncV2OutboxProducer(
         state_repository=repository,
         dataset_keys={"dataset-1": dataset_key},
-        source=database,
+        source=CharactersRAGDBChatSyncSource(database),
     )
     store.sync_v2_server_profile_id = "server-a"
     store.sync_v2_authenticated_principal_id = "user-a"
