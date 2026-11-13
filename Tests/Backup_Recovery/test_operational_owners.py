@@ -781,8 +781,15 @@ def test_dormant_tamagotchi_path_constructors_have_no_installed_call_sites():
             if isinstance(node, ast.Call) and (
                 getattr(node.func, "id", None) or getattr(node.func, "attr", None)
             ) in ("SQLiteStorage", "JSONStorage", "ConfigFileStorage", "NotesMirror"):
-                calls.append((path.relative_to(root).as_posix(), node.lineno))
-    assert calls == [], (
+                calls.append(
+                    (
+                        path.relative_to(root).as_posix(),
+                        getattr(node.func, "id", None) or node.func.attr,
+                    )
+                )
+    # 94e25526d9 (TASK-32905) mounted the footer pet on ConfigFileStorage, whose
+    # path is the installed tamagotchi.config backup owner (TASK-40306 review).
+    assert calls == [("Widgets/AppFooterStatus.py", "ConfigFileStorage")], (
         "New durable pet wiring requires a locator and recovery qualification"
     )
 

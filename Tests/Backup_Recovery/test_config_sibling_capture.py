@@ -202,7 +202,16 @@ def native_profile(tmp_path, request):
 
 @pytest.mark.parametrize("owner", ["emoji", "runtime", "sidebar"])
 def test_complete_capture_keeps_installed_sibling_writable(native_profile, owner):
-    output = _child(native_profile[0], _CAPTURE, owner, selector=native_profile[1])
+    # A complete capture; on a loaded host it outlasted the fixed 70 s while
+    # busy (TASK-40307), so it fails only once it stops using CPU.
+    output = _child(
+        native_profile[0],
+        _CAPTURE,
+        owner,
+        selector=native_profile[1],
+        timeout=280,
+        idle=60,
+    )
     assert "CAPTURE_SIBLING_CONTINUITY_COMPLETE" in output
 
 
@@ -296,7 +305,12 @@ def test_capture_waits_for_other_bound_selector_writer_without_extra_payload(
 ):
     script = "WRITER=" + repr(_OTHER_WRITER) + "\n" + _SHARED_CAPTURE
     output = _child(
-        native_profile[0], script, "runtime", timeout=80, selector=native_profile[1]
+        native_profile[0],
+        script,
+        "runtime",
+        timeout=280,
+        selector=native_profile[1],
+        idle=60,
     )
     assert "SHARED_PARENT_CAPTURE_EXCLUSION_COMPLETE" in output
 

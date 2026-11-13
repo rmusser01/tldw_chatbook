@@ -478,6 +478,10 @@ ARCHITECTURE_GUARD_TARGETS = (
     # TASK-39116 review r13b-rev2: the detached layout's persona.actor_packs
     # validation (both cases, ~25 s serial); the rest of that file is unlaned.
     "Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source",
+    # TASK-40310 review r14bk-rev1: the restore journal's record-count and
+    # warm-cache refusal pins (~1 s); the rest of their file runs on dev pushes.
+    "Tests/Backup_Recovery/test_publication_crashes.py::test_append_and_flush_handle_each_record_once",
+    "Tests/Backup_Recovery/test_publication_crashes.py::test_cached_journal_history_still_refuses_changed_records",
     # TASK-39060: whole, now that its persona/workspace boundary is green.
     "Tests/test_persistent_diagnostic_boundary.py",
     # TASK-39061: the shared log sanitizer.
@@ -695,10 +699,7 @@ BACKUP_OWNER_SUITES_DESELECTED = (
     "Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree",
     "Tests/Backup_Recovery/test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing",
     "Tests/Backup_Recovery/test_inventory.py::test_custom_db_and_disabled_features_are_not_external_or_unused",
-    "Tests/Backup_Recovery/test_config_sibling_capture.py::test_complete_capture_keeps_installed_sibling_writable[sidebar]",
-    "Tests/Backup_Recovery/test_config_sibling_capture.py::test_capture_waits_for_other_bound_selector_writer_without_extra_payload[custom]",
     "Tests/Backup_Recovery/test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent",
-    "Tests/Backup_Recovery/test_operational_owners.py::test_dormant_tamagotchi_path_constructors_have_no_installed_call_sites",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
@@ -1579,8 +1580,8 @@ def test_backup_owner_suites_run_on_dev_pushes_only_and_are_never_required() -> 
         assert "::" not in target and (PROJECT_ROOT / target).is_file()
     for node in BACKUP_OWNER_SUITES_DESELECTED:
         assert node.split("::", 1)[0] in BACKUP_OWNER_SUITE_TARGETS
-    # No other step lists one of these files whole. The detached layout's
-    # actor-pack node stays in architecture-guards, so PRs still run it.
+    # No other step lists one of these files whole; single nodes may run on
+    # PRs elsewhere.
     others = [
         f"{key}: {candidate['name']}"
         for key, other in jobs.items()
@@ -1590,11 +1591,17 @@ def test_backup_owner_suites_run_on_dev_pushes_only_and_are_never_required() -> 
         & set(_pytest_targets(str(candidate.get("run", ""))))
     ]
     assert others == []
-    assert (
+    # Single nodes of these files guard PRs from architecture-guards: the
+    # detached layout's actor-pack check and the restore journal's pins.
+    for node in (
         "Tests/Backup_Recovery/test_detached_layout.py::"
-        "test_actor_pack_persona_images_are_validated_in_a_detached_source"
-        in ARCHITECTURE_GUARD_TARGETS
-    )
+        "test_actor_pack_persona_images_are_validated_in_a_detached_source",
+        "Tests/Backup_Recovery/test_publication_crashes.py::"
+        "test_append_and_flush_handle_each_record_once",
+        "Tests/Backup_Recovery/test_publication_crashes.py::"
+        "test_cached_journal_history_still_refuses_changed_records",
+    ):
+        assert node in ARCHITECTURE_GUARD_TARGETS
 
 
 def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:

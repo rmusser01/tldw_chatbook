@@ -1291,6 +1291,8 @@ jobs:
             Tests/Persona_Buddy/test_controller_failure_logging.py \
             Tests/Architecture/test_backup_owner_inventory.py \
             Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source \
+            Tests/Backup_Recovery/test_publication_crashes.py::test_append_and_flush_handle_each_record_once \
+            Tests/Backup_Recovery/test_publication_crashes.py::test_cached_journal_history_still_refuses_changed_records \
             Tests/test_persistent_diagnostic_boundary.py \
             Tests/Utils/test_log_sanitizer.py \
             Tests/Architecture/test_no_undefined_module_globals.py \
@@ -1848,8 +1850,8 @@ jobs:
     # never on a pull request, like library-shell-dev: PRs pay nothing, and a
     # red shows on the dev push right after the merge. NOT in the aggregate's
     # needs and not a required context. A newer push to dev cancels the run
-    # (the workflow's concurrency rule). The single test_detached_layout node
-    # stays in architecture-guards, so the PR gate still runs it.
+    # (the workflow's concurrency rule). The test_detached_layout node and the
+    # two TASK-40310 journal nodes stay in architecture-guards, so PRs run them.
     #
     # Every suite here is sandboxed (no bootstrap_profile node) and runs its
     # heavy work in child processes with their own HOME, so they share one
@@ -1903,10 +1905,7 @@ jobs:
             --deselect="Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree" \
             --deselect="Tests/Backup_Recovery/test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing" \
             --deselect="Tests/Backup_Recovery/test_inventory.py::test_custom_db_and_disabled_features_are_not_external_or_unused" \
-            --deselect="Tests/Backup_Recovery/test_config_sibling_capture.py::test_complete_capture_keeps_installed_sibling_writable[sidebar]" \
-            --deselect="Tests/Backup_Recovery/test_config_sibling_capture.py::test_capture_waits_for_other_bound_selector_writer_without_extra_payload[custom]" \
             --deselect="Tests/Backup_Recovery/test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent" \
-            --deselect="Tests/Backup_Recovery/test_operational_owners.py::test_dormant_tamagotchi_path_constructors_have_no_installed_call_sites" \
             -n 4 \
             --timeout=300 \
             --tb=short
