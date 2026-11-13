@@ -940,7 +940,10 @@ def test_detached_import_keeps_interview_drafts_on_the_original_device(
 
 @pytest.mark.parametrize(
     ("adapter", "suffix"),
-    [("installed", ""), ("installed", "-wal"), ("captured", "")],
+    [
+        *(("installed", suffix) for suffix in ("", "-wal", "-shm", "-journal")),
+        ("captured", ""),
+    ],
 )
 def test_detached_import_refuses_the_personal_context_repository_by_name(
     tmp_path, monkeypatch, adapter, suffix
