@@ -4741,8 +4741,8 @@ class TldwCli(
             )
 
         return {
-            "full_agent_tools_upgrade": start_full_agent_tools_upgrade,
             "actor_pack_recovery": start_actor_pack_recovery,
+            "full_agent_tools_upgrade": start_full_agent_tools_upgrade,
             "actor_pack_staging_sweep": start_actor_pack_staging_sweep,
             "chachanotes_fts_backfill": start_chachanotes_fts_backfill,
             "subscriptions_fts_backfill": start_subscriptions_fts_backfill,

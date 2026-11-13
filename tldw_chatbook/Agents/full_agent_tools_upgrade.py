@@ -37,15 +37,22 @@ when it exists, the served mobile companion's ``<user_data>/mobile/runs.db``
 light surface too. When ChaChaNotes is unavailable the Console's runs
 database cannot be found, and that is a failure, not "no signal" (F3-4).
 
-How it runs: in the app (``run_for_profile``), once per launch, as the first
-staggered boot worker, on a worker thread after the UI is ready, so it never
-blocks startup or the UI loop; and in ``tldw-serve`` (``run_for_served_profile``),
-at every start, before the server accepts a connection, so it finishes or
-fails closed before the mobile companion can plan a phone send (review v5r2,
-G532-R2-1). In the app a Console send planned before the worker lands gets
-the light set, the safe default (``Utils/boot_worker_policy.py``); it cannot
-feed the check, whose reads start as the worker starts, at UI readiness,
-before any send could finish a model round trip and record a tool call.
+How it runs: in the app (``run_for_profile``), once per launch, as the second
+staggered boot worker, right after Actor Pack recovery (which stays first), on
+a worker thread after the UI is ready, so it never blocks startup or the UI
+loop; and in ``tldw-serve`` (``run_for_served_profile``), at every start,
+before the server accepts a connection, so it finishes or fails closed before
+the mobile companion can plan a phone send (review v5r2, G532-R2-1). In the
+app a Console send planned before the worker lands gets the light set, the
+safe default (``Utils/boot_worker_policy.py``). The window is recorded, not
+closed. The check's reads start when recovery frees the boot tier's one slot.
+Measured live at load ~20, that was 0.7-1.3 s after the staggered gate opened
+on a relaunched profile, and 2.8 s on a fresh profile's first launch. A send
+in that window could feed the check only by finishing a model round trip and
+committing a dispatched call to a tool outside the light set first. On the
+light surface that can only be a tool the user turned on themselves: a
+built-in with its own gate on, Library access, an MCP server they added or an
+armed shell (``Agents/plain_chat_tool_surface.py``).
 Both run the same steps, in order:
 
 1. A recorded marker means the upgrade already ran for this profile: done.
