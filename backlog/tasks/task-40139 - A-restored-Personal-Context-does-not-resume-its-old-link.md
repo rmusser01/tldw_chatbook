@@ -1,7 +1,7 @@
 ---
 id: TASK-40139
 title: "A restored Personal Context does not resume its old link"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 17:13
@@ -11,7 +11,7 @@ labels:
 - recovery
 - personal-context
 - security
-updated_date: '2026-11-13 18:40'
+updated_date: '2026-11-13 19:50'
 priority: medium
 references:
 - tldw_chatbook/app.py
@@ -73,7 +73,7 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [x] #6 After the fresh first link, Personal Context sync runs, and Notes and Chat sync never sends the old device id (refused, or rebound per TASK-40137's ruling); a test pins both
 - [x] #7 No link key (device wrapping key, staged integrity key, dataset staging key) is in any archive, in any credential mode; a test inspects an archive that includes credentials
 - [x] #8 The Settings panel says Personal Context sync is off because the profile was restored, to link again, and to remove the old device on the server if it is lost; the User Guide page says the same
-- [ ] #9 Per TASK-40137's ruling (owner, 2026-11-12), one reviewed sync-identity step approves `config` and `runtime.sync_state` together and, in the same step, clears the restored server identity for every server profile: device id, dataset and pull cursors, remote heads, Personal Context link state and the pending outbox, with the counts shown before the user confirms; the next sync registers a new device; nothing else approves `runtime.sync_state`; tests pin each part
+- [x] #9 Per TASK-40137's ruling (owner, 2026-11-12), one reviewed sync-identity step approves `config` and `runtime.sync_state` together and, in the same step, clears the restored server identity for every server profile: device id, dataset and pull cursors, remote heads, Personal Context link state and the pending outbox, with the counts shown before the user confirms; the next sync registers a new device; nothing else approves `runtime.sync_state`; tests pin each part
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -81,7 +81,7 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 1. Personal Context review (`Personal_Context.recovery`): for a generation whose restore published the repository or `runtime.sync_state` (or whose plan cannot be read), delete the restored `personal_context_link_state` rows first, then approve only `personal_context.repository`; Settings offers the review for that case too, with AC#8's copy.
 2. Sync-identity review (`Sync_Interop.recovery`, owner ruling on TASK-40137): `sync_identity_review` returns the counts of what it will clear while a restored generation waits for `config`/`runtime.sync_state`; `approve_sync_identity(shown=...)` recounts, refuses if the counts changed, clears device ids, dataset bindings and cursors, pull cursors, remote heads, Personal Context link state and the unsent outbox (with their receipts) for every server profile (`SyncStateRepository.clear_restored_identity`), then approves both owners. The approver pin names it as the only approver of `runtime.sync_state`.
 3. Tests: a scratch child per restore kind (repository; automation-only) drives both reviews, `LocalFirstSyncService.sync_once` and a fresh first link through the existing fakes; a real include-mode archive is scanned for link-key canaries.
-4. The review's UI: placement needs the owner (see notes).
+4. The review's UI: placement needs the owner (see notes). Owner decision 2026-11-13: Backup & Restore ▸ Restored profiles, beside TASK-40711's Approve settings.
 
 ## Implementation Notes
 
@@ -98,4 +98,14 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 **Tests.** `Tests/Backup_Recovery/test_activation_network_sync.py::test_restored_link_and_sync_identity_are_cleared_before_review_approves[repository|sync_state]` (bound generation; Personal Context review; `sync_once` refused; counts, stale-count refusal, clear and approval; a fresh first link through `PersonalContextLinkService` with the first-link fakes binds `device-1`; then `sync_once` pulls as `device-1` with no cursor and no outbox; ~10 s each); TASK-40134's `test_restored_personal_context_sync_waits_for_its_own_review` and the panel's `test_restored_profile_review_never_claims_sync_resumes` updated to the new contract; the archive scan in `Tests/Backup_Recovery/test_restore_data_groups.py`. AC#6's "Personal Context sync runs" is pinned as the gate opening (`sync_allowed`) plus the fresh link's state; the Personal Context dispatcher itself is unchanged.
 
 Files: `tldw_chatbook/Personal_Context/recovery.py`, `tldw_chatbook/Sync_Interop/{recovery.py,sync_state_repository.py}`, `tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py`, `Tests/Backup_Recovery/{test_activation_network_sync.py,test_restore_data_groups.py}`, `Tests/UI/test_settings_personal_context.py`, `Tests/Architecture/test_backup_owner_inventory.py`, `Docs/User_Guide/settings/personal-context-profile.md`, `backlog/docs/backup-recovery-owner-inventory.md`.
+
+**Owner decision, 2026-11-13 (AskUserQuestion, relayed by the coordinator), on the NEEDS_CONTEXT above:** "Backup & Restore ▸ Restored profiles (Recommended)". The option as put to the owner: "Next to the new 'Approve settings' review (TASK-40711), so every post-restore review sits in one place. No size waiver needed."
+
+**2026-11-13 (round 14, pcc round 2): the review's screen; AC#9 met.**
+- **Where.** Backup & Restore > Restored profiles > Current profile, beside TASK-40711's **Approve settings**, following its conventions. The list worker adds `RecoveryService.sync_identity_review()` to the current-profile summary. A `markup=False` **Sync identity review** note says why sync is off and what confirming does, then lists the six counts. **Clear sync identity and approve sync** runs `RecoveryService.approve_sync_identity(shown)` on a worker (generation-checked delivery through `_config_approval_done`) with the counts that were shown. A refusal shows "Sync identity review unavailable: <issue message> (<code>)"; `sync_identity_counts_changed` has its own copy.
+- **Path.** `RecoveryService._sync_state_path` reads the selected profile's config under a storage lease (as `_recovered_profile_source` does) and returns `<user data>/tldw_chatbook_sync_state.db`.
+- **Tests.**
+  - `Tests/UI/test_backup_restore_setup_entry.py::test_restored_profiles_sync_identity_review_shows_counts_then_approves[approved|counts_changed]`: a laned file. Red with the screen at the previous head: "AssertionError: no sync review".
+  - The relink child now drives the review through `RecoveryService` with a real profile config, and asserts `_sync_state_path()`.
+- **Docs.** `Docs/Backup-and-Recovery.md` (Restored profiles) and the Personal Context User Guide describe it.
 

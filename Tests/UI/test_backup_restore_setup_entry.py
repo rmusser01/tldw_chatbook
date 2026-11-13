@@ -800,3 +800,112 @@ async def test_restored_profiles_settings_review_approves_config_alone(
             assert "Server sync stays off." in message
     finally:
         service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["approved", "counts_changed"])
+async def test_restored_profiles_sync_identity_review_shows_counts_then_approves(
+    tmp_path, monkeypatch, outcome
+):
+    """TASK-40139 AC#9 (owner, 2026-11-13: Backup & Restore ▸ Restored
+    profiles): beside the settings review, the sync-identity review shows what
+    it clears, counted, before the user confirms; confirming passes exactly the
+    counts shown. ``counts_changed``: the service refuses and the review stays.
+
+    The service methods are stand-ins; the real clear-then-approve step is
+    pinned in Tests/Backup_Recovery/test_activation_network_sync.py.
+    """
+    import asyncio
+    from types import MappingProxyType
+
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    pending = ["runtime.sync_state"]
+    shown_counts = {
+        "device_ids": 1,
+        "datasets": 1,
+        "pull_cursors": 2,
+        "remote_heads": 3,
+        "personal_context_links": 1,
+        "pending_outbox": 4,
+    }
+    confirmed = []
+
+    def current_requirements():
+        return MappingProxyType(
+            {
+                "config": str(tmp_path / "config.toml"),
+                "operation_id": "restore",
+                "generation": "generation-1",
+                "required_owners": ("config", "runtime.sync_state"),
+                "pending_owners": tuple(pending),
+                "requirements_checked": True,
+                "needs_setup": bool(pending),
+                "status": "requirements_checked",
+            }
+        )
+
+    def approve_sync_identity(shown):
+        confirmed.append(shown)
+        if outcome == "counts_changed":
+            raise ValueError("sync_identity_counts_changed")
+        pending.clear()
+
+    service = RecoveryService(tmp_path / "control")
+    monkeypatch.setattr(service, "current_requirements", current_requirements)
+    monkeypatch.setattr(
+        service,
+        "sync_identity_review",
+        lambda: dict(shown_counts) if pending else None,
+    )
+    monkeypatch.setattr(service, "approve_sync_identity", approve_sync_identity)
+    monkeypatch.setattr(service, "profiles", lambda: ())
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(100, 48)) as pilot:
+            screen = app.screen
+            await pilot.click("#backup-open-profiles")
+            async with asyncio.timeout(10):
+                while not screen.query("#backup-current-requirements"):
+                    await pilot.pause(0.02)
+            assert screen.query("#backup-sync-identity-review"), "no sync review"
+            review = _text(screen, "#backup-sync-identity-review")
+            assert review.startswith("Sync identity review")
+            assert "registers this device as a new one" in review
+            for line in (
+                "• Device ids: 1",
+                "• Dataset bindings and cursors: 1",
+                "• Pull cursors: 2",
+                "• Remote heads: 3",
+                "• Personal Context links: 1",
+                "• Unsent changes: 4",
+            ):
+                assert line in review, line
+            button = screen.query_one("#backup-approve-sync-identity", Button)
+            assert str(button.label) == "Clear sync identity and approve sync"
+            button.press()
+            async with asyncio.timeout(10):
+                while not _text(screen, "#backup-message"):
+                    await pilot.pause(0.02)
+            assert confirmed == [shown_counts]
+            message = _text(screen, "#backup-message")
+            if outcome == "counts_changed":
+                code = service.issue_code(ValueError("sync_identity_counts_changed"))
+                assert code == "sync_identity_counts_changed"
+                assert message == (
+                    "Sync identity review unavailable: "
+                    f"{service.issue_message(code)} ({code})"
+                )
+                async with asyncio.timeout(10):
+                    while not screen.query("#backup-sync-identity-review"):
+                        await pilot.pause(0.02)
+                return
+            assert "registers this device as a new one" in message
+            async with asyncio.timeout(10):
+                while screen.query("#backup-sync-identity-review"):
+                    await pilot.pause(0.02)
+            assert not screen.query("#backup-approve-sync-identity")
+    finally:
+        service.close()

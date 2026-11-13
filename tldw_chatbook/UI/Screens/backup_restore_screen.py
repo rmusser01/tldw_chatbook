@@ -2,6 +2,7 @@
 
 from dataclasses import asdict
 from pathlib import Path
+from types import MappingProxyType
 
 from rich.text import Text
 from textual import on, work
@@ -31,6 +32,15 @@ from .backup_restore_state import (
 )
 
 _RETAINED_CREDENTIAL_REVIEW = "credential_isolated_retention_required"
+# TASK-40139: what the sync-identity review clears, as shown before confirming.
+_SYNC_IDENTITY_COUNTS = (
+    ("device_ids", "Device ids"),
+    ("datasets", "Dataset bindings and cursors"),
+    ("pull_cursors", "Pull cursors"),
+    ("remote_heads", "Remote heads"),
+    ("personal_context_links", "Personal Context links"),
+    ("pending_outbox", "Unsent changes"),
+)
 _PERSONAL_CONTEXT_LOCKED = "credential_personal_context_restore_locked:"
 
 
@@ -92,6 +102,7 @@ class BackupRestoreScreen(Screen):
         self._restore_availability = None
         self._extraction_plan = None
         self._delete_copy_id = None
+        self._sync_identity_shown = None
         self._last_terminal = None
         self._list_delivery = 0
         self._review_codes_seen = ()
@@ -812,6 +823,11 @@ class BackupRestoreScreen(Screen):
     @work(exclusive=True, thread=True, group="backup-list")
     def _refresh_list(self, app, revision, mode):
         current = self.service.current_requirements() if mode == "profiles" else None
+        if current is not None:
+            # TASK-40139: the counts the sync-identity review shows first.
+            current = MappingProxyType(
+                {**current, "sync_identity": self.service.sync_identity_review()}
+            )
         try:
             entries = (
                 self.service.recovery_copies()
@@ -931,6 +947,35 @@ class BackupRestoreScreen(Screen):
                         classes="backup-restore-screen-button",
                     )
                 )
+            counts = current.get("sync_identity")
+            self._sync_identity_shown = counts
+            if counts is not None:
+                # TASK-40139, owner ruling 2026-11-12 (TASK-40137): one reviewed
+                # step clears the restored identity and approves both owners.
+                widgets.append(
+                    Static(
+                        "Sync identity review\nServer sync (Notes, Chat and Personal "
+                        "Context) stays off after a restore, because the restored "
+                        "sync state would act as the device the backup came from. "
+                        "Approving clears that identity for every server profile and "
+                        "turns server sync back on: the next sync registers this "
+                        "device as a new one and downloads again, and changes queued "
+                        "but never sent are dropped from the queue. It clears:\n"
+                        + "\n".join(
+                            f"• {label}: {counts.get(key, 0)}"
+                            for key, label in _SYNC_IDENTITY_COUNTS
+                        ),
+                        id="backup-sync-identity-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Clear sync identity and approve sync",
+                        id="backup-approve-sync-identity",
+                        classes="backup-restore-screen-button",
+                    )
+                )
             widgets.append(
                 Button(
                     "Recovered media details",
@@ -1041,6 +1086,28 @@ class BackupRestoreScreen(Screen):
             else:
                 code = self.service.issue_code(error)
                 message = f"Settings review unavailable: {self.service.issue_message(code)} ({code})"
+        self._deliver(app, self._config_approval_done, revision, message)
+
+    @on(Button.Pressed, "#backup-approve-sync-identity")
+    def _approve_sync_identity(self, event):
+        if self._sync_identity_shown is None:
+            return
+        event.button.disabled = True
+        self._run_sync_identity_approval(
+            self.app, self._revision, dict(self._sync_identity_shown)
+        )
+
+    @work(exclusive=True, thread=True, group="backup-sync-identity-review")
+    def _run_sync_identity_approval(self, app, revision, shown):
+        try:
+            self.service.approve_sync_identity(shown)
+            message = (
+                "Sync identity cleared and server sync approved. The next sync "
+                "registers this device as a new one."
+            )
+        except (OSError, ValueError, RuntimeError) as error:
+            code = self.service.issue_code(error)
+            message = f"Sync identity review unavailable: {self.service.issue_message(code)} ({code})"
         self._deliver(app, self._config_approval_done, revision, message)
 
     def _config_approval_done(self, revision, message):

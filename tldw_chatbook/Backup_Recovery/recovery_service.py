@@ -204,6 +204,10 @@ _ISSUE_MESSAGES = {
         "secure keyring to hold its key. The data is kept, and the key stays in "
         "the encrypted restore copy."
     ),
+    "sync_identity_counts_changed": (
+        "What the sync-identity review would clear changed after it was shown. "
+        "Open Restored profiles again and review the new counts."
+    ),
     "personal_context_key_check_unavailable": (
         "Personal Context was restored, but the keyring did not answer when its "
         "key was checked. The data and the new keyring entry are kept; open "
@@ -1171,6 +1175,40 @@ class RecoveryService:
             ):
                 raise ValueError("config_review_changed")
             ActivationStore(Path(witness["store_root"])).approve(generation, "config")
+
+    @staticmethod
+    def _sync_state_path():
+        """The current profile's sync state database (`runtime.sync_state`)."""
+        import tomllib
+
+        from tldw_chatbook.runtime_policy.server_parity_state import (
+            SYNC_STATE_DB_FILENAME,
+        )
+
+        from . import bootstrap
+        from .profile_paths import user_data_dir
+        from .storage_admission import _read_recovery_file, acquire_storage
+
+        selected = bootstrap.effective_config_path()
+        with acquire_storage(selected):
+            raw = _read_recovery_file("config", selected, max_bytes=16 * 1024**2)
+        return user_data_dir(tomllib.loads(raw.decode("utf-8"))) / SYNC_STATE_DB_FILENAME
+
+    def sync_identity_review(self):
+        """What the sync-identity review would clear, or None (TASK-40139)."""
+        from tldw_chatbook.Sync_Interop.recovery import sync_identity_review
+
+        try:
+            return sync_identity_review(self._sync_state_path())
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+            return None
+
+    def approve_sync_identity(self, shown):
+        """Clear the restored sync identity the user saw counted, then approve
+        `config` and `runtime.sync_state` together (owner ruling, TASK-40137)."""
+        from tldw_chatbook.Sync_Interop.recovery import approve_sync_identity
+
+        approve_sync_identity(self._sync_state_path(), shown=shown)
 
     def profiles(self):
         """Enumerate locally associated restored profiles and recheck launch evidence."""

@@ -322,10 +322,12 @@ from tldw_chatbook.Sync_Interop.notes_local_store import InMemoryNotesStore
 case = sys.argv[1]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 data = selector.parent.parent / 'data'
-selector.write_text('[general]\nusers_name="test"\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir = "' + str(data) + '"\n')
 selector.chmod(0o600)
-db = data / 'tldw_chatbook_personal_context.db'
-state_path = data / 'tldw_chatbook_sync_state.db'
+profile_root = data / 'test'
+profile_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+db = profile_root / 'tldw_chatbook_personal_context.db'
+state_path = profile_root / 'tldw_chatbook_sync_state.db'
 scope = dict(server_profile_id='server-config-1', authenticated_principal_id='user-1')
 # The restored sync state, as the old device left it (shared row, no workspace).
 repo = SyncStateRepository(state_path)
@@ -403,18 +405,25 @@ else:
     raise AssertionError('Notes and Chat sync resumed after the Personal Context review')
 assert not sent
 # AC#9: one step, counts first; a stale count refuses and changes nothing.
-counts = sync_recovery.sync_identity_review(state_path)
+# Through Backup & Restore's service, which finds the profile's sync state.
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+service = RecoveryService(selector.parent.parent / 'recovery-control')
+assert service._sync_state_path() == state_path
+counts = service.sync_identity_review()
+assert counts == sync_recovery.sync_identity_review(state_path)
 assert counts == {'device_ids': 1, 'datasets': 1, 'pull_cursors': 1, 'remote_heads': 0,
                   'personal_context_links': 0, 'pending_outbox': 1}, counts
 try:
-    sync_recovery.approve_sync_identity(state_path, shown={**counts, 'pending_outbox': 0})
+    service.approve_sync_identity({**counts, 'pending_outbox': 0})
 except ValueError as error:
     assert str(error) == sync_recovery.SYNC_IDENTITY_CHANGED
 else:
     raise AssertionError('changed counts were approved')
 assert profile_row()['device_id'] == 'old-device'
 assert not store.allowed('generation', 'runtime.sync_state')
-sync_recovery.approve_sync_identity(state_path, shown=counts)
+service.approve_sync_identity(counts)
+assert service.sync_identity_review() is None
+service.close()
 assert store.allowed('generation', 'config') and store.allowed('generation', 'runtime.sync_state')
 assert sync_recovery.sync_identity_review(state_path) is None
 row = profile_row()
