@@ -9,6 +9,7 @@ labels:
 - recovery
 - personal-context
 - security
+updated_date: 2026-11-13 03:35
 priority: medium
 references:
 - tldw_chatbook/app.py
@@ -56,6 +57,8 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
   - The rebind must leave Notes and Chat sync state for that profile unchanged. If the shared row cannot be rebound that way, stop and bring it to the owner.
   - What Notes and Chat sync themselves do after a cross-machine restore is TASK-40137's investigation.
 - **Old device registration.** It stays on the server, and Chatbook cannot unregister it (User Guide `personal-context-profile.md:335`).
+
+**Amended 2026-11-12 after TASK-40137's owner ruling ("Rebind review + separate config review").** The spec's plan to rebind Personal Context "without changing Notes and Chat sync state" cannot hold: with no active workspace both share one `sync_profile_state` row. So AC#5 now requires Notes and Chat to move to the new device too, and AC#9 adds the sync-identity review that approves `config` and `runtime.sync_state` and clears the restored identity. The separate `config`-only review is TASK-40711.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -64,8 +67,9 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [ ] #2 Reviewing such a restore clears that server profile's Personal Context link state and only then approves `personal_context.repository` (never `config` or `runtime.sync_state`), replacing the named reason left by TASK-40134's guard, so the next Link to home server runs a fresh reviewed first link; a restore that publishes neither owner leaves the link state as it was
 - [ ] #3 After that review following a cross-machine restore, Notes and Chat sync (`LocalFirstSyncService.sync_once`) is still refused with `sync_activation_required`; a test pins it
 - [ ] #4 Under TASK-40137's ruling on approving `config` and `runtime.sync_state`, a fresh first link after a cross-machine restore, where the restored sync profile still names the old device, ends bound to the device the server issues for Personal Context instead of failing with `personal_context_sync_profile_binding_conflict`, and the old device id is not kept for Personal Context
-- [ ] #5 After that rebind, Notes and Chat sync state for that profile (device id, dataset cursors, outbox) is unchanged; a test pins it
+- [ ] #5 After that rebind, Notes and Chat sync for that profile never use the old device id, cursors or outbox: they run on the newly issued device (Personal Context and Notes/Chat share one `sync_profile_state` row when no workspace is active, TASK-40137's finding); a test pins it
 - [ ] #6 After the fresh first link, Personal Context sync runs, and Notes and Chat sync never sends the old device id (refused, or rebound per TASK-40137's ruling); a test pins both
 - [ ] #7 No link key (device wrapping key, staged integrity key, dataset staging key) is in any archive, in any credential mode; a test inspects an archive that includes credentials
 - [ ] #8 The Settings panel says Personal Context sync is off because the profile was restored, to link again, and to remove the old device on the server if it is lost; the User Guide page says the same
+- [ ] #9 Per TASK-40137's ruling (owner, 2026-11-12), one reviewed sync-identity step approves `config` and `runtime.sync_state` together and, in the same step, clears the restored server identity for every server profile: device id, dataset and pull cursors, remote heads, Personal Context link state and the pending outbox, with the counts shown before the user confirms; the next sync registers a new device; nothing else approves `runtime.sync_state`; tests pin each part
 <!-- AC:END -->

@@ -1,11 +1,11 @@
 ---
 id: TASK-40137
 title: "Investigate whether a restored runtime.sync_state lets Notes and Chat sync resume as the old device after a cross-machine restore"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 17:13
-updated_date: 2026-11-13 02:39
+updated_date: 2026-11-13 03:35
 labels:
 - follow-up
 - security
@@ -57,7 +57,7 @@ What is gated:
 <!-- AC:BEGIN -->
 - [x] #1 The task notes record, with file:line evidence, which Notes and Chat sync paths go through the `_sync_call` activation gate and which do not, and what approves `config` and `runtime.sync_state` after a restore
 - [x] #2 The task notes record, with a test or probe run through the scratch wrapper, whether Notes and Chat sync send the old device id and cursors once that gate is approved after a cross-machine replace restore
-- [ ] #3 The notes give the ruling: who may approve `config` and `runtime.sync_state` after a restore, and through what review, such that Notes and Chat sync never resume as the old device after a cross-machine restore, and how a fresh Personal Context first link then passes `_sync_call`; where the ruling needs an owner decision, that decision is recorded verbatim with its date
+- [x] #3 The notes give the ruling: who may approve `config` and `runtime.sync_state` after a restore, and through what review, such that Notes and Chat sync never resume as the old device after a cross-machine restore, and how a fresh Personal Context first link then passes `_sync_call`; where the ruling needs an owner decision, that decision is recorded verbatim with its date
 - [x] #4 If current behaviour lets Notes and Chat resume as the old device, the notes propose the guard (gate, rebind or reset after restore) as a follow-up; if not, the guard that prevents it is named and a test pins it
 <!-- AC:END -->
 
@@ -160,7 +160,14 @@ Options, with what each does:
 - **D. Split the owners.** `config` gets its own review, which also turns model-catalog refresh and change tracking back on. `runtime.sync_state` is approved only through A.
   - Separates the consumers that are not sync from device identity.
 
-Only A, used alone or as the forward-restore path of C or D, keeps constraint 1 on every machine. B does not. **NEEDS_CONTEXT:** the owner picks the option. No owner decision was available in this session, so none is recorded.
+Only A, used alone or as the forward-restore path of C or D, keeps constraint 1 on every machine. B does not.
+
+**Owner ruling, 2026-11-12 (AskUserQuestion, recorded by the coordinator):** "Rebind review + separate config review (Recommended)". The option as put to the owner: "Sync identity: one reviewed step approves both owners and clears the restored server identity (device id, cursors, Personal Context link, pending outbox, counts shown first), so the next sync registers as a new device and re-pulls. `config` gets its own simple review, which also turns model-catalog refresh and change tracking back on; today those stay off after any restore. Never acts as the old device."
+
+So, option A plus option D:
+- `runtime.sync_state` is approved only by the sync-identity review. That review approves `config` and `runtime.sync_state` together and clears the restored server identity for every server profile. Because Personal Context and Notes/Chat share one `sync_profile_state` row when no workspace is active, the rebind covers both. A fresh Personal Context first link afterwards passes `_sync_call` on the newly issued device.
+- `config` can also be approved alone by its own review, which brings back model-catalog refresh and change tracking without touching sync identity.
+- The sync-identity review is folded into TASK-40139 (its criteria were amended the same day); the config review is TASK-40711. The pin `test_no_reviewer_approves_the_shared_sync_owners` must then allow exactly these two approvers.
 
 ### AC#4: the guard today, and the guard to propose
 
