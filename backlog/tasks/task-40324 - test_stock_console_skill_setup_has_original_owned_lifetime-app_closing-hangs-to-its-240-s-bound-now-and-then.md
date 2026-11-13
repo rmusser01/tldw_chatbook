@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 08:17
+updated_date: 2026-11-13 15:53
 labels:
 - follow-up
 - tests
@@ -77,3 +77,5 @@ The module size ratchet passes.
 
 **Review r14ti-rev1 (2026-11-13): per-entry serial time for the census node.** In the same run as TASK-40322's (load 19-26):
     - `test_a_refresh_worker_cancelled_before_its_first_step_still_settles` 0.3 s
+
+**Review r14ti-rev2 (2026-11-13).** `pending_report()` now collects the thread frames before the task walk, and walks each task under `try/except: continue`. A task that changes mid-walk, off a blocked loop, no longer loses the thread frames. Rechecked with the blocked-loop control (a temporary 5 s watch with `time.sleep(40)` on the loop thread): exit 3 within the bound, with the hang line.

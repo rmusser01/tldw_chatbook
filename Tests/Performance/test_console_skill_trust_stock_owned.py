@@ -155,30 +155,9 @@ async def exercise():
         # TASK-40324: what a hang is waiting on -- every non-idle thread's
         # innermost frames, then every busy asyncio task's innermost awaits
         # (last, so the failure's 1,000-character tail keeps them).
-        lines, threads = [], []
-        # Read off the loop thread when the loop itself is blocked: the task
-        # walk is best effort, the thread frames always print.
-        try:
-            tasks = list(asyncio.all_tasks(loop))
-        except RuntimeError as error:
-            tasks, lines = [], ['task dump unavailable: ' + str(error)]
-        for item in tasks:
-            chain, coro = [], item.get_coro()
-            for _ in range(80):
-                frame = next((getattr(coro, name) for name in ('cr_frame', 'gi_frame', 'ag_frame') if getattr(coro, name, None) is not None), None)
-                if frame is None:
-                    if coro is not None:
-                        chain.append(type(coro).__name__)
-                    break
-                chain.append(frame.f_code.co_qualname + ':' + str(frame.f_lineno))
-                awaited = next((getattr(coro, name) for name in ('cr_await', 'gi_yieldfrom', 'ag_await') if getattr(coro, name, None) is not None), None)
-                if awaited is not None and not any(hasattr(awaited, name) for name in ('cr_frame', 'gi_frame', 'ag_frame')):
-                    # An async context manager awaits its generator's asend.
-                    awaited = getattr(frame.f_locals.get('self'), 'gen', None) or awaited
-                coro = awaited
-            # Idle message pumps and timers are not the wait.
-            if chain and not chain[0].startswith('Timer._run') and not any(step.startswith('MessagePump._get_message') for step in chain):
-                lines.append('task ' + item.get_name()[:40] + ': ' + ' > '.join(chain[-6:]))
+        # Thread frames are collected first: off the loop thread (a blocked
+        # loop) the task walk is best effort, task by task.
+        threads, lines = [], []
         names = {thread.ident: thread.name for thread in threading.enumerate()}
         for ident, frame in sys._current_frames().items():
             chain = []
@@ -187,6 +166,30 @@ async def exercise():
                 frame = frame.f_back
             if chain and not chain[0].startswith(('Condition.wait', 'BaseSelector', 'KqueueSelector', 'EpollSelector', '_worker')):
                 threads.append('thread ' + str(names.get(ident, ident)) + ': ' + ' < '.join(chain))
+        try:
+            tasks = list(asyncio.all_tasks(loop))
+        except RuntimeError as error:
+            tasks, lines = [], ['task dump unavailable: ' + str(error)]
+        for item in tasks:
+            try:
+                chain, coro = [], item.get_coro()
+                for _ in range(80):
+                    frame = next((getattr(coro, name) for name in ('cr_frame', 'gi_frame', 'ag_frame') if getattr(coro, name, None) is not None), None)
+                    if frame is None:
+                        if coro is not None:
+                            chain.append(type(coro).__name__)
+                        break
+                    chain.append(frame.f_code.co_qualname + ':' + str(frame.f_lineno))
+                    awaited = next((getattr(coro, name) for name in ('cr_await', 'gi_yieldfrom', 'ag_await') if getattr(coro, name, None) is not None), None)
+                    if awaited is not None and not any(hasattr(awaited, name) for name in ('cr_frame', 'gi_frame', 'ag_frame')):
+                        # An async context manager awaits its generator's asend.
+                        awaited = getattr(frame.f_locals.get('self'), 'gen', None) or awaited
+                    coro = awaited
+            except Exception:  # A task can change under an off-loop walk.
+                continue
+            # Idle message pumps and timers are not the wait.
+            if chain and not chain[0].startswith('Timer._run') and not any(step.startswith('MessagePump._get_message') for step in chain):
+                lines.append('task ' + item.get_name()[:40] + ': ' + ' > '.join(chain[-6:]))
         return threads + lines
 
     def watch(seconds, what):
