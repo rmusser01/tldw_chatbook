@@ -1287,7 +1287,7 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
     assert all_commands.count("pip install") == 1
 
 
-def test_console_p0_gate_runs_two_serial_minimal_python_312_profiles() -> None:
+def test_console_p0_gate_runs_three_serial_minimal_python_312_profiles() -> None:
     """TASK-40724: each unchanged invocation has its own bounded runner."""
     p0 = _workflow("derived-artifacts.yml")["jobs"]["console-p0-gate"]
 
@@ -1298,14 +1298,15 @@ def test_console_p0_gate_runs_two_serial_minimal_python_312_profiles() -> None:
     # checkout, setup-python, install, sandboxed, admission-sensitive.
     # TASK-34986 moved PR2921's two Dreams/Guardian steps to dreams-boundary
     # (with them this job measured max 18.7 min of 20 over 76 PR runs).
-    assert len(p0["steps"]) == 5
-    assert [step.get("name") for step in p0["steps"][-2:]] == [
+    assert len(p0["steps"]) == 6
+    assert [step.get("name") for step in p0["steps"][-3:]] == [
         "Run the sandboxed Console P0 regression tests",
+        "Run the restore Console P0 regression tests",
         "Run the admission-sensitive Console P0 regression tests",
     ]
     assert p0["strategy"] == {
         "fail-fast": False,
-        "matrix": {"profile": ["sandboxed", "admission-sensitive"]},
+        "matrix": {"profile": ["sandboxed", "restore", "admission-sensitive"]},
     }
     setup = next(
         step for step in p0["steps"] if step.get("uses") == "actions/setup-python@v5"
