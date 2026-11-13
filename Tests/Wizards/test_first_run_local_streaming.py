@@ -179,10 +179,19 @@ def _streamed_text(reply) -> str:
 @pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("streaming", [True, False], ids=("streamed", "non-streaming"))
-def test_a_wizard_committed_local_provider_replies_streamed_and_not(streaming) -> None:
-    """Review F2 (AC#10): the committed Custom section streams its first
-    reply, and with streaming off (the non-streaming fallback) the same
-    handler sends one plain request and returns the parsed reply."""
+def test_the_committed_custom_section_streams_when_asked_and_falls_back(
+    streaming,
+) -> None:
+    """Review F2 (AC#10), relabelled in review v5r2 (TE-4).
+
+    RED part: setup commits ``streaming = true`` for the Custom section (dev
+    has no such key: KeyError). The request half is a REGRESSION PIN of the
+    Custom handler at the committed endpoint and model: it streams when
+    asked, and with streaming off (the non-streaming fallback) sends one
+    plain request and parses the reply. The test passes ``streaming`` in
+    itself, so it does not show which value a Console send asks for; that is
+    decided by ``[chat_defaults] streaming`` (dev's), not by this section.
+    """
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
     with _ChatStub() as stub:
