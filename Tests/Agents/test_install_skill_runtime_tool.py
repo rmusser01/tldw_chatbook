@@ -368,9 +368,10 @@ _WIRED = {
 def test_wired_handler_records_the_call_then_returns_its_dependency_result(name):
     dep, args, expected_args, step_args = _WIRED[name]
     calls, answer = [], ToolResult(ok=True, content=f"{name} ran")
-    state, steps = _state(**{dep: lambda *a: calls.append(a) or answer})
+    # Each call notes how many steps were recorded so far: the step comes first.
+    state, steps = _state(**{dep: lambda *a: calls.append((a, len(steps))) or answer})
     assert _dispatch(name, args, state) is answer
-    assert calls == [expected_args]
+    assert calls == [(expected_args, 1)]
     recorded = {"shown": "display"} if step_args == "display" else args
     assert steps == [(STEP_TOOL_CALL, {"tool_name": name, "args": recorded})]
 
