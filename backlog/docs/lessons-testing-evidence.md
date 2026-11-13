@@ -2632,7 +2632,7 @@ evidence for the changed feature, and report those verification limits.
 ## Run a proposed workaround for a refusal through the real refuser first (TASK-34100.3 review round 2, 2026-10-06)
 
 **Incident.** With trace capture on, the third send of a saved Kimi chat is
-refused by the ADR-097 trace planner (`unsupported_surface_change`): turn 3
+refused by the ADR-337 trace planner (`unsupported_surface_change`): turn 3
 replays two stored reasoning checkpoints where turn 2 replayed one. Replay is
 optional for Kimi, so the review proposed dropping the checkpoints whenever
 the planner would refuse. That sounded safe, and it was the obvious next
@@ -2651,7 +2651,7 @@ not refused", wrap the real producer of that shape (here
 a scratch test and run every candidate through the real refuser before you
 write any production code. Record which shapes it admitted as evidence. If the
 only admitted shape is semantically wrong, the fix belongs in the refuser and
-its governance (here an ADR-097 admission change), not in the request.
+its governance (here an ADR-337 admission change), not in the request.
 
 ## Build fixture values with the producer the app uses, not by hand (TASK-34100.3, 2026-10-05)
 
