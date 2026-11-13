@@ -2190,6 +2190,42 @@ async def test_installed_standalone_compact_now_releases_admission(
 async def test_installed_owned_mcp_post_compaction(
     native_console, native_package, tmp_path, monkeypatch, mode
 ):
+    from tldw_chatbook.Agents.hooks_v2.checkpoints import (
+        HookCheckpointError,
+        HookCheckpointStore,
+    )
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookExecutor
+
+    observations = []
+    original_wait = MCPHookExecutor._wait_worker
+    original_accept = HookCheckpointStore.accept
+
+    async def observe_worker(executor, job):
+        # Capture the phase before the worker can install its result check.
+        phase = "invoke" if job.result_check is None else "revalidate"
+        result, failure = await original_wait(executor, job)
+        if job.event.event == "PostCompact":
+            observations.append(
+                (phase, round(job.active_used, 3), job.handler.timeout_seconds, failure)
+            )
+        return result, failure
+
+    def observe_checkpoint(store, token, outcome):
+        entry = store._entries[token]
+        original_accept(store, token, outcome)
+        if entry.event.event == "PostCompact":
+            observations.append(
+                (
+                    "checkpoint",
+                    entry.reason,
+                    tuple(failure.code for failure in outcome.failures),
+                    len(outcome.accepted),
+                    len(outcome.outstanding_cleanup),
+                )
+            )
+
+    monkeypatch.setattr(MCPHookExecutor, "_wait_worker", observe_worker)
+    monkeypatch.setattr(HookCheckpointStore, "accept", observe_checkpoint)
     cold_permission = mode != "warm"
     payload = {
         "content": [],
@@ -2222,15 +2258,19 @@ async def test_installed_owned_mcp_post_compaction(
             )
             assert case.unified._permission_store is None
             assert standard_console_sources(case.unified)
-        await _installed_compaction_case(
-            native_console,
-            native_package,
-            tmp_path,
-            "success" if mode in {"warm", "cold"} else mode,
-            standalone=True,
-            owned_case=case,
-            monkeypatch=monkeypatch,
-        )
+        try:
+            await _installed_compaction_case(
+                native_console,
+                native_package,
+                tmp_path,
+                "success" if mode in {"warm", "cold"} else mode,
+                standalone=True,
+                owned_case=case,
+                monkeypatch=monkeypatch,
+            )
+        except HookCheckpointError as error:
+            error.add_note(f"PostCompact worker/checkpoint observations: {observations!r}")
+            raise
 
         if mode == "cold":
             assert case.unified._permission_store is not None
