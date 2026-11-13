@@ -341,8 +341,29 @@ def test_a_crlf_config_keeps_its_line_endings(profile) -> None:
             "# mine\n[ \"tools\" ]",
             "# mine\n[ \"tools\" ]\nfull_agent_tools_enabled = true\n",
         ),
+        # Review v5r1 (F2): a ``[tools]`` inside a multi-line string BEFORE
+        # the real header. The first candidate (under the string's line)
+        # still parses, so only the "parses to exactly the expected values"
+        # check keeps the line out of the user's string.
+        (
+            '[general]\nnotes = """\n[tools]\nx"""\n\n[tools]\nread_file_enabled = true\n',
+            '[general]\nnotes = """\n[tools]\nx"""\n\n[tools]\n'
+            "full_agent_tools_enabled = true\nread_file_enabled = true\n",
+        ),
+        # ... and the only ``[tools]`` is inside a string: a new table is
+        # appended, the string untouched.
+        (
+            '[general]\nnotes = """\n[tools]\nx"""\n',
+            '[general]\nnotes = """\n[tools]\nx"""\n\n'
+            "[tools]\nfull_agent_tools_enabled = true\n",
+        ),
     ],
-    ids=["sub-table-only", "quoted-header-at-eof"],
+    ids=[
+        "sub-table-only",
+        "quoted-header-at-eof",
+        "string-header-before-the-real-one",
+        "string-header-only",
+    ],
 )
 def test_the_one_line_writer_handles_other_table_shapes(
     profile, hand_kept, expected
@@ -355,6 +376,38 @@ def test_the_one_line_writer_handles_other_table_shapes(
 
     assert profile.config_path.read_text(encoding="utf-8") == expected
     assert light_surface_configured() is False
+    if "notes" in expected:
+        assert tomllib.loads(expected)["general"]["notes"] == "[tools]\nx"
+
+
+def test_the_one_line_writer_keeps_the_load_time_config_transforms(profile) -> None:
+    """Review v5r1 (R1-4): the write republishes the runtime config. A
+    republish from the bare parsed text skipped the transforms the real
+    loader applies to the raw file, so an old profile's legacy
+    ``[console] replay_thinking = false`` (no ``reasoning_history``) ran the
+    rest of the session with ``reasoning_history`` back at "auto" -- on the
+    first launch of exactly the old profiles the legacy transform is for."""
+    from tldw_chatbook.config import (
+        insert_absent_cli_config_bool,
+        load_cli_config_and_ensure_existence,
+    )
+
+    profile.config_path.write_text(
+        "# mine\n[console]\nreplay_thinking = false\n\n[tools]\n", encoding="utf-8"
+    )
+    assert load_cli_config_and_ensure_existence(force_reload=True)["console"][
+        "reasoning_history"
+    ] == "off"
+
+    assert insert_absent_cli_config_bool("tools", "full_agent_tools_enabled", True)
+
+    published = load_cli_config_and_ensure_existence()
+    assert published["tools"]["full_agent_tools_enabled"] is True
+    assert published["console"]["reasoning_history"] == "off"
+    assert profile.config_path.read_text(encoding="utf-8") == (
+        "# mine\n[console]\nreplay_thinking = false\n\n[tools]\n"
+        "full_agent_tools_enabled = true\n"
+    )
 
 
 def test_the_one_line_writer_runs_at_the_config_write_switch_interval(
@@ -628,6 +681,40 @@ def test_a_malformed_step_row_does_not_hide_a_later_tool_call(profile) -> None:
 # --------------------------------------------------------------------------
 # AC#3: at most once; a later "off" is never switched back on
 # --------------------------------------------------------------------------
+
+
+def test_the_workspace_backfills_own_marker_does_not_stop_the_upgrade(
+    profile,
+) -> None:
+    """Review v5r1 (F1): the marker shares ``workspace_agent_backfill`` with
+    the workspace agent backfill's ``assistant_defaults`` row, which nearly
+    every real pre-upgrade profile already has -- that backfill marks itself
+    done at every launch where its wiring is available, even with nothing to
+    backfill. Read as this upgrade's marker, it would stop the upgrade on
+    every real profile before it looked, and AC#1 would never fire."""
+    profile.workspace_db.mark_agent_backfill_complete()  # dev's own row
+    _bind_folder(profile)
+
+    result = _run(profile)
+
+    assert (result.outcome, result.signal) == (
+        UpgradeOutcome.KEPT_ON,
+        SIGNAL_WORKSPACE_BINDING,
+    )
+    assert _raw(profile)["tools"]["full_agent_tools_enabled"] is True
+
+
+def test_recording_the_upgrade_does_not_mark_the_workspace_backfill_done(
+    profile,
+) -> None:
+    """The converse: this upgrade's marker must never stand in for the
+    workspace assistant-defaults backfill, or that backfill would never run."""
+    assert profile.workspace_db.is_agent_backfill_complete() is False
+
+    assert _run(profile).outcome is UpgradeOutcome.LIGHT
+
+    assert _marker_recorded(profile)
+    assert profile.workspace_db.is_agent_backfill_complete() is False
 
 
 def test_agent_use_that_starts_after_the_upgrade_ran_turns_nothing_on(
