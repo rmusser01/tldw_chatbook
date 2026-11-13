@@ -4987,6 +4987,8 @@ class LibraryNotesController:
                 self.call_after_refresh(self._focus_library_note_conflict_callout)
             elif validation_field:
                 self._focus_library_note_validation_field(validation_field)
+            else:  # TASK-40295: the hidden callout took focus with it.
+                self._focus_library_note_validation_field("body")
     @on(Button.Pressed, "#library-note-conflict-overwrite")
     def handle_library_note_conflict_overwrite(self, event: Button.Pressed) -> None:
         """Resolve a shown save conflict by re-saving the kept local edits.

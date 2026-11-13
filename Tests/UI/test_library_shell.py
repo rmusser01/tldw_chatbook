@@ -33992,7 +33992,10 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
             ),
             message="Reload did not resolve the conflict.",
         )
-        await wait_footer("esc notes | ctrl+end end")
+        # TASK-40295: Reload lands focus on the reloaded body, a text field,
+        # so its tier carries the N-31 typing chip like the open above.
+        await wait_footer("esc notes | typing in field | ctrl+end end")
+        assert screen.focused is screen.query_one("#library-note-body", TextArea)
         assert screen._notes_state.shortcut_status == ""
 
 
