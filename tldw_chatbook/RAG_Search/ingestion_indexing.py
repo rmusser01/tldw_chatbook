@@ -1586,8 +1586,8 @@ def remove_purged_note_projection(note_id: str) -> int:
                 clear()
         except Exception as e:
             logger.warning(
-                "Removing a purged note from the running index failed: {}",
-                type(e).__name__,
+                "Removing a purged note from the running index failed: "
+                f"{type(e).__name__}"
             )
     try:
         if embeddings_rag_deps_installed():
@@ -1604,8 +1604,8 @@ def remove_purged_note_projection(note_id: str) -> int:
                 removed += delete_document_from_every_index(persist, document_id)
     except Exception as e:
         logger.warning(
-            "Removing a purged note from the stored index failed: {}",
-            type(e).__name__,
+            "Removing a purged note from the stored index failed: "
+            f"{type(e).__name__}"
         )
     try:
         from ..config import get_rag_indexing_db_path
@@ -1623,7 +1623,7 @@ def remove_purged_note_projection(note_id: str) -> int:
                         RAGIndexingDB.close(tracking)
     except Exception as e:
         logger.warning(
-            "Removing a purged note's indexing record failed: {}", type(e).__name__
+            f"Removing a purged note's indexing record failed: {type(e).__name__}"
         )
     return removed
 
