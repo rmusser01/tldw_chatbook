@@ -14,7 +14,9 @@ already carried the ``/v1`` path.
 TASK-35582 fixed the comparison on dev (it matches the frozen continuation
 tuple, not the origin); this branch's own fix was dropped in the rebase. These
 tests stay as the regression guard the defect called for: every destination
-here is built with the REAL resolver, never by hand.
+here is built with the REAL resolver, never by hand. They pass on base
+26b2e677dd, except ``test_a_settled_reasoning_reply_settles_its_trace_call``,
+which guards this branch's trace-handoff drain and fails without it.
 """
 
 from __future__ import annotations
