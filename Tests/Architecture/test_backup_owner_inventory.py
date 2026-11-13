@@ -1694,3 +1694,38 @@ def test_personal_context_capture_refuses_a_first_link_in_flight(
         _capture_personal_context(tmp_path, monkeypatch, root)
     assert not (tmp_path / "stage" / path.name).exists()
 
+
+def test_no_reviewer_approves_the_shared_sync_owners():
+    """TASK-40137: after a restore, nothing approves `config` or
+    `runtime.sync_state`, and that is what keeps Notes and Chat sync and the
+    Personal Context link from resuming as the restored device. Once both are
+    approved, every Sync v2 route sends the restored `device_id` and cursors
+    (probe in TASK-40137's notes). A new or changed approval call waits for
+    that task's ruling on who may approve those two owners, and how."""
+    from tldw_chatbook.MCP.recovery_activation import _OWNERS as mcp_owners
+    from tldw_chatbook.Plugins.backup import OWNER as plugins_owner
+    from tldw_chatbook.RAG_Search.activation import _REVIEW_OWNERS as rag_owners
+
+    calls = Counter()
+    for path in sorted((ROOT / "tldw_chatbook").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "ActivationStore" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "approve":
+                owner = ", ".join(ast.unparse(arg) for arg in node.args[1:])
+                calls[(path.relative_to(ROOT).as_posix(), owner)] += 1
+    assert calls == Counter(
+        {
+            ("tldw_chatbook/MCP/recovery_activation.py", "row.owner"): 1,
+            # Its only callers pass "notes.file_notes" (Notes/file_notes_service.py).
+            ("tldw_chatbook/Notes/recovery_review.py", "owner"): 1,
+            ("tldw_chatbook/Plugins/backup.py", "OWNER"): 1,
+            ("tldw_chatbook/RAG_Search/activation.py", "owner"): 1,
+            ("tldw_chatbook/RAG_Search/model_recovery.py", "'models.artifacts'"): 1,
+            ("tldw_chatbook/Skills_Interop/recovery_activation.py", "'skills'"): 1,
+        }
+    )
+    assert {"config", "runtime.sync_state"}.isdisjoint(
+        {*mcp_owners, plugins_owner, *rag_owners}
+    )
