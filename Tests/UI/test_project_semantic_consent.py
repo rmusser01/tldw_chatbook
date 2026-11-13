@@ -4,7 +4,7 @@ import asyncio
 import sys
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Label, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_workspace_project_index_settings import (
@@ -86,6 +86,7 @@ async def test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_pr
             )
             approve.press()
             await pilot.pause()
+            assert card.app.screen.query_one("#confirm-button", Button).label.plain == "Approve destination"
             await pilot.press("escape")
             await pilot.pause()
             assert rig.service.semantic_state(rig.key) == state
@@ -129,7 +130,7 @@ async def test_catalog_destination_change_before_disclosure_refuses_old_staged_a
             monkeypatch.setattr(semantic, "_resolved_spec", changed)
             next(b for b in card.query(Button) if b.name == "semantic-approve").press()
             await pilot.pause()
-            assert not list(card.app.screen.query("#project-semantic-confirm"))
+            assert not list(card.app.screen.query("#confirm-button"))
             assert rig.service.semantic_state(rig.key) == staged
             assert rig.service.status(rig.key) == keyword
     finally:
@@ -241,11 +242,9 @@ async def test_approval_then_destination_change_pauses_and_preserves_keyword(
             await wait_for_card(card, pilot)
             next(b for b in card.query(Button) if b.name == "semantic-approve").press()
             await pilot.pause()
-            assert any(
-                "https://api.openai.com/v1/embeddings" in str(row.render())
-                for row in card.app.screen.query(Static)
-            )
-            card.app.screen.query_one("#project-semantic-confirm", Button).press()
+            message = card.app.screen.query_one(".dialog-message", Label)
+            assert "https://api.openai.com/v1/embeddings" in str(message.render())
+            card.app.screen.query_one("#confirm-button", Button).press()
             await pilot.pause()
             await wait_for_card(card, pilot)
             approved = rig.service.semantic_state(rig.key)

@@ -10,9 +10,9 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.message import Message
-from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Workspaces.project_index.lifetime import LifetimeBusy
 from tldw_chatbook.Workspaces.project_index.models import (
     ProjectIndexPolicy,
@@ -27,39 +27,6 @@ from tldw_chatbook.Workspaces.project_index.runtime import (
 
 DEFAULT_POLICY = ProjectIndexPolicy((), ())
 DEFAULT_SEMANTIC_MODEL = "all-MiniLM-L6-v2"
-
-
-class SemanticDisclosureDialog(ModalScreen[bool]):
-    """Approve one inspected model destination, or dismiss without consent."""
-
-    BINDINGS = [("escape", "cancel", "Cancel")]
-
-    def __init__(self, destination: str) -> None:
-        super().__init__()
-        self.destination = destination
-
-    def compose(self) -> ComposeResult:
-        with Vertical(classes="settings-detail-card h-auto"):
-            yield Static("Approve project text disclosure?", classes="settings-detail-row")
-            yield Static(
-                f"File text will be embedded by {self.destination}. Approve this folder and destination only.",
-                classes="settings-detail-row", markup=False,
-            )
-            yield Button("Cancel", id="project-semantic-cancel", compact=True)
-            yield Button("Approve destination", id="project-semantic-confirm", compact=True)
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
-
-    @on(Button.Pressed, "#project-semantic-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.dismiss(False)
-
-    @on(Button.Pressed, "#project-semantic-confirm")
-    def _confirm(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.dismiss(True)
 
 
 def index_status_copy(
@@ -415,7 +382,13 @@ class ProjectIndexBindingCard(Vertical):
         if selected != replace(semantic.settings, approved_destination_fingerprint=None):
             self._feedback("The model destination changed. Stage the current destination first.")
             return
-        approved = await self.app.push_screen_wait(SemanticDisclosureDialog(destination))
+        approved = await self.app.push_screen_wait(
+            ConfirmationDialog(
+                title="Approve project text disclosure?",
+                message=f"File text will be embedded by {destination}. Approve this folder and destination only.",
+                confirm_label="Approve destination",
+            )
+        )
         if approved and self.is_mounted:
             self.post_message(self.SemanticActionRequested(
                 self.binding_id, self.workspace_id, status, semantic,
