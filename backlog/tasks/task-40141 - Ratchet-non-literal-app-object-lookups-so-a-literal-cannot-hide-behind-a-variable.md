@@ -52,13 +52,30 @@ Re-measured on base 1455ceeb96: still 47 non-literal lookups (UI 24, Event_Handl
 
 ## Implementation Notes
 
-The census's own walk and receiver rule now also collect every non-literal `getattr`/`hasattr` on an app-like receiver, recorded in `Tests/Architecture/app_nonliteral_lookups.tsv` as file, name expression, and the attribute it reaches (`-` when the name is not a constant). The record is compared as a multiset: a new row fails, naming the file and asking for an explicit service instead of a new row; a recorded row no longer found fails until it is removed. Line numbers are left out so unrelated edits do not churn it.
+The census's own walk and receiver rule now also follow names that reach the app object:
 
-- Reproduction (base 1455ceeb96): a planted `getattr(app, name)`, and a literal `getattr(app, "_planted_private")` rewritten through a constant, both pass the old census; the rewrite reads as a literal count of 1 -> 0 and the private name leaves the private-name rule.
-- Re-measured on the base: 47 lookups, unchanged from ae9f9e8d21. A literal rewritten in place (the eced473b58 shape) is a new row, so it fails `test_no_new_nonliteral_app_lookups` beside the pin's "lower it" message.
-- Private names: an UPPER_CASE name (or `self.NAME`) with one module- or class-level string value package-wide resolves to that value. The seven private attributes reached only through constants appear in the record beside their lookups; `app_private_attrs.txt` is unchanged. Every lookup through a parameter, loop variable or dict was read by hand: each reaches a public name or `_vllm_connection_owner`/`_llamacpp_connection_owner`, which are already allowed.
-- Known ceiling (a `ponytail:` comment in the test): a literal passed into an existing helper's parameter still reaches the app unseen, since its row stays `-`. Following call sites would close it.
-- Negative control: `test_a_literal_rewritten_as_a_name_fails_rather_than_reading_as_a_reduction[constant|parameter]` plants the rewrite in a temporary package. It asserts the literal census reads a reduction and the guard fails naming `UI/planted.py`, and for the constant case the private name it reaches. With the guard disabled both cases fail (mutation check). A real planted file in `tldw_chatbook/UI/` failed the guard with its path, and a bogus record row failed with "remove those rows".
-- Lane: the guard lives in the same file, so it runs in `pr-fast-lane-arch` (`.github/workflows/derived-artifacts.yml`, pinned by `ARCH_REVIEW_TARGETS` in `Tests/CI/test_ci_queue_pressure_contract.py`) with no workflow change.
-- Files: `Tests/Architecture/test_app_string_lookup_census.py`, `Tests/Architecture/app_nonliteral_lookups.tsv` (new), and `tldw_chatbook/app_services.py` (docstring of `_optional`, which said its reads stay out of the census).
-- Verified 2026-11-13 on base 1455ceeb96. The census file passed 22 nodes at base and passes 25 at head. `./scripts/preflight.sh` passed. Serial `Tests/Architecture`: 1351 passed, 3 failed, and the same 3 fail at base: `test_persistent_diagnostic_inventory::test_reviewed_diagnostic_changes_are_metadata_only` (agent_service.py) and `test_timer_path_static_update_inventory` x2 (project_index_binding_card.py).
+- **Literals flowing into a lookup count as lookups.** A literal passed for an existing helper's name parameter (at any call site, positional or keyword, with `self`/`cls` skipped) counts in the pins and the private-name rule. So does each item of a literal tuple or list that a `for` loop or comprehension binds to the name, including tuple unpacking. Moving a literal lookup into `_optional(app, "...")` or a loop is therefore no longer a reduction. The five helpers found are `_optional`, `current_app_value`, `_storage_path_value`, `_consume_verified_default_intent` and `_consume_verified_console_intent`.
+- **Every non-literal lookup is recorded.** `Tests/Architecture/app_nonliteral_lookups.tsv` holds 47 rows: file, name expression, and the attribute reached. The record is compared as a multiset. A new row fails, naming the file and asking for an explicit service; the message also says to update a row on a pure rename or move. A recorded row no longer found fails until it is removed. Line numbers are left out.
+- **Constants resolve per module and through explicit imports.** An UPPER_CASE name (or `self.NAME`) resolves only when every binding of it in its module, or in the module it is imported from, is the same string. Assign, AnnAssign and AugAssign all count, and a binding that is not a string makes the row `-`. So a rebinding cannot hide a private name, and a same-named constant in an unrelated module changes nothing.
+
+Evidence:
+
+- **Reproduction (base 1455ceeb96):** a planted `getattr(app, name)`, and a literal rewritten through a constant, both passed the old census; the rewrite read as a literal count of 1 -> 0 and dropped the private name.
+- **Re-measure:** 47 non-literal lookups, unchanged from ae9f9e8d21.
+- **Pins re-measured:** `<root>` 78 -> 97 (17 `_optional` callers, 2 loop items), Backup_Recovery 20 -> 34 (tuple-unpacked loop in `runtime_maintenance.py`), UI 1261 -> 1290 (8 helper call sites, 21 loop items).
+- **Private names:** no new private names, so `app_private_attrs.txt` is unchanged. The seven private attributes reached only through constants appear in the record beside their lookups.
+- **Negative controls:**
+  - `test_a_literal_rewritten_as_a_name_fails_rather_than_reading_as_a_reduction[constant|parameter]`
+  - `test_a_literal_moved_into_a_helper_or_loop_is_still_counted[helper|helper-keyword|method|loop|unpacked-loop]`
+  - `test_a_constant_resolves_through_its_module_and_imports_only`
+- **Mutation checks:** each of these failed its controls. Guard off: both rewrite cases. Helper call-site counting off: 3 cases plus the `<root>`/UI pins. Loop counting off: 2 cases plus 3 pins. AnnAssign ignored: the constant test.
+- **The review's two reproductions on the real tree:** `workflows_screen.py:249` rewritten as `_optional(self.app_instance, "_workflow_database_path")` keeps all 31 nodes green, with the lookup still counted and its private name still seen. `CONSOLE_RUNTIME_ATTR: str = "_console_hidden_runtime"` added under `Chat/console_runtime.py:189` fails the record test.
+- **Lane:** the guard is in the same file, so it runs in `pr-fast-lane-arch` (`.github/workflows/derived-artifacts.yml`, pinned by `ARCH_REVIEW_TARGETS` in `Tests/CI/test_ci_queue_pressure_contract.py`).
+- **Scan cost:** the scan takes about +35% CPU, about 14 s -> 19 s at load 50. The scopes come from the main walk rather than a parent map, which had cost +50%.
+- **Known ceiling (a `ponytail:` comment):** a name taken from a dict, a module-level tuple, a nested loop or a call's return value is not followed, so its row reaches `-` and a literal added there is not counted. Helper call sites match by callee name, so an unrelated same-named call would over-count.
+- **Files:**
+  - `Tests/Architecture/test_app_string_lookup_census.py`
+  - `Tests/Architecture/app_lookup_census.tsv`
+  - `Tests/Architecture/app_nonliteral_lookups.tsv` (new)
+  - `tldw_chatbook/app_services.py` (the `_optional` docstring)
+- Verified 2026-11-13 on base 1455ceeb96 (review round). The census file passed 22 nodes at base and passes 31 at head. `./scripts/preflight.sh` passed. Serial `Tests/Architecture`: 1357 passed, 3 failed, and the same 3 fail at base: `test_persistent_diagnostic_inventory::test_reviewed_diagnostic_changes_are_metadata_only` (agent_service.py) and `test_timer_path_static_update_inventory` x2 (project_index_binding_card.py).

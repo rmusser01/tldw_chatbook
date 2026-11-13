@@ -632,8 +632,8 @@ class ApplicationServices:
 def _optional(app: Any, name: str) -> Any:
     """Read a service that composition leaves ``None`` when it is unavailable.
 
-    The name is not a literal, so the census pins this one call in
-    ``app_nonliteral_lookups.tsv`` (composition output, not consumers).
+    This call is a row of ``app_nonliteral_lookups.tsv``; each literal name
+    passed in counts in ``app_lookup_census.tsv`` (composition output).
     """
     return getattr(app, name, None)
 
