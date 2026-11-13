@@ -7,6 +7,12 @@ traceback's locals show it), because the assistant-turn row had been pruned
 while the mount awaited: the app was tearing the screen down. The sync then
 indexed ``children[index]`` of the emptied stack. A pruned row has nothing
 left to reconcile, so the sync must stop instead of crashing its worker.
+
+Regression pin, not a RED guard of this branch: dev's fe18d17335 (TASK-34785,
+"retire detached transcript activity updates") fixed the same function with
+``_can_sync_assistant_turn()`` checks after each awaited mount, so this
+branch's own guard was dropped on the rebase and ``console_transcript.py`` is
+identical to dev. This test passes on base 26b2e677dd.
 """
 
 from __future__ import annotations
