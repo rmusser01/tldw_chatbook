@@ -6,9 +6,8 @@ run roleplay characters with lorebooks, schedule watchlists, and drive
 agent/tool workflows — stored locally in SQLite by default (some surfaces
 can sync with a tldw server you configure).
 
-> This guide tracks the **dev** branch. Each fully written page carries a
-> "Verified against dev @ `<sha>`" stamp (stub pages are marked 🚧 instead);
-> if your build is older, screens may differ slightly.
+> This guide tracks the **dev** branch; stub pages awaiting a full write-up
+> are marked 🚧. If your build is older, screens may differ slightly.
 
 ## Quick start — your first five minutes
 

@@ -24,7 +24,7 @@ temporary profile: HOME, XDG_* and TLDW_CONFIG_PATH point into it, the
 keyring is the null backend, the test suite's real-profile guard refuses
 writes to the real profile, and sockets may reach loopback only, so no real
 provider can be contacted. The SVG is written with its cdnjs font URLs
-stripped (``Docs/User_Guide/_template.md``, step 5).
+stripped (``Docs/User_Guide/_template.md``, step 4).
 """
 
 from __future__ import annotations
