@@ -25327,3 +25327,10 @@ minutes:
 **Incident.** The disposable runner passed a standalone UI shard in 11m54s, but the first sustained eight-worker run 43487945840 timed out Console P0 during its first invocation and Dreams/Guardian near the end of its last group. Both retained 20-minute hosted job caps. The runner toolchain and actual project-chat UAT had already passed; those results did not establish sustained-load completion or whole-gate timing.
 
 **What to do.** Preserve individual attempt timings and distinguish per-test deadlines from whole-job caps. Qualify all required lanes under the deployed concurrency before reporting full CI success. Keep test coverage and isolation intact when splitting long invocations; measure the resulting full gate before claiming the new budget suffices.
+
+
+## A spawn crash target should not import the application before crashing (TASK-40725, 2026-11-13)
+
+**Incident.** Local CI run 43496035687 failed the real ingest-pool crash regression after its 10-second observation budget: the job was still PARSING. Its crash target was a wrapper defined in the large test module, which forces a spawned worker to import that module and the application before calling os._exit. The previous run had passed, so the log alone did not distinguish slow startup from slow crash reporting. Replacing the wrapper with the picklable stdlib os._exit target removed that unnecessary work while preserving the real production pool and deadlines. The original exact test passed locally in 3.02s; the changed test plus its adjacent idle-generation test passed in 1.19s. Disabling the production sentinel monitor still made the changed exact test fail at its original budget.
+
+**What to do.** Use the smallest picklable target that triggers the fault under test. Keep worker startup/import costs separate from the deadline for observing the fault, and retain a negative control proving the monitor is exercised. Loaded CI remains the final check for timing-sensitive failures.
