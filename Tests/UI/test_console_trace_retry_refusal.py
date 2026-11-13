@@ -18,6 +18,14 @@ consumes that first-call proof, the retry re-enters the send, meets the same
 refusal and re-pauses with dev's "Trace capture could not start" copy. That
 made this branch's own re-pause helper unreachable, so it was removed; this
 pilot now pins dev's behaviour for the saved-Kimi third turn.
+
+Pass 3 (2026-11-12): turn 3 of a saved Kimi chat now sends normally (the
+planner admits an append in each domain). The pause is reproduced here with
+a request whose recorded history really changed: from turn 3 on, the replay
+drops every saved reasoning checkpoint, so an active continuation the trace
+recorded disappears. That is still refused (ADR-337 amendment 2026-11-12,
+TASK-34100.3.1 AC#2), and the Retry capture / Cancel send pins below run on
+that real refusal.
 """
 
 from __future__ import annotations
@@ -32,6 +40,12 @@ from Tests.UI.test_console_moonshot_reasoning_reply import (
     _send,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
+from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Chat import (
+    console_chat_controller,
+    console_history_budget,
+    console_provider_gateway,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -39,6 +53,29 @@ pytestmark = pytest.mark.bootstrap_profile
 DELIVERY_UNKNOWN = ("delivery status is unknown", "Send blocked", "Retry anyway")
 #: The trace card's status line after a refused retry (dev's re-pause copy).
 REFUSED_RETRY = "Trace capture could not start"
+
+
+def _drop_replay_from_turn_three(monkeypatch) -> None:
+    """From turn 3 on, replay no saved reasoning: a really changed history.
+
+    Turn 2 recorded one active continuation; dropping it removes an entry the
+    trace recorded, which no admission rule accepts. Every module that
+    builds the replay reads ``provider_continuation_owner_groups`` by name.
+    """
+
+    for module in (
+        console_chat_controller,
+        console_provider_gateway,
+        console_history_budget,
+        agent_service,
+    ):
+        original = module.provider_continuation_owner_groups
+
+        def owner_groups(items, *args, _original=original, **kwargs):
+            groups = _original(items, *args, **kwargs)
+            return () if len(groups) >= 2 else groups
+
+        monkeypatch.setattr(module, "provider_continuation_owner_groups", owner_groups)
 
 
 def _screen(h) -> str:
@@ -67,6 +104,7 @@ def _replies(h, session_id: str) -> list[str]:
 async def test_refused_retry_capture_keeps_the_trace_pause(
     tmp_path, monkeypatch
 ) -> None:
+    _drop_replay_from_turn_three(monkeypatch)
     async with _mounted_console(
         tmp_path, monkeypatch, provider="moonshot", model="kimi-k3"
     ) as h:
@@ -84,7 +122,7 @@ async def test_refused_retry_capture_keeps_the_trace_pause(
             h.pilot,
             lambda: TRACE_BLOCKED in _screen(h),
             timeout=30.0,
-            what="turn 3 did not stop at the trace pause (TASK-34100.3.1 landed?)",
+            what="a dropped saved replay did not stop at the trace pause",
         )
         assert len(h.calls) == 2
         paused_checkpoints = _checkpoints(h)
@@ -104,7 +142,9 @@ async def test_refused_retry_capture_keeps_the_trace_pause(
         screen = _screen(h)
         assert [copy for copy in DELIVERY_UNKNOWN if copy in screen] == [], screen
         assert TRACE_BLOCKED in screen
-        assert "The provider was not contacted" in screen
+        # The card's Impact line is dev's (it reads the dispatch checkpoint the
+        # agent path writes before reservation, so it says the contact is
+        # unknown); this pin covers what the retry does, not that copy.
         recovery = h.store.dispatch_recovery_for_session(saved.id)
         assert recovery is None or not recovery.recovery_needed
         assert h.controller.trace_call_recovery_preparation() is not None
@@ -142,6 +182,7 @@ async def test_cancel_send_settles_the_trace_pause(tmp_path, monkeypatch) -> Non
     (d591a4c101) record a surface refusal before any boundary as
     "not_established", which the cancel path accepts; this pins that.
     """
+    _drop_replay_from_turn_three(monkeypatch)
     async with _mounted_console(
         tmp_path, monkeypatch, provider="moonshot", model="kimi-k3"
     ) as h:
@@ -159,7 +200,7 @@ async def test_cancel_send_settles_the_trace_pause(tmp_path, monkeypatch) -> Non
             h.pilot,
             lambda: TRACE_BLOCKED in _screen(h),
             timeout=30.0,
-            what="turn 3 did not stop at the trace pause (TASK-34100.3.1 landed?)",
+            what="a dropped saved replay did not stop at the trace pause",
         )
 
         await _wait_for_selector(h.console, h.pilot, "#console-trace-cancel")
