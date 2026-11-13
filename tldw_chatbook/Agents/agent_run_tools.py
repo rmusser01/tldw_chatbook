@@ -4,8 +4,9 @@
 operations (TASK-36950.3) and the run-log tools (TASK-36950.4), from the
 architecture review 2026-10-25 §F5. They are methods of
 :class:`AgentRunTools` now, and the per-run state they shared is its
-attributes, set by ``_run_one`` at the point where the closures used to be
-defined. The method bodies are the closure bodies: a closure's ``self`` (the
+attributes, set by ``_run_one`` once per run, just before it installs the
+review capacity probe (where the fleet closures used to be defined). The
+method bodies are the closure bodies: a closure's ``self`` (the
 service, which ``_run_one`` rebinds for a code-review child) is
 ``self.service``, and each local it shared is ``self.<name>``.
 
@@ -20,9 +21,12 @@ Three kinds of state are not plain snapshots:
 * ``_launch_fleet_child`` is wrapped per instance in ``core_operation`` over
   the run's own database, as the closure was decorated at definition time.
 
-``agent_service._setting``, ``AgentConfig``, ``load_agents_routing_config``
-and ``build_first_request_schema_plan`` are read through ``agent_service``
-at call time, because tests monkeypatch them on that module.
+Five names are read through ``agent_service`` at call time, because tests
+monkeypatch them on that module: ``_setting``, ``AgentConfig``,
+``get_internal_prompt``, ``load_agents_routing_config`` and
+``build_first_request_schema_plan``. The spawn path's twin of the resume
+prompt read is ``native_host.get_internal_prompt`` in
+``agent_native_execution``.
 """
 
 from __future__ import annotations
@@ -73,7 +77,6 @@ from .agent_service import (
     _coerce_child_max_wall_seconds,
     _coerce_subagents_outlive_turn,
     coerce_max_live_subagents,
-    get_internal_prompt,
 )
 from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
 from .execution_capacity import CapacityRefused, current_execution_owner
@@ -1271,7 +1274,7 @@ class AgentRunTools:
                 for n in child_allowed_tools
                 if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
             )
-        child_system_prompt = get_internal_prompt("agents.subagent_system")
+        child_system_prompt = agent_service.get_internal_prompt("agents.subagent_system")
         # ADR-344 (Task 8): WHERE the resumed child runs comes from the
         # v21 snapshot the ORIGINAL run froze at spawn time
         # (`get_run_resolved_target`), never from a live re-resolution

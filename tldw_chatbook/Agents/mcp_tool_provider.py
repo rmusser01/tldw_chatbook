@@ -1222,7 +1222,7 @@ class MCPToolProvider:
         NESTED sub-agent run this provider's turn spawns. `spawn_subagent`
         runs the child's entire loop INLINE, synchronously, before the
         parent's own remaining same-batch tool calls are dispatched
-        (`agent_service.AgentService._run_one`'s `spawn` closure, called
+        (`agent_run_tools.AgentRunTools.spawn`, called
         from `agent_runtime.run_agent_loop`'s per-call dispatch loop).
         `apply_batch_decisions` used to REPLACE the WHOLE dict every turn
         (Finding F1 -- never merged), so the child's OWN turn(s) silently
