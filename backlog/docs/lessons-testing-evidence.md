@@ -2724,6 +2724,19 @@ pins the hand-built shape to the producer's output. A comparison that only a
 fixture can satisfy is the bug. Related: TASK-33662's restore helper reused
 persisted ids as native ids and hid a relaunch bug the same way.
 
+**The same gap in a planner fixture (TASK-34100.3 pre-merge review, 2026-11-13).**
+The real-planner tests for the ADR-337 per-domain append built each request by
+hand and carried every saved reply as a `SavedRevisionTraceProvenance`, one
+distinct id per reply. The review asked that a checkpoint's owner occur exactly
+once among the incoming messages. That change passed all 46 rule and planner
+tests, was pushed, and then refused turn 3+ in every Kimi row of the mounted
+pilots (10 RED). The Console sends every assistant reply as the same
+`ProviderArtifactTraceProvenance(ACTIVE_REQUEST, policy)`, so no owner can be
+unique. A one-line print of the descriptors in the rule, under one pilot run,
+showed the real shape in a minute. Before tightening a rule on descriptor
+identity, read the descriptors the production caller actually sends, and run
+the mounted pilots before pushing, not after.
+
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
