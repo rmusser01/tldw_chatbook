@@ -24339,8 +24339,7 @@ class SettingsScreen(BaseAppScreen):
             if (pane := self._tools_hub_pane()) is not None:
                 pane.set_initial_view_state(self._tools_hub_initial_view_state)
             return
-        registered = CATEGORY_PANELS.get(category_value)
-        if registered is not None and registered.navigate(self, context):
+        if (registered := CATEGORY_PANELS.get(category_value)) is not None and registered.navigate(self, context):
             return
         from ..Settings_Modules.workspace_folder_bindings import navigate_settings_category
 
