@@ -260,11 +260,7 @@ async def prepare_submission_hooks(
             return ConsoleSubmitResult(False, False, "A run is already preparing.")
         _begin_hook_submission(controller, session_id)
         submissions = controller._hooks_v2_submissions
-        from .console_runtime import ConsoleRuntime
-
-        shared = ({"_hook_read": hook_read} if hook_read is not None
-            and getattr(hook_runtime.prepare_hooks_v2, "__func__", None)
-            is ConsoleRuntime.prepare_hooks_v2 else {})
+        shared = {"_hook_read": hook_read} if hook_read is not None else {}
         try:
             from .console_hook_preparation import submission_origin
 

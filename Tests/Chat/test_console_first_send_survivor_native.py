@@ -167,10 +167,15 @@ async def exercise():
         assert not Path(os.environ['TLDW_CONFIG_PATH']).exists()
         print('FIX1_SOURCE_RETAINED', flush=True)
         os._exit(0)
-    producer_invoked = []
-    if sys.argv[2] == 'producer_replaced':
-        from tldw_chatbook.Chat import console_received_dispatch as persistence
-        persistence._native_config_current = lambda: producer_invoked.append(True)
+    writer_calls = []
+    if sys.argv[2] == 'writer_wrapped':
+        import functools
+        writer = config.apply_settings_mutation_to_cli_config
+        @functools.wraps(writer)
+        def wrapped(mutations, **kwargs):
+            writer_calls.append(mutations)
+            return writer(mutations, **kwargs)
+        config.apply_settings_mutation_to_cli_config = wrapped
     child_release.set()
     if engine is not None:
         async with asyncio.timeout(10):
@@ -228,13 +233,10 @@ async def exercise():
     await runtime.dispose()
     import tomllib
     persisted = tomllib.loads(Path(os.environ['TLDW_CONFIG_PATH']).read_text())
-    if sys.argv[2] == 'producer_replaced':
-        assert not persisted.get('console', {}).get('onboarding', {}).get('first_send_completed')
-        assert not producer_invoked
-        assert config.current_config_identity() == before
-    else:
-        assert persisted['console']['onboarding']['first_send_completed'] is True
-        assert config.current_config_identity() != before
+    assert persisted['console']['onboarding']['first_send_completed'] is True
+    assert config.current_config_identity() != before
+    if sys.argv[2] == 'writer_wrapped':
+        assert writer_calls == [{'console.onboarding': {'first_send_completed': True}}]
     creators.retire()
     assert not network_guard.blocked_attempts()
     assert not real_profile_guard.take_violations()
@@ -299,8 +301,9 @@ def test_runtime_first_send_retains_changed_original_source(tmp_path):
     assert "FIX1_SOURCE_RETAINED" in text
 
 
-def test_runtime_first_send_refuses_replaced_native_source_check(tmp_path):
-    _run(tmp_path, "fix1_survivor", "producer_replaced", script=_SCRIPT, timeout=50)
+def test_runtime_first_send_saves_through_a_wrapped_config_writer(tmp_path):
+    """TASK-40719: a delegating wrapper is no reason to drop the save (ADR-356 rule 4)."""
+    _run(tmp_path, "fix1_survivor", "writer_wrapped", script=_SCRIPT, timeout=50)
 
 
 @pytest.mark.parametrize("failure", ["body", "cleanup", "handle"])

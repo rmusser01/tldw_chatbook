@@ -12,12 +12,9 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from tldw_chatbook.app_services import read_app_config
-from tldw_chatbook import config
-from tldw_chatbook.config import first_send_persistence_source_current as _native_config_current
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
 from .console_chat_models import ConsoleSubmissionOrigin
-from .console_ordinary_tree import _function_record, _function_unchanged
 from .console_preparation_reads import run_preparation_read
 
 if TYPE_CHECKING:
@@ -788,15 +785,7 @@ async def _run_custodied_turn(
             controller.prompt_queue_coordinator.bind_turn_request(request, origin=origin)
         from .console_received_turn import bind_received_turn_claim
 
-        from .console_chat_controller import ConsoleChatController
-
-        shared = (
-            {"_hook_read": hook_read}
-            if hook_read is not None
-            and getattr(controller.submit_draft, "__func__", None)
-            is ConsoleChatController.submit_draft
-            else {}
-        )
+        shared = {"_hook_read": hook_read} if hook_read is not None else {}
         issuing_store, issuing_claim = record.store, record.received_claim
         try:
             with bind_received_turn_claim(issuing_store, issuing_claim):
@@ -894,23 +883,12 @@ async def _run_custodied_turn(
     return result
 
 
-_NATIVE_CONFIG_CHECK = _function_record(_native_config_current)
-
-
 async def _persist_first_send_when_quiescent(
     self, config_module, identity, app_config, controller, store
 ) -> None:
     """Run the original one-key save only beyond all original lifetimes."""
 
     from . import console_runtime as native_host
-    check = _NATIVE_CONFIG_CHECK
-
-    def original_config():
-        return (
-            _native_config_current is check[0]
-            and _function_unchanged(check)
-            and check[0](config)
-        )
 
     wakeup = self._first_send_wakeup
     try:
@@ -935,7 +913,6 @@ async def _persist_first_send_when_quiescent(
         def current():
             return (
                 sys.modules.get("tldw_chatbook.config") is config_module
-                and original_config()
                 and vars(self._app).get("console_runtime") is self
                 and vars(self._app).get("app_config") is app_config
                 and self._chat_controller is controller
