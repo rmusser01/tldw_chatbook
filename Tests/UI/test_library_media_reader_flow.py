@@ -2712,10 +2712,9 @@ async def test_opening_find_costs_no_extra_focus_move(size):
         assert "library-media-reader-find" not in moves, moves
         # Exact list, not just a ceiling (review M-5): an inequality would let
         # a future regression that silently DROPS a legitimate move pass.
-        assert moves == [
-            "library-browse-items-grip",
-            "library-media-content-search",
-        ], moves
+        # TASK-40327: the bar mounts in place, so the Reader recompose that
+        # parked focus on the items grip on the way (the old first move) is gone.
+        assert moves == ["library-media-content-search"], moves
         for media_id in tuple(service.detail_release):
             service.release(media_id)
 

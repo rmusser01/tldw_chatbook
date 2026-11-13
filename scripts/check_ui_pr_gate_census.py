@@ -1055,6 +1055,10 @@ MINIMUM_FILES = 2130
 # TASK-40293 review r14lf-rev1 (2026-11-13): append the queued-grip-focus and
 # wide rail-focus nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2138
+MINIMUM_FILES = 2132
+# TASK-40327 (2026-11-13): append the Media Find-toggle node at the tail. The
+# floor is the measured entry count.
+MINIMUM_FILES = 2139
 
 
 def read_census(path: Path) -> list[str]:

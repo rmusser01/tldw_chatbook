@@ -3072,3 +3072,6 @@ Tests/UI/test_library_media_side_by_side.py::test_compact_media_viewer_back_empt
 # the wide size (7.3 s and 8.4 s call, ~15 s whole, serial at load 19-36).
 Tests/UI/test_library_media_side_by_side.py::test_compact_media_empty_page_landing_survives_a_queued_grip_focus
 Tests/UI/test_library_media_side_by_side.py::test_wide_media_reader_reset_leaves_focus_the_user_holds_in_the_rail
+# TASK-40327 (2026-11-13): a Library Media Find toggle keeps the content body
+# (no re-parse of the document) and focus.
+Tests/UI/test_library_media_reader_match_nav_t22209.py::test_find_toggle_keeps_body_parse_and_focus
