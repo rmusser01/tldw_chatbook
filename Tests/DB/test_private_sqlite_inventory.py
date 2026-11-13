@@ -530,6 +530,22 @@ def _qualified_fixed_validation_dispatch(source_path, production_module, symbol,
                 and isinstance(statements[3], ast.With)
                 and len(statements[3].items) == 1
                 and ast.dump(statements[3].items[0].context_expr) == ast.dump(call))
+    if production_module == "tldw_chatbook/Personal_Context/recovery":
+        # TASK-40135/40136: the staged repository copy's key reference only;
+        # the literal owner names the installed Personal Context declaration.
+        tree = _parse_source(source_path)
+        owner = next(
+            (node.value.value for node in tree.body if isinstance(node, ast.Assign)
+             and any(isinstance(t, ast.Name) and t.id == "OWNER" for t in node.targets)
+             and isinstance(node.value, ast.Constant)),
+            None,
+        )
+        return (
+            symbol == "stamp_restored_key"
+            and owner == "personal_context.repository"
+            and ast.unparse(call)
+            == "open_recovery_validation(OWNER, candidate, writable=True, with_restrictions=True)"
+        )
     declarations = {
         "tldw_chatbook/DB/recovery_operations": ("_SubscriptionsAdapter", "db.subscriptions"),
         "tldw_chatbook/Backup_Recovery/recovered_media": ("_RecoveredAdapter", "recovered.media"),
@@ -808,9 +824,11 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
         # C99/B41 read and copy the plugin registry for backup (TASK-40132).
         # C100/B42 validate and copy the Personal Context repository (TASK-40134).
+        # C101/C102 read an archived Personal Context image and check the
+        # published copy's key after a restore (TASK-40135).
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 101) if number not in {8, 9, 10, 75, 97}
+        for number in range(1, 103) if number not in {8, 9, 10, 75, 97}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
