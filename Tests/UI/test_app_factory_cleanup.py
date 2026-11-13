@@ -321,3 +321,53 @@ def test_console_send_fixture_owns_its_profile_bound_file_database():
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
         connection.execute("SELECT 1")
     borrowed_close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_factory_console_skill_discovery_reads_off_the_ui_loop():
+    """TASK-40321: the factory's runtime policy takes the shipped skill route.
+
+    Console's stock skill read leaves the UI loop only when ``app.runtime_policy``
+    is the real ``RuntimePolicyContext``; the factory used to hand the app a
+    ``SimpleNamespace``, so every factory-built Console read skills on the loop.
+    """
+    import inspect
+    import sys
+    import threading
+
+    from Tests.UI import app_factory
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    app = app_factory._build_test_app()
+    main, threads = threading.get_ident(), []
+    code = inspect.unwrap(LocalSkillsService.get_context).__code__
+    tool = sys.monitoring.PROFILER_ID
+    sys.monitoring.use_tool_id(tool, "factory-skill-discovery")
+    sys.monitoring.register_callback(
+        tool,
+        sys.monitoring.events.PY_START,
+        lambda _code, _offset: threads.append(threading.get_ident()),
+    )
+    sys.monitoring.set_local_events(tool, code, sys.monitoring.events.PY_START)
+    loop = asyncio.get_running_loop()
+    previous = loop.get_task_factory()
+    loop.set_task_factory(asyncio.eager_task_factory)  # What App.run_async installs.
+    try:
+        async with app.run_test(size=(170, 48)):
+            async with asyncio.timeout(60):
+                while not getattr(app, "_ui_ready", False):
+                    await asyncio.sleep(0.02)
+                if type(app.screen).__name__ != "ChatScreen":
+                    app.post_message(NavigateToScreen("chat"))
+                while type(app.screen).__name__ != "ChatScreen":
+                    await asyncio.sleep(0.02)
+                while not app.screen._skill._console_skill_candidates:
+                    await asyncio.sleep(0.02)
+    finally:
+        loop.set_task_factory(previous)
+        sys.monitoring.set_local_events(tool, code, 0)
+        sys.monitoring.register_callback(tool, sys.monitoring.events.PY_START, None)
+        sys.monitoring.free_tool_id(tool)
+    assert threads, "Console never read its skills"
+    assert main not in threads, "the factory app read skills on the UI loop"

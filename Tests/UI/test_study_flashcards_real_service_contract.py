@@ -26,7 +26,11 @@ import pytest
 from textual.widgets import Input, ListView, Select, Static, TextArea
 
 from Tests.app_module_patches import set_app_global
-from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
+from Tests.UI.app_factory import (
+    _build_test_app,
+    attach_chachanotes_db,
+    set_runtime_source_state,
+)
 from Tests.UI.test_study_dashboard import DashboardQuizScopeService
 import tldw_chatbook.app as app_module
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -142,8 +146,7 @@ def _build_real_study_app(
         active_source=runtime,
         server_configured=runtime == "server",
     )
-    app.runtime_policy.state = runtime_state
-    app._publish_runtime_policy_projection(runtime_state)
+    set_runtime_source_state(app, runtime_state)
     if scope_context is not None:
         app.pending_handoffs.stage(HandoffChannel.STUDY_SCOPE, scope_context)
     return app, db

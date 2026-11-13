@@ -7,7 +7,7 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.app_module_patches import set_app_global
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, set_runtime_source_state
 import tldw_chatbook.app as app_module
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -180,8 +180,7 @@ def _build_full_study_app(app_instance):
         active_source=source,
         server_configured=source == "server",
     )
-    app.runtime_policy.state = runtime_state
-    app._publish_runtime_policy_projection(runtime_state)
+    set_runtime_source_state(app, runtime_state)
     scope_context = getattr(app_instance, "scope_context", None)
     if scope_context is not None:
         app.pending_handoffs.stage(HandoffChannel.STUDY_SCOPE, scope_context)
