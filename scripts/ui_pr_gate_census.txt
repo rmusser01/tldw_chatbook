@@ -2994,3 +2994,8 @@ Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_
 # whose Console restore doubles now take dev's callable sync worker (whole
 # file, about 17 s serial locally).
 Tests/UI/test_workspace_archive_review_regressions.py
+# TASK-40322 (2026-11-12): the Personas Start-chat readiness file (now
+# bootstrap_profile: its footer reads config in compose) and the Console
+# once-a-second Character-scope sync-tick file.
+Tests/UI/test_personas_subscription_readiness.py
+Tests/UI/test_console_sync_tick_storage.py

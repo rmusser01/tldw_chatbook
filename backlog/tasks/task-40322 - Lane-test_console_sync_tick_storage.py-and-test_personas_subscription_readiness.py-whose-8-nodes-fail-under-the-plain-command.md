@@ -1,8 +1,11 @@
 ---
 id: TASK-40322
 title: "Lane test_console_sync_tick_storage.py and test_personas_subscription_readiness.py, whose 8 nodes fail under the plain command"
-status: To Do
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-11-12 19:36
+updated_date: 2026-11-13 03:53
 labels:
 - follow-up
 - tests
@@ -32,7 +35,28 @@ Neither path appears in `scripts/ui_pr_gate_census.txt`, `.github/` or `scripts/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The Personas file passes under its plain command at `-n 4` (a profile marker or a harness fix, with the RecoveryRequired cause recorded)
-- [ ] #2 Both files run on a required PR lane at the census tail, with lane times recorded
-- [ ] #3 Both pass 3 of 3 whole-file runs at `-n 4`
+- [x] #1 The Personas file passes under its plain command at `-n 4` (a profile marker or a harness fix, with the RecoveryRequired cause recorded)
+- [x] #2 Both files run on a required PR lane at the census tail, with lane times recorded
+- [x] #3 Both pass 3 of 3 whole-file runs at `-n 4`
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Re-run both files on base 26b2e677dd with the plain command.
+2. Find the Personas file's RecoveryRequired read and mark the file the way its sibling mounted readiness files are; fix whatever is red once it runs.
+3. Append both files at the census tail, measure their serial lane times, and run each whole file 3 times at `-n 4`.
+
+## Implementation Notes
+
+- **Base 26b2e677dd, plain command, `-n 4`:** Personas 8 of 8 failed, sync-tick 2 of 2 passed (load 52-60).
+- **RecoveryRequired cause.** The mounted `AppFooterStatus.compose` builds the Tamagotchi (`_build_tamagotchi`), which calls `get_cli_setting`. Under the per-test config sandbox that read raises `RecoveryRequired: raw_source_selection_changed` (`Backup_Recovery/raw_participants.py:307`, through `config_participants`). The file is now `pytest.mark.bootstrap_profile`, like `test_console_sync_tick_storage.py`.
+- **A product defect showed up once the file ran.** `test_completion_between_header_and_inspector_reads_refreshes_both_surfaces` failed 3 of 3 (TimeoutError at :203; the header's blocked chip never cleared).
+  - The 0.25 s handoff poll returns early when its cheap gate equals the last poll's gate (fad849155b, task-34914, 2026-10-13).
+  - A direct `_sync_title_and_console_actions()` can paint a read that gate never saw: a completion between the header read and the inspector read. 0077b872f1 handles that case, and the gate made it unreachable, so the header stayed "blocked" after the credential was ready.
+  - Fix: `_sync_title_and_console_actions` clears `_console_handoff_readiness_gate`, so the next poll checks in full once, then goes back to the cheap path. The cost is one extra provider-readiness check after a direct sync.
+  - Red 3 of 3 before, green after. The covering `test_personas_handoff_poll_gate.py` passes, and so do the 13 readiness and handoff nodes of `test_personas_workbench.py`. One of those failed once at `-n 4` (`OptionDoesNotExist 'character:1'`), then passed 3 of 3 serially and in a rerun at `-n 4`.
+- **Whole-file runs at `-n 4`:** Personas 8 of 8 passed, 3 of 3 runs (load 52-65). Sync-tick 2 of 2 passed, 3 of 3 runs (load 45-55).
+- **Lane.** Both files are whole-file entries at the census tail; `MINIMUM_FILES` is 2030. No re-deal.
+- **Serial lane times** (`-p no:xdist --timeout=180 --durations=0`): Personas 38.3 s at load 47; sync-tick 33.7 s at load 45.
+- **Size.** `personas_screen.py` is exactly at its 16,835-line row (the fix is one line). The module size ratchet passes.
+- **Files.** `tldw_chatbook/UI/Screens/personas_screen.py`, `Tests/UI/test_personas_subscription_readiness.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.

@@ -1027,6 +1027,11 @@ MINIMUM_FILES = 2069
 # TASK-40320 review r14set-rev1 (2026-11-12): append the archive review
 # regressions file at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2076
+MINIMUM_FILES = 2070
+# TASK-40322 (2026-11-12): append the Personas subscription-readiness and
+# Console sync-tick storage files at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 2078
 
 
 def read_census(path: Path) -> list[str]:
