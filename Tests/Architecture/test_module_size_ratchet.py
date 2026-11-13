@@ -92,6 +92,8 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
     # 2026-11-19, TASK-41904 (owner rule: raise by the change's own lines):
     # 1567 -> 1571 (+4) -- a Send pressed during the first-send save waits.
+    # 2026-11-12, TASK-33628.20 PR #3458 review (owner decision: a fix over a
+    # size ratchet raises the row): /stop takes only its captured draft. 1567 -> 1571.
     "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1571,
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
