@@ -1147,6 +1147,8 @@ def test_project_index_required_lane_has_real_pinned_sqlite_and_bounded_targets(
     assert job["needs"] == ["preflight"]
     assert job["name"] == "Project index contracts"
     assert job["runs-on"] == "windows-latest"
+    assert job["steps"][0]["run"] == "git config --global core.longpaths true"
+    assert job["steps"][1]["uses"] == "actions/checkout@v4"
     assert job["timeout-minutes"] == 20
     assert job["if"] == LANES
     setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5")
