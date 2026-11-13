@@ -10,11 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Union
 
+from tldw_chatbook.DB import declare_store
 from . import store_kernel as _store_kernel
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
 
 
+@declare_store("db.workspaces", closer="close", policy="db.base")
 class WorkspaceDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for local workspace registry state.
 

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, TYPE_CHECKING
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,
     core_getter,
@@ -98,6 +99,7 @@ class RemotePullCursorRecord:
     source_scope_key: str
 
 
+@declare_store("runtime.sync_state", policy="db.base")
 class SyncStateRepository(BaseDB):
     """SQLite-backed sync/mirror repository and local-first outbox."""
 

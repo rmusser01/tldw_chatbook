@@ -1,5 +1,6 @@
 """Test-only native prerequisite; compile/review before installation."""
 
+import importlib
 import inspect
 import sqlite3
 import sys
@@ -33,6 +34,24 @@ class OriginalPrivateAppCreators(OriginalStorageUnitObserver):
                 (self.app_type, "__init__", app_init),
             )
         )
+        # Stores register when their modules load (TASK-36948.1); load the ones
+        # repository_types() used to import itself, so the same births are watched.
+        for module in (
+            "tldw_chatbook.Notifications.event_state_repository",
+            "tldw_chatbook.Sync_Interop.sync_state_repository",
+            "tldw_chatbook.DB.ChaChaNotes_DB",
+            "tldw_chatbook.DB.Client_Media_DB_v2",
+            "tldw_chatbook.DB.Prompts_DB",
+            "tldw_chatbook.DB.Library_Collections_DB",
+            "tldw_chatbook.DB.Library_Ingest_Jobs_DB",
+            "tldw_chatbook.DB.Workspace_DB",
+            "tldw_chatbook.DB.AgentRuns_DB",
+            "tldw_chatbook.Notifications.client_notifications_db",
+            "tldw_chatbook.Scheduling.db.scheduled_tasks_db",
+            "tldw_chatbook.Research_Interop.local_research_service",
+            "tldw_chatbook.Writing_Interop.local_writing_service",
+        ):
+            importlib.import_module(module)
         self.original_types = participants.repository_types()
         assert EvalsDB in self.original_types and SubscriptionsDB in self.original_types
         self.roles, self.births, self.owners = {}, {}, []

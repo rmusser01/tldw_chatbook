@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import ClassVar, Union
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
     core_access,
     core_closing,
@@ -55,6 +56,7 @@ class DreamsSchemaError(RuntimeError):
         super().__init__(reason)
 
 
+@declare_store("db.dreams", closer="close", policy="db.base")
 class DreamsDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for the Dreams subsystem (discovery + track loops).
 

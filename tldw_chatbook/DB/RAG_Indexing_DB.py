@@ -36,6 +36,7 @@ from typing import (
     Union,
 )
 from loguru import logger
+from tldw_chatbook.DB import declare_store
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .store_kernel import SQLiteStoreKernel
 from tldw_chatbook.Utils.private_paths import lexical_path
@@ -104,6 +105,7 @@ def _decode_embedding_vector(blob: bytes) -> Optional[List[float]]:
     return packed.tolist()
 
 
+@declare_store("db.rag_indexing", closer="close", finite_worker=False)
 class RAGIndexingDB(SQLiteStoreKernel):
     """
     Manages SQLite database for tracking RAG indexing state.

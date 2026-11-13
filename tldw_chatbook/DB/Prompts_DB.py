@@ -49,6 +49,7 @@ from loguru import logger as logging
 
 #
 # Local Imports
+from tldw_chatbook.DB import declare_store
 from .keyword_store import KeywordStore, KeywordStoreSpec
 from .library_search_engine import LibrarySearchSpec, library_search_page
 from .sql_validation import validate_table_name, validate_column_name
@@ -140,6 +141,7 @@ class PromptNameConflictError(ConflictError):
 
 
 # --- Database Class ---
+@declare_store("db.prompts.primary", closer="close_connection")
 class PromptsDatabase:
     _CURRENT_SCHEMA_VERSION = 6
     _PROMPT_HISTORY_INDEX_NAME = "idx_sync_log_prompt_history"
