@@ -528,3 +528,123 @@ async def test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next():
             lambda: rows() == 2,
             message=lambda: f"An identical repaint left the pane with {rows()} rows",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+@pytest.mark.parametrize("window_action", ["user_focuses_other_grip", "route_to_notes"])
+async def test_collections_focus_retry_never_moves_a_users_own_focus(
+    window_action, monkeypatch
+):
+    """TASK-40328 review r14ls-rev3: the first-visit focus retry is pinned.
+
+    A first visit composes the reader shell with the width-0 layout, so the
+    route's restore parks focus on a grip and the shell's first layout sync
+    retries the Collections row. The layout sync is held back here to open
+    that window. If the user moves focus inside it -- to the other grip, or
+    away to Notes -- the retry must not fire: their focus is never pulled to
+    the row, the stored pair is spent, and a later Collections entry settles
+    on its own.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_collections_controller import (
+        LibraryCollectionsController,
+    )
+
+    hold = {"on": False}
+    layout_sync = (
+        LibraryCollectionsController._sync_library_collections_reader_layout_from_shell
+    )
+
+    def held_layout_sync(controller, priority=None):
+        if not hold["on"]:
+            layout_sync(controller, priority)
+
+    monkeypatch.setattr(
+        LibraryCollectionsController,
+        "_sync_library_collections_reader_layout_from_shell",
+        held_layout_sync,
+    )
+    app, _scope, _identities = await _seed()
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        def row() -> Button:
+            return screen.query_one("#library-row-browse-collections", Button)
+
+        def focused_id():
+            return getattr(screen.focused, "id", None)
+
+        await _wait_for_condition(
+            pilot, lambda: "(2)" in str(row().label), message="Prefetch never painted"
+        )
+        row().focus()
+        await pilot.pause()
+        hold["on"] = True
+        await pilot.press("enter")
+
+        def parked() -> bool:
+            shells = screen.query("#library-collections-reader-shell")
+            return (
+                bool(shells)
+                and screen._library_collections_focus_retry is not None
+                and screen.focused is shells.first().library_grip
+            )
+
+        await _wait_for_condition(
+            pilot,
+            parked,
+            message=lambda: f"Restore never parked on the grip; focus={focused_id()}",
+        )
+        shell = screen.query_one("#library-collections-reader-shell")
+        if window_action == "user_focuses_other_grip":
+            screen.set_focus(shell.items_grip)
+            await pilot.pause()
+        else:
+            await screen._select_library_rail_row("browse-notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen.query("#library-collections-reader-shell")
+                and not screen._recompose_required,
+                message="Notes never replaced Collections",
+            )
+        user_focus = screen.focused
+        hold["on"] = False
+        screen._sync_library_collections_reader_layout_from_shell()
+        for _ in range(3):
+            await pilot.pause()
+
+        assert focused_id() != "library-row-browse-collections"
+        assert screen._library_collections_focus_retry is None
+        if window_action == "user_focuses_other_grip":
+            # The shell reopens the Items pane the user's grip names and may
+            # hand focus into it; it must stay on that side, not the rail row.
+            assert screen.focused is shell.items_grip or shell.items in (
+                screen.focused.ancestors_with_self
+            ), screen.focused
+            return
+        assert screen.focused is user_focus
+
+        # Entering Collections later settles on its own: no stale retry.
+        row().focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-collections-work"))
+            and screen.query_one(
+                "#library-collections-work"
+            ).presentation.state.loaded_detail
+            is not None
+            and not any(
+                worker.group == "library_collections_capture_entry"
+                and not worker.is_finished
+                for worker in screen.app.workers
+            ),
+            message="Collections never settled after Notes",
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert focused_id() == "library-row-browse-collections"
+        assert screen._library_collections_focus_retry is None

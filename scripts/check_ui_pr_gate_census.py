@@ -1069,6 +1069,11 @@ MINIMUM_FILES = 2030
 # TASK-40328 review r14ls-rev1 (2026-11-13): append the cancelled pane-repaint
 # node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2141
+MINIMUM_FILES = 2135
+MINIMUM_FILES = 2031
+# TASK-40328 review r14ls-rev3 (2026-11-13): append the focus-retry guard node
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2142
 
 
 def read_census(path: Path) -> list[str]:

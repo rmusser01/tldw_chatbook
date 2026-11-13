@@ -3081,3 +3081,6 @@ Tests/UI/test_library_collection_reader_journeys.py::test_rail_press_recomposes_
 # TASK-40328 review r14ls-rev1 (2026-11-13): a pane repaint cancelled
 # mid-recompose is rebuilt by the next, identical one.
 Tests/UI/test_library_collection_reader_journeys.py::test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next
+# TASK-40328 review r14ls-rev3 (2026-11-13): the Collections first-visit
+# focus retry never moves a user's own focus.
+Tests/UI/test_library_collection_reader_journeys.py::test_collections_focus_retry_never_moves_a_users_own_focus
