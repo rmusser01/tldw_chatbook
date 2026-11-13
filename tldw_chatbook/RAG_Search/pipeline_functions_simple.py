@@ -25,6 +25,7 @@ from ..Chat.rag_scope import (
     media_id_params,
     note_id_params,
 )
+from ..Backup_Recovery.participants import run_finite_local_worker
 from .pipeline_types import SearchResult
 from .local_citation_capture import (
     FINAL_SCORE_KIND_KEY,
@@ -199,9 +200,11 @@ async def search_media_fts5(
         # byte-identical to before this parameter existed.
         search_kwargs["media_ids_filter"] = id_allowlist
 
-    # Search media database
+    # Search media database. Every store read here runs through
+    # run_finite_local_worker (TASK-34100.16.1 review v5r2): a bare executor
+    # read keeps a pool-thread connection a backup's local pause cannot revoke.
     media_results = await asyncio.to_thread(
-        app.media_db.search_media_db, **search_kwargs
+        run_finite_local_worker, app.media_db.search_media_db, **search_kwargs
     )
 
     # Extract results list
@@ -216,7 +219,7 @@ async def search_media_fts5(
     keywords_map = {}
     if media_ids and keyword_filter:
         keywords_map = await asyncio.to_thread(
-            app.media_db.fetch_keywords_for_media_batch, media_ids
+            run_finite_local_worker, app.media_db.fetch_keywords_for_media_batch, media_ids
         )
 
     # TASK-407: search_media_db's broad row carries no ``content`` key (full
@@ -229,6 +232,7 @@ async def search_media_fts5(
     content_map: Dict[int, str] = {}
     if media_ids:
         content_map = await asyncio.to_thread(
+            run_finite_local_worker,
             app.media_db.fetch_content_prefixes_for_media_batch,
             media_ids,
             _MEDIA_SNIPPET_PREFIX_CHARS,
@@ -347,13 +351,17 @@ async def search_conversations_fts5(
 
     logger.debug("RAG retrieval starting; source=conversations; search=fts5")
     conv_results = await asyncio.to_thread(
-        db.search_conversations_by_content, search_query=query, limit=limit * 2
+        run_finite_local_worker,
+        db.search_conversations_by_content,
+        search_query=query,
+        limit=limit * 2,
     )
 
     # task-260: one batched query for all matched conversations' context
     # messages (was one query per conversation), and text-only snippets
     # never fetch image BLOBs.
     messages_by_conv = await asyncio.to_thread(
+        run_finite_local_worker,
         db.get_messages_for_conversations_batch,
         conversation_ids=[conv["id"] for conv in conv_results],
         limit_per_conversation=5,
@@ -441,7 +449,11 @@ async def search_notes_fts5(
     logger.debug("RAG retrieval starting; source=notes; search=fts5")
 
     note_results = await asyncio.to_thread(
-        db.search_notes, search_term=query, limit=limit, id_allowlist=id_allowlist
+        run_finite_local_worker,
+        db.search_notes,
+        search_term=query,
+        limit=limit,
+        id_allowlist=id_allowlist,
     )
 
     results = []
