@@ -8,7 +8,6 @@ from textual import on
 from textual.events import DescendantFocus, Key
 from textual.widgets import Input, Select
 
-from ...Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
 from ..workbench_focus import WorkbenchPaneTarget
 from .library_adaptive_reader_shell import (
     AdaptiveReaderShellResized,
@@ -16,6 +15,7 @@ from .library_adaptive_reader_shell import (
     PaneToggleRequested,
 )
 from .library_artifacts_widgets import ArtifactItems, ArtifactWork
+from .library_rail import LIBRARY_RAIL_FOCUS_TARGET
 
 if TYPE_CHECKING:
     from ...UI.Library_Modules.library_artifacts_controller import (
@@ -55,15 +55,7 @@ class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
     def workbench_focus_targets(self) -> tuple[WorkbenchPaneTarget, ...]:
         """Cycle Library, Items and reader, using grips for collapsed panes."""
         targets = (
-            WorkbenchPaneTarget(
-                "library-rail",
-                (
-                    "library-search-input",
-                    f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
-                    "library-rail-explore-all",
-                    "library-rail-collapse",
-                ),
-            )
+            LIBRARY_RAIL_FOCUS_TARGET
             if self.library.display
             else WorkbenchPaneTarget(
                 "library-artifacts-library-grip", ("library-artifacts-library-grip",)

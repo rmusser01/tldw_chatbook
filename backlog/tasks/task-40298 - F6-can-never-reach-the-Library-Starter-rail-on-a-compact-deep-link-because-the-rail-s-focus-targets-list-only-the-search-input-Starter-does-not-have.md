@@ -4,7 +4,7 @@ title: "F6 can never reach the Library Starter rail on a compact deep link, beca
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 05:40'
+updated_date: '2026-11-13 07:20'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -56,3 +56,5 @@ Premise held on base 26b2e677dd: every route-specific F6 tuple (Media, Notes, Pr
 - Files: `UI/Screens/library_screen.py`, `Tests/UI/test_library_shell.py`, `Tests/Architecture/test_screen_size_ratchet.py`, `scripts/library_shell_push_deselect.txt`, `Docs/User_Guide/library.md`.
 
 Covering run (shared by the stream's five tasks, final tree): 58 Library UI files that reference the changed seams (`test_library_shell.py` whole, side-by-side, canvas-sync defects, choice strips, multiselect, honesty, workbench focus, screen navigation and 50 more), `-n 4`, load 42-66: 2023 passed, 863 failed. Every failing function was re-run on the head tree and on the base source (26b2e677dd, same tests): of those 871 nodes 850 fail on head and 845 on base, almost all the local RecoveryRequired wall for plain Tests/UI files plus the deselected nodes owned by TASK-32503/34000.60/40296/40299. Head-only reds re-checked: `test_focus_library_list_entry_falls_back_to_first_row_outside_active_selection` (fake rows without `ancestors`; fixed in TASK-40293), `test_any_non_markdown_item_with_content_says_why_rendered_is_absent[video]` (3 of 3 green on head when re-run alone), `test_literal_history_restore_keeps_kind_definition_and_guards` (red 1-3 of 3 params on base too), and four nodes that passed on re-run. `Tests/Architecture` Library wiring files: 49 passed (serial).
+
+**Fix round 1 (review r14lf-rev1).** The Artifacts route built its own identical copy of the rail target. The one constant, `LIBRARY_RAIL_FOCUS_TARGET`, now lives in `Widgets/Library/library_rail.py`, the rail's own module, and both `LibraryScreen`'s seven tuples and `LibraryArtifactsReaderShell.workbench_focus_targets` use it. `library_screen.py` drops its class copy: 38185 -> 38175 lines (row lowered). The Starter node and `test_library_artifacts_focus.py` pass.

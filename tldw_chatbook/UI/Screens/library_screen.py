@@ -453,6 +453,7 @@ from ...Widgets.Library import (
     skill_editor_warning_lines,
 )
 from ...Widgets.Library.library_rail import (
+    LIBRARY_RAIL_FOCUS_TARGET,
     LibraryDetailsRow,
     library_db_size_rows,
     library_diagnostics_disclosure,
@@ -1434,23 +1435,12 @@ class LibraryScreen(BaseAppScreen):
     #: ``focus_relative_workbench_pane`` idiom, per personas). The rail's
     #: preferred focus is its search box; the canvas's is the hub's first
     #: action, which exists only on the landing.
-    #: TASK-40298: one rail target for every route; a Starter rail has no
-    #: search box, so F6 falls through to its Import, then Explore, rows.
-    _LIBRARY_RAIL_FOCUS_TARGET = WorkbenchPaneTarget(
-        "library-rail",
-        (
-            "library-search-input",
-            f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
-            "library-rail-explore-all",
-            "library-rail-collapse",
-        ),
-    )
     _WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget(
             "library-rail-handle",
             ("library-rail-open",),
         ),
-        _LIBRARY_RAIL_FOCUS_TARGET,
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget(
             "library-emergency-return",
             ("library-emergency-return",),
@@ -1481,7 +1471,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _CONVERSATION_WORKBENCH_FOCUS_TARGETS = (
-        _LIBRARY_RAIL_FOCUS_TARGET,
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-conversations-filter",)),
         WorkbenchPaneTarget(
             "library-conversation-reader",
@@ -1492,7 +1482,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _COLLECTIONS_WORKBENCH_FOCUS_TARGETS = (
-        _LIBRARY_RAIL_FOCUS_TARGET,
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-collections-filter",)),
         WorkbenchPaneTarget(
             "library-collections-work",
@@ -1503,7 +1493,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _MEDIA_WORKBENCH_FOCUS_TARGETS = (
-        _LIBRARY_RAIL_FOCUS_TARGET,
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-media-filter",)),
         WorkbenchPaneTarget(
             "library-media-viewer",
@@ -1522,7 +1512,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _NOTES_WORKBENCH_FOCUS_TARGETS = (
-        _LIBRARY_RAIL_FOCUS_TARGET,
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-notes-filter",)),
         WorkbenchPaneTarget(
             "library-note-work-pane",
@@ -1535,7 +1525,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _PROMPTS_WORKBENCH_FOCUS_TARGETS = (
-        _LIBRARY_RAIL_FOCUS_TARGET,
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-prompts-filter",)),
         WorkbenchPaneTarget(
             "library-prompt-work-pane",
@@ -1543,7 +1533,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _SKILLS_WORKBENCH_FOCUS_TARGETS = (
-        _LIBRARY_RAIL_FOCUS_TARGET,
+        LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", (LIBRARY_SKILLS_FILTER_ID,)),
         WorkbenchPaneTarget(
             "library-skill-work-pane",
@@ -17344,7 +17334,7 @@ class LibraryScreen(BaseAppScreen):
                         self.call_after_refresh(
                             self._focus_library_control, focus_identity
                         )
-                    else:  # TASK-40293: the Reader's focus goes with it.
+                    else:  # TASK-40293: land focus the reset strands.
                         self._arm_library_list_entry_focus()
                 return
         if (
