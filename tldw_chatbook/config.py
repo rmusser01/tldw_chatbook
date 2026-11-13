@@ -3870,8 +3870,8 @@ API_MODELS_BY_PROVIDER = {
         "llama3-70b-8192",
         "llama3-8b-8192",
     ],
-    # TASK-34100.2 AC#6: every id here answered a 1-output-token
-    # generateContent call on 2026-10-03; the rolling alias leads.
+    # TASK-34100.2 AC#6, re-checked 2026-11-12: every id here answered a
+    # 1-output-token generateContent call that day; the shipped default leads.
     "Google": [
         "gemini-flash-lite-latest",
         "gemini-3.5-flash",

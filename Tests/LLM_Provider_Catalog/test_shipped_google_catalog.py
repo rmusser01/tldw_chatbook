@@ -15,7 +15,6 @@ answer a 1-output-token generate call today -- is
 
 from __future__ import annotations
 
-from tldw_chatbook import config
 from tldw_chatbook.config import (
     API_MODELS_BY_PROVIDER,
     DEFAULT_CONFIG_FROM_TOML,
@@ -55,6 +54,17 @@ def test_the_shipped_google_catalog_lists_no_retired_id() -> None:
 
 
 def test_no_code_fallback_names_a_retired_gemini_id() -> None:
+    """The code fallbacks a Gemini send can reach name no pinned id.
+
+    Review v5r4 (G2C-R4-4): the scan covered only ``RETIRED_GEMINI_IDS``, so
+    a hard-coded ``"gemini-flash-latest"`` fallback could come back and stay
+    green; it now covers ``NOT_ANSWERING_GEMINI_IDS`` too. Its config.py
+    clause (a quoted id after ``"google_model"``) matched nothing since the
+    legacy ``google_generative_api`` dict that held that fallback was
+    removed, so it is replaced: config.py's one sent Google fallback is
+    ``DEFAULT_GOOGLE_CHAT_MODEL`` (pinned above), and both handlers must
+    fall back to that name, not to a literal.
+    """
     from pathlib import Path
 
     from tldw_chatbook.LLM_Calls import LLM_API_Calls, Summarization_General_Lib
@@ -62,23 +72,18 @@ def test_no_code_fallback_names_a_retired_gemini_id() -> None:
     def source(module: object) -> str:
         return Path(module.__file__).read_text(encoding="utf-8")  # type: ignore[attr-defined]
 
+    modules = (
+        ("LLM_API_Calls.py", source(LLM_API_Calls)),
+        ("Summarization_General_Lib.py", source(Summarization_General_Lib)),
+    )
     # chat_with_google's and the summarizer's model fallbacks: any quoted
-    # retired id in these modules is a fallback that would be sent.
+    # pinned id in these modules is a fallback that would be sent.
     named = sorted(
         f"{name}: {model_id}"
-        for name, text in (
-            ("LLM_API_Calls.py", source(LLM_API_Calls)),
-            ("Summarization_General_Lib.py", source(Summarization_General_Lib)),
-        )
-        for model_id in RETIRED_GEMINI_IDS
+        for name, text in modules
+        for model_id in RETIRED_GEMINI_IDS | NOT_ANSWERING_GEMINI_IDS
         if f'"{model_id}"' in text
-    )
-    # config.py also carries a capability table that merely DESCRIBES old
-    # models; only its legacy [API] google_model fallback is ever sent.
-    named += sorted(
-        f"config.py: {model_id}"
-        for model_id in RETIRED_GEMINI_IDS
-        if f'"google_model", "{model_id}"' in source(config)
     )
 
     assert named == []
+    assert all("DEFAULT_GOOGLE_CHAT_MODEL" in text for _name, text in modules)
