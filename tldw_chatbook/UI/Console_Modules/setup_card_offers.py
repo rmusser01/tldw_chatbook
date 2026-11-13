@@ -107,8 +107,8 @@ async def apply_env_key_offer(screen: ChatScreen, action_id: str) -> bool:
             markup=False,  # a provider's display name is text, never markup
         )
         return False
-    # Review F2: every reader of the app's config snapshot (Library analysis,
-    # the Media panel, Reader Generate) sees the new chat default now.
+    # Review F2: every reader of the app's config snapshot (Library's
+    # analyze-after-import, Reader Generate) sees the new chat default now.
     mirror_provider_setup_mutation(
         getattr(screen.app_instance, "app_config", None), mutation
     )

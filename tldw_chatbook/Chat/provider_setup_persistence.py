@@ -750,9 +750,8 @@ def mirror_provider_setup_mutation(
     """Apply a persisted provider-setup mutation to an in-memory config snapshot.
 
     TASK-34100.2 review F2: the app's ``app_config`` is a snapshot taken at
-    launch; every reader of it (Library's analyze-after-import, the Media
-    panel, Reader Generate) kept the old chat default after a commit until a
-    relaunch. Setup's own commit mirrors its values the same way
+    launch; every reader of it (Library's analyze-after-import, Reader
+    Generate) kept the old chat default after a commit until a relaunch. Setup's own commit mirrors its values the same way
     (``FirstRunSetupWizard._mirror_into_app_config``). Call it only after the
     mutation was fully applied on disk.
 

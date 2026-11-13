@@ -8,7 +8,7 @@ the app's *existing* configured analysis default into something the
 pipeline can act on:
 
 * the provider comes from ``[analysis_defaults] provider`` -- the same
-  config the Media viewer's analysis panel already reads as its default --
+  config the Reader's Generate reads as its default --
   and, while ``[analysis_defaults]`` provider/model still equal the shipped
   template, from ``[chat_defaults]`` instead (TASK-34100.2 AC#8,
   ``effective_analysis_defaults``): setup writes only the chat default, so
