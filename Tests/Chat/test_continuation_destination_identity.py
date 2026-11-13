@@ -1,15 +1,20 @@
-"""TASK-34100.3 (gap-02): continuations match the destination the gateway records.
+"""TASK-34100.3 (gap-02): continuations settle against the gateway's destination.
 
 The durable dispatch row stores the provider destination exactly as
 ``resolve_console_destination`` computes it: a credential-free ORIGIN such as
-``https://api.moonshot.ai``. A provider continuation carries the full base URL
-it was sent to (``https://api.moonshot.ai/v1``). The repository used to compare
-the two for equality, so every saved-chat continuation conflicted: a Moonshot
-reasoning reply failed terminal settlement, and a tool batch failed its
-handoff. The existing store tests passed only because they hand-built a
-destination whose identity already carried the ``/v1`` path.
+``https://api.moonshot.ai`` for disclosure, plus (since dev's TASK-35582) the
+continuation tuple -- execution provider, protocol and the full base URL
+(``https://api.moonshot.ai/v1``). A provider continuation carries that full
+base URL. The repository used to compare the continuation's base URL with the
+ORIGIN, so every saved-chat continuation conflicted: a Moonshot reasoning
+reply failed terminal settlement, and a tool batch failed its handoff. The
+store tests passed only because they hand-built a destination whose identity
+already carried the ``/v1`` path.
 
-Every test here builds the destination with the real resolver.
+TASK-35582 fixed the comparison on dev (it matches the frozen continuation
+tuple, not the origin); this branch's own fix was dropped in the rebase. These
+tests stay as the regression guard the defect called for: every destination
+here is built with the REAL resolver, never by hand.
 """
 
 from __future__ import annotations
@@ -20,6 +25,8 @@ from pathlib import Path
 import pytest
 
 from Tests.Chat.test_console_dispatch_continuation_handoff import (
+    _DEEPSEEK_RUN_TARGET,
+    _MOONSHOT_RUN_TARGET,
     _checkpoint_count,
     _continuation,
     _deepseek_acceptance,
@@ -29,16 +36,16 @@ from Tests.Chat.test_console_dispatch_continuation_handoff import (
 )
 from Tests.Chat.test_console_dispatch_recovery import _database, _insert, _start
 from tldw_chatbook.Agents.agent_models import FinalContinuation
-from tldw_chatbook.Chat.console_library_destination import (
-    console_endpoint_identity,
-    resolve_console_destination,
-)
+from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
     parse_provider_continuation_json,
 )
+
+#: The wire protocol each provider's continuation is recorded under.
+_PROTOCOLS = {"moonshot": "chat_completions", "deepseek": "responses"}
 
 
 def _real_destination(provider: str, model: str, base_url: str):
@@ -50,6 +57,7 @@ def _real_destination(provider: str, model: str, base_url: str):
             ready=True,
             readiness_key=provider,
             execution_key=provider,
+            continuation_protocol=_PROTOCOLS.get(provider),
         )
     )
 
@@ -62,8 +70,11 @@ def _with_real_destination(acceptance, provider: str, model: str, base_url: str)
 
 
 def _kimi_final(base_url: str = "https://api.moonshot.ai/v1"):
+    # Host-bound (schema 3): the Console adapter stamps the raw selection on
+    # every candidate before the store sees it (TASK-35582).
     return ProviderContinuationCheckpoint(
-        schema_version=1,
+        schema_version=3,
+        selected_provider="moonshot",
         checkpoint_revision=1,
         provider="moonshot",
         protocol="chat_completions",
@@ -72,6 +83,11 @@ def _kimi_final(base_url: str = "https://api.moonshot.ai/v1"):
         state="complete",
         rounds=(ContinuationRound("answer", ("private reasoning",), ()),),
     )
+
+
+def _kimi_target(base_url: str = "https://api.moonshot.ai/v1"):
+    """The host-captured run target for a Kimi send to ``base_url``."""
+    return replace(_MOONSHOT_RUN_TARGET, api_base_url=base_url)
 
 
 def _started_store(tmp_path: Path, acceptance_for):
@@ -97,7 +113,8 @@ def test_reasoning_reply_settles_against_the_gateway_destination(tmp_path) -> No
     final = _kimi_final()
 
     store.persist_provider_continuation_event(
-        FinalContinuation(_event().context, final, None, "answer")
+        FinalContinuation(_event().context, final, None, "answer"),
+        continuation_target=_kimi_target(),
     )
 
     row = db.get_message_by_id("assistant-1")
@@ -119,7 +136,9 @@ def test_tool_batch_hands_off_against_the_gateway_destination(tmp_path) -> None:
         ),
     )
 
-    store.persist_provider_continuation_event(_event())
+    store.persist_provider_continuation_event(
+        _event(), continuation_target=_DEEPSEEK_RUN_TARGET
+    )
 
     row = db.get_message_by_id("assistant-1")
     assert row["assistant_generation_state"] == "continuation_active"
@@ -140,6 +159,8 @@ def test_tool_batch_hands_off_against_the_gateway_destination(tmp_path) -> None:
     ],
 )
 def test_a_continuation_to_another_origin_still_conflicts(tmp_path, base_url) -> None:
+    """The frozen destination still binds: a send whose run target moved to
+    another origin, port or scheme cannot settle the accepted dispatch."""
     db, store, session_id, checkpoint = _started_store(
         tmp_path,
         lambda conversation_id: _with_real_destination(
@@ -150,56 +171,10 @@ def test_a_continuation_to_another_origin_still_conflicts(tmp_path, base_url) ->
         ),
     )
 
-    with pytest.raises(RuntimeError, match="terminal settlement failed"):
+    with pytest.raises(RuntimeError, match="destination mismatch"):
         store.persist_provider_continuation_event(
-            FinalContinuation(_event().context, _kimi_final(base_url), None, "answer")
-        )
-
-    assert db.get_message_by_id("assistant-1")["provider_continuation_json"] is None
-    assert _checkpoint_count(db) == 1
-    db.close()
-
-
-def test_endpoint_identity_is_the_resolver_identity() -> None:
-    """One function names the identity; the resolver and the match share it."""
-    for base_url in (
-        "https://api.moonshot.ai/v1",
-        "https://API.Moonshot.ai/v1/",
-        "http://127.0.0.1:9099/v1",
-        "http://[::1]:8080/v1",
-        "unix:///tmp/llama.sock",
-    ):
-        assert console_endpoint_identity(base_url) == (
-            _real_destination("p", "m", base_url).endpoint_identity
-        )
-    assert console_endpoint_identity("not a url") is None
-    assert console_endpoint_identity(None) is None
-
-
-def test_a_path_bearing_row_identity_is_not_a_match(tmp_path) -> None:
-    """Only the identity the resolver records can match (review F4).
-
-    The match used to accept the continuation's raw base URL as an alternative
-    identity. ``resolve_console_destination`` has recorded origin-only
-    identities since before the match existed, so no real row can hold
-    ``https://api.moonshot.ai/v1``; that branch only kept hand-built fixtures
-    green, which is how gap-02 hid. A row carrying such an identity is not one
-    this app writes, and settlement must refuse it.
-    """
-    db, store, session_id, _ = _started_store(
-        tmp_path,
-        lambda conversation_id: replace(
-            _moonshot_acceptance(conversation_id),
-            resolved_destination=replace(
-                _real_destination("moonshot", "kimi-k3", "https://api.moonshot.ai/v1"),
-                endpoint_identity="https://api.moonshot.ai/v1",
-            ),
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="terminal settlement failed"):
-        store.persist_provider_continuation_event(
-            FinalContinuation(_event().context, _kimi_final(), None, "answer")
+            FinalContinuation(_event().context, _kimi_final(base_url), None, "answer"),
+            continuation_target=_kimi_target(base_url),
         )
 
     assert db.get_message_by_id("assistant-1")["provider_continuation_json"] is None

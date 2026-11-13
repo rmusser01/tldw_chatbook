@@ -26,6 +26,7 @@ from Tests.Chat.test_console_dispatch_continuation_handoff import (
 )
 from Tests.Chat.test_continuation_destination_identity import (
     _kimi_final,
+    _kimi_target,
     _started_store,
     _with_real_destination,
 )
@@ -93,10 +94,7 @@ def _assistant_rows(database, session) -> list[dict]:
     ]
 
 
-def test_settlement_conflict_leaves_the_dispatch_to_ordinary_completion(
-    tmp_path,
-) -> None:
-    """terminal_settlement_failed: the atomic settlement rolled back whole."""
+def _streaming_dispatch(tmp_path):
     db, store, session_id, _ = _started_store(
         tmp_path,
         lambda conversation_id: _with_real_destination(
@@ -111,19 +109,10 @@ def test_settlement_conflict_leaves_the_dispatch_to_ordinary_completion(
     assistant.status = "streaming"
     assistant.assistant_generation_state = "streaming"
     assistant.content = REPLY
+    return db, store, session_id, before
 
-    # Another origin is a real conflict: the repository refuses to settle.
-    with pytest.raises(RuntimeError) as error:
-        store.persist_provider_continuation_event(
-            FinalContinuation(
-                _event().context,
-                _kimi_final("https://api.moonshot.cn/v1"),
-                None,
-                REPLY,
-            )
-        )
 
-    assert _unwritten_code(error) == "terminal_settlement_failed"
+def _assert_ordinary_completion_settles(db, store, session_id, before) -> None:
     after = db.get_message_by_id("assistant-1")
     assert after["provider_continuation_json"] is None
     assert after["version"] == before["version"]
@@ -143,6 +132,70 @@ def test_settlement_conflict_leaves_the_dispatch_to_ordinary_completion(
     ) == (REPLY, "complete", None)
     assert _checkpoint_count(db) == 0
     assert store.dispatch_recovery_for_session(session_id) is None
+
+
+def test_destination_mismatch_leaves_the_dispatch_to_ordinary_completion(
+    tmp_path,
+) -> None:
+    """destination_mismatch: the frozen destination refuses before any write.
+
+    Since dev's TASK-35582 a run whose target moved to another origin is
+    refused by the store's binding check, before settlement is attempted.
+    """
+    db, store, session_id, before = _streaming_dispatch(tmp_path)
+
+    with pytest.raises(RuntimeError) as error:
+        store.persist_provider_continuation_event(
+            FinalContinuation(
+                _event().context,
+                _kimi_final("https://api.moonshot.cn/v1"),
+                None,
+                REPLY,
+            ),
+            continuation_target=_kimi_target("https://api.moonshot.cn/v1"),
+        )
+
+    assert _unwritten_code(error) == "destination_mismatch"
+    _assert_ordinary_completion_settles(db, store, session_id, before)
+    db.close()
+
+
+def test_settlement_conflict_leaves_the_dispatch_to_ordinary_completion(
+    tmp_path, monkeypatch
+) -> None:
+    """terminal_settlement_failed: the atomic settlement rolled back whole.
+
+    The repository refuses the continuation settlement once (a lost CAS race);
+    nothing is written, and the ordinary completion then settles the turn.
+    """
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchResultStatus,
+        ConsoleDispatchWriteResult,
+    )
+
+    db, store, session_id, before = _streaming_dispatch(tmp_path)
+    repository = store.persistence.console_dispatch_repository
+    settle = repository.settle_with_assistant
+
+    def refuse_the_continuation_settlement(settlement):
+        if settlement.provider_continuation_json is not None:
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.CONFLICT, None, None, None
+            )
+        return settle(settlement)
+
+    monkeypatch.setattr(
+        repository, "settle_with_assistant", refuse_the_continuation_settlement
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        store.persist_provider_continuation_event(
+            FinalContinuation(_event().context, _kimi_final(), None, REPLY),
+            continuation_target=_kimi_target(),
+        )
+
+    assert _unwritten_code(error) == "terminal_settlement_failed"
+    _assert_ordinary_completion_settles(db, store, session_id, before)
     db.close()
 
 
@@ -160,7 +213,8 @@ def test_missing_create_operation_writes_no_owner_row(tmp_path, monkeypatch) -> 
                     _kimi_final(),
                     None,
                     REPLY,
-                )
+                ),
+                continuation_target=_kimi_target(),
             )
 
         assert _unwritten_code(error) == "create_unavailable"
@@ -188,7 +242,8 @@ def test_missing_create_operation_writes_no_owner_row(tmp_path, monkeypatch) -> 
 
 def _active_batch() -> ProviderContinuationCheckpoint:
     return ProviderContinuationCheckpoint(
-        schema_version=1,
+        schema_version=3,
+        selected_provider="moonshot",
         checkpoint_revision=1,
         provider="moonshot",
         protocol="chat_completions",
@@ -223,7 +278,8 @@ def test_version_conflict_is_raised_before_the_update(tmp_path) -> None:
                 context=_context(owner.id),
                 checkpoint=_active_batch(),
                 expected_checkpoint_revision=None,
-            )
+            ),
+            continuation_target=_kimi_target(),
         )
         stored = database.get_message_by_id(owner.id)
         # Another writer moves the row on behind this store's back.
@@ -238,7 +294,8 @@ def test_version_conflict_is_raised_before_the_update(tmp_path) -> None:
 
         with pytest.raises(RuntimeError) as error:
             store.persist_provider_continuation_event(
-                FinalContinuation(_context(owner.id), _kimi_final(), 1, REPLY)
+                FinalContinuation(_context(owner.id), _kimi_final(), 1, REPLY),
+                continuation_target=_kimi_target(),
             )
 
         assert _unwritten_code(error) == "version_conflict"

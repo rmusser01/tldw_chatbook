@@ -22,7 +22,7 @@ import threading
 
 import pytest
 
-from Tests.Chat.test_continuation_destination_identity import _kimi_final
+from Tests.Chat.test_continuation_destination_identity import _kimi_final, _kimi_target
 from Tests.Chat.test_continuation_unwritten_store_failures import (
     _assistant_rows,
     _context,
@@ -73,7 +73,8 @@ def test_a_flush_in_the_create_window_leaves_one_complete_row(
         flushed = _flush_inside_the_create_window(store, owner.id, monkeypatch)
 
         store.persist_provider_continuation_event(
-            FinalContinuation(_context(owner.id), _kimi_final(), None, REPLY)
+            FinalContinuation(_context(owner.id), _kimi_final(), None, REPLY),
+            continuation_target=_kimi_target(),
         )
 
         assert flushed == [True], "the flush must really have inserted a row"
@@ -144,7 +145,8 @@ def test_a_worker_flush_during_the_create_waits_for_it(tmp_path, monkeypatch) ->
         )
 
         store.persist_provider_continuation_event(
-            FinalContinuation(_context(owner.id), _kimi_final(), None, REPLY)
+            FinalContinuation(_context(owner.id), _kimi_final(), None, REPLY),
+            continuation_target=_kimi_target(),
         )
         worker.join(10)
 
@@ -166,7 +168,8 @@ def test_without_a_flush_the_continuation_creates_the_row_itself(tmp_path) -> No
         store.append_stream_chunk(owner.id, PARTIAL)
 
         store.persist_provider_continuation_event(
-            FinalContinuation(_context(owner.id), _kimi_final(), None, REPLY)
+            FinalContinuation(_context(owner.id), _kimi_final(), None, REPLY),
+            continuation_target=_kimi_target(),
         )
 
         rows = _assistant_rows(database, session)
