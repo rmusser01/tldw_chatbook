@@ -1266,3 +1266,64 @@ def test_failed_verification_removes_only_the_account_the_restore_created(
     assert target.read_bytes() == data
     with pytest.raises(ProfileLockedError):
         _open_restored(staged, target, backend).list_records()
+
+
+@pytest.mark.parametrize(
+    ("case", "reason"),
+    [
+        ("record", "personal_context_keyring_unavailable"),
+        ("device_account", "personal_context_keyring_unavailable"),
+        ("neither", "personal_context_key_not_in_backup"),
+    ],
+)
+def test_isolated_restore_marks_the_copy_with_the_case_spec_row_names(
+    tmp_path, monkeypatch, case, reason
+):
+    """TASK-40136 AC#1/#5: an isolated copy has no keyring, so it is always marked
+    and nothing is written; ``key_not_in_backup`` only when the archive had no key
+    and no account on this device opens the copy."""
+    from tldw_chatbook.Personal_Context import recovery
+
+    staged, record, target, backend = _restore_case(tmp_path, monkeypatch, "named")
+    if case != "device_account":
+        backend.values.clear()
+    before, rows = dict(backend.values), _tables(staged)
+
+    recovery.stamp_restored_key(
+        staged,
+        record_value=record if case == "record" else None,
+        target=target,
+        logical_id=_KEY,
+        planned=recovery.RESTORE_LOCKED + ":" + reason + ":" + _KEY,
+        account="personal-context:recovery_" + "c" * 32,
+        isolated=True,
+    )
+
+    assert backend.values == before and _tables(staged) == rows
+    with closing(sqlite3.connect(staged)) as connection:
+        assert connection.execute("SELECT key_account FROM profile_meta").fetchone() == (
+            "recovery:setup_required:" + reason,
+        )
+
+
+@pytest.mark.parametrize("mode", ["replace", "isolated"])
+def test_a_locked_restore_is_acknowledged_before_staging_writes(tmp_path, mode):
+    """TASK-40136 AC#4: each case that will leave Personal Context locked needs
+    its acknowledgement; without it staging refuses before writing anything."""
+    from threading import Event
+
+    from Tests.Backup_Recovery.test_restore_data_groups import _personal_context_archive
+    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
+    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
+    from tldw_chatbook.Backup_Recovery.staging import stage_restore
+
+    archive = _personal_context_archive(tmp_path, b"x")
+    issue = (
+        "personal_context_restore_locked:personal_context_key_not_in_backup:" + _KEY
+    )
+    plan = RestorePlan(archive.digest, mode, (), (), (), "", issues=(issue,))
+    work = tmp_path / "work"
+    with pytest.raises(CaptureReviewRequired) as refused:
+        stage_restore(archive, plan, work, Event())
+    assert refused.value.issues == ("credential_" + issue,)
+    assert not work.exists()

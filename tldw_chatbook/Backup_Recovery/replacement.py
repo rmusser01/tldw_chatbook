@@ -1653,6 +1653,8 @@ def replace(
                 issue
                 for issue in plan.acknowledged_credential_issues
                 if issue != "credential_isolated_retention_required"
+                # TASK-40136: locked-restore cases are not safety-copy omissions.
+                and not issue.startswith("credential_personal_context_restore_locked:")
             ),
         )
         reader._check(cancel)

@@ -4058,16 +4058,24 @@ selectable `personal_context` group ("Personal Context").
 | the profile key (`profile_meta.key_account` names its keyring account) | — | `include`/`rollback` only: a `personal_context` credential record (service `tldw_chatbook.personal_context`, not remappable), written only after the key authenticates the captured copy's manifest; `credential_manual_recovery_required` like the citation key. An empty reference, a removed profile or a recovery marker carries no record. `exclude` (the default) never reads it and never rewrites the database: the reference is not a secret, and the preview says the key is not in the backup. |
 | link keys (device wrapping key, staged integrity keys, dataset staging keys) | — | never captured (decision 5); `include` mode discloses them as `credential_personal_context_link_keys_excluded:<id>`, like skill-trust keys |
 
-**Restore (TASK-40135).** A replace restore publishes the repository; an isolated
-restore still leaves it out (`personal_context_not_restored`, TASK-40136 changes
-that). The plan carries, per repository, `personal_context_restore_readable:<id>`
-or `personal_context_restore_locked:<reason>:<id>` (`personal_context_key_not_in_backup`,
-`personal_context_key_install_unavailable`), computed from the archive's own copy:
+**Restore (TASK-40135, TASK-40136).** Every restore publishes the repository. The
+plan carries, per repository, `personal_context_restore_readable:<id>` or
+`personal_context_restore_locked:<reason>:<id>` (`personal_context_key_not_in_backup`,
+`personal_context_key_install_unavailable`, and for an isolated restore
+`personal_context_keyring_unavailable`; an isolated copy is always locked and uses
+`key_not_in_backup` only when the archive had no key and no account on this device
+opens the copy). Each locked case needs the acknowledgement
+`credential_personal_context_restore_locked:<reason>:<id>` before staging writes
+anything (allowed in isolated plans too; the safety copy's credential review
+ignores it). The marker's reason locks the repository on every start
+(`repository_keys._named_key_account`), and a stored key that does not
+authenticate the manifest head locks as `personal_context_key_mismatch`. The
+outcome is computed from the archive's own copy:
 the key is the archive's record, else the account the copy names on this device
 (the target path's legacy account for an empty reference), used only once it
 authenticates the copy's manifest head. Staging recomputes it and refuses a
 different result, then rewrites only `profile_meta.key_account` in the staged
-copy: a fresh, unused `personal-context:recovery_<hex>` account, or the marker
+copy, through the restricted candidate connection (`stamping_key_account`): a fresh, unused `personal-context:recovery_<hex>` account, or the marker
 `recovery:setup_required:<reason>` (a removed profile names nothing). No keyring
 entry is written while staging; `replacement._install_personal_context_keys`
 re-derives the key from the archive and writes it set-if-absent just before
@@ -4100,6 +4108,5 @@ Manual (inert) extraction never offers or writes credential material.
 | tldw_chatbook/Personal_Context/recovery.py | _Repository.validate | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only catalog validation and first-link check |
 | tldw_chatbook/Personal_Context/recovery.py | _archived_key | ZipFile | 1 | qualified | personal_context.repository; reads the sealed archive's own copy and key record to plan and recheck a restore (TASK-40135) |
 | tldw_chatbook/Personal_Context/recovery.py | _archived_key | connect_private_sqlite | 1 | qualified | personal_context.repository; in-memory image only, no file (TASK-40135) |
-| tldw_chatbook/Personal_Context/recovery.py | stamp_restored_key | connect_private_sqlite | 1 | qualified | personal_context.repository; staged candidate's key reference only (TASK-40135) |
 | tldw_chatbook/Personal_Context/recovery.py | verify_restored_key | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only check of the published copy (TASK-40135) |
 

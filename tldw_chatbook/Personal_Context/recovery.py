@@ -46,7 +46,6 @@ from tldw_chatbook.DB.recovery_operations import _SQLiteDeclaration
 OWNER = "personal_context.repository"
 LEAF = "tldw_chatbook_personal_context.db"
 FIRST_LINK_IN_PROGRESS = "personal_context_first_link_in_progress"
-NOT_RESTORED = "personal_context_not_restored"
 VERSION_QUERY = "SELECT version FROM personal_context_schema WHERE singleton = 1"
 REPOSITORY_SCHEMA_VERSION = 9
 
@@ -303,8 +302,11 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
 MARKER = "recovery:setup_required:"
 KEY_NOT_IN_BACKUP = "personal_context_key_not_in_backup"
 KEY_INSTALL_UNAVAILABLE = "personal_context_key_install_unavailable"
+KEYRING_UNAVAILABLE = "personal_context_keyring_unavailable"
 RESTORE_READABLE = "personal_context_restore_readable"
 RESTORE_LOCKED = "personal_context_restore_locked"
+# TASK-40136: each locked case is acknowledged before staging writes anything.
+LOCKED_ACKNOWLEDGEMENT = "credential_" + RESTORE_LOCKED + ":"
 KEY_UNVERIFIED = "personal_context_key_unverified"
 _RECOVERY_ACCOUNT = "personal-context:recovery_"
 
@@ -368,6 +370,29 @@ def restore_key(connection, *, record_value, target: Path, protector):
     return None, KEY_NOT_IN_BACKUP
 
 
+def _isolated(record_value, value, reason):
+    """An isolated copy has no keyring (decision 6): always locked, never written.
+
+    ``key_not_in_backup`` only when the archive had no key and no account on this
+    device opens the copy (spec Q2 row 1); otherwise "Restore with Replace" is true.
+    """
+    if value is None and reason is None:
+        return None, None
+    if record_value is None and value is None:
+        return None, KEY_NOT_IN_BACKUP
+    return None, KEYRING_UNAVAILABLE
+
+
+def unacknowledged_locks(plan) -> tuple[str, ...]:
+    """The locked-case acknowledgements a plan still needs (TASK-40136 AC#4)."""
+    return tuple(
+        code
+        for issue in plan.issues
+        if issue.startswith(RESTORE_LOCKED + ":")
+        if (code := "credential_" + issue) not in plan.acknowledged_credential_issues
+    )
+
+
 def _issue(value, reason, logical_id: str) -> str | None:
     """The plan line for one repository; its logical id keeps profiles apart."""
     if reason is not None:
@@ -381,7 +406,7 @@ def restore_account(candidate: Path, logical_id: str) -> str:
     return _RECOVERY_ACCOUNT + hashlib.sha256(seed).hexdigest()[:32]
 
 
-def _archived_key(archive, doc, logical_id: str, target: Path):
+def _archived_key(archive, doc, logical_id: str, target: Path, *, isolated=False):
     """``restore_key`` against the sealed archive's own copy and record."""
     row = next(row for row in doc.files if row.logical_id == logical_id)
     with zipfile.ZipFile(archive.path) as container:
@@ -411,15 +436,21 @@ def _archived_key(archive, doc, logical_id: str, target: Path):
     ) as connection:
         # An in-memory image cannot be in WAL mode; the bytes on disk are untouched.
         connection.deserialize(data[:18] + b"\x01\x01" + data[20:])
-        return restore_key(
+        found = restore_key(
             connection, record_value=record, target=target, protector=_device_protector()
         )
+    return _isolated(record, *found) if isolated else found
 
 
-def restore_plan_issue(archive, doc, logical_id: str, target: Path) -> str | None:
-    """What the plan says before a replace restore runs: readable or locked, and why."""
+def restore_plan_issue(
+    archive, doc, logical_id: str, target: Path, *, isolated: bool = False
+) -> str | None:
+    """What the plan says before a restore runs: readable or locked, and why."""
     try:
-        return _issue(*_archived_key(archive, doc, logical_id, target), logical_id)
+        return _issue(
+            *_archived_key(archive, doc, logical_id, target, isolated=isolated),
+            logical_id,
+        )
     except (OSError, KeyError, sqlite3.Error, zipfile.BadZipFile, json.JSONDecodeError):
         raise ValueError("personal_context_validation_unavailable") from None
 
@@ -432,6 +463,7 @@ def stamp_restored_key(
     logical_id: str,
     planned: str | None,
     account: str,
+    isolated: bool = False,
 ) -> None:
     """Rewrite a staged copy's key reference; nothing is written to the keyring.
 
@@ -440,16 +472,17 @@ def stamp_restored_key(
     ``key_account`` changes. A result other than the reviewed plan's refuses
     before any write.
     """
-    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
 
     protector = _device_protector()
-    with closing(
-        connect_private_sqlite("recovery.personal_context.repository", candidate)
-    ) as connection:
-        connection.execute("PRAGMA trusted_schema=OFF")
+    with open_recovery_validation(
+        OWNER, candidate, writable=True, with_restrictions=True
+    ) as (connection, restrictions):
         value, reason = restore_key(
             connection, record_value=record_value, target=target, protector=protector
         )
+        if isolated:
+            value, reason = _isolated(record_value, value, reason)
         if _issue(value, reason, logical_id) != planned:
             raise ValueError("personal_context_restore_changed")
         if value is None and reason is None:
@@ -460,11 +493,15 @@ def stamp_restored_key(
             raise ValueError("personal_context_key_account_in_use")
         else:
             reference = account
-        with connection:
-            connection.execute(
-                "UPDATE profile_meta SET key_account = ? WHERE singleton = 1",
-                (reference,),
-            )
+        restrictions.stamping_key_account = True
+        try:
+            with connection:
+                connection.execute(
+                    "UPDATE profile_meta SET key_account = ? WHERE singleton = 1",
+                    (reference,),
+                )
+        finally:
+            restrictions.stamping_key_account = False
 
 
 def install_restored_keys(archive, doc, plan, candidate: Path) -> None:

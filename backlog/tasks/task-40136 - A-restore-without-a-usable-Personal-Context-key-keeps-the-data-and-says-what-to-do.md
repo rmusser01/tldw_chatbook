@@ -1,7 +1,10 @@
 ---
 id: TASK-40136
 title: "A restore without a usable Personal Context key keeps the data and says what to do"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
+updated_date: '2026-11-13 17:15'
 created_date: 2026-11-10 17:13
 labels:
 - follow-up
@@ -62,3 +65,12 @@ The spec's Q2 table gives each case a named reason and the copy.
 - [ ] #6 After a replace restore with no secure keyring, a second replace restore from the same archive once a keyring is available makes the records readable
 - [ ] #7 The Personal Context User Guide troubleshooting table describes these states
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Repository: a `recovery:setup_required:<reason>` marker locks with that reason (`ProfileLockedError.reason_code`), so it survives a restart; a stored key that does not authenticate the manifest head at open locks as `personal_context_key_mismatch`. Integrity failures past the manifest are unchanged.
+2. Isolated restores publish the repository with the marker: `personal_context_key_not_in_backup` only when the archive had no key and no account on this device authenticates the copy (checked in the live process), else `personal_context_keyring_unavailable`. Nothing is written to the keyring.
+3. Plan: each locked case (`personal_context_restore_locked:<reason>:<id>`, both modes) needs the acknowledgement `credential_personal_context_restore_locked:<reason>:<id>` before staging writes anything; the restore review shows the cases with their copy (isolated restores included), and the safety copy's own credential review ignores these codes.
+4. Settings panel: per-reason locked copy from the spec, naming only restore/roll back through Backup & Restore, then Try again.
+5. Tests: repository reasons and restart, key mismatch, isolated plan/stage, acknowledgement refusal, end-to-end no-keyring replace then a second replace once a keyring exists, isolated restore end to end, panel copy; User Guide troubleshooting rows.
+

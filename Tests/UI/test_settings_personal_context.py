@@ -847,6 +847,56 @@ async def test_my_profile_named_states_are_safe_and_actionable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "copy"),
+    [
+        ("personal_context_key_not_in_backup", "this backup did not include its key"),
+        ("personal_context_keyring_unavailable", "can't open in a separately restored copy"),
+        ("personal_context_key_install_unavailable", "no secure keyring to hold its key"),
+        ("personal_context_key_mismatch", "belongs to a different copy of the profile"),
+        ("profile_locked", "Unlock secure key storage and try again."),
+    ],
+)
+async def test_locked_profile_says_why_and_offers_only_what_a_locked_profile_allows(
+    reason: str, copy: str
+) -> None:
+    """TASK-40136 AC#5: each locked reason has the spec's copy; restore cases
+    name only Backup & Restore and Try again (Remove and Start fresh refuse
+    while locked)."""
+    status = ProfileOperationalStatus(
+        state=ProfileOperationalState.LOCKED,
+        profile_present=True,
+        locked=True,
+        runtime_enabled=False,
+        reason_code=reason,
+    )
+    app = _build_test_app()
+    app._personal_context_service = _ProfileServiceStub(
+        PersonalContextSettingsSnapshot(status=status)
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        screen = _active_destination_screen(host)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        text = str(screen.query_one("#personal-context-locked-reason").renderable)
+        assert copy in text
+        assert screen.query("#personal-context-reload")
+        for absent in (
+            "#personal-context-finish-removal",
+            "#personal-context-start-fresh",
+            "#personal-context-create",
+        ):
+            assert not screen.query(absent)
+        if reason != "profile_locked":
+            assert "Unlock secure key storage" not in text
+
+
+@pytest.mark.asyncio
 async def test_profile_load_error_is_content_free() -> None:
     app = _build_test_app()
     app._personal_context_service = _ExplodingProfileService()

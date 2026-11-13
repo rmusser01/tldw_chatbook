@@ -43,6 +43,24 @@ def _removal_tag(keys: ProfileKeyMaterial, account: str) -> str:
     ).hexdigest()
 
 
+# TASK-40136: a restore's marker names why it stays locked, across restarts.
+RESTORE_MARKER = "recovery:setup_required:"
+RESTORE_REASONS = frozenset(
+    {
+        "personal_context_key_not_in_backup",
+        "personal_context_keyring_unavailable",
+        "personal_context_key_install_unavailable",
+    }
+)
+KEY_MISMATCH = "personal_context_key_mismatch"
+
+
+def _locked(message: str, reason: str) -> ProfileLockedError:
+    error = ProfileLockedError(message)
+    error.reason_code = reason
+    return error
+
+
 class RepositoryKeyCustody:
     """Key-account lookup, provisioning and removal for the repository."""
 
@@ -53,6 +71,10 @@ class RepositoryKeyCustody:
             return self._profile_ref
         if isinstance(stored, str) and KEY_ACCOUNT.fullmatch(stored):
             return stored
+        if isinstance(stored, str) and stored.startswith(RESTORE_MARKER):
+            reason = stored.removeprefix(RESTORE_MARKER)
+            if reason in RESTORE_REASONS:
+                raise _locked("Restored profile key is not set up.", reason)
         raise ProfileLockedError("Profile key account is invalid.")
 
     def _account_on(self, connection: sqlite3.Connection) -> str:
@@ -102,7 +124,17 @@ class RepositoryKeyCustody:
             protected = self._protector.load(account)
         if recovery_integrity_key is None:
             if protected is not None:
-                self._authenticate_keys(connection, protected)
+                from .repository import ProfileIntegrityError
+
+                try:
+                    self._authenticate_keys(connection, protected)
+                except ProfileLockedError as exc:
+                    # The manifest head failed AEAD/HMAC under the stored key:
+                    # that key belongs to another copy (or the head was
+                    # tampered with, which fails the same way). TASK-40136.
+                    if isinstance(exc.__context__, ProfileIntegrityError):
+                        raise _locked("Profile key does not match.", KEY_MISMATCH) from None
+                    raise
                 if meta["key_account"] == "":
                     connection.execute(
                         "UPDATE profile_meta SET key_account = ? "

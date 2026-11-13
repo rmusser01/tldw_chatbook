@@ -31,6 +31,7 @@ from .backup_restore_state import (
 )
 
 _RETAINED_CREDENTIAL_REVIEW = "credential_isolated_retention_required"
+_PERSONAL_CONTEXT_LOCKED = "credential_personal_context_restore_locked:"
 
 
 class BackupRestoreScreen(Screen):
@@ -1932,9 +1933,14 @@ class BackupRestoreScreen(Screen):
             return
         area.display = True
         retention = codes == (_RETAINED_CREDENTIAL_REVIEW,)
+        locked = all(code.startswith(_PERSONAL_CONTEXT_LOCKED) for code in codes)
         await area.mount(
             Static(
-                "Some incoming credentials need manual recovery and will remain in the encrypted archive. "
+                # TASK-40136: told before anything is written.
+                "Personal Context will be restored but stay locked. Nothing has been "
+                "written yet. Acknowledge each case, then review restore again."
+                if locked
+                else "Some incoming credentials need manual recovery and will remain in the encrypted archive. "
                 "No replacement was published. Accept encrypted retention, enter a new rollback password, "
                 "and review restore again."
                 if retention
@@ -1946,7 +1952,12 @@ class BackupRestoreScreen(Screen):
             *(
                 Checkbox(
                     Text(
-                        "Accept encrypted manual retention"
+                        "Acknowledge: "
+                        + self.service.issue_message(
+                            code.removeprefix("credential_").split(":profile:", 1)[0]
+                        )
+                        if locked
+                        else "Accept encrypted manual retention"
                         if retention
                         else "Acknowledge safety-copy omission: " + code
                     ),
@@ -2295,7 +2306,7 @@ class BackupRestoreScreen(Screen):
         acknowledged = tuple(
             box.name
             for box in self.query(".backup-acknowledge-restore-credential")
-            if mode == "replace"
+            if (mode == "replace" or box.name.startswith(_PERSONAL_CONTEXT_LOCKED))
             and box.value
             and box.name in self._restore_review_codes_seen
         )

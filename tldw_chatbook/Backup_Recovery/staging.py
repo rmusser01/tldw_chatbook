@@ -544,6 +544,14 @@ def stage_restore(
     if isolated_profiles and plan.mode != "isolated":
         raise ValueError("isolated_plan_required")
     doc = _document(archive)
+    from tldw_chatbook.Personal_Context.recovery import unacknowledged_locks
+
+    if unacknowledged_locks(plan):
+        # TASK-40136: a restore that leaves Personal Context locked is
+        # acknowledged before anything is written.
+        from .capture import CaptureReviewRequired
+
+        raise CaptureReviewRequired(unacknowledged_locks(plan))
     if plan.retained_configs and session is None:
         raise ValueError("retained_config_native_session_required")
     if plan.local_snapshot is not None:
@@ -916,7 +924,7 @@ def stage_restore(
                     )
                 if issues:
                     raise ValueError(issues[0])
-            if plan.mode == "replace" and plan.local_snapshot is None:
+            if plan.local_snapshot is None:
                 _stamp_personal_context(doc, plan, selected, extracted, stage)
         validated = {
             key: reader._hash(path, cancel)
@@ -1273,15 +1281,23 @@ def _stamp_personal_context(doc, plan, selected, extracted, stage):
         stamp_restored_key,
     )
 
-    from .credentials import _material
+    from .credentials import _material, _read
 
+    isolated = plan.mode == "isolated"
+    material = stage / "credential-recovery.json"
+    if isolated:
+        # Validated by the isolated scope plan above, then set aside: an
+        # isolated copy only needs to know the archive had a key (TASK-40136).
+        material = stage / "payload" / "credential-recovery.json"
     records = (
         {
             record["file"]: record["value"]
-            for record in _material(stage)
+            for record in (
+                json.loads(_read(material))["records"] if isolated else _material(stage)
+            )
             if record["kind"] == "personal_context" and record["status"] == "captured"
         }
-        if (stage / "credential-recovery.json").exists()
+        if material.exists()
         else {}
     )
     (owner,) = recovery_adapters()
@@ -1307,6 +1323,7 @@ def _stamp_personal_context(doc, plan, selected, extracted, stage):
                 None,
             ),
             account=restore_account(stage, key),
+            isolated=isolated,
         )
         issues = owner.validate(extracted[key])
         if issues:

@@ -1551,3 +1551,95 @@ def test_a_secure_removal_retry_reads_the_key_once_before_deleting(tmp_path) -> 
     assert backend.reads == 2
     assert (_KEYRING_SERVICE, account) not in backend.values
     assert _stored_account(db_path) == ""
+
+
+# TASK-40136: a locked profile names why, and the reason survives a restart.
+
+
+def _bootstrap_status(db_path, backend):
+    from tldw_chatbook.Personal_Context.bootstrap import (
+        bootstrap_personal_context_service,
+    )
+
+    return bootstrap_personal_context_service(
+        db_path=db_path, key_protector=KeyringProfileKeyProtector(backend)
+    ).status()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "personal_context_key_not_in_backup",
+        "personal_context_keyring_unavailable",
+        "personal_context_key_install_unavailable",
+    ],
+)
+def test_a_restore_marker_locks_with_its_reason_across_restarts(
+    tmp_path, record_factory, reason
+) -> None:
+    """AC#1/#2: the marker a restore left names the case on every start; no
+    keyring entry is created, changed or deleted, and the data stays."""
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    _profile(db_path, backend, record_factory)
+    _set_stored_account(db_path, "recovery:setup_required:" + reason)
+    before, data = dict(backend.values), db_path.read_bytes()
+
+    for _start in range(2):
+        status = _bootstrap_status(db_path, backend)
+        assert (status.locked, status.reason_code) == (True, reason)
+        assert status.profile_present is True
+
+    assert backend.values == before
+    assert db_path.read_bytes() == data
+
+
+@pytest.mark.parametrize("key", ["same_version", "other_version"])
+def test_a_key_for_another_copy_locks_as_a_key_mismatch(
+    tmp_path, record_factory, key
+) -> None:
+    """AC#3: the stored account's key does not authenticate the manifest head,
+    including a different key with the same key_version: a key mismatch, not
+    integrity; data byte-identical and no keyring entry changes."""
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    _profile(db_path, backend, record_factory)
+    account = _stored_account(db_path)
+    KeyringProfileKeyProtector(backend).replace(
+        account,
+        ProfileKeyMaterial(b"o" * 32, b"p" * 32, 1 if key == "same_version" else 2),
+    )
+    before, data = dict(backend.values), db_path.read_bytes()
+
+    status = _bootstrap_status(db_path, backend)
+
+    assert (status.locked, status.reason_code) == (
+        True,
+        "personal_context_key_mismatch",
+    )
+    assert backend.values == before
+    assert db_path.read_bytes() == data
+
+
+def test_an_integrity_failure_past_the_manifest_is_not_a_key_mismatch(
+    tmp_path, record_factory
+) -> None:
+    """AC#3: the right key opens the profile; a damaged record row stays an
+    integrity failure (quarantined where it is read), never a key mismatch."""
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    (record_id,) = _profile(db_path, backend, record_factory)
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute(
+            "UPDATE encrypted_objects SET integrity_tag = ? "
+            "WHERE object_type = 'record' AND object_id = ?",
+            ("hmac-sha256-v1:" + "0" * 64, record_id),
+        )
+
+    assert _bootstrap_status(db_path, backend).locked is False
+    repo = _keyring_repo(db_path, backend)
+    assert repo.list_records() == []
+    assert repo.list_quarantine()[0].reason_code == "integrity_failure"

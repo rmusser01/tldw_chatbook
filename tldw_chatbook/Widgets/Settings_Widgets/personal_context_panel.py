@@ -76,6 +76,32 @@ _DISABLED_REASON_COPY = {
     "agent_authority_denied": "Agent use is disabled because runtime authority could not be verified.",
 }
 
+# TASK-40136 (spec Q2): why a profile is locked, naming only what a locked
+# profile allows: restore or roll back through Backup & Restore, then Try again.
+_LOCKED_REASON_COPY = {
+    "personal_context_key_not_in_backup": (
+        "Personal Context is locked: this backup did not include its key, and "
+        "this device does not have it. Your profile data is kept. To read it, "
+        "restore again with Replace from an encrypted backup that includes "
+        "credentials."
+    ),
+    "personal_context_keyring_unavailable": (
+        "Personal Context can't open in a separately restored copy, because that "
+        "copy has no access to the system keyring. Its data and key are kept. "
+        "Restore with Replace to use it."
+    ),
+    "personal_context_key_install_unavailable": (
+        "Personal Context was restored but stays locked: this device has no "
+        "secure keyring to hold its key. The key is kept in the encrypted "
+        "restore copy. Set up a secure keyring, then restore again."
+    ),
+    "personal_context_key_mismatch": (
+        "Personal Context is locked: the key on this device belongs to a "
+        "different copy of the profile. Your data is kept. Use Backup & Restore "
+        "to roll back or restore the matching copy, then choose Try again."
+    ),
+}
+
 _KIND_OPTIONS = (
     ("Preference", "preference"),
     ("Identity", "identity"),
@@ -381,7 +407,11 @@ class PersonalContextSettingsPanel(Vertical):
 
         if status.state is ProfileOperationalState.LOCKED:
             yield Static(
-                "Your encrypted profile is locked. Unlock secure key storage and try again.",
+                _LOCKED_REASON_COPY.get(
+                    status.reason_code,
+                    "Your encrypted profile is locked. Unlock secure key storage and try again.",
+                ),
+                id="personal-context-locked-reason",
                 classes="settings-inline-guidance",
             )
             yield Button("Try again", id="personal-context-reload")

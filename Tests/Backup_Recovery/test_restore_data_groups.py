@@ -321,10 +321,11 @@ def _personal_context_archive(tmp_path, data):
     )
 
 
-def test_isolated_restore_plans_keep_personal_context_out_and_say_so(tmp_path):
-    """TASK-40134 AC#5, narrowed by TASK-40135: an isolated plan still never
-    publishes the repository (TASK-40136 changes that) and says so; the group is
-    now offered for restore, because replace restores publish it."""
+@pytest.mark.parametrize("mode", ["replace", "isolated"])
+def test_restore_plan_refuses_an_unreadable_personal_context_copy(tmp_path, mode):
+    """TASK-40135/40136: every restore now publishes the repository, so its plan
+    reads the archived copy first; one that is not a database refuses by name
+    instead of planning an outcome it cannot state."""
     from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
     from tldw_chatbook.Backup_Recovery.restore_groups import available_group_ids
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
@@ -333,24 +334,51 @@ def test_isolated_restore_plans_keep_personal_context_out_and_say_so(tmp_path):
     archive = _personal_context_archive(tmp_path, data)
     assert "personal_context" in available_group_ids(verify_sealed(archive))
     restored = tmp_path / "restored"
-    plan = plan_restore(
+    with pytest.raises(ValueError, match="^personal_context_validation_unavailable$"):
+        plan_restore(
+            archive,
+            mode="isolated",
+            destinations={
+                "root:config": restored / "config",
+                "root:personal_context.repository": restored / "data",
+                "profile:profile:paths.data_dir": restored / "data",
+            },
+            target=None,
+            profile_names={"profile": "restored"},
+        ) if mode == "isolated" else _replace_plan(tmp_path, archive, data)
+
+
+def _replace_plan(tmp_path, archive, data):
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+
+    live = tmp_path / "live"
+    live.mkdir(mode=0o700)
+    profile = hashlib.sha256(str(live / "config.toml").encode()).hexdigest()[:24]
+    items = []
+    for owner, name in (
+        ("config", "config.toml"),
+        ("personal_context.repository", "tldw_chatbook_personal_context.db"),
+    ):
+        path = live / name
+        path.write_bytes(data)
+        path.chmod(0o600)
+        key = "profile:" + profile + ":" + owner
+        items.append(
+            StorageItem(
+                owner, key, path, "included",
+                () if owner == "config" else ("profile:" + profile + ":config",),
+                metadata=FileMetadata(
+                    1, key, name, None, "file", 0o600, path.stat().st_mtime_ns, "private"
+                ),
+            )
+        )
+    return plan_restore(
         archive,
-        mode="isolated",
-        destinations={
-            "root:config": restored / "config",
-            "root:personal_context.repository": restored / "data",
-            "profile:profile:paths.data_dir": restored / "data",
-        },
-        target=None,
-        profile_names={"profile": "restored"},
-    )
-    restored_keys = [key for key, _ in plan.restore]
-    assert "profile:profile:config" in restored_keys
-    assert not [key for key in restored_keys if "personal_context" in key]
-    assert "personal_context_not_restored" in plan.issues
-    assert any(
-        row.owner_id == "personal_context.repository"
-        for row in verify_sealed(archive).files
+        mode="replace",
+        destinations={"root:config": live, "root:personal_context.repository": live},
+        target=Inventory(tuple(items), True, "independent-local-review", ()),
+        profile_names={"profile": "default_user"},
     )
 
 
@@ -438,6 +466,43 @@ def account(path):
     with closing(sqlite3.connect(path)) as connection:
         return connection.execute('SELECT key_account FROM profile_meta').fetchone()[0]
 
+def tables(path):
+    """Every row of every table, without ``profile_meta.key_account``."""
+    import sqlite3
+    from contextlib import closing
+    with closing(sqlite3.connect(path)) as connection:
+        dump = {}
+        for (name,) in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"):
+            cursor = connection.execute(f'SELECT * FROM "{name}"')
+            columns = [column[0] for column in cursor.description]
+            dump[name] = sorted(
+                tuple(v for c, v in zip(columns, row)
+                      if (name, c) != ('profile_meta', 'key_account'))
+                for row in cursor)
+        return dump
+
+STATUS = """
+import sys
+from Tests import network_guard
+network_guard.install()
+from Tests.Personal_Context.test_key_protector import SecureKeyring
+from tldw_chatbook.Personal_Context.bootstrap import bootstrap_personal_context_service
+from tldw_chatbook.Personal_Context.key_protector import KeyringProfileKeyProtector
+status = bootstrap_personal_context_service(
+    db_path=sys.argv[1], key_protector=KeyringProfileKeyProtector(SecureKeyring())).status()
+print(status.locked, status.reason_code)
+"""
+
+def status(path):
+    """A fresh start (another process) reads the locked reason from the copy alone."""
+    import subprocess
+    import sys
+    done = subprocess.run([sys.executable, '-c', STATUS, str(path)], capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-4000:]
+    return done.stdout.split()[-2:]
+
 def succeeded(operation):
     result = service.wait(operation)
     assert result['state'] == 'succeeded', dict(result)
@@ -481,11 +546,62 @@ try:
                                     options=options, password=password)
 
     reviewed(backup)
+    archived = tables(live)
     inspection = service.start_inspection(destination, password=password)
     succeeded(inspection)
     profile = service.summary(inspection)['profile_ids'][0]
     assert 'personal_context' in {
         row['group_id'] for row in service.summary(inspection)['data_groups']}
+    if SCENARIO.startswith('isolated'):
+        # TASK-40136: an isolated copy is published locked, keyring untouched.
+        if SCENARIO == 'isolated_elsewhere':
+            use('b')  # no account on this device opens the copy
+        before = dict(current['device'].values)
+        (Path.home() / 'isolated').mkdir(mode=0o700)
+        base = Path.home() / 'isolated' / 'copy'
+        result = reviewed(lambda ack: service.start_restore(inspection, service.preview_restore(
+            inspection, mode='isolated', profile_bases={profile: base},
+            external_destinations={}, profile_names={profile: 'restored'}, target=None,
+            data_groups=GROUP, acknowledged_credential_issues=ack)))
+        (copy,) = [p for p in base.rglob('tldw_chatbook_personal_context.db')]
+        reason = ('personal_context_key_not_in_backup' if SCENARIO == 'isolated_elsewhere'
+                  else 'personal_context_keyring_unavailable')
+        assert account(copy) == 'recovery:setup_required:' + reason
+        assert current['device'].values == before
+        assert tables(copy) == archived
+        assert status(copy) == ['True', reason]
+        assert account(live) == original_account
+        print('retired and reopened')
+        raise SystemExit(0)
+    if SCENARIO == 'no_keyring':
+        # TASK-40136 AC#1/#6: no secure keyring (the production store refuses),
+        # then a second restore from the same archive once one is there.
+        from tldw_chatbook.runtime_policy.server_credentials import CredentialStoreUnavailable
+        store = credentials._credential_store
+
+        def no_store():
+            raise CredentialStoreUnavailable('no secure keyring')
+
+        credentials._credential_store = no_store
+        before = dict(current['device'].values)
+        locked = 'personal_context_restore_locked:personal_context_key_install_unavailable:'
+        assert any(i.startswith(locked) for i in plan_for().issues)
+        reviewed(lambda ack: service.start_restore(
+            inspection, plan_for(ack), rollback_password=ROLLBACK))
+        reason = 'personal_context_key_install_unavailable'
+        assert account(live) == 'recovery:setup_required:' + reason
+        assert current['device'].values == before
+        assert tables(live) == archived
+        assert status(live) == ['True', reason]
+        credentials._credential_store = store
+        assert 'personal_context_restore_readable:' + next(
+            key for key, path in plan_for().restore if path == live) in plan_for().issues
+        reviewed(lambda ack: service.start_restore(
+            inspection, plan_for(ack), rollback_password=ROLLBACK))
+        assert account(live).startswith('personal-context:recovery_')
+        assert records(live) == ['record-device-only']
+        print('retired and reopened')
+        raise SystemExit(0)
     if SCENARIO == 'other_device':
         # The relocation advice: another device (empty keyring), another path.
         use('b')
@@ -597,6 +713,9 @@ print('retired and reopened')
         ("link", "exclude"),
         ("finish", "include"),
         ("rollback", "include"),
+        ("no_keyring", "include"),
+        ("isolated", "include"),
+        ("isolated_elsewhere", "exclude"),
     ],
 )
 def test_replace_restore_makes_personal_context_readable_and_rolls_back(
@@ -609,7 +728,8 @@ def test_replace_restore_makes_personal_context_readable_and_rolls_back(
     the portable relocation advice: another keyring, another data path, a backup
     with credentials, then Replace. ``finish``/``rollback``: interrupted after
     the key step, either recovery leaves a reference to an account that exists
-    and opens it."""
+    and opens it. TASK-40136: ``no_keyring`` (AC#1, #2, #6) and the two isolated
+    cases (AC#1, #2) end locked with their reason, keyring and rows untouched."""
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
     script = _PERSONAL_CONTEXT_RESTORE.replace("SCENARIO_VALUE", repr(scenario)).replace(

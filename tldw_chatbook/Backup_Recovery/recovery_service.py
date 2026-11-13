@@ -185,11 +185,7 @@ _ISSUE_MESSAGES = {
         "copy is readable only on this device, and only until Personal Context is "
         "linked or removed. To include the key, back up with credentials."
     ),
-    "personal_context_not_restored": (
-        "Personal Context will not be restored: your current Personal Context "
-        "profile stays exactly as it is, and the backup keeps its copy."
-    ),
-    # TASK-40135: what a replace restore will do with Personal Context.
+    # TASK-40135/40136: what a restore will do with Personal Context.
     "personal_context_restore_readable": (
         "Personal Context will be restored readable: its key goes into a new "
         "keyring account, and no existing keyring entry is changed."
@@ -197,6 +193,11 @@ _ISSUE_MESSAGES = {
     "personal_context_restore_locked:personal_context_key_not_in_backup": (
         "Personal Context will be restored but stay locked: this backup does not "
         "include its key, and this device does not have it. The data is kept."
+    ),
+    "personal_context_restore_locked:personal_context_keyring_unavailable": (
+        "Personal Context will be restored but stay locked: a separately restored "
+        "copy has no access to the system keyring. Its data and key are kept; "
+        "restore with Replace to use it."
     ),
     "personal_context_restore_locked:personal_context_key_install_unavailable": (
         "Personal Context will be restored but stay locked: this device has no "
