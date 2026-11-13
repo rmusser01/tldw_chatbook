@@ -183,7 +183,7 @@ def validate(document):
         assert len(job["steps"]) == (6 if job_name == "console-p0-gate" else 5)
         assert (
             job["if"]
-            == "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))"
+            == "needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))"
         )
         assert not job.get("continue-on-error", False)
         assert job_name in jobs["derived-artifacts"]["needs"]

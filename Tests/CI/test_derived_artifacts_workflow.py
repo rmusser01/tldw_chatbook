@@ -21,10 +21,7 @@ yaml = pytest.importorskip("yaml")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "derived-artifacts.yml"
-LANES = (
-    "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
-    "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
-)
+LANES = "needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))"
 CHECKERS = (
     "tldw_chatbook/css/check_bundle_sync.py",
     "scripts/check_canvas_mermaid_assets.py",
@@ -98,6 +95,8 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
     """
     assert list(_workflow()["jobs"]) == [
         "preflight",
+        "dev-light",
+        "release-qualification",
         "pr-fast-lane",
         # TASK-34916: the PR Fast Lane's admission-sensitive pytest invocation,
         # moved out when the two steps together reached the 35-min cap.
@@ -139,7 +138,7 @@ def test_required_aggregator_fails_when_either_lane_fails():
     "guard nobody is gated on" shape this whole workflow exists to replace.
     """
     job = _workflow()["jobs"]["derived-artifacts"]
-    assert job.get("needs") == ["preflight", *VERDICTS]
+    assert job.get("needs") == ["preflight", "dev-light", "release-qualification", *VERDICTS]
     for lane, step_name in VERDICTS.items():
         verdict = next(step for step in job["steps"] if step.get("name") == step_name)
         # Round 4: `!cancelled()` so one red lane cannot skip the next verdict.
@@ -352,7 +351,8 @@ def test_preflight_must_pass_before_every_application_lane():
     assert all(not step.get("continue-on-error", False) for step in preflight["steps"])
     for lane in VERDICTS:
         assert jobs[lane]["needs"] == ["preflight"]
-        assert jobs[lane]["if"] == LANES
+        if lane not in {"dev-light", "release-qualification"}:
+            assert jobs[lane]["if"] == LANES
     verdict = next(step for step in _job()["steps"] if step.get("name") == "Require successful preflight")
     assert verdict["if"] == "${{ !cancelled() && needs.preflight.result != 'success' }}"
     assert "exit 1" in verdict["run"]
@@ -362,7 +362,7 @@ def test_preflight_must_pass_before_every_application_lane():
 def test_preflight_checks_selectors_without_installing_or_loading_the_application():
     steps = _steps()
     install = next(step for step in steps if step.get("name") == "Install preflight test tools")
-    assert install["run"] == "python -m pip install pytest PyYAML"
+    assert install["run"] == "python -m pip install pytest PyYAML ruff==0.16.6"
     selector = next(step for step in steps if step.get("name") == "PR lane test targets resolve without overlaps")
     assert selector["if"] == "${{ !cancelled() }}"
     assert "--noconftest" in selector["run"]
@@ -640,7 +640,7 @@ def test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required():
     jobs = workflow["jobs"]
     job = jobs["library-shell-dev"]
     assert job["needs"] == ["preflight"]
-    assert job["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/dev'"
+    assert job["if"] == "(github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TIERED_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.nightly)"
     assert "library-shell-dev" not in jobs["derived-artifacts"]["needs"]
     assert not any(
         "library-shell-dev" in str(step.get("if", "")) + str(step.get("run", ""))

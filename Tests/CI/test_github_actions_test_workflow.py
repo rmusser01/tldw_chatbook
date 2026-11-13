@@ -150,7 +150,7 @@ def test_full_suite_job_is_bounded_and_manual_only() -> None:
     all_tests_job = _all_tests_job_block()
 
     assert "timeout-minutes:" in all_tests_job
-    assert "if: github.event_name == 'workflow_dispatch'" in all_tests_job
+    assert "if: github.workflow == 'Tests' && github.event_name == 'workflow_dispatch'" in all_tests_job
     assert "pull_request" not in all_tests_job
     assert "name: Full Test Suite (Manual)" in all_tests_job
     assert "pytest ./Tests/" in all_tests_job
