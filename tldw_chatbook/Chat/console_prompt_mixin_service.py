@@ -558,6 +558,7 @@ class ConsolePromptMixinService:
         persistence = self.persistence
         assistant = self.store.get_message(batch.assistant_message_id)
         user = self.store.get_message(batch.user_message_id)
+        pending_assistant = None
         if not session.ephemeral and session.persisted_conversation_id is not None:
             if (
                 persistence is None
@@ -601,6 +602,8 @@ class ConsolePromptMixinService:
             )
             or self.store.persistence is not persistence
         ):
+            if pending_assistant is not None:
+                await self._discard_refused_reply(assistant.id)
             raise MixinSnapshotUnavailableError("mixin_attempt_owner_changed")
         self.store.publish_prompt_mixin_attempt(session_id, batch)
         if record_usage:
@@ -639,6 +642,24 @@ class ConsolePromptMixinService:
         except Exception:  # noqa: BLE001 - uncertain persistence refuses dispatch.
             raise MixinSnapshotUnavailableError("mixin_attempt_save_failed") from None
         return cancelled
+
+    async def _discard_refused_reply(self, message_id: str) -> None:
+        """Tombstone the reply row a refused turn saved (TASK-40313).
+
+        The owner moved during the save, so nothing adopts the row; left
+        ``accepted`` it reopens as a reply still waiting for dispatch. Best
+        effort: the turn is refused either way.
+        """
+        from functools import partial
+
+        from loguru import logger
+
+        try:
+            await self._run_owned_save(
+                partial(self.persistence.delete_message_subtree, message_id=message_id)
+            )
+        except Exception:  # noqa: BLE001 - best effort; the turn is refused anyway.
+            logger.warning("Console refused reply row could not be discarded")
 
     async def save_pending_reply(
         self, session_id: str, assistant_message_id: str
@@ -701,6 +722,7 @@ class ConsolePromptMixinService:
             )
             or self.store.persistence is not persistence
         ):
+            await self._discard_refused_reply(assistant.id)
             raise MixinSnapshotUnavailableError("mixin_attempt_owner_changed")
         self.store.adopt_saved_pending_assistant(assistant.id)
         if cancelled:
