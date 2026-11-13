@@ -1,7 +1,7 @@
 ---
 id: TASK-40141
 title: Ratchet non-literal app-object lookups so a literal cannot hide behind a variable
-status: To Do
+status: In Progress
 created_date: 2026-11-10 20:10
 labels:
 - architecture
@@ -37,3 +37,15 @@ The blind spot is already real: seven private app attributes are reached only th
 - [ ] #5 The guard runs in the same required lane as the existing census.
 - [ ] #6 A negative control shows the guard fails on a planted non-literal lookup.
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. This extends an existing architecture test (TASK-36942.4) with a shrink-only record of the same shape as its census; no product behaviour or design choice changes.
+
+Re-measured on base 1455ceeb96: still 47 non-literal lookups (UI 24, Event_Handlers 9, Chat 6, Backup_Recovery 3, `<root>` 2, RAG_Search 2, Scheduling 1), and the same seven private attributes reached only through module constants. Every lookup whose name comes from a parameter, loop variable or dict reaches a public name or an allowed private one (`_vllm_connection_owner`, `_llamacpp_connection_owner`).
+
+1. Reproduce: a planted `getattr(app, name)`, and a literal lookup rewritten through a constant, both pass the current census (the rewrite reads as a literal-count reduction and drops out of the private-name rule).
+2. Extend `_scan` in `Tests/Architecture/test_app_string_lookup_census.py` (same walk, same receiver rule) to collect every non-literal lookup as (file, name expression, reached name), resolving an UPPER_CASE constant with one package-wide string value to the attribute it names.
+3. Record the 47 lookups in `Tests/Architecture/app_nonliteral_lookups.tsv`; a new row fails naming the file and how to reach the service explicitly; a recorded row no longer found fails until removed. The seven private attributes appear in the record beside their lookups; `app_private_attrs.txt` is unchanged.
+4. Negative controls: planted lookups (parameter, and a literal rewritten through a constant) fail the guard while the literal census reads a reduction.
+5. Same file, so it runs in the PR Fast Lane (architecture-review tests) job that already runs the census.
