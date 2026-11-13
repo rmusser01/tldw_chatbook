@@ -87,7 +87,10 @@ background, whether the profile already uses agent features:
   `tldw-serve` serves, that ran a tool outside the light set
   (a workspace, web or Watchlists tool, a sub-agent, and so on). A call that
   was refused, such as a tool a small model named although plain chat never
-  offered it, does not count.
+  offered it, does not count. Neither does the agent's own housekeeping:
+  searching for or loading tools, or reading its own run log or messages.
+  Small models do that even for a plain "hi", and a tool they load and then
+  use still counts.
 
 If it finds any of them, it turns **Full agent tools** on for you, so plain
 chat keeps the tools it had. It adds one line, `full_agent_tools_enabled =

@@ -25,7 +25,11 @@ nothing written to their config.
   ``tool_result`` is a refusal, such as the light surface's "Tool not
   permitted" for a tool a small model named anyway -- was never dispatched
   and is not use (review round 1, F3-11; paired by position, not ``call_id``
-  alone, review v5r1 R1-2).
+  alone, review v5r1 R1-2). Nor is a call to the runtime's own scaffolding,
+  tool discovery and the run's own log and inbox
+  (``RUNTIME_SCAFFOLDING_TOOL_NAMES``, review v5r2 G532-R2-3): it says
+  nothing about what the user uses, and a tool it loads that then runs
+  records its own call.
 
 Runs are read from the Console's ``agent_runs.db`` beside ChaChaNotes and,
 when it exists, the served mobile companion's ``<user_data>/mobile/runs.db``
@@ -85,7 +89,15 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.Agents.agent_models import MESSAGE_TOOL_NAMES
+from tldw_chatbook.Agents.agent_models import (
+    FIND_TOOLS_NAME,
+    LOAD_TOOLS_NAME,
+    MESSAGE_TOOL_NAMES,
+    READ_AGENT_MESSAGES_TOOL_NAME,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
+    SEARCH_RUN_LOG_TOOL_NAME,
+)
 from tldw_chatbook.Agents.plain_chat_tool_surface import (
     FULL_AGENT_TOOLS_GATE_KEY,
     LIGHT_SURFACE_TOOL_NAMES,
@@ -93,6 +105,7 @@ from tldw_chatbook.Agents.plain_chat_tool_surface import (
 
 __all__ = [
     "FULL_AGENT_TOOLS_UPGRADE_MARKER",
+    "RUNTIME_SCAFFOLDING_TOOL_NAMES",
     "SIGNAL_AGENT_DEFINITION",
     "SIGNAL_SUBAGENT_RUN",
     "SIGNAL_TOOL_CALL",
@@ -137,6 +150,30 @@ _AGENT_RUN_KINDS: tuple[str, ...] = ("primary", "subagent")
 
 #: Step kinds that record a model's tool call (``Agents.agent_models``).
 _TOOL_STEP_KINDS: tuple[str, ...] = ("tool_call", "spawn")
+
+#: The agent runtime's own scaffolding, which is not "using agent features"
+#: (review v5r2, G532-R2-3/LV2-1): tool discovery (``find_tools``,
+#: ``load_tools``) and the run reading its own log (``search_run_log``,
+#: ``run_log_stats``, ``run_log_slice``) or its own inbox
+#: (``read_agent_messages``). The full surface offered these on every send
+#: before the light surface, the loop dispatches the discovery pair even on
+#: the light surface, and small models call them reflexively: live, a 0.5B
+#: model called find_tools and load_tools for "Reply with just: hi". No real
+#: use is lost: a tool that discovery loads and the model then calls records
+#: its own ``tool_call`` step, which counts. The runtime names no such set
+#: (``RUNTIME_TOOL_NAMES`` also holds spawning, skills, fleet and chat-fork
+#: tools, which are agent features), so it is defined here, once, from the
+#: runtime's own name constants.
+RUNTIME_SCAFFOLDING_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        FIND_TOOLS_NAME,
+        LOAD_TOOLS_NAME,
+        SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
+        READ_AGENT_MESSAGES_TOOL_NAME,
+    }
+)
 
 
 #: The refusal text the loop records for a call it never started
@@ -277,7 +314,11 @@ def _runs_signal(connection: Any, light_names: tuple[str, ...]) -> str | None:
     parameters: dict[str, str] = {"refused_text": _REFUSED_RESULT_TEXT}
     kinds = _named_list("run_kind", _AGENT_RUN_KINDS, parameters)
     step_kinds = _named_list("step_kind", _TOOL_STEP_KINDS, parameters)
-    not_use = _named_list("light", ("", *light_names), parameters)
+    not_use = _named_list(
+        "not_use",
+        ("", *light_names, *sorted(RUNTIME_SCAFFOLDING_TOOL_NAMES)),
+        parameters,
+    )
     messages = _named_list("message", sorted(MESSAGE_TOOL_NAMES), parameters)
     # The JSON is checked before it is parsed: one malformed row must not
     # turn the whole read into an error. The instr() pre-filters skip the
@@ -381,7 +422,7 @@ def detect_agent_feature_use(
             same way when it exists.
         budget_seconds: How long the reads may take in all.
         light_names: The light set; a tool call to one of these is not a
-            signal.
+            signal (nor is one to ``RUNTIME_SCAFFOLDING_TOOL_NAMES``).
 
     Returns:
         ``SIGNAL_WORKSPACE_BINDING``, ``SIGNAL_AGENT_DEFINITION``,
