@@ -2977,6 +2977,8 @@ which admission re-verifies on each run. The app has no rebind for either yet
 | tldw_chatbook/Plugins/backup.py | _Plugins._inspect | connect_private_sqlite | 1 | qualified | plugins; read-only registry validation and process check |
 | tldw_chatbook/Plugins/backup.py | _Plugins.capture | copy_private_sqlite | 1 | qualified | plugins |
 | tldw_chatbook/Plugins/backup.py | _runtime_lock | open | 1 | qualified | plugins; runtime.lock probe: preview never creates it, capture creates and holds it |
+| tldw_chatbook/Plugins/backup.py | remove_fetch_members | open | 3 | qualified | plugins; newer-download removal opens staging and the folder with O_NOFOLLOW under the runtime lock (TASK-40309) |
+| tldw_chatbook/Plugins/backup.py | remove_fetch_members | os.unlink | 1 | qualified | plugins; removes only the listed members, never snapshot/ (TASK-40309) |
 
 ## Census vocabulary extension (TASK-39111, TASK-39112, TASK-39115)
 
@@ -3680,6 +3682,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Plugins/acquisition.py | _reserve | mkdir | 1 | qualified | plugins |
 | tldw_chatbook/Plugins/acquisition.py | _retire_cleaned | open_private_binary | 1 | qualified | plugins |
 | tldw_chatbook/Plugins/acquisition.py | _save | open_private_binary | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | rebind_custody | open_private_binary | 1 | qualified | plugins; re-signs a reviewed download record bound to the reviewed folder identity (TASK-40308) |
 | tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.clear | open | 1 | unsupported | plugins; caller-selected reduced-protection marker, unused by the app |
 | tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.clear | open_private_binary | 1 | unsupported | plugins; caller-selected reduced-protection marker, unused by the app |
 | tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.clear | os.unlink | 1 | unsupported | plugins; caller-selected reduced-protection marker, unused by the app |
@@ -3709,6 +3712,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._materialize | mkdir | 1 | qualified | plugins |
 | tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._materialize | open | 5 | qualified | plugins |
 | tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._remove_uninstalled_package | open | 2 | qualified | plugins |
+| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._set_restored_plugins_aside | mkdir | 1 | qualified | plugins; creates reset-<id>/, excluded whole from capture (TASK-40308) |
+| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._set_restored_plugins_aside | os.rename | 1 | qualified | plugins; moves restored records and downloads into reset-<id>/, deletes nothing (TASK-40308) |
 | tldw_chatbook/Plugins/data_cleanup.py | create_data | mkdir | 2 | qualified | plugins |
 | tldw_chatbook/Plugins/data_cleanup.py | create_data | open | 2 | qualified | plugins |
 | tldw_chatbook/Plugins/data_cleanup.py | open_root | open | 3 | qualified | plugins |
@@ -3887,6 +3892,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Widgets/Persona_Widgets/actor_pack_import_review.py | _portrait_widget | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Plugins/registry.py | PluginRegistry.__init__ | connect_private_sqlite | 1 | qualified | plugins; registry.sqlite3, captured through recovery.plugins.registry |
 | tldw_chatbook/Plugins/registry.py | PluginRegistry._reference_schema | connect_private_sqlite | 1 | memory | plugins.registry; in-memory schema reference |
+| tldw_chatbook/Plugins/registry.py | PluginRegistry.set_aside | os.rename | 1 | qualified | plugins; moves the restored registry into reset-<id>/ (TASK-40308) |
 | tldw_chatbook/Backup_Recovery/detached_source.py | _hash | write | 1 | disposable | private archive staging |
 | tldw_chatbook/Backup_Recovery/detached_source.py | acquire_source | create_private_file | 1 | disposable | private archive staging |
 | tldw_chatbook/Utils/private_paths.py | open_private_lock_stream | create_private_text | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
