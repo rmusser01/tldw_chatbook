@@ -11,25 +11,55 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
+    DestinationHarness,
     _active_destination_screen,
     _build_test_app,
     _static_text,
     _wait_for_selector,
 )
+from Tests.UI.test_settings_category_sweep import (
+    _click_settings_category,
+    _settle_settings,
+)
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
+from tldw_chatbook.Backup_Recovery.unsaved_editors import (
+    UnsavedEditor,
+    probe_unsaved_editors,
+)
 from tldw_chatbook.state.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
     SettingsValidationResult,
 )
+from tldw_chatbook.UI.Navigation.screen_state_store import (
+    RuntimeIdentity,
+    ScreenStateStore,
+)
+from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
+from tldw_chatbook.UI.Screens.settings_network_defaults import (
+    SettingsNetworkTLS,
+    build_network_save_sections,
+    load_network_tls,
+)
 from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
     SettingsScreen,
 )
+from tldw_chatbook.UI.Settings_Modules.category_panels import (
+    CATEGORY_PANELS,
+    NETWORK_PANEL,
+)
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import (
+    SettingsConfigAdapter,
+)
+from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+    unsaved_settings_titles,
+)
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Speech.settings_speech_tts import load_global_speech_tts_state
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
     SpeechTTSPanelDraftSnapshot,
@@ -54,6 +84,7 @@ _STAGING_CATEGORIES = (
     SettingsCategoryId.IMAGE_GENERATION,
     SettingsCategoryId.VIDEO_GENERATION,
     SettingsCategoryId.ADVANCED_CONFIG,
+    SettingsCategoryId.NETWORK,  # registered panel; review N5
 )
 
 
@@ -322,8 +353,349 @@ async def test_f1_help_says_switching_categories_keeps_the_draft(request) -> Non
         *GUIDED_SETTINGS_MUTATION_CATEGORIES,
         SettingsCategoryId.IMAGE_GENERATION,
         SettingsCategoryId.VIDEO_GENERATION,
+        SettingsCategoryId.NETWORK,  # TASK-1378.1: kept on switch, marked *
     } - {SettingsCategoryId.SPEECH_TTS}
     note = "Switching categories keeps the draft; the rail marks it with *."
     for category in SettingsCategoryId:
         body = screen._workbench_help_state(category).render_text()
         assert (note in body) is (category in keeps), category
+
+
+# --- Network, served by its registered panel (TASK-1378.1) ---------------
+# ADR-303 staged model with no SettingsDraft: an edit is unsaved (rail *,
+# banner count, quit prompt), s saves it, r discards it after asking.
+
+_NETWORK = SettingsCategoryId.NETWORK
+_NETWORK_SCOPE = "Trust applies to new connections; open ones keep theirs."
+_NETWORK_GUIDED = (
+    "Save with s: the TLS trust setting applies to newly created clients; "
+    "already-open connections keep their trust policy until restart."
+)
+
+
+async def _open_network(host, pilot) -> SettingsScreen:
+    await _settle_settings(pilot)
+    await _click_settings_category(pilot, "network")
+    return _active_destination_screen(host)
+
+
+def _capture_toasts(screen, monkeypatch) -> list[tuple[str, str]]:
+    toasts: list[tuple[str, str]] = []
+
+    def _notify(message, *args, severity="information", **kwargs):
+        toasts.append((str(message), severity))
+
+    monkeypatch.setattr(screen.app, "notify", _notify)
+    return toasts
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_registered_panels_answer_the_screens_category_questions(request) -> None:
+    """For a registered category the screen asks its panel, so the two give one
+    answer: unsaved state (and the quit guard), badge, both scope lines, and
+    what s and r may do (from the panel's ADR-303 commit model). Leaving
+    Settings keeps a panel's staged edit, so the quit prompt stays true."""
+    screen = SettingsScreen(_build_test_app())
+    for category, panel in CATEGORY_PANELS.items():
+        scope = panel.scope_text(screen)
+        assert screen._persistence_badge(category) == panel.commit_model.badge
+        assert screen._guided_action_message(category) == scope.guided
+        assert screen._category_state_scope_text(category) == scope.banner
+        for action, allowed in (
+            ("save", panel.commit_model.saves),
+            ("revert", panel.commit_model.reverts),
+        ):
+            assert SettingsScreen._category_action_supported(category, action) is allowed
+    assert screen._category_has_unsaved_changes(_NETWORK) is False
+    screen._category_panel_states[_NETWORK] = {"mode": "off"}
+    assert NETWORK_PANEL.has_unsaved_changes(screen) is True
+    assert screen._category_has_unsaved_changes(_NETWORK) is True
+    assert "Network" in unsaved_settings_titles(screen)
+
+    revisit = SettingsScreen(_build_test_app())
+    revisit.restore_state(screen.save_state())
+    assert NETWORK_PANEL.pending(revisit) == {"mode": "off"}
+    assert revisit._category_has_unsaved_changes(_NETWORK) is True
+
+    # Recovery mode's unsaved-work check gives the same answer, live and kept.
+    live = probe_unsaved_editors(editors=(screen,))
+    assert live == (UnsavedEditor("Settings", "needs-user-save-discard"),)
+    store = ScreenStateStore()
+    store.save("settings", screen.save_state(), RuntimeIdentity("server", "other"))
+    kept = probe_unsaved_editors(screen_state_store=store)
+    assert kept == (UnsavedEditor("Retained Settings", "needs-user-save-discard"),)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_network_select_edit_marks_the_rail_banner_and_quit_prompt(
+    request,
+) -> None:
+    """Review I2 + M4: an edit through the real Select reaches the card's
+    handler, repaints the warning, marks the rail and the banner, and makes
+    the quit prompt name Network; a category hop keeps it without asking."""
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_network(host, pilot)
+        # The Select and Input echo their seeded values on mount: no edit.
+        assert screen._category_has_unsaved_changes(_NETWORK) is False
+        assert screen._persistence_badge(_NETWORK) == "Pending — save with s"
+        assert screen._guided_action_message(_NETWORK) == _NETWORK_GUIDED
+        assert screen._category_state_banner_text(_NETWORK) == (
+            f"State: Pending — save with s | {_NETWORK_SCOPE}"
+        )
+
+        screen.query_one("#settings-network-ssl-mode", Select).value = "off"
+        await pilot.pause()
+        warning = screen.query_one("#settings-network-warning", Static)
+        assert _static_text(warning).startswith("Verification is DISABLED")
+        rail = screen.query_one("#settings-category-network", Button)
+        assert str(rail.label).endswith(" *")
+        banner = screen.query_one("#settings-category-state-banner", Static)
+        assert _static_text(banner) == (
+            "State: Pending — save with s · 1 unsaved · revert with r | "
+            f"{_NETWORK_SCOPE}"
+        )
+
+        quit_flow = host.run_worker(screen.confirm_quit(), exit_on_error=False)
+        await pilot.pause(0.3)
+        prompt = host.screen
+        assert isinstance(prompt, ConfirmationDialog)
+        assert "Network" in prompt.message
+        await pilot.click("#cancel-button")  # Keep editing
+        await pilot.pause(0.2)
+        assert await quit_flow.wait() is False
+
+        await _click_settings_category(pilot, "appearance")
+        assert screen.active_category == "appearance"  # no leave prompt
+        await _click_settings_category(pilot, "network")
+        assert screen.query_one("#settings-network-ssl-mode", Select).value == "off"
+        assert NETWORK_PANEL.pending(screen)["mode"] == "off"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_network_s_saves_through_the_screens_config_adapter(
+    request, monkeypatch
+) -> None:
+    """Review M5: a panel saves through the screen's adapter seam, so the
+    dominant patch (``settings_screen.SettingsConfigAdapter``) reaches it."""
+    saved: list[dict] = []
+
+    class _FakeAdapter:
+        def save_sections(self, sections):
+            saved.append({k: dict(v) for k, v in dict(sections).items()})
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", _FakeAdapter)
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_network(host, pilot)
+        screen.query_one("#settings-network-ssl-mode", Select).value = "off"
+        await pilot.pause()
+        rail = screen.query_one("#settings-category-network", Button)
+        rail.focus()
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert saved == [build_network_save_sections(SettingsNetworkTLS("off"))]
+        assert screen._category_has_unsaved_changes(_NETWORK) is False
+        assert not str(rail.label).endswith(" *")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_network_rejects_missing_ca_then_saves_a_valid_one(
+    request, tmp_path, monkeypatch
+) -> None:
+    saved: list[dict] = []
+
+    def _capture(sections):
+        saved.append({k: dict(v) for k, v in dict(sections).items()})
+        return True
+
+    monkeypatch.setattr(SettingsConfigAdapter, "save_sections", staticmethod(_capture))
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_network(host, pilot)
+        toasts = _capture_toasts(screen, monkeypatch)
+        NETWORK_PANEL.stage(
+            screen, mode="custom-ca", ca_bundle_path=str(tmp_path / "missing.pem")
+        )
+        screen.action_settings_save_category()  # verified sync: -> None
+        assert saved == []  # invalid path rejected, nothing written
+        assert len(toasts) == 1 and toasts[0][1] == "error"
+        assert NETWORK_PANEL.pending(screen)["mode"] == "custom-ca"
+
+        toasts.clear()
+        ca = tmp_path / "corp.pem"
+        ca.write_text("# corp ca")
+        NETWORK_PANEL.stage(screen, ca_bundle_path=str(ca))
+        screen.action_settings_save_category()
+        assert saved == [{"network": {"ssl_verify": str(ca)}}]
+        assert toasts == [("Network TLS setting saved.", "information")]
+        assert NETWORK_PANEL.pending(screen) == {}  # cleared after the save
+        # qodo PR #2223 bug 5: the app's in-memory config mapping must
+        # reflect the save, or the next detail render shows the stale
+        # pre-save mode/path.
+        assert load_network_tls(screen._app_config_mapping()).ca_bundle_path == str(ca)
+        guided_text = screen.query_one("#settings-guided-action-state", Static)
+        assert "Read-only" not in _static_text(guided_text)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_network_save_failure_keeps_the_edit_and_r_discards_it_after_asking(
+    request, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        SettingsConfigAdapter, "save_sections", staticmethod(lambda sections: False)
+    )
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_network(host, pilot)
+        toasts = _capture_toasts(screen, monkeypatch)
+        screen.query_one("#settings-network-ssl-mode", Select).value = "off"
+        await pilot.pause()
+        screen.action_settings_save_category()
+        assert toasts == [("Failed to save Network TLS setting.", "error")]
+        assert screen._category_has_unsaved_changes(_NETWORK) is True
+
+        screen.action_settings_revert_category()
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, ConfirmationDialog)
+        await pilot.click("#cancel-button")  # Keep editing
+        await pilot.pause(0.2)
+        assert screen._category_has_unsaved_changes(_NETWORK) is True
+
+        toasts.clear()
+        screen.action_settings_revert_category()
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # Discard changes
+        await _settle_settings(pilot)
+        assert screen._category_has_unsaved_changes(_NETWORK) is False
+        assert toasts == [("Settings category changes reverted.", "information")]
+        select = screen.query_one("#settings-network-ssl-mode", Select)
+        assert select.value == "verify"  # repainted from the loaded config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ssl_verify", ["moved-ca-file", 7], ids=["moved-ca-file", "not-a-mode"])
+@private_profile_test
+async def test_network_with_an_unreadable_ssl_verify_opens_clean_and_r_keeps_it_clean(
+    request, tmp_path, ssl_verify
+) -> None:
+    """Review N1: an ``ssl_verify`` the loader reads as "invalid" (a CA file
+    since moved away, or a value of no known form) seeds the Select with
+    "verify", and the Select's mount echo was staged as an edit: opening
+    Network raised a ``*`` no ``r`` could clear and blocked Recovery. Opening
+    is no edit; a real choice on that Select still is, and ``r`` clears it."""
+    if ssl_verify == "moved-ca-file":
+        ssl_verify = str(tmp_path / "corp-ca.pem")  # configured, then moved
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        screen = _active_destination_screen(host)
+        screen._app_config_update_target().update({"network": {"ssl_verify": ssl_verify}})
+        await _click_settings_category(pilot, "network")
+        assert screen.query_one("#settings-network-invalid-row", Static)
+
+        def marked() -> bool:
+            rail = screen.query_one("#settings-category-network", Button)
+            return str(rail.label).endswith(" *")
+
+        assert screen._category_has_unsaved_changes(_NETWORK) is False
+        assert not marked()
+        assert "Network" not in unsaved_settings_titles(screen)
+        store = ScreenStateStore()
+        store.save("settings", screen.save_state(), RuntimeIdentity("server", "other"))
+        assert probe_unsaved_editors(screen_state_store=store) == ()
+
+        screen.query_one("#settings-network-ssl-mode", Select).value = "off"
+        await pilot.pause()
+        assert NETWORK_PANEL.pending(screen)["mode"] == "off"
+        assert screen._category_has_unsaved_changes(_NETWORK) is True and marked()
+
+        screen.action_settings_revert_category()
+        await pilot.pause(0.2)
+        await pilot.click("#confirm-button")  # Discard changes
+        await _settle_settings(pilot)
+        assert screen._category_has_unsaved_changes(_NETWORK) is False
+        assert not marked()
+        screen.action_settings_revert_category()  # nothing left: no dialog
+        await pilot.pause(0.2)
+        assert not isinstance(host.screen, ConfirmationDialog)
+
+
+def _saved_ssl_verify():
+    """``[network] ssl_verify`` as written to this private profile's config."""
+    return SettingsConfigAdapter().load(force_reload=True)["network"]["ssl_verify"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_network_pick_back_to_verify_after_a_save_is_staged_and_saved(
+    request, monkeypatch
+) -> None:
+    """Review N6: after "off" was saved, picking "verify" again (the value the
+    card first showed) was dropped as a mount echo, and the next ``s`` wrote
+    false again while toasting success. Every user pick is an edit."""
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_network(host, pilot)
+        toasts = _capture_toasts(screen, monkeypatch)
+        select = screen.query_one("#settings-network-ssl-mode", Select)
+        rail = screen.query_one("#settings-category-network", Button)
+        warning = screen.query_one("#settings-network-warning", Static)
+
+        select.value = "off"
+        await pilot.pause()
+        screen.action_settings_save_category()
+        assert _saved_ssl_verify() is False
+
+        select.value = "verify"
+        await pilot.pause()
+        assert NETWORK_PANEL.pending(screen) == {"mode": "verify"}
+        assert str(rail.label).endswith(" *")
+        assert "Network" in unsaved_settings_titles(screen)
+        assert _static_text(warning) == ""  # no "Verification is DISABLED"
+
+        screen.action_settings_save_category()
+        assert _saved_ssl_verify() is True
+        assert toasts[-1] == ("Network TLS setting saved.", "information")
+        assert screen._category_has_unsaved_changes(_NETWORK) is False
+        assert not str(rail.label).endswith(" *")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_network_ca_path_typed_back_after_a_save_is_staged_and_saved(
+    request, tmp_path
+) -> None:
+    """Review N6 on the CA path Input: after another bundle was saved, typing
+    the path the card first showed is an edit, and ``s`` writes it."""
+    first, second = tmp_path / "first-ca.pem", tmp_path / "second-ca.pem"
+    first.write_text("# first ca")
+    second.write_text("# second ca")
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        screen = _active_destination_screen(host)
+        screen._app_config_update_target().update({"network": {"ssl_verify": str(first)}})
+        await _click_settings_category(pilot, "network")
+        path = screen.query_one("#settings-network-ca-path", Input)
+        assert path.value == str(first)
+
+        path.value = str(second)
+        await pilot.pause()
+        screen.action_settings_save_category()
+        assert _saved_ssl_verify() == str(second)
+
+        path.value = str(first)
+        await pilot.pause()
+        assert NETWORK_PANEL.pending(screen) == {"ca_bundle_path": str(first)}
+        assert "Network" in unsaved_settings_titles(screen)
+        screen.action_settings_save_category()
+        assert _saved_ssl_verify() == str(first)
+        assert screen._category_has_unsaved_changes(_NETWORK) is False

@@ -23,9 +23,11 @@ def _assert_category_support(screen, category):
         category in GUIDED_SETTINGS_MUTATION_CATEGORIES
         or category is SettingsCategoryId.NETWORK
     )
+    # TASK-1378.1: Network is ADR-303 staged, so its panel reverts too.
     assert supports(category, "revert") == (
         category in GUIDED_SETTINGS_MUTATION_CATEGORIES
         or category is SettingsCategoryId.ADVANCED_CONFIG
+        or category is SettingsCategoryId.NETWORK
     )
     assert supports(category, "test") == (
         category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES
