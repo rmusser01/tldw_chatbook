@@ -374,6 +374,13 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.UI.LLM_Management.vllm_setup",
     "tldw_chatbook.LLM_Calls.anthropic_subscription",
     "tldw_chatbook.Chat.console_trace_regex_worker",
+    # PR #3517 CI (TASK-34100.2, ADR-097): a send's transport retry and a
+    # 429's provider reason are send-time work (Tests/Packaging/
+    # test_first_chat_boot_closure.py), and readiness interprets an endpoint
+    # only when a window was recorded, which never happens before a send.
+    "tldw_chatbook.LLM_Calls.chat_transport_retry",
+    "tldw_chatbook.LLM_Calls.provider_reason",
+    "tldw_chatbook.Provider_Contract.provider_setup_facts",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount
