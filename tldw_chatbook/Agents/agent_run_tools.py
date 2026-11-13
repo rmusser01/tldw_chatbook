@@ -1,7 +1,8 @@
 """The per-run operations of one ``AgentService._run_one`` call.
 
-``_run_one`` used to define these as closures over its own locals
-(TASK-36950.3, architecture review 2026-10-25 §F5). They are methods of
+``_run_one`` used to define these as closures over its own locals: the fleet
+operations (TASK-36950.3) and the run-log tools (TASK-36950.4), from the
+architecture review 2026-10-25 §F5. They are methods of
 :class:`AgentRunTools` now, and the per-run state they shared is its
 attributes, set by ``_run_one`` at the point where the closures used to be
 defined. The method bodies are the closure bodies: a closure's ``self`` (the
@@ -29,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
+import sys
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Literal
@@ -37,7 +39,9 @@ from uuid import uuid4
 from tldw_chatbook.Provider_Contract.sampling_params import params_to_tuple
 
 from . import agent_service
+from .activation import history_execution, standard_history_resolver
 from .agent_models import (
+    AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
     MAX_STEERING_CHARS,
     RUN_DONE,
@@ -84,7 +88,7 @@ if TYPE_CHECKING:
 
 
 class AgentRunTools:
-    """Fleet operations of one agent run, over the state that run shares.
+    """Fleet operations and run-log tools of one agent run, over its state.
 
     Built by ``AgentService._run_one`` once per run, after the run row
     exists and its tool surface is decided; its bound methods are what the
@@ -1785,4 +1789,429 @@ class AgentRunTools:
             return refuse_progress()
         return collect_progress(
             self.progress_reader, args, self.config.budget.max_tool_result_chars
+        )
+
+    # -- run-log tools (TASK-36950.4) ----------------------------------
+
+    def search_run_log(self, args: dict) -> ToolResult:
+        """Query THIS run's log, or (``scope="conversation"``) this
+        conversation's earlier runs too. Reads only what this agent --
+        and, in conversation scope, its own earlier runs -- produced.
+
+        F2 (Qodo #2, PR #1066 review -- DECLINED): Qodo's finding wanted
+        these raw ``dict`` args routed through a Pydantic model before
+        use. Declined: every OTHER runtime tool this service wires
+        (``install_skill``, ``run_skill_script``, ``skill_file``) takes
+        the exact same raw-dict-plus-defensive-cast shape, and every
+        argument here is ALREADY coerced defensively (``str(...)`` for
+        the metadata filters below; ``int(... or 0)`` inside a single
+        ``try/except (TypeError, ValueError)`` for the numeric ones) --
+        a bad value already returns a clean ``ToolResult`` error rather
+        than raising, which is the property Pydantic would add. Giving
+        this one tool a model would make it the odd one out in this
+        module without changing behavior. See
+        ``Tests/Agents/test_search_run_log_runtime_tool.py`` for the
+        coverage confirming every argument is safely coerced (string
+        where an int is expected, null, a nested object, a list).
+
+        task-1273 (``scope``): ``scope="run"`` (the default, and the
+        only value every call before this task could send) is handled
+        by the UNCHANGED code path below -- byte-identical output.
+        ``scope="conversation"`` branches out early into a separate,
+        best-effort cross-run path built on ``run_log_search.
+        search_across_runs``: it enumerates this conversation's own
+        PRIMARY runs via ``self.db.list_runs`` (capped at
+        ``MAX_CROSS_RUN_RUNS``), resolves each one's log directory via
+        ``run_log.resolve_existing_log_dir`` (the current run's own
+        directory is already known -- ``log_dir`` below -- and is never
+        re-resolved), and reports which runs could not be located
+        rather than silently omitting them. Any other ``scope`` value
+        falls back to ``"run"``, the same defensive-coercion convention
+        as every other argument here.
+
+        Args:
+            args: The model-supplied call arguments, straight off
+                ``ToolCall.args`` (always a ``dict`` -- both parsing
+                paths in ``native_tools.py``/``agent_runtime.py``
+                guarantee that, never validated by a schema here).
+                Recognised keys mirror ``search_records``'/
+                ``format_results``' own parameters: ``contains``,
+                ``pattern``, ``tool``, ``type``, ``status``, ``kind``,
+                ``from_record``, ``to_record``, ``context``, ``offset``
+                -- plus ``scope`` (``"run"`` default or
+                ``"conversation"``).
+
+        Returns:
+            ``ToolResult(ok=True, content=...)`` with the rendered hits
+            (or "No matching records."), or ``ok=False`` with a
+            human-readable error -- for a missing log, malformed
+            numeric arguments, a rejected catastrophic-looking
+            ``pattern``, a search that exceeded its wall-clock budget
+            (F6), or (``scope="conversation"`` only) a failure to list
+            this conversation's runs. Never raises.
+        """
+        from .run_log import resolve_existing_log_dir
+        from .run_log_search import (
+            MAX_CROSS_RUN_RUNS,
+            RunLogSearchPatternRejected,
+            RunLogSearchTimeout,
+            format_cross_run_results,
+            format_results,
+            load_records,
+            search_across_runs,
+            search_records,
+        )
+
+        log_dir = self.writer.log_dir
+        if log_dir is None:
+            return ToolResult(ok=False, error="No run log is available.")
+        contains = str(args.get("contains", ""))
+        pattern = str(args.get("pattern", ""))
+        # task-1273: defensively coerced like every other argument here
+        # -- an unrecognised value falls back to "run", the byte-
+        # identical default every call before this task already got.
+        scope = str(args.get("scope") or "run").strip().lower()
+        if scope == "conversation":
+            try:
+                with history_execution(self.service) as history_root:
+                    offset = int(args.get("offset") or 0)
+                    # task-1273 review finding A: the cap is pushed INTO the
+                    # query (both `limit` and `agent_kind`) rather than
+                    # fetched-then-discarded -- a long-lived conversation's
+                    # run count (primary + every sub-agent run it has ever
+                    # spawned) must never size this query. `count_runs` is a
+                    # second, O(1)-row query that gets the EXACT total
+                    # without materializing it, so the coverage line can
+                    # still report a precise omitted count rather than only
+                    # "more exist".
+                    windowed = self.service.db.list_runs(
+                        self.conversation_id,
+                        include_superseded=True,
+                        limit=MAX_CROSS_RUN_RUNS,
+                        agent_kind=AGENT_KIND_PRIMARY,
+                    )
+                    total_primary_count = self.service.db.count_runs(
+                        self.conversation_id,
+                        include_superseded=True,
+                        agent_kind=AGENT_KIND_PRIMARY,
+                    )
+                    omitted_run_count = max(0, total_primary_count - len(windowed))
+                    standard_resolver = standard_history_resolver(
+                        resolve_existing_log_dir
+                    )
+                    resolved_runs: list = []
+                    for run in windowed:
+                        candidate_id = run.get("id")
+                        if candidate_id == self.run_id:
+                            # This run's own directory is already known --
+                            # never re-resolved (avoids a redundant glob and
+                            # any race with THIS run's still-open writer).
+                            resolved_runs.append((candidate_id, log_dir))
+                        else:
+                            if standard_resolver:
+                                directory = (
+                                    resolve_existing_log_dir(
+                                        candidate_id, root=history_root
+                                    )
+                                    if history_root is not None
+                                    else None
+                                )
+                            else:
+                                directory = resolve_existing_log_dir(candidate_id)
+                            resolved_runs.append((candidate_id, directory))
+                    cross_result = search_across_runs(
+                        resolved_runs,
+                        current_run_id=self.run_id,
+                        contains=contains,
+                        pattern=pattern,
+                        tool=str(args.get("tool", "")),
+                        type=str(args.get("type", "")),
+                        status=str(args.get("status", "")),
+                        kind=str(args.get("kind", "")),
+                        from_record=int(args.get("from_record") or 0),
+                        to_record=int(args.get("to_record") or 0),
+                        context=int(args.get("context") or 0),
+                    )
+            except (TypeError, ValueError, OverflowError) as exc:
+                return ToolResult(
+                    ok=False, error=f"Invalid search arguments: {exc}"
+                )
+            except (RunLogSearchPatternRejected, RunLogSearchTimeout) as exc:
+                return ToolResult(ok=False, error=str(exc))
+            except Exception as exc:  # noqa: BLE001 — a run listing/
+                # resolution failure (a missing DB file, a locked
+                # connection, an unreadable directory) must degrade to a
+                # ToolResult like every other failure mode here, never
+                # raise into the run.
+                return ToolResult(ok=False, error=f"Cross-run search failed: {exc}")
+            ceiling = self.config.budget.max_tool_result_chars
+            render_max_chars = ceiling if ceiling > 0 else sys.maxsize
+            return ToolResult(
+                ok=True,
+                content=format_cross_run_results(
+                    cross_result,
+                    max_chars=render_max_chars,
+                    contains=contains,
+                    pattern=pattern,
+                    offset=offset,
+                    omitted_run_count=omitted_run_count,
+                ),
+            )
+        # scope == "run" (the default, and any unrecognised value):
+        # UNCHANGED below -- byte-identical to every call before
+        # task-1273.
+        try:
+            records = load_records(log_dir)
+            hits = search_records(
+                records,
+                contains=contains,
+                pattern=pattern,
+                tool=str(args.get("tool", "")),
+                type=str(args.get("type", "")),
+                status=str(args.get("status", "")),
+                kind=str(args.get("kind", "")),
+                from_record=int(args.get("from_record") or 0),
+                to_record=int(args.get("to_record") or 0),
+                context=int(args.get("context") or 0),
+            )
+            # TASK-1250: offset, coerced the same defensively-numeric way
+            # as from_record/to_record/context above -- a model sending
+            # junk (a non-numeric string) is caught below like any other
+            # bad numeric arg, never raised into the run. Negative and
+            # past-the-end clamping happens in format_results itself
+            # (single point of truth, mirroring `context`'s own clamp).
+            offset = int(args.get("offset") or 0)
+        except (TypeError, ValueError, OverflowError) as exc:
+            # OverflowError: a model can send `float('inf')` (or a
+            # literal large enough to parse as one) for from_record/
+            # to_record/context/offset -- `int(float('inf'))` raises
+            # OverflowError, NOT TypeError/ValueError, so it must be
+            # caught here too or it escapes uncaught into the run.
+            # `float('nan')` already raises ValueError, already
+            # covered. Same gap `run_log_stats`/`run_log_slice` below
+            # already close for their own from_record/to_record --
+            # this closure (Phase 1, merged earlier) was the one
+            # sibling still missing it (task-1272 Phase 3 review,
+            # carried-over finding).
+            return ToolResult(ok=False, error=f"Invalid search arguments: {exc}")
+        except (RunLogSearchPatternRejected, RunLogSearchTimeout) as exc:
+            # F6 (Qodo #6): a model-supplied `pattern=` that looks
+            # catastrophic, or a search that ran past its wall-clock
+            # budget -- both must degrade to a normal tool error, never
+            # raise into (and abort) this run. See run_log_search.py's
+            # module docstring for why neither defense is complete
+            # alone.
+            return ToolResult(ok=False, error=str(exc))
+        # Final-review CRITICAL 1: render recovered records at THIS run's
+        # own tool-result ceiling, not format_results' 400-char rendering
+        # default. §6.1's whole point is that a truncation trailer points
+        # at a lossless copy -- if the copy renders at 400 chars while
+        # the truncation it repairs cut at 16,000, following the trailer
+        # returns LESS than the thing it was supposed to fix. Keep
+        # format_results' own default untouched (its existing tests pin
+        # 400) and instead pass the run's actual ceiling from here.
+        # 0 (or negative) is the documented "unlimited" value for
+        # RunBudget.max_tool_result_chars / _truncate_tool_result;
+        # format_results has no such sentinel (max_chars=0 would render
+        # nothing), so translate it into a ceiling that never trips
+        # format_results' own truncation branch. The rendered search
+        # RESULT still passes back through the loop's ordinary
+        # _truncate_tool_result at the history-append seam, so this
+        # cannot blow the run's context budget -- it only stops the
+        # recovery path from being strictly worse than what it repairs.
+        #
+        # TASK-1250: that alone was not enough. format_results always
+        # rendered from character 0 of each record, which is the SAME
+        # ceiling that truncated the result in the first place -- so a
+        # record larger than render_max_chars still rendered byte-
+        # identical to what history already showed, and a `contains=`
+        # match past that ceiling could render a body that did not
+        # contain it. Passing `contains`/`pattern` lets format_results
+        # centre the window on the actual match; passing `offset` lets
+        # the model page past render_max_chars deterministically once a
+        # render tells it the next offset to use.
+        ceiling = self.config.budget.max_tool_result_chars
+        render_max_chars = ceiling if ceiling > 0 else sys.maxsize
+        return ToolResult(
+            ok=True,
+            content=format_results(
+                hits,
+                max_chars=render_max_chars,
+                contains=contains,
+                pattern=pattern,
+                offset=offset,
+            ),
+        )
+
+    def run_log_stats(self, args: dict) -> ToolResult:
+        """Aggregate counts/errors/bytes over THIS run's log, grouped.
+
+        Phase 2 (task-1271) sibling of ``search_run_log`` immediately
+        above -- same coercion discipline (F2: raw-dict-plus-defensive-
+        cast, declined Pydantic for the same reason every other
+        runtime-tool closure in this module uses that shape --
+        ``install_skill``, ``run_skill_script``, ``skill_file``,
+        ``search_run_log`` all take a raw ``dict`` through this exact
+        seam and coerce defensively rather than raising). Giving these
+        two tools alone a bespoke validation model would make them the
+        odd ones out without changing observable behaviour -- every
+        argument below is coerced the same way and proven safe against
+        the full space of JSON-decodable value types (str, int, float,
+        bool, None, list, dict) in every argument slot by
+        ``Tests/Agents/test_run_log_stats_slice_runtime_tools.py``'s
+        "every argument, every hostile JSON value" matrix -- so this
+        does not need re-litigating on the next review. Same "never
+        raise into the run" contract.
+
+        ``group_by`` is normalised HERE, before calling
+        ``compute_stats``, rather than left to that function's own
+        (still-present, defense-in-depth) fallback: ``compute_stats``
+        silently substitutes ``"tool"`` for an unrecognised value, and
+        if this closure echoed the caller's ORIGINAL (unrecognised)
+        string back into ``format_stats``' header line, the rendered
+        output would claim to be grouped by something it is not --
+        confidently mislabelled data. Normalising here keeps the label
+        passed to ``format_stats`` in sync with what ``compute_stats``
+        actually grouped by, for every input, not just the recognised
+        ones.
+
+        Args:
+            args: The model-supplied call arguments, straight off
+                ``ToolCall.args`` (always a ``dict``, never validated
+                by a schema here -- see ``search_run_log``'s own
+                docstring for why). Recognised keys mirror
+                ``run_log_search.compute_stats``'s parameters:
+                ``group_by`` (``tool``/``type``/``status``/``kind``,
+                default ``"tool"``; an unrecognised value falls back
+                to ``"tool"`` and is reported as ``"tool"``, never
+                raises here), and the same structured pre-filters
+                ``search_run_log`` accepts (``tool``, ``type``,
+                ``status``, ``kind``, ``from_record``, ``to_record``)
+                -- never ``contains``/``pattern``: this tool aggregates
+                metadata, it does not search content.
+
+        Returns:
+            ``ToolResult(ok=True, content=...)`` with one line per
+            (capped) distinct group value plus, when the cap trimmed
+            anything, an explicit "N further ... omitted" trailer --
+            bounded by ``run_log_search.MAX_STATS_GROUPS``, never by
+            the number of records or the number of distinct groups a
+            long run could accumulate -- or ``ok=False`` for a missing
+            log or a malformed numeric argument (including a value
+            that overflows ``int()``, e.g. ``float('inf')``). Never
+            raises.
+        """
+        from .run_log_search import (
+            STATS_GROUP_BY_FIELDS,
+            compute_stats,
+            format_stats,
+            load_records,
+        )
+
+        log_dir = self.writer.log_dir
+        if log_dir is None:
+            return ToolResult(ok=False, error="No run log is available.")
+        group_by = str(args.get("group_by") or "tool")
+        if group_by not in STATS_GROUP_BY_FIELDS:
+            group_by = "tool"
+        try:
+            records = load_records(log_dir)
+            groups, total, omitted = compute_stats(
+                records,
+                group_by=group_by,
+                tool=str(args.get("tool", "")),
+                type=str(args.get("type", "")),
+                status=str(args.get("status", "")),
+                kind=str(args.get("kind", "")),
+                from_record=int(args.get("from_record") or 0),
+                to_record=int(args.get("to_record") or 0),
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            # OverflowError: a model can send `float('inf')` (or a
+            # literal large enough to parse as one) for from_record/
+            # to_record -- `int(float('inf'))` raises OverflowError,
+            # NOT TypeError/ValueError, so it must be caught here too
+            # or it escapes uncaught into the run. `float('nan')`
+            # already raises ValueError, already covered.
+            return ToolResult(ok=False, error=f"Invalid stats arguments: {exc}")
+        return ToolResult(
+            ok=True,
+            content=format_stats(
+                groups,
+                group_by=group_by,
+                total_records=total,
+                omitted_groups=omitted,
+            ),
+        )
+
+    def run_log_slice(self, args: dict) -> ToolResult:
+        """Retrieve a contiguous range of THIS run's log as one unit.
+
+        Phase 2 (task-1271) sibling of ``search_run_log``/
+        ``run_log_stats`` above -- same coercion discipline (raw-dict-
+        plus-defensive-cast, deliberately NOT a Pydantic model, for the
+        same reason as every other runtime-tool closure in this module
+        -- ``install_skill``, ``run_skill_script``, ``skill_file``,
+        ``search_run_log``; see ``run_log_stats``'s own docstring
+        immediately above for the full rationale and the test that
+        proves every argument slot here is safe against the full
+        JSON-decodable value space), same "never raise into the run"
+        contract. Bounded the same way ``search_run_log`` bounds its
+        own output: this run's own ``max_tool_result_chars`` ceiling
+        per record (identical ``render_max_chars`` computation, reused
+        verbatim below), and ``run_log_search.MAX_SLICE_RECORDS``
+        records per call regardless of how wide the requested range
+        is.
+
+        Args:
+            args: The model-supplied call arguments, straight off
+                ``ToolCall.args`` (always a ``dict``). Recognised keys:
+                ``from_record`` (coerced defensively; a missing or
+                invalid value falls back to record 1 rather than
+                erroring -- see ``run_log_search.slice_records``) and
+                ``to_record`` (optional; a default-width window is
+                applied when omitted).
+
+        Returns:
+            ``ToolResult(ok=True, content=...)`` rendering the
+            selected records via ``run_log_search.format_slice``
+            (which itself reuses ``format_results`` -- no second
+            renderer), or ``ok=False`` for a missing log or a
+            malformed numeric argument (including a value that
+            overflows ``int()``, e.g. ``float('inf')``). Never raises.
+        """
+        from .run_log_search import format_slice, load_records, slice_records
+
+        log_dir = self.writer.log_dir
+        if log_dir is None:
+            return ToolResult(ok=False, error="No run log is available.")
+        try:
+            from_record = int(args.get("from_record") or 0)
+            to_record = int(args.get("to_record") or 0)
+        except (TypeError, ValueError, OverflowError) as exc:
+            # OverflowError: see run_log_stats' identical except clause
+            # immediately above -- `int(float('inf'))` raises
+            # OverflowError, not TypeError/ValueError, and a model can
+            # send that for from_record/to_record just as easily.
+            return ToolResult(ok=False, error=f"Invalid slice arguments: {exc}")
+        records = load_records(log_dir)
+        selected, total_matched, resolved_from, resolved_to = slice_records(
+            records, from_record=from_record, to_record=to_record
+        )
+        # Same ceiling-translation as search_run_log immediately above:
+        # 0 (or negative) is the documented "unlimited" sentinel for
+        # max_tool_result_chars, which format_results has no sentinel
+        # for (max_chars=0 would render nothing), so translate it into
+        # a ceiling format_results' own truncation branch never trips.
+        ceiling = self.config.budget.max_tool_result_chars
+        render_max_chars = ceiling if ceiling > 0 else sys.maxsize
+        return ToolResult(
+            ok=True,
+            content=format_slice(
+                selected,
+                from_record=resolved_from,
+                to_record=resolved_to,
+                total_matched=total_matched,
+                max_chars=render_max_chars,
+            ),
         )
