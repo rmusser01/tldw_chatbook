@@ -601,7 +601,7 @@ Anthropic = ["claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-haiku
 Cohere = ["command-a-03-2025", "command-r7b-12-2024", "command-r-plus-04-2024", "command-r-plus", "command-r-08-2024", "command-r-03-2024", "command", "command-nightly", "command-light", "command-light-nightly"]
 DeepSeek = ["deepseek-v4-flash", "deepseek-v4-pro"]
 Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-70b-8192", "llama3-70b-8192", "llama3-8b-8192",]
-Google = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", ]
+Google = ["gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", ]
 HuggingFace = ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
 MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
 Moonshot = ["kimi-k3", "kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
@@ -773,7 +773,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.google]
     api_key_env_var = "GOOGLE_API_KEY"
     api_key = "<API_KEY_HERE>"
-    model = "gemini-flash-latest" # Google's rolling Flash alias (TASK-34100.2)
+    model = "gemini-flash-lite-latest" # Google's rolling Flash-Lite alias (TASK-34100.2)
     temperature = 0.7
     top_p = 0.9 # Google uses topP (represented as topp in UI)
     top_k = 100 # Google uses topK
