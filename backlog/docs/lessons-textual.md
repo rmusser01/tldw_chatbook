@@ -2622,3 +2622,9 @@ round that asked for a test of the new restore-mismatch copy found it.
 **What to do.**
 - Move a new branch's body into its own `async def` helper that looks up its widgets before its first `await`, and have the handler call it. The count went back to "none new" with no census re-pin.
 - Do not re-pin with `--write` for a lookup that only looks post-await because of where it sits in the source.
+
+## A pane rebuilt inside a modal's confirm callback finds the modal's focus, not the screen's (TASK-40318, 2026-11-12)
+
+**Incident.** After a confirmed archive in Settings ▸ Workspaces, focus never reached Undo archive, which sat clipped below the pane at 80x24. The task's diagnosis was a missing entry in the swap's replacement map (`"settings-workspace-archive"` had none), so the obvious fix was one map line. With only that line, `test_workspace_lifecycle_feedback_is_visible[archive]` stayed red, under `run_test` and under the eager task factory alike. `ConfirmationDialog` awaits `confirm_callback()` before it dismisses itself, and the archive commits inside that callback. So the pane swap reads `app.focused` while the dialog is still on top: it is a dialog button, `_focused_id_in_category_panes` returns None, and nothing is parked or restored. The map is never consulted. Textual then resets the covered screen's focus when the Archive button goes.
+
+**What to do.** When a confirm callback rebuilds the screen underneath, name the landing explicitly: queue it behind the rebuild (`_after_category_panes(self._restore_category_pane_focus, "<id>")` here). `Screen.set_focus` works on a covered screen (it sets that screen's `focused`), and the resume's own same-category rebuild then restores that control and scrolls it into view. Prove a focus fix with the real dialog, not by calling the completion directly.

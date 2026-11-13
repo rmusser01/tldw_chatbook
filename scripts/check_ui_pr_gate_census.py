@@ -1019,6 +1019,10 @@ MINIMUM_FILES = 2036
 # TASK-40319 (2026-11-12): append the Settings Workspaces category file's 20
 # tests at the tail, one entry each. The floor is the measured entry count.
 MINIMUM_FILES = 2062
+MINIMUM_FILES = 2056
+# TASK-40318 (2026-11-12): append the Settings Workspaces lifecycle journeys'
+# 13 cases at the tail, one entry each. The floor is the measured entry count.
+MINIMUM_FILES = 2075
 
 
 def read_census(path: Path) -> list[str]:

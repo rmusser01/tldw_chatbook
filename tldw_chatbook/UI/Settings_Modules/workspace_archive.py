@@ -1,4 +1,4 @@
-"""Settings archive Undo; receipt and completion ownership stay screen-local."""
+"""Settings archive receipt and Undo; receipt ownership stays screen-local."""
 
 from __future__ import annotations
 
@@ -11,6 +11,28 @@ from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceEr
 
 if TYPE_CHECKING:
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+
+
+def show_receipt(screen: SettingsScreen, name: str) -> None:
+    """Show a committed archive's receipt and put keyboard focus on Undo.
+
+    TASK-40318: the archive commits inside the confirmation dialog's callback,
+    so the pane swap can run while the dialog still holds focus and find no
+    control to restore. Undo archive is the next action; focusing it behind
+    the swap also scrolls it into the pane.
+
+    Args:
+        screen: Settings screen whose archive just committed.
+        name: The archived workspace's name.
+    """
+    screen._settings_selected_workspace_id = None
+    screen._settings_workspaces_result = (
+        f"Archived {name}. Saved conversations stay in Library."
+    )
+    screen._refresh_settings_workspaces_pane()
+    screen._after_category_panes(
+        screen._restore_category_pane_focus, "settings-workspace-archive-undo"
+    )
 
 
 def undo_workspace_archive(screen: SettingsScreen, event: Button.Pressed) -> None:

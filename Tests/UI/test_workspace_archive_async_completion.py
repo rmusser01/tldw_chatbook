@@ -36,6 +36,8 @@ def _host(registry):
         _settings_workspace_archive_receipt=None,
         _set_settings_workspaces_result=Mock(),
         _refresh_settings_workspaces_pane=Mock(),
+        _after_category_panes=Mock(),
+        _restore_category_pane_focus=Mock(),
         query_one=lambda *_: SimpleNamespace(value="Restored"),
     )
     app.screen = screen
@@ -261,9 +263,14 @@ async def test_workspace_archive_cancellation_keeps_reservation_until_commit(
         if leave_screen:
             assert screen._settings_selected_workspace_id == "w"
             screen._refresh_settings_workspaces_pane.assert_not_called()
+            screen._after_category_panes.assert_not_called()
         else:
             assert screen._settings_selected_workspace_id is None
             screen._refresh_settings_workspaces_pane.assert_called_once()
+            # TASK-40318: focus lands on Undo once the panes are rebuilt.
+            screen._after_category_panes.assert_called_once_with(
+                screen._restore_category_pane_focus, "settings-workspace-archive-undo"
+            )
 
 
 @pytest.mark.asyncio
