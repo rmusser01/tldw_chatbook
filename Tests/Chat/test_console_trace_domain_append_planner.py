@@ -659,3 +659,35 @@ def test_an_admitted_probe_hands_its_values_to_the_boundary(
     assert len(probes[0]["after"]) == len(probes[0]["before"]) + 2
     assert _read_back(chat, persisted) == chat.sent()
 
+
+@pytest.mark.parametrize("warm", [True, False], ids=["warm", "cold"])
+def test_tool_loop_messages_keep_their_place_in_the_admitted_delta(
+    db, repository, warm: bool
+) -> None:
+    """Pre-merge review M5: the delta's tool-loop overlay follows its indices.
+
+    The overlay names provider messages by index. The per-domain delta is not
+    a contiguous slice of the request, so each marked message must be named
+    by its position in the admitted delta, not by an offset from the flat
+    prefix.
+    """
+    from dataclasses import replace
+
+    chat, service, _ = _two_traced_turns(db, repository)
+    if not warm:
+        service = ConsoleTraceService(repository)
+    provenance, values = chat.request()
+    # Mark reply 2 (incoming message 3), one of the two new messages.
+    provenance = replace(provenance, tool_loop=(3,))
+
+    with db.transaction() as cursor:
+        admission, boundary = _plan(service, cursor, chat, provenance, values)
+
+    assert admission.descriptors == (
+        chat.messages[3][0],
+        chat.messages[4][0],
+        chat.attachment(3),
+    )
+    # Warm, the delta names reply 2 as its first message; either way the
+    # verified surface reads it back as message 3 of the request.
+    assert boundary.provenance.tool_loop == (3,)
