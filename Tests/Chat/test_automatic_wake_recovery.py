@@ -267,9 +267,11 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
             assert getattr(outcome, "visible_copy", outcome) == "Session closed.", outcome
             assert outcome.terminal_status is not ConsoleRunStatus.BLOCKED, outcome
             row = chacha.get_connection().execute(
-                "SELECT conversation_id, content FROM messages WHERE id=?", (saved[0],)
+                "SELECT conversation_id, content, deleted FROM messages WHERE id=?",
+                (saved[0],),
             ).fetchone()
-            assert tuple(row) == (session.id, ""), row
+            # TASK-40313: the refused save's row is tombstoned, not left live.
+            assert tuple(row) == (session.id, "", 1), tuple(row)
             return
 
         refused = "The chat changed while the reply was being saved; response was not sent."
@@ -293,9 +295,10 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
         first = store.get_message(saved[0])
         assert first.persisted_message_id is None, "the moved save was adopted"
         row = chacha.get_connection().execute(
-            "SELECT conversation_id, content FROM messages WHERE id=?", (saved[0],)
+            "SELECT conversation_id, content, deleted FROM messages WHERE id=?",
+            (saved[0],),
         ).fetchone()
-        assert tuple(row) == (session.id, ""), row
+        assert tuple(row) == (session.id, "", 1), tuple(row)
     finally:
         await close_rig(rig)
 
