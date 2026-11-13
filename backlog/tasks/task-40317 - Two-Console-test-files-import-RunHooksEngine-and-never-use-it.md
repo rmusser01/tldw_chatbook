@@ -1,7 +1,9 @@
 ---
 id: TASK-40317
 title: "Two Console test files import RunHooksEngine and never use it"
-status: To Do
+status: Done
+assignee: ['@claude']
+updated_date: 2026-11-13 02:01
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -24,5 +26,18 @@ Found in round 13 of the 2026-10-23 burn-down (cred stream). Checked by reading 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Neither file imports a name it does not use (ruff F401 clean for both)
+- [x] #1 Neither file imports a name it does not use (ruff F401 clean for both)
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Re-check the premise on base 26b2e677dd with `ruff check --select F401 --isolated` on both files.
+2. Drop the unused `RunHooksEngine` name from both imports; run the tests that use those helpers.
+
+## Implementation Notes
+
+The premise held on base 26b2e677dd: `ruff check --select F401 --isolated` reported exactly the two unused `RunHooksEngine` imports (`test_console_chat_controller.py:12142`, `test_console_local_review_hook.py:1821`) and nothing else. Removed the name from both imports; the same ruff command now reports "All checks passed!".
+
+Covering run: `TestUserPromptSubmitHooks` plus the hook tests of `test_console_local_review_hook.py` (`-n 4`, load 52): 66 passed.
+
+Files: `Tests/Chat/test_console_chat_controller.py`, `Tests/Chat/test_console_local_review_hook.py`.

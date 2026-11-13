@@ -1818,7 +1818,7 @@ def _deny_fs_tools_engine(tmp_path):
     """
     import sys as _sys
 
-    from tldw_chatbook.Agents.run_hooks import HookSpec, RunHooksConfig, RunHooksEngine
+    from tldw_chatbook.Agents.run_hooks import HookSpec, RunHooksConfig
 
     return trusted_hook_engine(
         lambda: RunHooksConfig(
