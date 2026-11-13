@@ -40,6 +40,7 @@ from Tests.Actor_Packs.test_actor_pack_attribution import services
 from Tests.UI.roleplay_frame_harness import (
     CHOOSER_OPTIONS_ID,
     fake_file_picker,
+    list_state,
     open_styled_roleplay,
     painted_rows,
     painted_text,
@@ -1493,3 +1494,81 @@ async def test_a_lore_import_clears_a_search_its_book_does_not_match_and_selects
         assert f"lore:{harbour}" in visible_item_ids(screen)
         assert screen.state.selected_entity_id == str(kepler)
         assert notices[-1:] == ["Kepler Atlas imported."]
+
+
+# ---- TASK-33910.51: a landing that then toasts gives the search back ----
+
+
+@pytest.mark.parametrize("meanwhile", ["draft", "search"])
+async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleared(
+    meanwhile, import_env, mock_app_instance, monkeypatch
+):
+    """The landing clears the search (and a character search's relevance
+    sort) before its refresh and decides again after it. When that second
+    decision fails (a draft started during the refresh), the search, the box
+    and the sort come back and the list is read once with them. On dev they
+    stayed cleared (exists on dev; TASK-33910.51 fixes it). A search the
+    user typed during the refresh is newer, so it stays. Mutations: M51-A
+    (no restore) and M51-C (the box restored without ``prevent``, a second
+    read) turn the draft case red; M51-B (no check for a newer search)
+    turns the search case red."""
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_notices(monkeypatch, screen)
+        search = screen.query_one("#personas-library-search", Input)
+        search.focus()
+        await pilot.press(*"Abel")
+        await wait_until(
+            pilot,
+            lambda: [item.name for item in list_state(screen).items] == [SEED],
+            what="the search's one match",
+        )
+        assert screen.state.sort_key == "relevance"
+        entered, gate = _hold_the_landing_refresh(monkeypatch, screen)
+        await _press_import(pilot)
+        await wait_until(pilot, entered.is_set, what="the landing's refresh")
+        assert (search.value, screen.state.search_query, screen.state.sort_key) == (
+            "",
+            "",
+            "name_asc",
+        )
+        if meanwhile == "draft":
+            name = await _dirty_character_draft(pilot)
+        else:
+            search.focus()
+            await pilot.press(*"Zed")
+            await wait_until(
+                pilot,
+                lambda: screen.state.search_query == "Zed",
+                what="the newer search",
+            )
+        reads: list[str] = []
+        real_reload = screen._reload_character_page
+
+        async def counted_reload(*args, **kwargs):
+            reads.append(screen.state.search_query)
+            return await real_reload(*args, **kwargs)
+
+        monkeypatch.setattr(screen, "_reload_character_page", counted_reload)
+        gate.set()
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        # Past a debounce a stray Input.Changed would arm.
+        await asyncio.sleep(personas_screen_module.PERSONAS_SEARCH_DEBOUNCE_SECONDS * 2)
+        await settle(pilot)
+        assert "Wren Halloway" in import_env.characters()
+        assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+        if meanwhile == "draft":
+            assert (search.value, screen.state.search_query, screen.state.sort_key) == (
+                "Abel",
+                "Abel",
+                "relevance",
+            )
+            assert reads.count("Abel") == 1, reads
+            assert [item.name for item in list_state(screen).items] == [SEED]
+            assert _draft_kept(screen, name)
+        else:
+            assert (search.value, screen.state.search_query) == ("Zed", "Zed")
+            assert "Abel" not in reads, reads
