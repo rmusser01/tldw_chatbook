@@ -1,6 +1,7 @@
 """Deterministic workspace lifecycle and late-resume ownership regressions."""
 
 import asyncio
+import contextlib
 import threading
 from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -20,7 +21,13 @@ pytestmark = pytest.mark.bootstrap_profile
 def _host(registry):
     tasks, dialogs = [], []
     app = SimpleNamespace(workspace_registry_service=registry, notify=Mock())
-    app.run_worker = lambda coroutine, **_: tasks.append(asyncio.create_task(coroutine))
+
+    def run_worker(work, **_):
+        # Like Textual's: a coroutine, or an async callable (d043e22438 passes
+        # the bound `_sync_native_console_chat_ui` uncalled).
+        tasks.append(asyncio.create_task(work() if callable(work) else work))
+
+    app.run_worker = run_worker
     screen = SimpleNamespace(
         app=app,
         app_instance=app,
@@ -56,6 +63,14 @@ def _host(registry):
     return screen, controller, tasks, dialogs
 
 
+def _record():
+    # archive_revision: the captured revision archive_workspace compares
+    # against since dd8d60c9e8 (#3162), as on the real WorkspaceRecord.
+    return SimpleNamespace(
+        workspace_id="w", active=False, name="Workspace", archive_revision=0
+    )
+
+
 async def _drain(tasks):
     for task in tasks:
         await task
@@ -65,9 +80,9 @@ async def _drain(tasks):
 @pytest.mark.parametrize("surface", ["console", "settings"])
 async def test_workspace_archive_dispatches_read_and_write_offloop(surface):
     threads = []
-    record = SimpleNamespace(workspace_id="w", active=False, name="Workspace")
+    record = _record()
 
-    def storage(_):
+    def storage(_, **__):
         threads.append(threading.get_ident())
         return record
 
@@ -130,7 +145,12 @@ async def test_late_existing_resume_keeps_authority_through_token_preparation(
     )
     host = SimpleNamespace(
         app_instance=SimpleNamespace(notify=Mock()),
-        _screen=object(),
+        # The resume holds ChatScreen's activation window (b6859aee5f, #3173).
+        _screen=SimpleNamespace(
+            _session=SimpleNamespace(
+                conversation_activation_window=contextlib.nullcontext
+            )
+        ),
         _ensure_console_chat_store=lambda: store,
         _capture_console_draft_switch_snapshot=Mock(),
         _bind_composer_after_switch=Mock(),
@@ -175,10 +195,10 @@ async def test_workspace_archive_cancellation_keeps_reservation_until_commit(
     surface, leave_screen
 ):
     started, release = threading.Event(), threading.Event()
-    record = SimpleNamespace(workspace_id="w", active=False, name="Workspace")
+    record = _record()
     ui_thread = threading.get_ident()
 
-    def archive(_):
+    def archive(_, **__):
         assert threading.get_ident() != ui_thread
         started.set()
         assert release.wait(5)
@@ -317,7 +337,7 @@ async def test_workspace_archive_failure_never_releases_another_reservation(
 ):
     from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
-    record = SimpleNamespace(workspace_id="w", active=False, name="Workspace")
+    record = _record()
     archive = Mock(side_effect=WorkspaceRegistryServiceError("locked"))
     screen, controller, tasks, dialogs = _host(
         SimpleNamespace(get_workspace=lambda _: record, archive_workspace=archive)
@@ -351,7 +371,7 @@ async def test_workspace_archive_failure_never_releases_another_reservation(
 async def test_workspace_archive_unexpected_storage_failure_is_recoverable(
     surface, stage
 ):
-    record = SimpleNamespace(workspace_id="w", active=False, name="Workspace")
+    record = _record()
     registry = SimpleNamespace(
         get_workspace=Mock(return_value=record),
         archive_workspace=Mock(return_value=record),
@@ -392,9 +412,9 @@ async def test_settings_restore_unexpected_storage_failure_keeps_receipt():
 @pytest.mark.asyncio
 async def test_cancelled_archive_receipt_appears_after_late_dialog_dismissal():
     started, release = threading.Event(), threading.Event()
-    record = SimpleNamespace(workspace_id="w", active=False, name="Workspace")
+    record = _record()
 
-    def archive(_):
+    def archive(_, **__):
         started.set()
         assert release.wait(5)
         return record

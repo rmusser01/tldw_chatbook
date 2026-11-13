@@ -2947,3 +2947,7 @@ Tests/UI/test_plugins_browse.py::test_review_dialog_load_failure_stays_in_the_di
 # back to a reset that sets them aside and reattaches kept saved data.
 Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen
 Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches
+# TASK-40320 round 14 (2026-11-12): the Console and Settings archive
+# completion doubles, re-pinned to dev's archive revision, activation window
+# and callable worker (whole file, about 23 s serial locally).
+Tests/UI/test_workspace_archive_async_completion.py

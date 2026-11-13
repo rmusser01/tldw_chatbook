@@ -1011,6 +1011,10 @@ MINIMUM_FILES = 2033
 # TASK-40308 (2026-11-13): append the Plugins screen's restore recovery and
 # reset-fallback tests at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2041
+MINIMUM_FILES = 2035
+# TASK-40320 (2026-11-12): append the archive async-completion file at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 2042
 
 
 def read_census(path: Path) -> list[str]:
