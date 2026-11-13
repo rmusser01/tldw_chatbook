@@ -12,8 +12,10 @@ sentence to one of the codes below and logs the code. Text that is not one of
 these sentences maps to ``UNRECOGNIZED_STORE_FAILURE``; nothing a caller put in
 an exception can reach the log through this module.
 
-``Tests/Agents/test_continuation_error_reasons.py`` reads the store's source
-and fails when a new failure sentence on the persist path has no code here.
+``Tests/Agents/test_continuation_error_reasons.py`` reads the persist path's
+source (the store, ``console_continuation_binding`` and
+``console_native_commit``) and fails when a new failure sentence there has no
+code here.
 """
 
 from __future__ import annotations
@@ -42,13 +44,29 @@ STORE_FAILURE_CODES: Mapping[str, str] = MappingProxyType(
         "Provider continuation terminal settlement failed.": (
             "terminal_settlement_failed"
         ),
-        # _continuation_event_value.
+        # _continuation_write_value: the managed seal (dev TASK-35582).
+        "Managed continuation seal is unavailable.": "managed_seal_unavailable",
+        # console_continuation_binding.continuation_event_value.
         "Continuation revision conflict.": "revision_conflict",
         "Unsupported continuation event.": "unsupported_event",
-        # _settle_dispatch_recovery.
+        # console_continuation_binding.validate_durable_continuation_binding
+        # (dev TASK-35582): the host target and frozen destination checks.
+        "Durable continuation host target is unavailable.": (
+            "host_target_unavailable"
+        ),
+        "Provider continuation binding cannot be erased.": "binding_erased",
+        "Managed continuation finalizer is unavailable.": (
+            "managed_finalizer_unavailable"
+        ),
+        "Durable continuation destination is unavailable.": (
+            "destination_unavailable"
+        ),
+        "Provider continuation destination mismatch.": "destination_mismatch",
+        # console_native_commit._store_settle_dispatch_recovery.
         "Dispatch recovery owner changed during settlement.": (
             "settlement_owner_changed"
         ),
+        "Durable Console persistence owner changed.": "persistence_owner_changed",
         # ensure_provider_continuation_durable (raised as durability.reason).
         "Local continuation storage is unavailable; save the message and retry.": (
             "local_storage_unavailable"
@@ -78,10 +96,14 @@ STORE_FAILURE_CODES: Mapping[str, str] = MappingProxyType(
 PROJECTION_FAILED = "projection_failed"
 
 #: Failures raised before the store wrote the continuation or settled the
-#: dispatch (a failed terminal settlement is one atomic, rolled-back write).
-#: The durability-barrier codes and ``settlement_owner_changed`` are absent on
-#: purpose: they are raised after a commit. ``UNRECOGNIZED_STORE_FAILURE`` is
-#: absent too, so anything unknown keeps failing closed.
+#: dispatch (a failed terminal settlement is one atomic, rolled-back write; the
+#: host-target and destination binding checks run before any write). The
+#: durability-barrier codes, ``settlement_owner_changed`` and
+#: ``persistence_owner_changed`` are absent on purpose: they can follow a
+#: commit. So is ``managed_seal_unavailable``: it is raised after the managed
+#: finalizer ran, whose own effects this module cannot vouch for.
+#: ``UNRECOGNIZED_STORE_FAILURE`` is absent too, so anything unknown keeps
+#: failing closed.
 UNWRITTEN_STORE_FAILURES = frozenset(
     {
         PROJECTION_FAILED,
@@ -96,6 +118,11 @@ UNWRITTEN_STORE_FAILURES = frozenset(
         "terminal_settlement_failed",
         "revision_conflict",
         "unsupported_event",
+        "host_target_unavailable",
+        "binding_erased",
+        "managed_finalizer_unavailable",
+        "destination_unavailable",
+        "destination_mismatch",
     }
 )
 
