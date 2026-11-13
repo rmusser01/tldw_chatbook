@@ -1015,6 +1015,10 @@ MINIMUM_FILES = 2035
 # TASK-40320 (2026-11-12): append the archive async-completion file at the
 # tail. The floor is the measured entry count.
 MINIMUM_FILES = 2042
+MINIMUM_FILES = 2036
+# TASK-40319 (2026-11-12): append the Settings Workspaces category file's 20
+# tests at the tail, one entry each. The floor is the measured entry count.
+MINIMUM_FILES = 2062
 
 
 def read_census(path: Path) -> list[str]:
