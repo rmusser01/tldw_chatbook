@@ -21,7 +21,6 @@ from typing import (
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import (

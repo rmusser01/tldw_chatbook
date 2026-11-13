@@ -16359,7 +16359,8 @@ SmartContentTree Tree > .selected-node {
     height: auto;
     margin-top: $ds-space-1;
 }
-.setup-rag-extras-row Static {
+
+.setup-extras-package {
     width: auto;
     margin-right: $ds-space-2;
 }
