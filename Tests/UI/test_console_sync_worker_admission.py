@@ -22,7 +22,12 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 def record_native_sync_entry(screen, entered):
-    """Record each task that enters the screen's native sync."""
+    """Record each task that enters the screen's native sync.
+
+    The wrapper is a plain function, so a run poll's display path would treat
+    it as a custom callback and drop ``_preparing_poll``; use it only while no
+    run poll is active.
+    """
     native_sync = screen._sync_native_console_chat_ui
 
     async def recording_sync(*args, **kwargs):
@@ -72,11 +77,14 @@ async def test_native_refresh_survives_worker_replacement_and_pre_entry_cancel()
                 # A pending whole-sync replay takes the resume's request
                 # instead of a console-sync worker.
                 assert await until(quiet, 8)
+                before = set(host.workers)
                 request()
                 first = next(
                     w
                     for w in host.workers
-                    if w.node is screen and w.group == "console-sync"
+                    if w not in before
+                    and w.node is screen
+                    and w.group == "console-sync"
                 )
                 first_task = first._task
                 if cancel:
@@ -89,7 +97,8 @@ async def test_native_refresh_survives_worker_replacement_and_pre_entry_cancel()
                     second = next(
                         w
                         for w in host.workers
-                        if w.node is screen
+                        if w not in before
+                        and w.node is screen
                         and w.group == "console-sync"
                         and w is not first
                     )

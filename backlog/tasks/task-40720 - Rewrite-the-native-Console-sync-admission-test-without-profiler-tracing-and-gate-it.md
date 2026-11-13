@@ -41,12 +41,12 @@ On dev beab5c1e4e the file is also not in the UI PR gate, and neither of its tes
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 `record_native_sync_entry` replaces the screen's `_sync_native_console_chat_ui` with an async wrapper that records the entering task. The publication test also wraps `screen.run_worker` to keep the `console-context-publication` worker and cancel it at once when asked. Both schedulers read these seams from the screen when they schedule. So a coroutine created before admission would be the wrapper's, and a refused or cancelled worker leaves its "never awaited" RuntimeWarning, which each test already asserts against.
 
-The publication seams are installed after the snapshot exists, so its assertions that it holds the screen's real `run_worker` and sync still hold. The replacement test now waits for no sync and no pending whole-sync replay before each request.
+The publication seams are installed after the snapshot exists, so its assertions that it holds the screen's real `run_worker` and sync still hold. The replacement test now waits for no sync and no pending whole-sync replay before each request. It also takes only workers created by its own request.
 
 Verified locally on 2026-11-13 under the isolated profile:
 - the file passes 10 consecutive full runs;
 - dev's version fails the publication test in every run and the replacement test in 4 of 8;
-- mutants that schedule an eager coroutine fail as expected. At `ChatScreen._console_sync_maintenance_resume` the replacement test fails, 2 of 2 runs. At `publish_console_presentation` the cancelled publication case fails, 2 of 2 runs.
+- mutants that schedule an eager coroutine fail as expected. At `ChatScreen._console_sync_maintenance_resume` the replacement test fails, 2 of 2 runs. At `publish_console_presentation` the cancelled publication case fails, 2 of 2 runs; review saw the replacement test fail there too.
 
-The file joins the UI PR-gate census tail. It supersedes an unpushed 11-09 rewrite that swapped these mounted cases for a fake-screen unit test, losing the replacement, live-failure and publication coverage.
+The file joins the UI PR-gate census tail. Review noted that the snapshot's own fallback `self.schedule(self.refresh, ...)` branch (`UI/Console_Modules/console_spend_projection.py:1636-1643`) is unreachable from `for_screen`, which always sets `publish`. It is production code, so it is left for its own change. It supersedes an unpushed 11-09 rewrite that swapped these mounted cases for a fake-screen unit test, losing the replacement, live-failure and publication coverage.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
