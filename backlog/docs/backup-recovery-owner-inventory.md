@@ -3230,7 +3230,16 @@ restores a Conversations and Workspaces backup over a profile that gained a seco
 Actor Pack since, then rolls the restore back, and every file of both trees comes
 back byte for byte. A rollback plan that leaves those trees out is refused
 (`target_changed` at review, `rollback_dependency_selection_required` at start).
-Not covered: a restore that creates either tree in a profile that never had it.
+A restore that creates either tree root in a profile that never had one used to
+make its later rollback refuse `local_snapshot_absence_unclassified`: only the
+builtin and eval roots were created-root owners. `later_rollback._CREATED_TREE_ROOT_OWNERS`
+now holds both owners, so review reobserves and validates the created root and the
+rollback retires it
+(`test_later_rollback_of_a_restore_that_created_actor_pack_trees`). Still refused
+with that reason: a restore that creates a nested pack folder inside an existing
+root (read from the code, not run: only `persona.assets` has that proof), and a
+restore from another profile that creates the persona store file
+`tldw_chatbook_personas.json` (observed while building that test).
 
 The Actor_Packs rows: activation producers are `qualified` under the owner they write
 into; import staging rows, and `_preflight_space` (which checks free space on the

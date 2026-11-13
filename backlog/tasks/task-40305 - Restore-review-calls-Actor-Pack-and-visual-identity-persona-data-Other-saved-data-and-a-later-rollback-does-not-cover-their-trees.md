@@ -4,7 +4,7 @@ title: "Restore review calls Actor Pack and visual-identity persona data 'Other 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 03:36
+updated_date: 2026-11-13 06:00
 labels:
 - follow-up
 - backup
@@ -73,3 +73,17 @@ Files: `tldw_chatbook/Backup_Recovery/recovery_service.py`, `Tests/Architecture/
 
 Runs: the label test serially, 1 passed. The AC2 test: green twice (585.9 s at load ~70, 440.2 s at load ~60) and red under both negative controls. `Tests/Backup_Recovery/test_recovery_service.py` and `test_group_issues.py` with `-n 4`: 40 passed.
 
+### Review round 2 (r14act-rev1)
+
+- **I3:** I added the second AC2 scenario as the `created-source` / `created-target` routes of the same child script, run by `test_later_rollback_of_a_restore_that_created_actor_pack_trees`:
+  1. The source profile holds one Actor Pack and is backed up.
+  2. The target profile has a persona of its own but never imported an Actor Pack, so it has neither tree. The backup is restored into it.
+  3. The restore is rolled back later.
+
+  At base the rollback review refused `local_snapshot_absence_unclassified`: `_created_destination_target` admitted only the builtin and eval roots as created roots, and `_stage_read_sources` granted reads only to those. The fix was small and stayed in scope: both whitelists now share `later_rollback._CREATED_TREE_ROOT_OWNERS`, which adds `persona.actor_packs` and `persona.visual_identity` (both `_Assets` tree owners, like the builtin). Review now reobserves and validates the created roots, and the rollback retires them. The test was red at base and is green after (179 s). The first whitelist alone was not enough: execution still refused `local_snapshot_created_member_invalid`, because the held session could not read the created files until `_stage_read_sources` admitted them.
+- Found while building it, and recorded in the inventory but not fixed:
+  - A restore from another profile that creates the persona store file `tldw_chatbook_personas.json` also refuses `local_snapshot_absence_unclassified`. This was observed, and is why the target has its own persona.
+  - A restore that creates a nested pack folder inside an existing root still refuses the same way. This is read from the code, not run.
+- **M3:** both AC2 tests now use the per-platform timeout form.
+- **Regression check:** `test_later_created_destinations`, `test_builtin_later_snapshot`, `test_rollback_group_scope`, `test_later_rollback` and `test_eval_later_snapshot` with `-n 4`: 122 passed, 1 failed. The failure is `test_builtin_later_snapshot.py::test_fresh_process_rederives_finite_sources_and_executes_later_rollback`, whose 60 s child timed out. It timed out the same way against base `later_rollback.py` at load ~44.
+- **Changed scenario:** green again after the restructure (328 s).
