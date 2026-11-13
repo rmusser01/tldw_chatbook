@@ -77,9 +77,9 @@ To turn more on:
   surface for that turn.
 
 **Upgrading a profile from before the light tool surface.** The first time
-this version opens a profile that has no `full_agent_tools_enabled` setting,
-it checks once, in the background, whether the profile already uses agent
-features:
+the Chatbook app (the terminal UI) opens a profile that has no
+`full_agent_tools_enabled` setting on this version, it checks once, in the
+background, whether the profile already uses agent features:
 
 - a sub-agent definition (**Settings ▸ Agents**);
 - a workspace folder or SSH remote binding (**Settings ▸ Workspaces**);
@@ -92,12 +92,18 @@ features:
 If it finds any of them, it turns **Full agent tools** on for you, so plain
 chat keeps the tools it had. It adds one line, `full_agent_tools_enabled =
 true`, under `[tools]` in config.toml (or a new `[tools]` table at the end of
-the file), and keeps every other byte, your comments and layout included. A
-profile with none of them, and every new profile, stays on the light set, and
-its config.toml is left as it was. The check runs at most once per profile and never changes a
-value you set yourself, so switching Full agent tools off afterwards keeps
-it off. If it cannot read the profile's data, it changes nothing and tries
-again at the next launch.
+the file), and keeps every other byte, your comments and layout included.
+That holds for this one write only: a later settings save rewrites
+config.toml, as every settings save does. A profile with none of them, and
+every new profile, stays on the light set, and its config.toml is left as it
+was. The check runs at most once per profile and never changes a value you
+set yourself, so switching Full agent tools off afterwards keeps it off. If
+it cannot read the profile's data, it changes nothing and tries again at the
+next launch.
+
+`tldw-serve` on its own does not run this check. A profile you use only from
+the mobile companion keeps the light set until the Chatbook app opens it
+once, or until you turn **Full agent tools** on yourself.
 
 Each send reads these switches fresh, so a change applies on the next send.
 The exception is a conversation whose sub-agents are still running, or have
