@@ -1,7 +1,7 @@
 ---
 id: TASK-40715
 title: "Ordinary Console Sends in other chats are refused as 'Workspace activity is busy' while one chat's reply runs"
-status: To Do
+status: In Progress
 created_date: 2026-11-13 06:28
 labels:
 - follow-up
@@ -40,3 +40,11 @@ Every turn goes through `admit_ordinary_turn` (`Chat/console_chat_controller.py:
 - [ ] #3 An opaque claim still conflicts with every other turn in its worktree.
 - [ ] #4 A POSIX regression test holds the first chat's provider call open, then sends from a second chat, both an agent chat and a character chat. Each gets its own provider call.
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: yes. AC #1 (claim only becomes opaque when the turn actually spawns or installs) contradicts ADR-285 Decision 5 ("Opaque-capable native work acquires a runtime-wide opaque-effect reservation before root-specific claims") and its Task8D2 ordinary-tree contract ("the original turn acquires its complete READ/WRITE/OPAQUE maximum ... Composition may narrow that captured maximum but cannot silently expand it"; Task 8D1: "bounded claims cannot be upgraded"). Widening needs an ADR amendment and an owner decision on the conflict behaviour.
+
+1. Reproduce on POSIX: hold the first agent chat's provider call open, send from a second agent chat and a character chat, show the busy refusal on base.
+2. Stop and report the options (in-place upgrade with refusal on conflict, waiting, declaring the effects instead) with a recommendation; implement only once the decision and ADR amendment are settled.
+
