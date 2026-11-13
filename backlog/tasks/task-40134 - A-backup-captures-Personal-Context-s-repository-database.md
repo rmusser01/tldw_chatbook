@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 17:13
-updated_date: '2026-11-13 16:01'
+updated_date: '2026-11-13 17:30'
 labels:
 - follow-up
 - backup
@@ -125,4 +125,8 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - **Summary filter pinned.** `test_inspection_summary_never_offers_credential_groups`; negative control (filter removed): the credentials group is listed.
 - **Unreadable review.** When the restore review cannot be read and the gate keeps sync off, Settings shows `personal_context_restore_review_unavailable` with copy; an ordinary profile shows nothing. Tests: `test_an_unreadable_restore_review_is_named_only_while_sync_is_off` (negative control: `None == ...unavailable`) and the Settings test's `[unavailable]` case.
 - **Not changed here.** The detached-layout refusal is left to the pcc restack, as instructed.
+
+**Review r14pca-rev2 fixes (2026-11-13).**
+- `test_restored_link_resumes_nothing_before_its_review` now gives the stored link every field `_key_binding` reads and records custodian reads (`reads == []`). Without the Settings link-flow gate it fails on that assertion instead of passing through the catch-all.
+- `test_reading_published_owners_never_creates_an_operation_directory` pins the no-create read on a control root that passes `qualified_for("admission", ...)`. Without the `is_dir` check, `Journal()` creates `operation-<sha256>` and the test fails.
 

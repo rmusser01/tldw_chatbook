@@ -166,24 +166,35 @@ def test_restored_link_resumes_nothing_before_its_review(monkeypatch) -> None:
         with pytest.raises(ValueError, match=recovery.SYNC_REVIEW_REQUIRED):
             asyncio.run(call)
 
+    reads = []
+
     class Custodian:
-        def load(self, **_kwargs):
-            raise AssertionError("staged integrity key was read")
+        def load(self, **kwargs):
+            reads.append(kwargs)
+            raise ValueError("stop")
 
     monkeypatch.setattr(custody, "KeyringPersonalContextLinkKeyCustodian", Custodian)
     monkeypatch.setattr(custody, "KeyringPersonalContextWrappingKeyProvider", object)
     notices = []
+    # Every field PersonalContextLinkService._key_binding reads, so only the gate
+    # (not a KeyError in the catch-all) can keep the staged key unread.
     app = SimpleNamespace(
         _server_notification_event_scope=lambda: {"server_profile_id": "server"},
         sync_state_repository=SimpleNamespace(
             get_personal_context_link_state=lambda **_kwargs: {
                 "state": "applying",
                 "profile_id": "profile",
+                "server_profile_id": "server",
+                "dataset_id": "dataset",
+                "device_id": "device",
+                "integrity_key_id": "integrity",
+                "key_record_id": "record",
             }
         ),
         notify=lambda message, **_kwargs: notices.append(message),
     )
     asyncio.run(app_destinations._run_personal_context_link(app))
+    assert reads == []
     assert notices and "needs attention" in notices[0]
 
 
@@ -203,3 +214,21 @@ def test_an_unreadable_restore_review_is_named_only_while_sync_is_off(
     assert recovery.restore_review(path) == recovery.REVIEW_UNAVAILABLE
     monkeypatch.setattr(recovery, "sync_allowed", lambda path=None: True)
     assert recovery.restore_review(path) is None
+
+
+def test_reading_published_owners_never_creates_an_operation_directory(
+    tmp_path,
+) -> None:
+    """Review r14pca-rev2: the review's journal read creates nothing when the
+    witness's operation directory is absent (Journal() would create it)."""
+    from tldw_chatbook.Backup_Recovery.qualification import qualified_for
+    from tldw_chatbook.Personal_Context.recovery import _published_owners
+
+    control = tmp_path / "operation-control"
+    control.mkdir(mode=0o700)
+    assert qualified_for("admission", control)[0], "Journal() would refuse here"
+    witness = {"store_root": str(control / "activation"), "operation_id": "restore-1"}
+
+    assert _published_owners(witness) is None
+    assert list(control.iterdir()) == []
+
