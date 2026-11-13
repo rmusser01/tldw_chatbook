@@ -2587,6 +2587,18 @@ def run_web_server(
     # Create and run the server
     server = create_server(host=host, port=port, title=title, debug=debug)
 
+    # TASK-34100.5.3.2 (review v5r2, G532-R2-1): the one-time Full agent tools
+    # upgrade check, here as in the app, because the mobile companion plans
+    # phone sends in this process and its runs are one of the check's
+    # sources. Before serve(): the listener is not bound until the check has
+    # finished or failed closed, so no phone send is planned first, and the
+    # server waits only as long as the check takes (bounded by its own
+    # budget). Before the pairing QR, whose one-use link expires. It never
+    # raises; a failure leaves the light set and the next start retries.
+    from ..Agents.full_agent_tools_upgrade import run_for_served_profile
+
+    run_for_served_profile()
+
     if pair:
         _print_pair_qr(server)
 

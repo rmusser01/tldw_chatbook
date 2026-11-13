@@ -1306,3 +1306,194 @@ def test_the_boot_worker_body_reads_the_companion_runs_database(profile) -> None
         UpgradeOutcome.KEPT_ON,
         SIGNAL_SUBAGENT_RUN,
     )
+
+
+# --------------------------------------------------------------------------
+# tldw-serve runs the same check before it accepts a connection
+# (review v5r2, G532-R2-1)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A profile as ``tldw-serve`` finds it: a real config.toml with one tool
+    switched on by itself (``read_file``) and no ``full_agent_tools_enabled``,
+    and the data paths the config getters resolve (the per-test sandbox's).
+    No database exists yet: the profile is first used through the server."""
+    config_path = tmp_path / "config" / "config.toml"
+    config_path.parent.mkdir(mode=0o700)
+    config_path.write_text(PRE_UPGRADE_CONFIG, encoding="utf-8")
+    config_path.chmod(0o600)
+    select_config_source(monkeypatch, str(config_path), globals())
+    from tldw_chatbook.config import (
+        get_chachanotes_db_path,
+        get_user_data_dir,
+        get_workspaces_db_path,
+    )
+
+    served = SimpleNamespace(
+        config_path=config_path,
+        workspaces=Path(get_workspaces_db_path()),
+        agent_runs=Path(get_chachanotes_db_path()).parent / "agent_runs.db",
+        companion=Path(get_user_data_dir()) / "mobile" / "runs.db",
+    )
+    for path in (served.workspaces, served.agent_runs, served.companion):
+        assert tmp_path in path.parents  # never the real profile
+        assert not path.exists()
+    return served
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, while_serving) -> None:
+    """Run ``tldw-serve``'s real entry point, ``run_web_server``.
+
+    Only the server object is a stand-in: its ``serve()`` is where the real
+    one binds the port and accepts the phone's requests, so
+    ``while_serving`` runs exactly when the first phone send could.
+    """
+    from tldw_chatbook.Web_Server import serve as serve_module
+
+    class _Server:
+        public_url = None
+
+        def serve(self, debug: bool = False) -> None:
+            while_serving()
+
+    monkeypatch.setattr(serve_module, "check_web_server_available", lambda: True)
+    monkeypatch.setattr(serve_module, "create_server", lambda **_kwargs: _Server())
+    # Host, port, title and debug are passed, so the [web_server] table only
+    # supplies defaults nobody reads.
+    monkeypatch.setattr(
+        serve_module,
+        "get_cli_setting",
+        lambda section, key=None, default=None: default,
+    )
+    serve_module.run_web_server(host="127.0.0.1", port=8000, title="t", debug=False)
+
+
+def _served_marker_recorded(served) -> bool:
+    if not served.workspaces.is_file():
+        return False
+    workspace_db = WorkspaceDB(served.workspaces, client_id="upgrade-test")
+    try:
+        return workspace_db.is_agent_backfill_complete(FULL_AGENT_TOOLS_UPGRADE_MARKER)
+    finally:
+        workspace_db.close()
+
+
+def _record_phone_run(served, *steps: dict) -> None:
+    """What a phone send leaves in the companion's own runs database."""
+    served.companion.parent.mkdir(mode=0o700, exist_ok=True)
+    runs = AgentRunsDB(served.companion, client_id="mobile-service")
+    try:
+        run_id = runs.create_run(conversation_id="phone-1", agent_kind="primary")
+        runs.insert_steps_at_indices(
+            run_id,
+            [(index, {"index": index, **step}) for index, step in enumerate(steps)],
+        )
+    finally:
+        runs.close()
+
+
+def test_a_fresh_profile_first_used_through_tldw_serve_stays_light(
+    served, monkeypatch
+) -> None:
+    """The failure G532-R2-1 found: a fresh profile first used through
+    ``tldw-serve``, with ``read_file`` switched on by itself. The light
+    surface offers that tool, so one phone send that reads a file left a
+    dispatched non-light call in ``mobile/runs.db``, and the app's first
+    launch afterwards read it as agent use and turned Full agent tools on
+    for a profile that never opted in. The server now records the check
+    before it accepts a connection, while the profile has no signal."""
+    before = served.config_path.read_bytes()
+    recorded_when_serving: list[bool] = []
+
+    def phone_send() -> None:
+        recorded_when_serving.append(_served_marker_recorded(served))
+        _record_phone_run(served, *_dispatched("read_file", "call_0"))
+
+    _serve(monkeypatch, phone_send)
+
+    assert recorded_when_serving == [True], (
+        "the server accepted connections before the check recorded the profile"
+    )
+    assert served.config_path.read_bytes() == before
+
+    # The app's first launch afterwards: the check is already recorded, so
+    # the phone's light-era read_file is never read as agent use.
+    result = run_for_profile(
+        workspace_db=WorkspaceDB(served.workspaces, client_id="upgrade-test"),
+        chachanotes_db=SimpleNamespace(db_path=served.agent_runs.parent / "ChaChaNotes.db"),
+        app_config={},
+        call_from_thread=_mirroring_call_from_thread([]),
+    )
+
+    assert result.outcome is UpgradeOutcome.ALREADY_RECORDED
+    assert served.config_path.read_bytes() == before
+    assert light_surface_configured() is True
+
+
+def test_a_phone_only_profile_from_before_the_light_surface_is_upgraded_at_serve_start(
+    served, monkeypatch
+) -> None:
+    """A profile used only from the phone before the light surface (its
+    replies ran ``web_fetch`` on the full surface) keeps Full agent tools:
+    the server adds the one line before it accepts a connection, so the
+    next phone send already plans the full surface."""
+    _record_phone_run(served, *_dispatched("web_fetch", "call_0"))
+    before = served.config_path.read_text(encoding="utf-8")
+    when_serving: list[tuple[bool, str]] = []
+
+    def phone_send() -> None:
+        when_serving.append(
+            (
+                light_surface_configured(),
+                served.config_path.read_text(encoding="utf-8"),
+            )
+        )
+
+    _serve(monkeypatch, phone_send)
+
+    assert len(when_serving) == 1
+    light, text = when_serving[0]
+    assert light is False, "the next phone send would still plan the light set"
+    assert _added_and_removed(before, text) == (
+        ["full_agent_tools_enabled = true\n"],
+        [],
+    )
+    assert _served_marker_recorded(served)
+
+
+def test_a_serve_start_check_that_fails_writes_nothing_and_still_serves(
+    served, monkeypatch, captured_logs
+) -> None:
+    """Fail closed: an unreadable companion runs database fails the check;
+    the server still starts, nothing is written, no marker is recorded (the
+    next start or launch retries), and the log names only the error type."""
+    served.companion.parent.mkdir(mode=0o700)
+    served.companion.write_bytes(b"this is not an sqlite database " * 64)
+    served.companion.chmod(0o600)
+    before = served.config_path.read_bytes()
+    served_once: list[bool] = []
+
+    _serve(monkeypatch, lambda: served_once.append(light_surface_configured()))
+
+    assert served_once == [True]
+    assert served.config_path.read_bytes() == before
+    assert not _served_marker_recorded(served)
+    logged = "\n".join(captured_logs)
+    assert "upgrade check failed" in logged
+    assert str(served.companion.parent) not in logged
+
+
+def test_a_workspaces_database_that_cannot_open_fails_closed_at_serve_start(
+    served, monkeypatch, captured_logs
+) -> None:
+    served.workspaces.mkdir(mode=0o700)  # a directory where the file belongs
+    before = served.config_path.read_bytes()
+    served_once: list[bool] = []
+
+    _serve(monkeypatch, lambda: served_once.append(light_surface_configured()))
+
+    assert served_once == [True]
+    assert served.config_path.read_bytes() == before
+    assert "upgrade check failed" in "\n".join(captured_logs)
