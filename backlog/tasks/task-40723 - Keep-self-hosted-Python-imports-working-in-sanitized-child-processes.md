@@ -37,6 +37,7 @@ Reason: Repair the guest image toolchain within the accepted runner boundary.
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Reproduced the exact Python 3.12.16 archive failure in a trusted bake VM, then verified pytest imports with LD_LIBRARY_PATH removed and HOME changed after moving the installation to /opt/hostedtoolcache. The runner .env selects that canonical cache and the directory is runner-owned. Added a reusable guest customization script and sanitized-child checks for pinned 3.12.11 and current 3.12. No application fixture changes. Independent review passed; the temporary promotion helper was invoked after blocking systemctl stop completed and its reuse guard was tightened to require explicit inactive state. Fresh fleet is online. Live GitHub qualification and the failing UAT rerun remain pending, so this task stays In Progress.
 
+Follow-up gate 43485256104 exposed an incomplete preloaded interpreter: setup-python cache initialization could not find pip. Removed the manually seeded Python 3.12.16 tree from a new trusted base; retain only canonical cache configuration and let the official action perform the full installation. Qualification now enables cache: pip to match real lanes. The task remains In Progress pending live cache qualification and UAT.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
