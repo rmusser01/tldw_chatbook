@@ -25419,3 +25419,10 @@ For this settled-startup geometry test, wait for real readiness publication, sam
 ## Queued workflow status does not prove its jobs are inactive (PR3496, 2026-11-13)
 
 While the merge queue waited for runners, GitHub's repository API reported zero in-progress workflows and165 queued workflows. A rolling job-level census over those165 runs found40 allocated/in-progress test jobs across eight queued Derived runs, with new allocations and completions during the check. The count is not an atomic capacity-limit measurement, and no billing/quota cause was established. Inspect individual jobs and exact head/PR ownership before attributing a runner outage or cancelling an allegedly inactive workflow. Receipt: pr3496-capacity-census-jobs-full.json.
+
+
+## Disposable-runner evidence must include failed guest shutdown (TASK-40721, 2026-11-13)
+
+**Incident.** The first local-runner qualification passed two sequential GitHub jobs, but source review found that the pinned QEMU controller waited indefinitely for guest poweroff. A root-capable job could disable that command and consume a slot forever. The systemd default also signaled all QEMU children during service stop, bypassing the controller's intended drain.
+
+**Evidence and correction.** Added host-side reclamation for deleted/offline runner records and a busy-job deadline, and used `KillMode=mixed` for orderly service shutdown. In GitHub run 43480488554, the first guest deliberately replaced poweroff with a no-op; the host logged reclamation and a fresh control runner began the next job 23 seconds later with the previous marker absent. Happy-path replacement alone did not prove the disposal boundary.

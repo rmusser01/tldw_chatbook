@@ -1,0 +1,364 @@
+diff --git a/README.md b/README.md
+index deca8f1..bb77a4f 100644
+--- a/README.md
++++ b/README.md
+@@ -390,6 +390,14 @@ at a time, forever. Labels may overlap across pools.
+ | `runner_group` | no | `Default` | Org-scoped pools only — see below |
+ | `liveness_timeout` | no | `5m` | How long a freshly booted runner may take to show up online before the slot is torn down and recycled |
+ | `drain_timeout` | no | `30m` | On shutdown, how long a busy runner may finish its job before being powered down (the job then fails — GitHub does not requeue jobs from vanished ephemeral runners). systemd `TimeoutStopSec` (35m in the shipped unit) must exceed the largest pool value |
++| `job_timeout` | no | `6h` | Host execution limit starting when GitHub first reports the runner busy; idle waiting does not count. Set above the longest workflow job timeout, including cancellation grace. |
++
++After registration the controller keeps checking runner status. A deleted runner
++is reclaimed even if its guest refuses shutdown. A runner continuously reported
++offline for `liveness_timeout` is also reclaimed; API errors interrupt that
++offline grace period. Once observed busy, the `job_timeout` deadline persists
++through status changes and API errors. Controller shutdown still uses the
++existing drain policy. Guest cooperation is not required for reclamation.
+ 
+ Oversubscription (`sum(count × cpus/memory)` beyond the host) is allowed
+ but warned about by `setup` and at controller startup.
+diff --git a/internal/config/config.go b/internal/config/config.go
+index c761aee..c67d997 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -149,6 +149,7 @@ type Pool struct {
+ 	RunnerGroup     string   `yaml:"runner_group"`
+ 	LivenessTimeout Duration `yaml:"liveness_timeout"`
+ 	DrainTimeout    Duration `yaml:"drain_timeout"`
++	JobTimeout      Duration `yaml:"job_timeout"`
+ }
+ 
+ // APIPrefix returns the REST path prefix for the pool's registration scope,
+@@ -255,6 +256,9 @@ func (c *Config) applyDefaults() {
+ 		if p.DrainTimeout == 0 {
+ 			p.DrainTimeout = Duration(30 * time.Minute)
+ 		}
++		if p.JobTimeout == 0 {
++			p.JobTimeout = Duration(6 * time.Hour)
++		}
+ 	}
+ }
+ 
+@@ -362,6 +366,9 @@ func (c *Config) validate() error {
+ 		if p.Count < 1 {
+ 			return fmt.Errorf("pool %s: count must be >= 1", p.Name)
+ 		}
++		if p.JobTimeout < 0 {
++			return fmt.Errorf("pool %s: job_timeout must be positive", p.Name)
++		}
+ 		if p.CPUs < 1 {
+ 			return fmt.Errorf("pool %s: cpus must be >= 1", p.Name)
+ 		}
+diff --git a/internal/config/config_test.go b/internal/config/config_test.go
+index c5550dc..46a1924 100644
+--- a/internal/config/config_test.go
++++ b/internal/config/config_test.go
+@@ -55,6 +55,9 @@ func TestLoadValidAppliesDefaults(t *testing.T) {
+ 	if time.Duration(p.DrainTimeout) != 30*time.Minute {
+ 		t.Errorf("DrainTimeout = %v", p.DrainTimeout)
+ 	}
++	if time.Duration(p.JobTimeout) != 6*time.Hour {
++		t.Errorf("JobTimeout = %v", p.JobTimeout)
++	}
+ 	if got := p.APIPrefix(); got != "orgs/my-org" {
+ 		t.Errorf("APIPrefix = %q", got)
+ 	}
+@@ -75,7 +78,7 @@ func TestRepoScopeAPIPrefix(t *testing.T) {
+ }
+ 
+ func TestDurationOverride(t *testing.T) {
+-	y := validYAML + "    liveness_timeout: 90s\n    drain_timeout: 1h\n"
++	y := validYAML + "    liveness_timeout: 90s\n    drain_timeout: 1h\n    job_timeout: 45m\n"
+ 	c, err := Load(writeConfig(t, y))
+ 	if err != nil {
+ 		t.Fatal(err)
+@@ -86,6 +89,16 @@ func TestDurationOverride(t *testing.T) {
+ 	if time.Duration(c.Pools[0].DrainTimeout) != time.Hour {
+ 		t.Errorf("DrainTimeout = %v", c.Pools[0].DrainTimeout)
+ 	}
++	if time.Duration(c.Pools[0].JobTimeout) != 45*time.Minute {
++		t.Errorf("JobTimeout = %v", c.Pools[0].JobTimeout)
++	}
++}
++
++func TestRejectNegativeJobTimeout(t *testing.T) {
++	_, err := Load(writeConfig(t, validYAML+"    job_timeout: -1s\n"))
++	if err == nil || !strings.Contains(err.Error(), "job_timeout must be positive") {
++		t.Fatalf("negative job timeout must be rejected, got %v", err)
++	}
+ }
+ 
+ func TestEnvExpansionInKeyPath(t *testing.T) {
+diff --git a/internal/pool/pool.go b/internal/pool/pool.go
+index e342918..dab07e8 100644
+--- a/internal/pool/pool.go
++++ b/internal/pool/pool.go
+@@ -1,6 +1,6 @@
+ // Package pool supervises a fixed number of ephemeral-runner slots. Each
+ // slot loops: JIT-register -> provision VM -> liveness gate -> wait for the
+-// VM to power itself off -> teardown -> repeat.
++// VM exit or host-enforced reclamation -> teardown -> repeat.
+ package pool
+ 
+ import (
+@@ -46,7 +46,7 @@ type Pool struct {
+ 	Prov Provisioner
+ 	Log  *slog.Logger
+ 
+-	// PollInterval for the liveness gate; defaults to 10s. Tests shrink it.
++	// PollInterval for runner status checks; defaults to 10s. Tests shrink it.
+ 	PollInterval time.Duration
+ }
+ 
+@@ -132,17 +132,61 @@ func (p *Pool) runOne(ctx context.Context, slot int) error {
+ 	}
+ 	log.Info("runner online")
+ 
+-	select {
+-	case <-vm.Done():
+-		if vmErr := vm.Err(); vmErr != nil {
+-			log.Warn("VM exited with error", "err", vmErr, "console_tail", vm.ConsoleTail())
+-		} else {
+-			log.Info("VM exited")
++	interval := p.PollInterval
++	if interval == 0 {
++		interval = 10 * time.Second
++	}
++	tick := time.NewTicker(interval)
++	defer tick.Stop()
++	var offlineSince time.Time
++	jobStarted := false
++	jobCtx := ctx
++	for {
++		select {
++		case <-vm.Done():
++			if vmErr := vm.Err(); vmErr != nil {
++				log.Warn("VM exited with error", "err", vmErr, "console_tail", vm.ConsoleTail())
++			} else {
++				log.Info("VM exited")
++			}
++			return nil
++		case <-jobCtx.Done():
++			if ctx.Err() != nil {
++				p.drain(vm, prefix, jit.Runner.ID, log)
++				return nil
++			}
++			log.Warn("job timeout exceeded; killing VM", "timeout", time.Duration(p.Cfg.JobTimeout))
++			return vm.Kill()
++		case <-tick.C:
++			r, err := p.GH.GetRunner(jobCtx, prefix, jit.Runner.ID)
++			if ctx.Err() != nil {
++				p.drain(vm, prefix, jit.Runner.ID, log)
++				return nil
++			}
++			if errors.Is(err, github.ErrNotFound) {
++				log.Info("runner deregistered; reclaiming VM")
++				return vm.Kill()
++			}
++			if err != nil {
++				offlineSince = time.Time{} // Unknown status is not proof of sustained disconnection.
++				continue
++			}
++			if r.Busy && !jobStarted {
++				// Idle age must never consume the job's execution budget.
++				var cancel context.CancelFunc
++				jobCtx, cancel = context.WithTimeout(ctx, time.Duration(p.Cfg.JobTimeout))
++				defer cancel()
++				jobStarted = true
++			}
++			if r.Status == "online" {
++				offlineSince = time.Time{}
++			} else if offlineSince.IsZero() {
++				offlineSince = time.Now()
++			} else if time.Since(offlineSince) >= time.Duration(p.Cfg.LivenessTimeout) {
++				log.Warn("runner remained offline; reclaiming VM")
++				return vm.Kill()
++			}
+ 		}
+-		return nil
+-	case <-ctx.Done():
+-		p.drain(vm, prefix, jit.Runner.ID, log)
+-		return nil
+ 	}
+ }
+ 
+diff --git a/internal/pool/pool_test.go b/internal/pool/pool_test.go
+index 32c909b..e023e24 100644
+--- a/internal/pool/pool_test.go
++++ b/internal/pool/pool_test.go
+@@ -3,10 +3,12 @@ package pool
+ import (
+ 	"context"
+ 	"errors"
++	"fmt"
+ 	"log/slog"
+ 	"strings"
+ 	"sync"
+ 	"testing"
++	"testing/synctest"
+ 	"time"
+ 
+ 	"github.com/a1678991/github-qemu-runner/internal/config"
+@@ -35,6 +37,12 @@ func (f *fakeAPI) setGetErr(err error) {
+ 	f.getErr = err
+ }
+ 
++func (f *fakeAPI) setState(status string, busy bool) {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	f.status, f.busy = status, busy
++}
++
+ func (f *fakeAPI) GetRunner(context.Context, string, int64) (*github.Runner, error) {
+ 	f.mu.Lock()
+ 	defer f.mu.Unlock()
+@@ -115,6 +123,7 @@ func testPool(api *fakeAPI, prov *fakeProv) *Pool {
+ 			RunnerGroup:     "Default",
+ 			LivenessTimeout: config.Duration(200 * time.Millisecond),
+ 			DrainTimeout:    config.Duration(200 * time.Millisecond),
++			JobTimeout:      config.Duration(200 * time.Millisecond),
+ 		},
+ 		GH: api, Prov: prov,
+ 		Log:          slog.New(slog.DiscardHandler),
+@@ -139,6 +148,141 @@ func TestRunOneHappyPath(t *testing.T) {
+ 	}
+ }
+ 
++func TestRunOneReclaimsDeregisteredRunner(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		api := &fakeAPI{status: "online"}
++		vm := newFakeVM() // Guest never powers itself off.
++		defer vm.exit()
++		prov := &fakeProv{vm: vm}
++		p := testPool(api, prov)
++		done := make(chan error, 1)
++		go func() { done <- p.runOne(context.Background(), 0) }()
++		time.Sleep(50 * time.Millisecond)
++		api.setGetErr(fmt.Errorf("runner 42: %w", github.ErrNotFound))
++		time.Sleep(50 * time.Millisecond)
++		synctest.Wait()
++		select {
++		case err := <-done:
++			if err != nil {
++				t.Fatal(err)
++			}
++		default:
++			t.Fatal("deregistered runner left its guest alive")
++		}
++		if !vm.wasKilled() || prov.cleanedCount() != 1 {
++			t.Fatal("host must kill the uncooperative guest and remove its state")
++		}
++	})
++}
++
++func TestRunOnePreservesRunnerDuringTransientAPIError(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		api := &fakeAPI{status: "online"}
++		vm := newFakeVM()
++		defer vm.exit()
++		p := testPool(api, &fakeProv{vm: vm})
++		done := make(chan error, 1)
++		go func() { done <- p.runOne(context.Background(), 0) }()
++		time.Sleep(50 * time.Millisecond)
++		api.setGetErr(errors.New("temporary API outage"))
++		time.Sleep(time.Second)
++		synctest.Wait()
++		if vm.wasKilled() || vm.wasPowered() {
++			t.Fatal("API failure must not be treated as a missing runner")
++		}
++		api.setGetErr(nil)
++		time.Sleep(50 * time.Millisecond)
++		vm.exit()
++		if err := <-done; err != nil {
++			t.Fatal(err)
++		}
++	})
++}
++
++func TestRunOneReclaimsSustainedOfflineRunner(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		api := &fakeAPI{status: "online"}
++		vm := newFakeVM()
++		defer vm.exit()
++		prov := &fakeProv{vm: vm}
++		p := testPool(api, prov)
++		done := make(chan error, 1)
++		go func() { done <- p.runOne(context.Background(), 0) }()
++		time.Sleep(50 * time.Millisecond)
++		api.setState("offline", false) // Guest killed its listener, not its VM.
++		time.Sleep(100 * time.Millisecond)
++		if vm.wasKilled() {
++			t.Fatal("brief disconnection must get the liveness grace period")
++		}
++		time.Sleep(200 * time.Millisecond)
++		synctest.Wait()
++		if !vm.wasKilled() || prov.cleanedCount() != 1 {
++			t.Fatal("offline runner retained its VM past the liveness grace period")
++		}
++		if err := <-done; err != nil {
++			t.Fatal(err)
++		}
++	})
++}
++
++func TestRunOneDoesNotCountAPIOutageAsOffline(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		api := &fakeAPI{status: "online"}
++		vm := newFakeVM()
++		defer vm.exit()
++		p := testPool(api, &fakeProv{vm: vm})
++		done := make(chan error, 1)
++		go func() { done <- p.runOne(context.Background(), 0) }()
++		time.Sleep(50 * time.Millisecond)
++		api.setState("offline", false)
++		time.Sleep(100 * time.Millisecond)
++		api.setGetErr(errors.New("temporary API outage"))
++		time.Sleep(time.Second)
++		api.setGetErr(nil)
++		time.Sleep(100 * time.Millisecond)
++		api.setState("online", false)
++		time.Sleep(time.Second)
++		synctest.Wait()
++		if vm.wasKilled() || vm.wasPowered() {
++			t.Fatal("unknown or recovered status must interrupt the offline grace period")
++		}
++		vm.exit()
++		if err := <-done; err != nil {
++			t.Fatal(err)
++		}
++	})
++}
++
++func TestRunOneJobDeadlineStartsWhenBusyAndSurvivesAPIErrors(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		api := &fakeAPI{status: "online"}
++		vm := newFakeVM()
++		defer vm.exit()
++		p := testPool(api, &fakeProv{vm: vm})
++		done := make(chan error, 1)
++		go func() { done <- p.runOne(context.Background(), 0) }()
++		time.Sleep(time.Second) // An old, idle runner must still accept a full job.
++		synctest.Wait()
++		if vm.wasKilled() {
++			t.Fatal("idle age consumed the job deadline")
++		}
++		api.setState("online", true)
++		time.Sleep(100 * time.Millisecond)
++		if vm.wasKilled() {
++			t.Fatal("job did not receive its full execution budget")
++		}
++		api.setGetErr(errors.New("API unavailable after job started"))
++		time.Sleep(200 * time.Millisecond)
++		synctest.Wait()
++		if !vm.wasKilled() {
++			t.Fatal("busy guest escaped its host deadline during an API outage")
++		}
++		if err := <-done; err != nil {
++			t.Fatal(err)
++		}
++	})
++}
++
+ func TestRunOneLivenessTimeout(t *testing.T) {
+ 	api := &fakeAPI{status: "offline"} // runner never connects
+ 	vm := newFakeVM()

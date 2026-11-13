@@ -82,11 +82,13 @@ concurrency:
 permissions:
   contents: read
 
+# ADR-359: opt-in single runner labels; clearing either variable restores hosted
+# capacity. Forks stay hosted; only same-repository PRs use CI_TEST_RUNNER.
 jobs:
   preflight:
     name: CI preflight
     # Python 3.12.11 has no setup-python build for Ubuntu 26.04.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_CONTROL_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -243,7 +245,7 @@ jobs:
     needs: [preflight]
     name: PR Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     # TASK-34916: the admission-sensitive invocation moved to its own job
     # (pr-fast-lane-admission, below). Over 90 pull-request runs to
     # 2026-10-14 this job took median 31.5 / max 39.5 min with both steps,
@@ -468,7 +470,7 @@ jobs:
     # One more runner per PR (ADR-103 note, 2026-10-14).
     name: PR Fast Lane (admission-sensitive)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
 
     steps:
@@ -580,7 +582,7 @@ jobs:
     # profile, as there. One more runner per PR (ADR-103 note, 2026-10-19).
     name: PR Fast Lane (admission-sensitive 2)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
 
     steps:
@@ -769,7 +771,7 @@ jobs:
     # profile, as there. The project-chat UAT steps stay in lane 2.
     name: PR Fast Lane (admission-sensitive 3)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
 
     steps:
@@ -871,7 +873,7 @@ jobs:
     # Complete duration rows let replay charge function selectors by node.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       # Report every shard, so one red shard does not hide another.
@@ -948,7 +950,7 @@ jobs:
     # worst, not 6.
     name: Console P0 regression gate
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
     steps:
@@ -1083,7 +1085,7 @@ jobs:
     # runner per PR (ADR-103 note, 2026-10-14).
     name: Dreams and Guardian boundary contracts
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
     steps:
@@ -1187,7 +1189,7 @@ jobs:
     # test at --timeout=180 still ends ~10 min under the cap.
     name: Dreams tracking tests
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
     steps:
@@ -1221,7 +1223,7 @@ jobs:
     # bootstrap_profile node must not precede a sandboxed suite (TASK-32873).
     name: Architecture guard contracts
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
     steps:
@@ -1304,7 +1306,7 @@ jobs:
     # take the file.
     name: PR Fast Lane (architecture-review tests)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
     steps:
@@ -1365,7 +1367,7 @@ jobs:
     # note names the one that does.
     name: PR lane (recovered suites)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
     steps:
@@ -1465,7 +1467,7 @@ jobs:
     needs: [preflight, pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, pr-fast-lane-admission-3, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking, architecture-guards, pr-fast-lane-arch, recovered-suites]
     if: ${{ always() }}
     # Keep the immutable Python build available as ubuntu-latest advances.
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_CONTROL_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
 
     steps:
@@ -1671,7 +1673,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository))
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_CONTROL_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: write
