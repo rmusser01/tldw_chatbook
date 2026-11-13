@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_first_send_atomicity import _controller
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat import console_native_commit
@@ -182,13 +183,14 @@ async def test_a_temporary_chat_closed_during_agent_setup_ends_the_turn_closed(
         ConsoleRunStatus,
     )
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     db, store, controller, gateway = _controller(tmp_path)
     owned_console_databases(db, controller)
     session = store.create_session(session_id="temporary", title="Temporary", ephemeral=True)
     gateway.deferred_dispatch_boundary = True
-    runs = AgentRunsDB(tmp_path / "temporary-runs.sqlite", client_id="temporary-close")
+    runs = owned_agent_runs_db(
+        tmp_path / "temporary-runs.sqlite", client_id="temporary-close"
+    )
     controller._agent_bridge = ConsoleAgentBridge(
         agent_runs_db=runs, store=store, provider_gateway=gateway
     )
@@ -234,3 +236,6 @@ async def test_a_temporary_chat_closed_during_agent_setup_ends_the_turn_closed(
         release.set()
         await asyncio.gather(task, return_exceptions=True)
         logger.remove(sink)
+        await _until(lambda: not controller._maintenance_background)
+        await runtime.dispose()
+        assert runs.close_idle_connections()
