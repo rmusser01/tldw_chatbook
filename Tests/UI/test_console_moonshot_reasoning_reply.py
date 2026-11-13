@@ -585,6 +585,133 @@ async def test_unstored_reasoning_checkpoint_keeps_the_reply(
     ), warnings
 
 
+@pytest.mark.asyncio
+async def test_destination_refused_reasoning_checkpoint_fails_the_reply(
+    tmp_path, monkeypatch
+) -> None:
+    """A first Kimi final refused by a destination binding check fails the reply.
+
+    The reply-keeping fallback above covers a checkpoint the store could not
+    write. TASK-35582's destination and binding refusals stay fail-closed
+    (review v5r1 F9): the checkpoint names another provider destination than
+    the one the send was accepted for. This pins what the user then gets, as
+    the User Guide states it (pre-merge review, 2026-11-13): the reply text
+    stays visible but is saved as failed, without its reasoning, under an
+    "Agent run failed: Provider continuation could not be persisted" error
+    row; the run fails; there is NO response-recovery card or dispatch
+    checkpoint; and the next Send reaches the provider and completes.
+
+    The refusal is the real one: the dispatch the store holds is presented
+    once as accepted for Moonshot's China endpoint, so the real binding check
+    (``validate_durable_continuation_binding``) raises "Provider continuation
+    destination mismatch."
+    """
+    from tldw_chatbook.Chat import console_continuation_binding as binding
+    from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+        continuation_reasons,
+    )
+
+    original = binding.validate_durable_continuation_binding
+    moved: list[str] = []
+
+    def moved_destination(message, checkpoint, target, recovery, **kwargs):
+        if not moved and recovery is not None and recovery.checkpoint is not None:
+            accepted = recovery.checkpoint
+            recovery = replace(
+                recovery,
+                checkpoint=replace(
+                    accepted,
+                    resolved_destination=replace(
+                        accepted.resolved_destination,
+                        continuation_base_url="https://api.moonshot.cn/v1",
+                    ),
+                ),
+            )
+            moved.append(message.id)
+        return original(message, checkpoint, target, recovery, **kwargs)
+
+    monkeypatch.setattr(
+        binding, "validate_durable_continuation_binding", moved_destination
+    )
+    async with _mounted_console(
+        tmp_path, monkeypatch, provider="moonshot", model="kimi-k3"
+    ) as h:
+        saved = h.store.ensure_session()
+        await _send(h, "Say hello")
+
+        view = await _observed(h, saved.id)
+        assert len(moved) == 1, "the first final must meet the moved destination"
+        assert view == {
+            "assistant_texts": [_reply(1)],
+            "assistant_states": ["failed"],
+            "run_status": ConsoleRunStatus.FAILED,
+            "dispatch_recovery": None,
+            "blocked_copy": ["could not be persisted"],
+            "reply_on_screen": True,
+        }
+        screen = " ".join(_frame_rows(h.host))
+        assert (
+            "Agent run failed: Provider continuation could not be persisted; "
+            "retry or recover the interrupted run." in screen
+        )
+        assert "delivery status is unknown" not in screen
+        assert "Send blocked" not in screen
+        conversation_id = next(
+            session for session in h.store.sessions() if session.id == saved.id
+        ).persisted_conversation_id
+        assert [
+            (
+                row["content"],
+                row["assistant_generation_state"],
+                row["provider_continuation_json"],
+            )
+            for row in _assistant_rows(h.database, conversation_id)
+        ] == [(_reply(1), "failed", None)]
+        assert (
+            h.database.get_connection()
+            .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+            .fetchone()[0]
+            == 0
+        )
+        # The run failed on the binding refusal itself, by code.
+        runs = h.controller._agent_bridge.runs_db.list_runs(conversation_id)
+        errors = [
+            step
+            for run in runs
+            for step in run["steps"]
+            if continuation_reasons(step.get("field_states") or {})
+        ]
+        assert [continuation_reasons(step["field_states"]) for step in errors] == [
+            {
+                "continuation_error": "final_persist_failed",
+                "continuation_store_failure": "destination_mismatch",
+            }
+        ]
+        assert not [
+            step
+            for run in runs
+            for step in run["steps"]
+            if step.get("summary") == "Reasoning not preserved for replay"
+        ]
+
+        # Send stays available: the next turn reaches the provider and
+        # completes, with no reasoning to replay from the failed reply.
+        await _send(h, "And again")
+        second = await _observed(h, saved.id)
+        assert len(h.calls) == 2
+        assert second["assistant_texts"] == [_reply(1), _reply(2)]
+        assert second["assistant_states"] == ["failed", "complete"]
+        assert second["run_status"] is ConsoleRunStatus.COMPLETED
+        assert second["dispatch_recovery"] is None
+        assert _replayed(h.calls[1].get("provider_continuations") or ()) == []
+        # A failed reply is not sent as history either: only the two turns.
+        assert [
+            (row.get("role"), row.get("content"))
+            for row in h.calls[1]["messages_payload"]
+            if row.get("role") != "system"
+        ] == [("user", "Say hello"), ("user", "And again")]
+
+
 TRACE_BLOCKED = "Trace capture blocked"
 SAVED_TURNS = 5
 
