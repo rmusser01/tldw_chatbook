@@ -190,7 +190,8 @@ def test_the_committed_custom_section_streams_when_asked_and_falls_back(
     asked, and with streaming off (the non-streaming fallback) sends one
     plain request and parses the reply. The test passes ``streaming`` in
     itself, so it does not show which value a Console send asks for; that is
-    decided by ``[chat_defaults] streaming`` (dev's), not by this section.
+    decided by ``[chat_defaults] streaming`` (dev's), not by this section,
+    and pinned by the Console-half test below (review v5r4, TE-R4-1).
     """
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
@@ -212,3 +213,130 @@ def test_the_committed_custom_section_streams_when_asked_and_falls_back(
     assert request["path"] == "/v1/chat/completions"
     assert request["body"]["model"] == "qwen2.5-0.5b"
     assert request["body"]["stream"] is streaming
+
+
+# --- Review v5r4 (TE-R4-1): AC#10's Console half ----------------------------
+#
+# The tests above stop at the committed section or call the handler with a
+# ``streaming`` value they choose. This one sends the way Console does: the
+# wizard's commit is applied to the shipped template, a new Console
+# session's default settings are built from that config, the session's
+# selection is resolved by the real gateway, and the real agent bridge runs
+# the reply against the loopback stub. What reaches the wire is what a
+# Console send asks for.
+
+
+def _committed_config(endpoint: str) -> dict:
+    """The shipped template with setup's Custom commit applied to it."""
+    config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
+    draft = setup_state.FirstRunProviderDraft(
+        provider="custom",
+        endpoint=endpoint,
+        credential=setup_state.ProviderCredentialDraft("none", "", 0),
+    )
+    resolved = setup_state.resolve_first_run_provider_draft(draft, config)
+    mutation = setup_state.build_first_run_provider_commit(
+        resolved, "qwen2.5-0.5b", config
+    )
+    for dotted, values in mutation.section_values.items():
+        node = config
+        for part in dotted.split("."):
+            node = node.setdefault(part, {})
+        node.update(values)
+    for dotted, keys in mutation.delete_keys.items():
+        node = config
+        for part in dotted.split("."):
+            node = node.setdefault(part, {})
+        for key in keys:
+            node.pop(key, None)
+    return config
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.loopback_network
+@pytest.mark.parametrize(
+    ("section_streaming", "chat_defaults_streaming", "streamed"),
+    [
+        (None, None, True),  # the commit as setup writes it
+        (False, None, True),  # the section's own value does not decide
+        (None, False, False),  # control: [chat_defaults] streaming decides
+    ],
+    ids=("committed", "section-off", "chat-defaults-off-control"),
+)
+def test_a_wizard_committed_custom_providers_console_send_asks_to_stream(
+    tmp_path, section_streaming, chat_defaults_streaming, streamed
+) -> None:
+    """Review v5r4 (TE-R4-1), AC#10's Console half. REGRESSION PIN of dev's
+    TASK-33620.10: passes on dev 4b90eb860b, whose shipped
+    ``[chat_defaults] streaming = true`` is what a Console send reads; it
+    outranks ``[api_settings.custom] streaming``, so this branch's section
+    default and the wizard's ``streaming = true`` write do not change the
+    request (the 'section-off' case streams too). The control turns
+    ``[chat_defaults] streaming`` off and the same send asks for one plain
+    reply, so the pin can see the value it guards."""
+    import asyncio
+
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_console_provider_selection_from_settings,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderStreamSignals,
+    )
+    from tldw_chatbook.Chat.console_session_settings import (
+        default_console_session_settings,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    with _ChatStub() as stub:
+        config = _committed_config(stub.base_url)
+        assert config["chat_defaults"]["provider"] == "custom"
+        assert config["chat_defaults"]["streaming"] is True  # the shipped value
+        if section_streaming is not None:
+            config["api_settings"]["custom"]["streaming"] = section_streaming
+        if chat_defaults_streaming is not None:
+            config["chat_defaults"]["streaming"] = chat_defaults_streaming
+
+        settings = default_console_session_settings(config)
+        assert (settings.provider, settings.model) == ("custom", "qwen2.5-0.5b")
+        selection = build_console_provider_selection_from_settings(
+            settings, app_config=config, workspace_context=None
+        )
+        gateway = ConsoleProviderGateway(config_provider=lambda: config, environ={})
+        resolution = asyncio.run(gateway.resolve_for_send(selection))
+        assert resolution.ready, resolution.visible_copy
+
+        store = ConsoleChatStore()
+        session = store.ensure_session()
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="Capital of France?"
+        )
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="te-r4-1"),
+            store=store,
+            provider_gateway=gateway,
+        )
+        _run_id, outcome = bridge.run_reply(
+            conversation_id="te-r4-1",
+            session_id=session.id,
+            resolution=resolution,
+            assistant_message_id=assistant.id,
+            model=resolution.model,
+            session_system_prompt="",
+            agent_messages=[{"role": "user", "content": "Capital of France?"}],
+            should_cancel=lambda: False,
+            provider_stream_signals=ConsoleProviderStreamSignals(),
+        )
+
+    assert outcome.status == "done"
+    assert outcome.final_text == "Paris"
+    first = stub.requests[0]
+    assert first["path"] == "/v1/chat/completions"
+    assert first["body"]["model"] == "qwen2.5-0.5b"
+    assert first["body"]["stream"] is streamed
