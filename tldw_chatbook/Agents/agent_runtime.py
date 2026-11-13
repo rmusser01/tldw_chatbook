@@ -1088,6 +1088,437 @@ BUDGET_WRAPUP_INSTRUCTION = (
     "remains unfinished, and any partial results worth keeping."
 )
 
+#: A special-tool handler returns this when its dependency is not wired: the
+#: call then takes the ordinary tool path, as the old ``elif`` chain fell
+#: through to its ``else`` (TASK-36950.1).
+ORDINARY_TOOL = object()
+
+
+@dataclass(slots=True)
+class LoopState:
+    """The ``run_agent_loop`` variables the special-tool handlers read and write.
+
+    One carrier, so a handler runs (and is tested) without the whole loop
+    (TASK-36950.1). ``messages`` and ``active`` are the loop's own lists,
+    mutated in place and never rebound. The loop sets the per-call fields
+    (``current_call_correlation``, ``display_call_arguments``,
+    ``output_observer``) before each dispatch, and ``load_batch_exclusive``
+    once per batch.
+    """
+
+    config: AgentConfig
+    deps: LoopDeps
+    add: Callable[..., AgentStep]
+    messages: list[dict]
+    active: list
+    spawned: int = 0
+    load_batch_exclusive: bool = False
+    current_call_correlation: str = ""
+    display_call_arguments: dict = field(default_factory=dict)
+    output_observer: Callable[[str], None] | None = None
+
+
+def _dispatch_spawn(call: ToolCall, state: LoopState) -> Any:
+    deps = state.deps
+    if SPAWN_TOOL_NAME not in state.config.allowed_tools:
+        # Q6: refuse before dispatch — no budget consumption,
+        # no STEP_SPAWN, deps.spawn never called.
+        return ToolResult(
+            ok=False,
+            error=f"Tool not permitted: {SPAWN_TOOL_NAME}",
+            dispatch_state="not_started",
+        )
+    task = str(call.args.get("task", "")).strip()
+    # `.get("agent") or ""` (not `.get("agent", "")`):
+    # an explicit JSON `null` for "agent" arrives here as
+    # Python `None`, and `str(None)` is the truthy
+    # string "None" -- which would then fail unknown-
+    # agent resolution with a spurious "unknown agent
+    # 'None'" refusal instead of taking the no-agent
+    # path.
+    agent_name = str(call.args.get("agent") or "").strip()
+    # Same `or ""` guard as `agent_name`: schema-valid
+    # values are only "worktree" or absent, but a
+    # stray JSON `null` must not become the truthy
+    # string "None".
+    isolation = str(call.args.get("isolation") or "").strip() or None
+    # ADR-344 (Task 6): ad-hoc routing args. Same
+    # `.get(...) or ""` coercion as `agent` above: an
+    # explicit JSON null must not become the truthy
+    # string "None". The resolver (inside deps.spawn)
+    # gates them on `[agents] spawn_override_enabled`;
+    # absent/blank means inherit, byte-identical to
+    # before.
+    override_provider = str(call.args.get("provider") or "").strip()
+    override_model = str(call.args.get("model") or "").strip()
+    scoped = "review_id" in call.args or "review_slot_id" in call.args
+    if scoped:
+        if set(call.args) != {"review_id", "review_slot_id"} or any(
+            not isinstance(call.args.get(key), str) or not call.args[key].strip()
+            for key in ("review_id", "review_slot_id")
+        ):
+            return ToolResult(
+                ok=False,
+                error="invalid_review_spawn",
+                dispatch_state="not_started",
+            )
+        result = deps.spawn(
+            review_id=call.args["review_id"],
+            review_slot_id=call.args["review_slot_id"],
+        )
+        if not isinstance(result, (SpawnAdmissionRefusal, SpawnAdmissionReplay)):
+            state.spawned += 1
+        return result
+    if not task:
+        # G4: an empty task is refused with no budget
+        # consumption and no STEP_SPAWN.
+        return ToolResult(
+            ok=False,
+            error="Task description cannot be empty",
+            dispatch_state="not_started",
+        )
+    if state.spawned >= state.config.budget.max_subagents:
+        return ToolResult(
+            ok=False,
+            error="sub-agent budget exhausted",
+            dispatch_state="not_started",
+        )
+    spawn_step = state.add(
+        STEP_SPAWN,
+        summary=(f"[{agent_name}] {task}"[:200] if agent_name else task[:200]),
+        tool_name=SPAWN_TOOL_NAME,
+        args=state.display_call_arguments,
+    )
+    if deps.spawn_at_step is not None:
+        # Routing overrides ride as kwargs ONLY when
+        # set (same guard as the spawn path below):
+        # 4-positional-arg spawn_at_step doubles in
+        # pre-existing tests never see them.
+        route_kwargs: dict[str, str] = {}
+        if override_provider:
+            route_kwargs["provider"] = override_provider
+        if override_model:
+            route_kwargs["model"] = override_model
+        result = deps.spawn_at_step(
+            task,
+            spawn_step.index,
+            agent_name or None,
+            isolation,
+            **route_kwargs,
+        )
+    elif agent_name:
+        # `isolation=` (and the ADR-344 routing
+        # overrides) are passed only when set: many
+        # unit tests build a bare `LoopDeps` with a
+        # narrow single/double-arg `spawn` double
+        # (no `spawn_at_step`, no `**kwargs`) that
+        # never exercises them -- an unconditional
+        # kwarg would break every one of them for a
+        # feature they never opt into.
+        extra: dict[str, object] = {}
+        if isolation:
+            extra["isolation"] = isolation
+        if override_provider:
+            extra["provider"] = override_provider
+        if override_model:
+            extra["model"] = override_model
+        result = (
+            deps.spawn(task, agent=agent_name, **extra)
+            if extra
+            else deps.spawn(task, agent=agent_name)
+        )
+    else:
+        extra = {}
+        if isolation:
+            extra["isolation"] = isolation
+        if override_provider:
+            extra["provider"] = override_provider
+        if override_model:
+            extra["model"] = override_model
+        result = deps.spawn(task, **extra) if extra else deps.spawn(task)
+    # Named-agent resolution (fleet spec §4) gave
+    # deps.spawn a NEW failure mode this loop-level
+    # check does not pre-screen: deps.spawn can now
+    # refuse a NAMED spawn for an unknown `agent`
+    # (or its own budget check) after this branch
+    # was already entered. This is a redundant
+    # secondary bound; the service's own
+    # sub_agent_spawns counter remains authoritative.
+    #
+    # Increment accounting differs by path:
+    # - No-agent path: increment is unconditional,
+    #   byte-identical to pre-task-5 behavior, including
+    #   spawns whose child ran and ended non-DONE.
+    # - Named path: increment only when result.ok.
+    #   Any named-spawn failure (unknown agent, budget
+    #   refusal before dispatch, or child ending
+    #   non-DONE) skips the counter; otherwise a later
+    #   VALID named spawn would be wrongly refused here
+    #   before ever reaching deps.spawn's own (real)
+    #   budget check.
+    if not isinstance(result, SpawnAdmissionRefusal) and (
+        result.ok or not agent_name
+    ):
+        state.spawned += 1
+    return result
+
+
+def _dispatch_wait_agents(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.wait_agents is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    # Same defensive coercion as load_tools' `ids`:
+    # an unreliable local model may send one bare
+    # string, a JSON null, or junk. A bare string is ONE
+    # id (never char-split); anything unusable becomes
+    # None, which the service reads as "every child" --
+    # the same thing an omitted `ids` means, and the
+    # safest reading of an ambiguous request to wait.
+    raw_ids = call.args.get("ids")
+    if isinstance(raw_ids, str):
+        wait_ids: list[str] | None = [raw_ids]
+    elif isinstance(raw_ids, list):
+        # An explicitly EMPTY list is "no ids given",
+        # i.e. all of them -- not "wait for nothing".
+        wait_ids = [str(x) for x in raw_ids] or None
+    else:
+        wait_ids = None
+    return state.deps.wait_agents(wait_ids)
+
+
+def _dispatch_check_agents(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.check_agents is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    return state.deps.check_agents()
+
+
+def _dispatch_send_to_agent(call: ToolCall, state: LoopState) -> Any:
+    deps = state.deps
+    if deps.send_to_agent is None:
+        state.add(STEP_TOOL_CALL, tool_name=call.name, args={})
+        return ToolResult(
+            False,
+            error="Tool not permitted: send_to_agent",
+            dispatch_state="not_started",
+        )
+    steering_step = state.add(
+        STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments
+    )
+    # Same defensive coercion as wait_agents' `ids`:
+    # an unreliable local model may send numbers or JSON
+    # nulls. Anything non-string becomes its str() form (a
+    # numeric id then simply fails to resolve, and the
+    # service's own refusal copy names it); a missing/null
+    # value becomes "" so the service's empty-message and
+    # unknown-id refusals speak, never a crash here.
+    raw_target = call.args.get("id")
+    raw_message = call.args.get("message")
+    target = "" if raw_target is None else str(raw_target)
+    message = "" if raw_message is None else str(raw_message)
+    if deps.send_to_agent_at_step is not None:
+        return deps.send_to_agent_at_step(target, message, steering_step.index)
+    return deps.send_to_agent(target, message)
+
+
+def _dispatch_merge_agent_worktree(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.merge_agent_worktree is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    raw_mode = call.args.get("mode")
+    mode = str(raw_mode) if raw_mode else "apply"
+    return state.deps.merge_agent_worktree(str(call.args.get("handle_id", "")), mode)
+
+
+def _dispatch_discard_agent_worktree(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.discard_agent_worktree is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    return state.deps.discard_agent_worktree(str(call.args.get("handle_id", "")))
+
+
+def _dispatch_message_tool(call: ToolCall, state: LoopState) -> Any:
+    from .fleet_message_tools import refused
+
+    deps = state.deps
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=call.args)
+    callback = {
+        REPORT_TO_SUPERVISOR_TOOL_NAME: deps.report_to_supervisor,
+        READ_AGENT_MESSAGES_TOOL_NAME: deps.read_agent_messages,
+        LIST_PEER_AGENTS_TOOL_NAME: deps.list_peer_agents,
+        SEND_TO_PEER_TOOL_NAME: deps.send_to_peer,
+    }.get(call.name)
+    return (
+        callback(call.args)
+        if callback is not None
+        else replace(refused(), dispatch_state="not_started")
+    )
+
+
+def _dispatch_find_tools(call: ToolCall, state: LoopState) -> Any:
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    entries = state.deps.find_tools(str(call.args.get("query", "")))
+    return ToolResult(ok=True, content=_catalog_lines(entries))
+
+
+def _dispatch_load_tools(call: ToolCall, state: LoopState) -> Any:
+    deps = state.deps
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    if not state.load_batch_exclusive:
+        return ToolResult(
+            ok=False,
+            error="call load_tools alone in its own tool batch",
+            dispatch_state="not_started",
+        )
+    # A bare string is one id, never a sequence of chars.
+    raw_ids = call.args.get("ids")
+    if isinstance(raw_ids, str):
+        ids = [raw_ids]
+    elif isinstance(raw_ids, list):
+        ids = [str(item) for item in raw_ids]
+    else:
+        ids = []
+    selection = deps.load_schemas(ids, state.messages, call)
+    if not isinstance(selection, ToolLoadSelection):
+        selection = ToolLoadSelection(invalid_inputs=tuple(ids))
+    result = format_tool_load_selection(selection)
+    if selection.accepted:
+        replacement = list(selection.accepted)
+        replacement_names = frozenset(schema.name for schema in replacement)
+        try:
+            deps.replace_disclosed_names(replacement_names)
+        except Exception:  # noqa: BLE001 - preserve old set
+            result = ToolResult(
+                ok=False,
+                error="tool working-set commit failed",
+            )
+        else:
+            state.active[:] = replacement
+    return result
+
+
+def _dispatch_skill_file(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.read_skill_file is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    return state.deps.read_skill_file(
+        str(call.args.get("skill_name", "")),
+        str(call.args.get("path", "")),
+    )
+
+
+def _dispatch_install_skill(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.install_skill is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    return state.deps.install_skill(str(call.args.get("url", "")))
+
+
+def _dispatch_prepare_managed_skill_promotion(
+    call: ToolCall, state: LoopState
+) -> Any:
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    if state.deps.prepare_managed_skill_promotion is None:
+        return ToolResult.blocked("Managed-skill promotion proposals are unavailable.")
+    with use_tool_call_id(state.current_call_correlation):
+        return state.deps.prepare_managed_skill_promotion(dict(call.args))
+
+
+def _dispatch_run_skill_script(call: ToolCall, state: LoopState) -> Any:
+    from .tool_output import tool_output_scope
+
+    if state.deps.run_skill_script is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    raw_args = call.args.get("args") or []
+    if not isinstance(raw_args, (list, tuple)):
+        raw_args = [raw_args]
+    with tool_output_scope(state.output_observer):
+        return state.deps.run_skill_script(
+            str(call.args.get("skill_name", "")),
+            str(call.args.get("script_path", "")),
+            [str(item) for item in raw_args],
+        )
+
+
+def _dispatch_search_archived_conversations(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.search_archived_conversations is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+    return state.deps.search_archived_conversations(dict(call.args))
+
+
+def _dispatch_request_conversation_restore(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.request_conversation_restore is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+    return state.deps.request_conversation_restore(
+        dict(call.args), call_id=state.current_call_correlation
+    )
+
+
+def _dispatch_fork_chat(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.fork_chat is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+    return state.deps.fork_chat(dict(call.args))
+
+
+def _dispatch_new_chat(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.new_chat is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+    return state.deps.new_chat(dict(call.args))
+
+
+def _dispatch_search_run_log(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.search_run_log is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    return state.deps.search_run_log(dict(call.args))
+
+
+def _dispatch_run_log_stats(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.run_log_stats is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    return state.deps.run_log_stats(dict(call.args))
+
+
+def _dispatch_run_log_slice(call: ToolCall, state: LoopState) -> Any:
+    if state.deps.run_log_slice is None:
+        return ORDINARY_TOOL
+    state.add(STEP_TOOL_CALL, tool_name=call.name, args=state.display_call_arguments)
+    return state.deps.run_log_slice(dict(call.args))
+
+
+#: The runtime's special tools, dispatched by name ahead of the ordinary tool
+#: path. Each handler takes ``(call, state)`` and returns the call's result,
+#: or ``ORDINARY_TOOL`` when its dependency is not wired (TASK-36950.1).
+SPECIAL_TOOL_HANDLERS: dict[str, Callable[[ToolCall, LoopState], Any]] = {
+    SPAWN_TOOL_NAME: _dispatch_spawn,
+    WAIT_AGENTS_TOOL_NAME: _dispatch_wait_agents,
+    CHECK_AGENTS_TOOL_NAME: _dispatch_check_agents,
+    SEND_TO_AGENT_TOOL_NAME: _dispatch_send_to_agent,
+    MERGE_AGENT_WORKTREE_TOOL_NAME: _dispatch_merge_agent_worktree,
+    DISCARD_AGENT_WORKTREE_TOOL_NAME: _dispatch_discard_agent_worktree,
+    **dict.fromkeys(MESSAGE_TOOL_NAMES, _dispatch_message_tool),
+    FIND_TOOLS_NAME: _dispatch_find_tools,
+    LOAD_TOOLS_NAME: _dispatch_load_tools,
+    SKILL_FILE_TOOL_NAME: _dispatch_skill_file,
+    INSTALL_SKILL_TOOL_NAME: _dispatch_install_skill,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME: _dispatch_prepare_managed_skill_promotion,
+    RUN_SKILL_SCRIPT_TOOL_NAME: _dispatch_run_skill_script,
+    "search_archived_conversations": _dispatch_search_archived_conversations,
+    "request_conversation_restore": _dispatch_request_conversation_restore,
+    FORK_CHAT_TOOL_NAME: _dispatch_fork_chat,
+    NEW_CHAT_TOOL_NAME: _dispatch_new_chat,
+    SEARCH_RUN_LOG_TOOL_NAME: _dispatch_search_run_log,
+    RUN_LOG_STATS_TOOL_NAME: _dispatch_run_log_stats,
+    RUN_LOG_SLICE_TOOL_NAME: _dispatch_run_log_slice,
+}
+
+
 #: Backoff shape for transient model failures (TASK-25901). The attempt COUNT
 #: is per-run config (`RunBudget.max_model_retries`); this is only the delay
 #: curve.
@@ -1187,7 +1618,6 @@ def run_agent_loop(
     #: blips rather than a deterministic fault.
     consecutive_empty_turns = 0
     consecutive_denials = 0
-    spawned = 0
     model_turns = 0
     tool_activity_proposed = False
     total_tokens = 0
@@ -1201,7 +1631,6 @@ def run_agent_loop(
     last_failed_tool = ""
     consecutive_tool_failures = 0
     context_trace_reserved = False
-    current_call_correlation = ""
 
     def account_denial(
         *,
@@ -1368,7 +1797,7 @@ def run_agent_loop(
     def add(kind: str, *, counts_toward_budget: bool = True, **kw) -> AgentStep:
         nonlocal budget_steps
         if kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT} and "call_id" not in kw:
-            kw["call_id"] = current_call_correlation
+            kw["call_id"] = state.current_call_correlation
         if not kw.get("created_at"):
             kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
         if kw.get("owner_seq") is None:
@@ -1392,6 +1821,12 @@ def run_agent_loop(
         except Exception:  # noqa: BLE001 — best-effort observation only
             pass
         return step
+
+    # TASK-36950.1: the one carrier of the loop variables the special-tool
+    # handlers read and write; `add` and `_outcome` read it at call time.
+    state = LoopState(
+        config=config, deps=deps, add=add, messages=messages, active=active
+    )
 
     def reader_cycle_stuck(call: ToolCall, result: ToolResult | None) -> bool:
         """Evaluate reader progress only after its result and history barriers."""
@@ -1439,7 +1874,7 @@ def run_agent_loop(
         status: str, *, assistant_message: dict | None = None, **kw
     ) -> RunOutcome:
         # Reports run spend on every terminal path; reads enclosing steps/
-        # spawned/total_tokens at call time (no nonlocal, like add()).
+        # state.spawned/total_tokens at call time (no nonlocal, like add()).
         #
         # PR3b Task 4: every terminal return also captures the coherent
         # transcript -- `messages[:coherent_len]`, the last drain-boundary
@@ -1474,7 +1909,7 @@ def run_agent_loop(
         return RunOutcome(
             status,
             steps,
-            subagents_spawned=spawned,
+            subagents_spawned=state.spawned,
             total_tokens=total_tokens,
             final_messages=final_messages,
             **kw,
@@ -2402,7 +2837,7 @@ def run_agent_loop(
                 turn.assistant_message or {"role": "assistant", "content": turn.text}
             )
         load_call_count = sum(call.name == LOAD_TOOLS_NAME for call in calls)
-        load_batch_exclusive = load_call_count == 1 and len(calls) == 1
+        state.load_batch_exclusive = load_call_count == 1 and len(calls) == 1
         scope_refusals: dict[int, str] = {}
         scoped_calls = []
         for call in calls:
@@ -2726,13 +3161,13 @@ def run_agent_loop(
                     "before_tool_dispatch hook raised; dispatch continuing"
                 )
         for call in calls:
-            current_call_correlation = str(call_trace[id(call)]["correlation"])
+            state.current_call_correlation = str(call_trace[id(call)]["correlation"])
             display_call_projection = project_record("display", call)
-            display_call_arguments = dict(display_call_projection.arguments)
+            state.display_call_arguments = dict(display_call_projection.arguments)
             review_decision = _effective_review_decision(
                 call,
                 verdicts,
-                call_id=current_call_correlation,
+                call_id=state.current_call_correlation,
             )
             verdict = review_decision.verdict
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
@@ -2967,7 +3402,7 @@ def run_agent_loop(
 
                 from .tool_output import tool_output_scope
 
-                output_observer = (
+                state.output_observer = (
                     publish_output if deps.on_tool_activity is not None else None
                 )
                 dispatch_refused = False
@@ -2987,411 +3422,21 @@ def run_agent_loop(
                     "load_tools",
                 }:
                     result = ToolResult(ok=False, error="role_denied", dispatch_state="not_started")
-                elif call.name == SPAWN_TOOL_NAME:
-                    if SPAWN_TOOL_NAME not in config.allowed_tools:
-                        # Q6: refuse before dispatch — no budget consumption,
-                        # no STEP_SPAWN, deps.spawn never called.
-                        result = ToolResult(
-                            ok=False,
-                            error=f"Tool not permitted: {SPAWN_TOOL_NAME}",
-                            dispatch_state="not_started",
-                        )
-                    else:
-                        task = str(call.args.get("task", "")).strip()
-                        # `.get("agent") or ""` (not `.get("agent", "")`):
-                        # an explicit JSON `null` for "agent" arrives here as
-                        # Python `None`, and `str(None)` is the truthy
-                        # string "None" -- which would then fail unknown-
-                        # agent resolution with a spurious "unknown agent
-                        # 'None'" refusal instead of taking the no-agent
-                        # path.
-                        agent_name = str(call.args.get("agent") or "").strip()
-                        # Same `or ""` guard as `agent_name`: schema-valid
-                        # values are only "worktree" or absent, but a
-                        # stray JSON `null` must not become the truthy
-                        # string "None".
-                        isolation = (
-                            str(call.args.get("isolation") or "").strip() or None
-                        )
-                        # ADR-344 (Task 6): ad-hoc routing args. Same
-                        # `.get(...) or ""` coercion as `agent` above: an
-                        # explicit JSON null must not become the truthy
-                        # string "None". The resolver (inside deps.spawn)
-                        # gates them on `[agents] spawn_override_enabled`;
-                        # absent/blank means inherit, byte-identical to
-                        # before.
-                        override_provider = str(call.args.get("provider") or "").strip()
-                        override_model = str(call.args.get("model") or "").strip()
-                        scoped = (
-                            "review_id" in call.args or "review_slot_id" in call.args
-                        )
-                        if scoped:
-                            if set(call.args) != {"review_id", "review_slot_id"} or any(
-                                not isinstance(call.args.get(key), str)
-                                or not call.args[key].strip()
-                                for key in ("review_id", "review_slot_id")
-                            ):
-                                result = ToolResult(
-                                    ok=False,
-                                    error="invalid_review_spawn",
-                                    dispatch_state="not_started",
-                                )
-                            else:
-                                result = deps.spawn(
-                                    review_id=call.args["review_id"],
-                                    review_slot_id=call.args["review_slot_id"],
-                                )
-                                if not isinstance(
-                                    result,
-                                    (SpawnAdmissionRefusal, SpawnAdmissionReplay),
-                                ):
-                                    spawned += 1
-                        elif not task:
-                            # G4: an empty task is refused with no budget
-                            # consumption and no STEP_SPAWN.
-                            result = ToolResult(
-                                ok=False,
-                                error="Task description cannot be empty",
-                                dispatch_state="not_started",
-                            )
-                        elif spawned >= budget.max_subagents:
-                            result = ToolResult(
-                                ok=False,
-                                error="sub-agent budget exhausted",
-                                dispatch_state="not_started",
-                            )
-                        else:
-                            spawn_step = add(
-                                STEP_SPAWN,
-                                summary=(
-                                    f"[{agent_name}] {task}"[:200]
-                                    if agent_name
-                                    else task[:200]
-                                ),
-                                tool_name=SPAWN_TOOL_NAME,
-                                args=display_call_arguments,
-                            )
-                            if deps.spawn_at_step is not None:
-                                # Routing overrides ride as kwargs ONLY when
-                                # set (same guard as the spawn path below):
-                                # 4-positional-arg spawn_at_step doubles in
-                                # pre-existing tests never see them.
-                                route_kwargs: dict[str, str] = {}
-                                if override_provider:
-                                    route_kwargs["provider"] = override_provider
-                                if override_model:
-                                    route_kwargs["model"] = override_model
-                                result = deps.spawn_at_step(
-                                    task,
-                                    spawn_step.index,
-                                    agent_name or None,
-                                    isolation,
-                                    **route_kwargs,
-                                )
-                            elif agent_name:
-                                # `isolation=` (and the ADR-344 routing
-                                # overrides) are passed only when set: many
-                                # unit tests build a bare `LoopDeps` with a
-                                # narrow single/double-arg `spawn` double
-                                # (no `spawn_at_step`, no `**kwargs`) that
-                                # never exercises them -- an unconditional
-                                # kwarg would break every one of them for a
-                                # feature they never opt into.
-                                extra: dict[str, object] = {}
-                                if isolation:
-                                    extra["isolation"] = isolation
-                                if override_provider:
-                                    extra["provider"] = override_provider
-                                if override_model:
-                                    extra["model"] = override_model
-                                result = (
-                                    deps.spawn(task, agent=agent_name, **extra)
-                                    if extra
-                                    else deps.spawn(task, agent=agent_name)
-                                )
-                            else:
-                                extra = {}
-                                if isolation:
-                                    extra["isolation"] = isolation
-                                if override_provider:
-                                    extra["provider"] = override_provider
-                                if override_model:
-                                    extra["model"] = override_model
-                                result = (
-                                    deps.spawn(task, **extra)
-                                    if extra
-                                    else deps.spawn(task)
-                                )
-                            # Named-agent resolution (fleet spec §4) gave
-                            # deps.spawn a NEW failure mode this loop-level
-                            # check does not pre-screen: deps.spawn can now
-                            # refuse a NAMED spawn for an unknown `agent`
-                            # (or its own budget check) after this branch
-                            # was already entered. This is a redundant
-                            # secondary bound; the service's own
-                            # sub_agent_spawns counter remains authoritative.
-                            #
-                            # Increment accounting differs by path:
-                            # - No-agent path: increment is unconditional,
-                            #   byte-identical to pre-task-5 behavior, including
-                            #   spawns whose child ran and ended non-DONE.
-                            # - Named path: increment only when result.ok.
-                            #   Any named-spawn failure (unknown agent, budget
-                            #   refusal before dispatch, or child ending
-                            #   non-DONE) skips the counter; otherwise a later
-                            #   VALID named spawn would be wrongly refused here
-                            #   before ever reaching deps.spawn's own (real)
-                            #   budget check.
-                            if not isinstance(result, SpawnAdmissionRefusal) and (
-                                result.ok or not agent_name
-                            ):
-                                spawned += 1
-                elif (
-                    call.name == WAIT_AGENTS_TOOL_NAME and deps.wait_agents is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    # Same defensive coercion as load_tools' `ids` right
-                    # below: an unreliable local model may send one bare
-                    # string, a JSON null, or junk. A bare string is ONE
-                    # id (never char-split); anything unusable becomes
-                    # None, which the service reads as "every child" --
-                    # the same thing an omitted `ids` means, and the
-                    # safest reading of an ambiguous request to wait.
-                    raw_ids = call.args.get("ids")
-                    if isinstance(raw_ids, str):
-                        wait_ids: list[str] | None = [raw_ids]
-                    elif isinstance(raw_ids, list):
-                        # An explicitly EMPTY list is "no ids given",
-                        # i.e. all of them -- not "wait for nothing".
-                        wait_ids = [str(x) for x in raw_ids] or None
-                    else:
-                        wait_ids = None
-                    result = deps.wait_agents(wait_ids)
-                elif (
-                    call.name == CHECK_AGENTS_TOOL_NAME
-                    and deps.check_agents is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    result = deps.check_agents()
-                elif (
-                    call.name == SEND_TO_AGENT_TOOL_NAME
-                    and deps.send_to_agent is not None
-                ):
-                    steering_step = add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    # Same defensive coercion as wait_agents' `ids` above:
-                    # an unreliable local model may send numbers or JSON
-                    # nulls. Anything non-string becomes its str() form (a
-                    # numeric id then simply fails to resolve, and the
-                    # service's own refusal copy names it); a missing/null
-                    # value becomes "" so the service's empty-message and
-                    # unknown-id refusals speak, never a crash here.
-                    raw_target = call.args.get("id")
-                    raw_message = call.args.get("message")
-                    target = "" if raw_target is None else str(raw_target)
-                    message = "" if raw_message is None else str(raw_message)
-                    if deps.send_to_agent_at_step is not None:
-                        result = deps.send_to_agent_at_step(
-                            target, message, steering_step.index
-                        )
-                    else:
-                        result = deps.send_to_agent(target, message)
-                elif (
-                    call.name == MERGE_AGENT_WORKTREE_TOOL_NAME
-                    and deps.merge_agent_worktree is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    raw_mode = call.args.get("mode")
-                    mode = str(raw_mode) if raw_mode else "apply"
-                    result = deps.merge_agent_worktree(
-                        str(call.args.get("handle_id", "")), mode
-                    )
-                elif (
-                    call.name == DISCARD_AGENT_WORKTREE_TOOL_NAME
-                    and deps.discard_agent_worktree is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    result = deps.discard_agent_worktree(
-                        str(call.args.get("handle_id", ""))
-                    )
-                elif call.name in MESSAGE_TOOL_NAMES:
-                    from .fleet_message_tools import refused
-
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=call.args)
-                    callback = {
-                        REPORT_TO_SUPERVISOR_TOOL_NAME: deps.report_to_supervisor,
-                        READ_AGENT_MESSAGES_TOOL_NAME: deps.read_agent_messages,
-                        LIST_PEER_AGENTS_TOOL_NAME: deps.list_peer_agents,
-                        SEND_TO_PEER_TOOL_NAME: deps.send_to_peer,
-                    }.get(call.name)
-                    result = (
-                        callback(call.args)
-                        if callback is not None
-                        else replace(refused(), dispatch_state="not_started")
-                    )
-                elif (
-                    call.name == SEND_TO_AGENT_TOOL_NAME and deps.send_to_agent is None
-                ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args={})
-                    result = ToolResult(
-                        False,
-                        error="Tool not permitted: send_to_agent",
-                        dispatch_state="not_started",
-                    )
-                elif call.name == FIND_TOOLS_NAME:
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    entries = deps.find_tools(str(call.args.get("query", "")))
-                    result = ToolResult(ok=True, content=_catalog_lines(entries))
-                elif call.name == LOAD_TOOLS_NAME:
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    if not load_batch_exclusive:
-                        result = ToolResult(
-                            ok=False,
-                            error="call load_tools alone in its own tool batch",
-                            dispatch_state="not_started",
-                        )
-                    else:
-                        # A bare string is one id, never a sequence of chars.
-                        raw_ids = call.args.get("ids")
-                        if isinstance(raw_ids, str):
-                            ids = [raw_ids]
-                        elif isinstance(raw_ids, list):
-                            ids = [str(item) for item in raw_ids]
-                        else:
-                            ids = []
-                        selection = deps.load_schemas(ids, messages, call)
-                        if not isinstance(selection, ToolLoadSelection):
-                            selection = ToolLoadSelection(invalid_inputs=tuple(ids))
-                        result = format_tool_load_selection(selection)
-                        if selection.accepted:
-                            replacement = list(selection.accepted)
-                            replacement_names = frozenset(
-                                schema.name for schema in replacement
-                            )
-                            try:
-                                deps.replace_disclosed_names(replacement_names)
-                            except Exception:  # noqa: BLE001 - preserve old set
-                                result = ToolResult(
-                                    ok=False,
-                                    error="tool working-set commit failed",
-                                )
-                            else:
-                                active[:] = replacement
-                elif (
-                    call.name == SKILL_FILE_TOOL_NAME
-                    and deps.read_skill_file is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    result = deps.read_skill_file(
-                        str(call.args.get("skill_name", "")),
-                        str(call.args.get("path", "")),
-                    )
-                elif (
-                    call.name == INSTALL_SKILL_TOOL_NAME
-                    and deps.install_skill is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    result = deps.install_skill(str(call.args.get("url", "")))
-                elif call.name == PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME:
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    if deps.prepare_managed_skill_promotion is None:
-                        result = ToolResult.blocked(
-                            "Managed-skill promotion proposals are unavailable."
-                        )
-                    else:
-                        with use_tool_call_id(current_call_correlation):
-                            result = deps.prepare_managed_skill_promotion(
-                                dict(call.args)
-                            )
-                elif (
-                    call.name == RUN_SKILL_SCRIPT_TOOL_NAME
-                    and deps.run_skill_script is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    raw_args = call.args.get("args") or []
-                    if not isinstance(raw_args, (list, tuple)):
-                        raw_args = [raw_args]
-                    with tool_output_scope(output_observer):
-                        result = deps.run_skill_script(
-                            str(call.args.get("skill_name", "")),
-                            str(call.args.get("script_path", "")),
-                            [str(item) for item in raw_args],
-                        )
-                elif (
-                    call.name == "search_archived_conversations"
-                    and deps.search_archived_conversations is not None
-                ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
-                    result = deps.search_archived_conversations(dict(call.args))
-                elif (
-                    call.name == "request_conversation_restore"
-                    and deps.request_conversation_restore is not None
-                ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
-                    result = deps.request_conversation_restore(
-                        dict(call.args), call_id=current_call_correlation
-                    )
-                elif call.name == FORK_CHAT_TOOL_NAME and deps.fork_chat is not None:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
-                    result = deps.fork_chat(dict(call.args))
-                elif call.name == NEW_CHAT_TOOL_NAME and deps.new_chat is not None:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
-                    result = deps.new_chat(dict(call.args))
-                elif (
-                    call.name == SEARCH_RUN_LOG_TOOL_NAME
-                    and deps.search_run_log is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    result = deps.search_run_log(dict(call.args))
-                elif (
-                    call.name == RUN_LOG_STATS_TOOL_NAME
-                    and deps.run_log_stats is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    result = deps.run_log_stats(dict(call.args))
-                elif (
-                    call.name == RUN_LOG_SLICE_TOOL_NAME
-                    and deps.run_log_slice is not None
-                ):
-                    add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
-                    )
-                    result = deps.run_log_slice(dict(call.args))
                 else:
+                    handler = SPECIAL_TOOL_HANDLERS.get(call.name)
+                    result = ORDINARY_TOOL if handler is None else handler(call, state)
+                if result is ORDINARY_TOOL:
                     tool_step = add(
-                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                        STEP_TOOL_CALL,
+                        tool_name=call.name,
+                        args=state.display_call_arguments,
                     )
-                    with tool_output_scope(output_observer):
+                    with tool_output_scope(state.output_observer):
                         if deps.invoke_tool_at_step is not None:
                             result = deps.invoke_tool_at_step(
                                 call,
                                 tool_step.index,
-                                current_call_correlation,
+                                state.current_call_correlation,
                             )
                         else:
                             result = deps.invoke_tool(call)
