@@ -7,8 +7,15 @@ runtime_schemas (never disclosure-gated) only for the top-level agent
 """
 
 import json
+from dataclasses import replace as _replace
+from types import SimpleNamespace
+
+import pytest
 
 from tldw_chatbook.Agents.agent_models import (
+    STEP_SPAWN,
+    STEP_TOOL_CALL,
+    ToolCall,
     CHECK_AGENTS_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
     RUNTIME_TOOL_NAMES,
@@ -41,7 +48,13 @@ from tldw_chatbook.Agents.agent_models import (
     MERGE_AGENT_WORKTREE_TOOL_NAME,
 )
 from tldw_chatbook.Agents.tool_catalog import INSTALL_SKILL_TOOL_SCHEMA
-from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
+from tldw_chatbook.Agents.agent_runtime import (
+    ORDINARY_TOOL,
+    SPECIAL_TOOL_HANDLERS,
+    LoopDeps,
+    LoopState,
+    run_agent_loop,
+)
 
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 
@@ -266,18 +279,6 @@ def test_subagent_cannot_call_install_skill(tmp_path):
 
 # -- TASK-36950.1: each special-tool handler runs without the loop -----------
 
-from dataclasses import replace as _replace
-from types import SimpleNamespace
-
-import pytest
-
-from tldw_chatbook.Agents.agent_models import STEP_SPAWN, STEP_TOOL_CALL, ToolCall
-from tldw_chatbook.Agents.agent_runtime import (
-    ORDINARY_TOOL,
-    SPECIAL_TOOL_HANDLERS,
-    LoopState,
-)
-
 
 def _state(config=_CFG, **deps):
     """A LoopState whose `add` records (kind, kwargs) instead of persisting."""
@@ -333,6 +334,45 @@ def test_unwired_gated_handler_defers_to_the_ordinary_path(name):
     state, steps = _state(**{_GATED[name]: None})
     assert _dispatch(name, {}, state) is ORDINARY_TOOL
     assert steps == []
+
+
+# name -> (wired dep, call args, args the dep must receive, step args recorded)
+_WIRED = {
+    CHECK_AGENTS_TOOL_NAME: ("check_agents", {"x": 1}, (), "display"),
+    DISCARD_AGENT_WORKTREE_TOOL_NAME: (
+        "discard_agent_worktree",
+        {"handle_id": 9},
+        ("9",),
+        "display",
+    ),
+    SKILL_FILE_TOOL_NAME: (
+        "read_skill_file",
+        {"skill_name": "s", "path": 3},
+        ("s", "3"),
+        "display",
+    ),
+    INSTALL_SKILL_TOOL_NAME: ("install_skill", {}, ("",), "display"),
+    "search_archived_conversations": (
+        "search_archived_conversations",
+        {"q": "x"},
+        ({"q": "x"},),
+        "raw",
+    ),
+    NEW_CHAT_TOOL_NAME: ("new_chat", {"t": "x"}, ({"t": "x"},), "raw"),
+    SEARCH_RUN_LOG_TOOL_NAME: ("search_run_log", {"q": 1}, ({"q": 1},), "display"),
+    RUN_LOG_SLICE_TOOL_NAME: ("run_log_slice", {"n": 2}, ({"n": 2},), "display"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_WIRED))
+def test_wired_handler_records_the_call_then_returns_its_dependency_result(name):
+    dep, args, expected_args, step_args = _WIRED[name]
+    calls, answer = [], ToolResult(ok=True, content=f"{name} ran")
+    state, steps = _state(**{dep: lambda *a: calls.append(a) or answer})
+    assert _dispatch(name, args, state) is answer
+    assert calls == [expected_args]
+    recorded = {"shown": "display"} if step_args == "display" else args
+    assert steps == [(STEP_TOOL_CALL, {"tool_name": name, "args": recorded})]
 
 
 def test_display_args_handler_records_display_args_and_passes_raw_args():
