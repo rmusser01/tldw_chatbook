@@ -672,7 +672,8 @@ _BUDGETS: dict[str, int] = {
     # UI/Settings_Modules/workspace_archive.py (-3): 35,020.
     # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +1 (the
     # carried #3295 review fix: the Canvas switch's help says plain chat
-    # needs Full agent tools); re-measured after the rebase onto dev 26b2e677dd.
+    # needs Full agent tools); re-measured after the rebase onto dev 26b2e677dd:
+    # dev's 35,023 plus 1, exact measurement 35,024.
     "tldw_chatbook/UI/Screens/settings_screen.py": 34993,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
@@ -968,8 +969,9 @@ _BUDGETS: dict[str, int] = {
     # comments and layout, review round 1 F1-10): 8862 -> 8954.
     # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +7 (that
     # writer runs at dev's short config-write switch interval, TASK-38987):
-    # 8954 -> 8961.
-    "tldw_chatbook/config.py": 8837,
+    # 8954 -> 8961. Re-measured 2026-11-12 after the rebase onto dev
+    # 26b2e677dd: dev's 8,837 plus the branch's +126, exact measurement 8,963.
+    "tldw_chatbook/config.py": 8963,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
