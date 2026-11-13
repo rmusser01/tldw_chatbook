@@ -1023,6 +1023,10 @@ MINIMUM_FILES = 2056
 # TASK-40318 (2026-11-12): append the Settings Workspaces lifecycle journeys'
 # 13 cases at the tail, one entry each. The floor is the measured entry count.
 MINIMUM_FILES = 2075
+MINIMUM_FILES = 2069
+# TASK-40320 review r14set-rev1 (2026-11-12): append the archive review
+# regressions file at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2076
 
 
 def read_census(path: Path) -> list[str]:

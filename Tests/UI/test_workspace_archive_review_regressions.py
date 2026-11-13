@@ -142,7 +142,13 @@ def _recovery_host(registry):
 
     tasks = []
     app = SimpleNamespace(workspace_registry_service=registry, notify=Mock())
-    app.run_worker = lambda coroutine, **_: tasks.append(asyncio.create_task(coroutine))
+
+    def run_worker(work, **_):
+        # Like Textual's: a coroutine, or an async callable (d043e22438 passes
+        # the bound `_sync_native_console_chat_ui` uncalled).
+        tasks.append(asyncio.create_task(work() if callable(work) else work))
+
+    app.run_worker = run_worker
     screen = SimpleNamespace(is_mounted=True, app=app)
     app.screen = screen
     controller = SimpleNamespace(

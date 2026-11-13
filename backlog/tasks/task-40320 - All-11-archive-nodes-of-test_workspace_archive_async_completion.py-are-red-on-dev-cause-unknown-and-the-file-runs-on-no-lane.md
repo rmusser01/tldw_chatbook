@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 02:46
+updated_date: 2026-11-13 05:45
 labels:
 - follow-up
 - tests
@@ -30,6 +30,7 @@ Found in round 13 of the 2026-10-23 burn-down (cprod stream review r13p-rev1: 11
 <!-- AC:BEGIN -->
 - [x] #1 Each of the 11 nodes is classified (test drift with the commit, or a product defect fixed with a test that was red) and passes at `-n 4`
 - [x] #2 The file runs on a PR lane
+- [x] #3 test_workspace_archive_review_regressions.py's three Console restore nodes pass (stand-in run_worker accepts an async callable) and the file runs on the UI lane
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,4 +56,6 @@ All 11 nodes were test drift: the `_host`/stand-in doubles fell behind three pro
 
 **Lane.** The whole file is appended to `scripts/ui_pr_gate_census.txt` (`MINIMUM_FILES` = measured count). Local serial time with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`): 24 passed in 23.3 s (35.7 s wall), load 65-70 on 18 CPUs.
 
-Files: `Tests/UI/test_workspace_archive_async_completion.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+**Review r14set-rev1 (AC #3).** `Tests/UI/test_workspace_archive_review_regressions.py` had the same d043e22438 drift in `_recovery_host`. Its stand-in `run_worker` now calls an async callable as Textual does. Red at base 26b2e677dd with `TypeError: a coroutine was expected`: `test_console_restore_invalidates_cached_rows_before_sync`, `test_console_restore_storage_does_not_block_ui_loop`, `test_console_receipt_undo_read_failure_has_async_recovery`. After: 23 passed at `-n 4`. The whole file is appended to the census tail (`MINIMUM_FILES` = measured count). Serial with the lane's flags: 23 passed in 16.5 s (22.4 s wall), load about 33. Its five `ASYNC110` ruff findings were there at base; I left them alone.
+
+Files: `Tests/UI/test_workspace_archive_async_completion.py`, `Tests/UI/test_workspace_archive_review_regressions.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.

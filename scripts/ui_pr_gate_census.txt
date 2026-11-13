@@ -2990,3 +2990,7 @@ Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle
 Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[literal_archive]
 Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_the_current_theme_surface[textual-dark]
 Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_the_current_theme_surface[textual-light]
+# TASK-40320 review r14set-rev1 (2026-11-12): the archive review regressions,
+# whose Console restore doubles now take dev's callable sync worker (whole
+# file, about 17 s serial locally).
+Tests/UI/test_workspace_archive_review_regressions.py
