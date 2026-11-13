@@ -471,7 +471,30 @@ _BUDGETS: dict[str, int] = {
     # immediate select (``]``/``[`` and the review-set walk too) hands it back.
     # 2026-11-06, TASK-38981 re-review 4 (same waiver): 5260 -> 5275 (+15):
     # the viewer sync lands a pending stage pick once its item has loaded.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5275,
+    # 2026-10-27, TASK-34000.40 polish-1b Task 9 (N-33; owner decision --
+    # expand limits, don't contort code): the analysis form's Save body moved
+    # into ``_save_library_media_analysis_from_form`` so the press and Ctrl+S
+    # share it: 5281 -> 5286 (measured with ``_measure``).
+    # 2026-10-27, Task 9 fix round 1 (review I-3; same owner decision): the
+    # analysis save's in-flight guard -- a second press says "Already
+    # saving." and writes nothing; the worker clears the flag in a
+    # ``finally`` (``_run_library_media_analysis_form_save``): 5286 -> 5313
+    # (measured with ``_measure``).
+    # 2026-10-27, Task 9 fix round 2 (review R1 N-6; same owner decision):
+    # opening a row, an external detail and Discard each reset the analysis
+    # save guard with the form: 5313 -> 5316 (measured with ``_measure``).
+    # 2026-10-27, Task 9 fix round 3 (review R2 N2-2; same owner decision):
+    # the analysis save guard is the token of the save that holds it, and a
+    # worker clears it only while it still holds its own: 5316 -> 5321
+    # (measured with ``_measure``).
+    # 2026-11-05, rebased onto dev 29592ecc9b: 5246 -> 5286 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 5275 -> 5315 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
+    # 2026-11-12, rebased onto dev 4b90eb860b: 5315 -> 5307 (dev measures
+    # 5267; polish-1b's own +40; same owner decision: expand limits,
+    # don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5307,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -627,7 +650,132 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3259: exact integration size under the user backlog size-limit waiver.
     # 2026-11-10, TASK-39130: the Select all and Clear focus roles' selectors
     # (the pair in ``_library_notes_semantic_role``): 7423 -> 7425.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7425,
+    # 2026-10-26, TASK-34000.29 (polish-1b Task 6; owner decision "expand
+    # limits, don't contort code"): ``_cancel_library_notes_operation``, the
+    # operation's ``origin_control`` and the synchronous focus return after a
+    # finish or cancel, the ``use-in-console`` focus role, and the one
+    # per-note fact reset (``_reset_library_note_facts`` /
+    # ``_start_library_note_fact_loads``) the open and create paths share:
+    # 7394 -> 7470 (measured). Fix round 1 (same decision; review R0 M-3): the
+    # deferred focus return is one programmatic, region-checked retry, and
+    # the presentation state names the transfer's origin control:
+    # 7470 -> 7478 (measured).
+    # 2026-10-26, TASK-34000.29 (polish-1b Task 7, N-14; same owner
+    # decision): select mode's Space action, the Actions… chooser and its
+    # Escape, the bulk Move and bulk keyword seams with their receipts and
+    # the one shared finish (``_finish_library_notes_bulk``), the open note's
+    # reload after a keyword change, the chooser's focus roles, the
+    # synchronous focus hand-offs and the in-place tree refresh
+    # (``_refresh_library_notes_tree_in_place``): 7478 -> 8008 (measured).
+    # 2026-10-27, Task 7 fix round 1 (review R0 M-1, M-8; same decision): the
+    # owed visit reload (``_tree_reload_owed``, ``_release_library_notes_
+    # mutation``, ``_run_owed_library_notes_tree_reload``) and the empty
+    # keyword toast: 8008 -> 8044 (measured).
+    # 2026-10-27, TASK-34000.29 (polish-1b Task 8, part 8a, N-29; same owner
+    # decision): Recently deleted pages -- the page read with its read-side
+    # clamp (``_load_library_notes_trash(page=)``, ``_read_library_notes_
+    # trash_page``), the Previous/Next handlers queued behind a running
+    # Restore (``_trash_reload_owed``), the Trash focus roles and their
+    # resolution (``_library_notes_trash_focus_target``) and the owed landing
+    # (``_trash_focus_role``): 8044 -> 8271 (measured).
+    # 2026-10-27, Task 8 fix round 1 (review R0 m-1, m-3, m-6, m-7; same
+    # decision): the Trash list as a scroll owner, a failed page read keeping
+    # the painted page, page 1's loading state on a reopen, the owed landing's
+    # lifetime comment: 8271 -> 8305 (measured).
+    # 2026-10-27, Task 8 fix round 2 (review R1 N-1, N-2; same decision): a
+    # page change replays no old offset (the Trash scroll owner matches the
+    # page it shows), a failed read marks the snapshot and the Retry handler
+    # re-runs it: 8305 -> 8358 (measured).
+    # 2026-10-27, Task 8 fix round 3 (review R2-1..R2-3; same decision): a
+    # failed read lands focus on Retry, a landed control is scrolled in after
+    # the deferred offset re-applies (``_keep_landed_trash_control_in_view``),
+    # a reopen clears the old failure: 8358 -> 8393 (measured).
+    # 2026-10-27, Task 8 fix round 4 (review R3-1, ruling T8-j; same
+    # decision): while a page change's landing settles, the Trash scroll
+    # owner records no offset (``_trash_landing_settling``), so a sync on
+    # either side of the keep-in-view cannot hide the landed control:
+    # 8393 -> 8421 (measured).
+    # 2026-10-27, TASK-34000.40 polish-1b Task 9 (N-33; same owner decision
+    # -- expand limits, don't contort code): the Save press's body as
+    # ``_begin_library_note_explicit_save``, which Ctrl+S runs too:
+    # 8421 -> 8425 (measured).
+    # 2026-10-27, Task 9 fix round 1 (ruling T9-g; same owner decision): a
+    # clean note's commit answers "Saved — no changes." on the status line
+    # for the key and the button alike: 8425 -> 8432 (measured).
+    # 2026-10-27, Task 9 fix round 2 (review R1 N-3; same decision): only an
+    # explicit Save is answered "Saved — no changes." -- the outcome learns
+    # who asked: 8432 -> 8441 (measured).
+    # 2026-10-29, TASK-34000.40 Task 10 (N-34; owner decision "expand limits,
+    # don't contort code"): Escape leaves a running import instead of
+    # cancelling it (a running check still cancels, ruling T10-c), and the
+    # lasting-sync snapshot is handed to the canvas with its back control
+    # named for the route in ("‹ Sync folders"): 8441 -> 8462 (measured).
+    # Same day, same decision: that hand-off is class-forwarded, because the
+    # canvas-kwargs tests run the method on a fake: 8462 -> 8467 (measured).
+    # 2026-10-29, Task 10 fix round 1 (review R0 I-1/M-7; same decision):
+    # one "back to Sync folders" decision read by Escape, the back control,
+    # the label and the footer, a shared roots return that lands focus, and a
+    # running-import re-entry focused on its progress: 8467 -> 8505 (measured).
+    # 2026-10-29, TASK-34000.29 Task 8b (N-29, Delete forever; owner ruling
+    # "yes with confimration", owner decision "expand limits, don't contort
+    # code"): the Delete forever handler and its ConfirmationDialog, the
+    # confirm and cancel answers (focus owed back to the row), the purge
+    # worker through ``NotesScopeService.purge_note`` with its refusals, its
+    # notice and its page re-read after the interlock's release, and the
+    # parked R4-1/R4-2 settling rules (every list landing raises the marker,
+    # a landing for another role drops it, keep-in-view waits out a pruning
+    # sync's framework focus): 8505 -> 8739 (measured).
+    # 2026-10-29, TASK-34000.29 Task 8b fix round 1 (review R0; same owner
+    # decision): Delete forever's busy reason painted on the Trash and
+    # cleared at the interlock's release (m-5), one confirm at a time with a
+    # stale-confirm recovery (m-8), the destructive confirm's class (m-4),
+    # the page read's "what stays elsewhere" facts for the confirm (m-9), and
+    # a roleless read dropping a replaced landing's marker (R4 residual):
+    # 8739 -> 8845 (measured).
+    # 2026-10-29, TASK-34000.29 polish-1b final review I-2/I-3/m-3 (same owner
+    # decision): the Trash's reads (opener, Previous/Next, Retry) wait behind
+    # the writer interlock alone (``_library_notes_writer_held``), never an
+    # import's fence; the ONE release body (every site, the bulk workers'
+    # ``finally`` and the import's settle path through it) runs the owed
+    # Trash read and clears the busy reason; leaving the Trash drops a queued
+    # read: 8845 -> 8893 (measured).
+    # 2026-10-29, final review T6 m2 (same owner decision): the origin focus
+    # return's docstring names it a backstop while the origin stays enabled:
+    # 8893 -> 8896 (measured).
+    # 2026-10-29, polish-1b finishing pass (same owner decision): the live I-2
+    # check found ``x`` under an import losing its row to the first one when
+    # the release cleared the busy reason (a sync captured the pane grip);
+    # the fenced ``x`` owes its row, as the confirm's Cancel does:
+    # 8896 -> 8905 (measured).
+    # 2026-10-30, polish-1b re-review NB-1, residual R-2 (same owner decision):
+    # a Restore under an import paints the busy reason ``x`` paints and owes
+    # its row, through the one busy helper both now share (it takes the
+    # pressed button): 8905 -> 8917 (measured).
+    # 2026-10-30, residual R-3 (same owner decision): that helper names the
+    # action pressed last -- "Restore waits…" for a Restore, "Delete forever
+    # waits…" otherwise: 8917 -> 8923 (measured).
+    # 2026-11-05, rebased onto dev 29592ecc9b: 7423 -> 8952 (polish-1b's
+    # own +1529; same owner decision: expand limits, don't contort code).
+    # 2026-11-05, PR #3423 review fixes (same owner decision: expand limits,
+    # don't contort code): the purge and its kept-file read resolve lasting
+    # sync with _prepare_runtime (I-1), the bulk keyword worker goes through
+    # the scope service (I-2), the transfer focus return yields to the
+    # user's move (m-3), and twelve app lookups become attribute reads
+    # (m-1): 8952 -> 9037 (measured).
+    # 2026-11-06, rebased onto dev 2684e5453f: 7423 -> 9037 (polish-1b's
+    # own +1614; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, PR #3423 re-review N-1/N-2/N-3 (same owner decision:
+    # expand limits, don't contort code): the bulk keyword worker commits
+    # each note in its own transaction and its receipt names a refusal's
+    # reason (``_bulk_keyword_refusal_reason`` and its copy):
+    # 9037 -> 9093 (measured).
+    # 2026-11-06, TASK-34000.116 (the rest of N-1; same owner decision:
+    # expand limits, don't contort code): the bulk keyword worker resolves
+    # the Sync v2 profile once, before its per-note transactions:
+    # 9093 -> 9115 (measured).
+    # 2026-11-12, rebased onto dev 4b90eb860b: 7425 -> 9117 (polish-1b's
+    # own +1692; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9117,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -681,7 +829,22 @@ _BUDGETS: dict[str, int] = {
     # decision): P1-B's .17 begin_add_from_files / release-on-exit and .71
     # availability re-derive on top of P1-C's .16 activation hold, measured
     # on the rebased tree: 2415 -> 2461.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2468,
+    # 2026-10-29, TASK-34000.40 Task 10 (N-34, AC#6; owner decision "expand
+    # limits, don't contort code"): staged review choices survive leaving the
+    # review -- forgotten per root by an apply, a stale review or a root
+    # control, bounded to three observations -- and the status line is
+    # derived from the staged count: 2461 -> 2524 (measured).
+    # 2026-10-29, Task 10 fix round 1 (review R0 M-2/M-3; same decision): the
+    # inert root action keeps staged choices, and one status-line derivation
+    # puts a held Activate's reason ahead of them: 2524 -> 2548 (measured).
+    # 2026-11-05, rebased onto dev 29592ecc9b: 2468 -> 2555 (polish-1b's
+    # own +87; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 2468 -> 2555 (polish-1b's
+    # own +87; same owner decision: expand limits, don't contort code).
+    # 2026-11-12, rebased onto dev 4b90eb860b: 2555 -> 2554 (dev measures
+    # 2467; polish-1b's own +87; same owner decision: expand limits,
+    # don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2554,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
@@ -735,7 +898,22 @@ _BUDGETS: dict[str, int] = {
     # PR3346: submission joins its existing save/ack owner; no ceiling increase.
     # 2026-11-06, TASK-38981 re-review 4 (owner size waiver): 5065 -> 5068
     # (+3): the detail sync's ``arm_editor`` lands a pending stage pick.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5068,
+    # 2026-10-27, TASK-34000.40 polish-1b Task 9 (N-33; owner decision --
+    # expand limits, don't contort code): the Save handler's body as
+    # ``_save_library_prompt_from_editor`` (shared with Ctrl+S, which also
+    # reveals the receipt below the fold), Ctrl+S's own seam
+    # (``_save_library_prompt_from_key``: a held Save says why, a conflict
+    # shows its banner, a clean editor says nothing was pending) and the
+    # canvas-backed refusal reading: 5100 -> 5161 (measured with ``_measure``).
+    # 2026-10-27, Task 9 fix round 1 (ruling T9-j; same owner decision): the
+    # footer re-registers when a write starts and ends, so the Ctrl+S chip
+    # never shows while Save is held: 5161 -> 5164 (measured with
+    # ``_measure``).
+    # 2026-11-05, rebased onto dev 29592ecc9b: 5065 -> 5129 (polish-1b's
+    # own +64; same owner decision: expand limits, don't contort code).
+    # 2026-11-06, rebased onto dev 2684e5453f: 5068 -> 5132 (polish-1b's
+    # own +64; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5132,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the

@@ -426,6 +426,9 @@ class LibraryNotesState:
     )
     sort: str = "newest"
     sort_choices_visible: bool = False
+    #: TASK-34000.29 (N-14): the select strip's Actions… chooser is open.
+    #: State, not canvas-local: Escape, the footer and the pick all read it.
+    select_actions_visible: bool = False
     filter: str = ""
     filter_records: list | None = None
     filter_generation: int = 0
@@ -488,6 +491,10 @@ class LibraryNotesState:
     # and after every delete/restore. ``None`` means "not read yet", which is
     # what keeps the "Recently deleted (N)" row off a failed read.
     trash: LibraryNotesTrashState | None = None
+    #: TASK-34000.29 (N-29): the Trash page the view asked for. Every reload
+    #: (a Restore's, a delete's, a visit's) re-reads it, clamped read-side to
+    #: the last page the total still has; opening the view starts at 1.
+    trash_page: int = 1
     operation_counter: int = 0
     operation: LibraryNotesOperationState | None = None
 

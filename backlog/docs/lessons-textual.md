@@ -1902,6 +1902,28 @@ nor doing it *before* the snapshot landed.
   defect for every other branch of the same phase. Prefer a target the phase
   always composes.
 
+## Library Notes' "focus region" is the open VIEW, not the focus — a key gated on it fires from the list (TASK-34000.40, 2026-10-27)
+
+`_library_notes_focus_region()` answers `editor` / `preview` / `context`
+whenever a note is open (`_library_notes_view == "editor"`), wherever focus
+actually is; in the three-pane reader the Notes list, its filter and the folder
+tree sit beside that note. `check_action("library_notes_save")` is built on it,
+so the first cut of the one Ctrl+S binding (TASK-34000.40) saved from the list:
+with the note's focus test removed, the Pilot pin reads `Ctrl+S on
+LibraryRailSearchInput(id='library-notes-filter') wrote the note open beside
+it`. The skill editor had the same shape since task-424: the old
+`library_skill_save` gate ("a save is available", focus anywhere) saved the
+open skill from the Skills filter (`Ctrl+S on Input(id='library-skills-filter')
+saved the skill open beside it`).
+
+- A key that must act only where the user is (ADR-299 rule (d)) needs a FOCUS
+  test — an id on an ancestor of `screen.focused`
+  (`LibraryScreen._library_focus_within("library-note-work-pane")`, the
+  `_library_note_work_pane_owns_tab` idiom) — on top of any view flag.
+- The Notes footer tier follows the same region, so with focus on the tree
+  beside an open note it still reads `esc back to notes`; a chip that must
+  follow focus has to ask focus itself (`_library_ctrl_s_chip`).
+
 ## Textual's own focus reset looks exactly like a user focus move (TASK-34000.28 fix rounds 1-2, 2026-10-25)
 
 Enter on the Notes tree's "more" pager loaded the next page and left focus in
@@ -1966,6 +1988,116 @@ Pilot pins were green.
     the user leaving the list and disarmed the landing (1 of 10 runs under
     CPU load; certain once the attempt is held). Landing at once, while the
     rows are known to be mounted, takes the race away.
+- **A third, the same week (TASK-34000.29 polish-1b Task 8, 2026-10-27).**
+  The Notes Trash's landing after a page or a Restore was first guarded by
+  a `_LibraryNotesRestoreGuard(focus_generation=...)` taken at the press.
+  Every reload recomposes the trash list, prunes the focused control, and
+  Textual's reset onto the Library grip bumped the generation, so the
+  `then=` landing was vetoed on EVERY run -- a `set_focus` + capture trace
+  showed `LAND ... gen=10` against a guard of 9 each time. It looked fine
+  unloaded only because the automatic role replay did the work; under
+  8-way load a later sync captured the grip and replaced that replay, and
+  18 of 24 runs ended on the first row. The owed landing is now a role that
+  the real-input withdrawal clears, and the Trash region's fallback resolves
+  that role. If a landing has to survive its own reload, no generation the
+  reset can move may veto it.
+
+## A focus identity captured during a prune, or after a running action disabled its button, names the wrong control (TASK-34000.29, 2026-10-26)
+
+Returning focus to Info's Export Markdown after a cancelled export passed 7
+runs in 8; the eighth left focus on the Info region. A cancelled export with
+no fix at all always left it on Delete.
+
+- **Two landings that are not the user's place.** (1) The running export
+  disables its own button; Textual blurs it, and focus moves to the next
+  enabled stop, Delete. (2) Closing the file dialog resumes Library, and the
+  resume starts a burst of Notes tree syncs. Each sync recomposes the Info
+  pane, which prunes the focused button, and Textual parks focus on the
+  Library grip until the replay runs.
+- **Any sync captured in either window records that landing as the user's
+  place.** Delete has a real role, so its replay put focus back on Delete.
+  The grip has no role, so its replay fell back to the Info region. An
+  explicit-`then` sync REPLACES the pending callback, so the earlier good
+  capture is lost. A `set_focus` wrapper plus a wrapper on
+  `_capture_library_notes_focus_identity` that prints role, focus and
+  operation phase showed it: `CAPTURE role='' focus=library-browse-items-grip`
+  ran right after the prune.
+- **Remove the first landing; fix the capture for the second; and do not
+  leave focus on a landing that no replay claimed.**
+  - The control that started the operation now stays enabled while it runs,
+    so focus never moves to Delete.
+  - While a recompose is pruning the focused control, the capture uses that
+    control (`LibraryNotesCanvas.focus_before_prune`). It does so only while
+    focus is still on the landing Textual's reset picks, as predicted by the
+    base class's pinned `_predicted_reset_target`, or on nothing. A user's own
+    move inside the window is captured as made. Review R0 I-1 caught a first
+    cut that substituted for any focus without a role.
+  - Once an editor-mode resync's follow-ups have run, focus that is still on
+    that landing goes to the same-id replacement, with no stand-in.
+    Transitions such as opening a note, Create or a delete are excluded,
+    because they own their own landing.
+- **Evidence.**
+  - The first cut used an "operation origin" capture rule while the button
+    stayed disabled, plus the role substitution. The cancelled export still
+    left focus on the Info region 2 runs in 24, and the round before it 1 in
+    24.
+  - The failing trace showed why. The operation ended while a resync had
+    pruned the displaced Delete. The automatic tree-slice restores were
+    vetoed (Textual's reset counts as a user move, the TASK-34000.90 shape),
+    so focus stayed on the grip and the next sync captured it.
+  - With the button kept enabled and the same-id refocus added, the result
+    was 72 runs out of 72.
+  - Deterministic pins enter the window through the work pane's `compose`,
+    which runs after the prune and before the remount. Each mutation fails
+    every run: deleting the substitution, deleting the refocus, or disabling
+    the origin again.
+- **Rule.** When a test of a focus return passes most runs but not all,
+  record every capture and every focus write before changing any timing.
+  The replay that wins is usually one captured in a window you did not know
+  about.
+- **The same shape in the LIST canvas, three more ways (TASK-34000.29 N-14,
+  polish-1b Task 7, 2026-10-27).** Select mode's bulk Move/keyword dialogs
+  left focus in the filter after both Escape and a successful move, from 1 to
+  4 runs in 8, and Escape wiped the whole selection.
+  - **A dialog closing over Library reloads the whole Notes tree**
+    (`_refresh_library_visit_surfaces` on every `ScreenResume`). For a moment
+    no row is rendered. Select mode's reconcile pruned the selection against
+    that empty projection: 3 checked notes, 0 visible, all gone. The reconcile
+    now waits for the reload (`_library_notes_rows_reloading`).
+  - **The toolbar's Select is disabled while no row is rendered**, so every
+    replay onto it was refused. The `set_focus` wrapper printed
+    `disabled= True focusable= False` four times, then `FALLBACK role='' ->
+    library-notes-filter`. Four fixes: Select is now blocked only once the
+    tree has answered; a bulk action refreshes its loaded slices in place
+    with the rows kept; the resume reload does not start while a Notes
+    mutation holds the interlock; and the same-id refocus also covers
+    list-to-list resyncs for non-row controls. Rows have positional ids, so
+    their own replay is left alone.
+  - **`Widget.focus()` is deferred (`call_later`).** Focusing the opener and
+    pushing a modal in the same callback let the modal's
+    `SafeModalDismissMixin` record the stale focus as the opener. Dismissing
+    the modal then returned focus there. Use the public `screen.set_focus`,
+    marked programmatic, before `push_screen`.
+  - After the fixes: 10 runs out of 10, and every later run. Keeping the bulk action's own button
+    enabled while it runs was the Task 6 transfer-origin fix again.
+- **Textual's reset landing is counted as user intent, and other code leans
+  on that (Task 7 fix round 1, 2026-10-27).** Review R0 M-3 gated the list
+  canvas's same-id refocus on `focus_intent_generation` ("only if the user did
+  not move"). With the gate on, the bulk Move picker's Escape failed on the
+  first looped run: a silent in-memory log (no prints, which hid the race)
+  showed `SET library-browse-library-grip` from `_reset_focus`, then `BUMP
+  library-browse-library-grip` -- `on_descendant_focus` took the framework's
+  landing for a user move, and the gate vetoed the very refocus it guards.
+  Taking the landing out of intent in `on_descendant_focus` fixed that run and
+  broke another: leaving a blank note then left focus in the filter 4 runs in
+  8 (`test_a_refused_escape_names_the_field…`), because that landing's bump
+  was what vetoed an older deferred restore. The fix keeps the bump and tells
+  the pruning canvas (`reset_landing_intents`), which discounts it in its own
+  gate only. A second race in the same arm, 1 in 24: the entry reconcile
+  detaches focus on purpose (`_capture_library_entry_focus`'s
+  `set_focus(None)`), and a tree slice landing inside that window captured an
+  empty role and replayed to the filter. Before narrowing who counts as "the
+  user", grep for every reader of the generation you are changing.
 
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 

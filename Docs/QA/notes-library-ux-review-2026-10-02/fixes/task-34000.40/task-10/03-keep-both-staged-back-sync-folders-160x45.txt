@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N    N   Add files to Library notes.                                                                                     │
+│ │ ▊ Search Library…        ▎▊x▎  │  a    o   Choice staged. No changes yet.                                                                                  │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │  v    t   0 safe · 1 need attention · 0 skipped · 0 folder moves                                                          │
+│ │                              ▂ │       e   Syncs .md, .markdown and .txt only; other files are left alone.                                                 │
+│ │ ─────────────────────────────  │       s   Both file and note changed (1)                                                                                  │
+│ │ Browse                    ▾    │           quotes.md · Both file and note changed · VSync                                                                  │
+│ │    Media (0) — your files      │           quotes                                                                                                          │
+│ │    Conversations (0)           │             View comparison                                                                                               │
+│ │  ▸ Notes (781)                 │           Selected: Keep both                                                                                             │
+│ │    Prompts (0) — reuse         │           ┃ ✓ Keep both ┃                                                                                                 │
+│ │    Skills (1) — AI add-ons     │           preserve an unbound note copy                                                                                   │
+│ │    Collections (0)             │           then update the bound note.                                                                                     │
+│ │    Search / RAG — find all     │             Keep file                                                                                                     │
+│ │ ─────────────────────────────  │<---       update the Library note                                                                                         │
+│ │ Artifacts                 ▾    │             Keep note                                                                                                     │
+│ │    All artifacts               │           replace the folder file                                                                                         │
+│ │    Chatbooks                   │             Skip for now                                                                                                  │
+│ │    Reports                     │           make no changes                                                                                                 │
+│ │    Dreams                      │     --->                                                                                                                  │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Create                    ▾    │                                                                                                                           │
+│ │    New note                    │                                                                                                                           │
+│ │    New prompt                  │                                                                                                                           │
+│ │    New skill                   │<---                                                                                                                       │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Study                     ▾    │                                                                                                                           │
+│ │    Study decks (0)             │                                                                                                                           │
+│ │    Flashcards due: 0           │                                                                                                                           │
+│ │    Quizzes (0)                 │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Import / Export           ▾    │                                                                                                                           │
+│ │    Import…                     │                                                                                                                           │
+│ │    Export                      │                                                                                                                           │
+│ │ ─────────────────────────────  │                                                                                                                           │
+│ │ Details                   ▸    │                                                                                                                           │
+│ │  ▾ scroll for more             │                                                                                                                           │
+│ └────────────────────────────────┘              Apply reviewed     Resolution history     ‹ Sync folders                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter run action | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

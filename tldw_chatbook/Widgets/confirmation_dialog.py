@@ -28,6 +28,9 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
     A modal confirmation dialog for user actions.
 
     This dialog displays a message and provides confirm/cancel options.
+    A permanent delete passes ``classes="destructive-confirm"``: that class
+    holds the commit button 3 cells from the focused Cancel (the Media Trash
+    rule), so a slip off Cancel lands on nothing.
     """
 
     # Escape mirrors the Cancel button so keyboard users can dismiss the
@@ -78,6 +81,14 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
     
     ConfirmationDialog .confirm-button {
         background: $error;
+    }
+
+    /* A permanent delete's confirm (``classes="destructive-confirm"``) holds
+       its commit at least 3 cells from the focused Cancel, the Media Trash
+       rule (task-31980), so a slip off Cancel lands on nothing. Other
+       confirms keep their geometry. */
+    ConfirmationDialog.destructive-confirm #confirm-button {
+        margin: 0 1 0 3;
     }
     
     ConfirmationDialog .cancel-button {

@@ -79,6 +79,15 @@ LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
 LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to delete them."
 LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
 
+# TASK-34000.29 (N-14): the Notes select strip's Actions… chooser (Move to
+# folder / Add keyword / Remove keyword) follows the same pair.
+LIBRARY_NOTES_SELECT_ACTIONS_DISABLED_TOOLTIP = (
+    "Select one or more notes to move them or change a keyword."
+)
+LIBRARY_NOTES_SELECT_ACTIONS_TOOLTIP = (
+    "Move the selected notes to a folder, or add or remove a keyword on all of them."
+)
+
 # task-28242: the Media canvas's "Review selected" bulk action, same pair.
 LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP = "Select one or more items to review them."
 LIBRARY_REVIEW_SELECTED_TOOLTIP = "Review the selected items, one by one."
@@ -159,6 +168,40 @@ LIBRARY_NOTES_SORT_FILTERED_TOOLTIP = (
 #: Derived from the marker rather than hard-coded so the two can never
 #: drift out of alignment.
 LIBRARY_ACTION_LABEL_PAD = " " * (cell_len(LIBRARY_DISABLED_ACTION_MARKER) + 1)
+
+#: TASK-34000.40 (N-33): Ctrl+S saves in every Library editor (ADR-299
+#: refinement 2026-10-03). Controller ruling T9-g (2026-10-27): ONE sentence
+#: for "nothing unsaved" -- the note Save button's answer, which the notes
+#: session coordinator gives for a clean explicit save -- said by every
+#: editor's Ctrl+S on its own status line, never with a toast.
+LIBRARY_EDITOR_SAVE_NO_CHANGES = "Saved — no changes."
+#: The key's refusals where an editor's Save is held (rule (c): said at the
+#: editor, no focus moved), in ``library_disabled_reason_line``'s grammar.
+LIBRARY_EDITOR_SAVE_BUSY_COPY = "Save unavailable — wait for the current update to finish."
+LIBRARY_PROMPT_SAVE_BULK_PREVIEW_COPY = (
+    "Save unavailable — this prompt is a read-only bulk preview."
+)
+LIBRARY_PROMPT_SAVE_NOT_LOADED_COPY = (
+    "Save unavailable — this prompt's details did not load."
+)
+LIBRARY_SKILL_SAVE_DELETE_ARMED_COPY = (
+    "Save unavailable — finish or cancel the delete first."
+)
+#: PR #3423 review m-6: a plugin-owned skill is read-only package content
+#: (no Save; Plugins owns it), so its Ctrl+S says so -- never "no changes".
+LIBRARY_SKILL_SAVE_PLUGIN_OWNED_COPY = (
+    "Save unavailable — this skill is read-only plugin content."
+)
+#: The Media forms' answers (painted on the form's own status line): the
+#: shared write interlock's existing wording, and the analysis save's own
+#: in-flight guard (review I-3: a double or held Ctrl+S wrote two versions).
+LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY = "Media change in progress."
+LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY = "Already saving."
+#: TASK-34000.40 final review (m-2): the Folder files editor's Ctrl+S refusal
+#: marker. Truthy for ``_library_editor_save_refusal``'s "would refuse" test
+#: only; never user copy -- ``report_key_save`` owns the words a refused
+#: folder-files save shows ("Save refused — …").
+LIBRARY_FILE_NOTES_SAVE_REFUSED = "file_notes_save_refused"
 
 
 def library_disabled_reason_line(label: str, reason: str) -> str:

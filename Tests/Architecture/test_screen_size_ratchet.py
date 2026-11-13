@@ -1345,7 +1345,110 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-10, TASK-39130: Select all and Clear get portable Notes focus
     #: roles, so their own canvas rebuild no longer drops focus into the
     #: filter: 38161 -> 38164 lines, 1376 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38164, 1376),
+    #: 2026-10-26, TASK-34000.29 (polish-1b Task 6; same owner decision --
+    #: expand limits, don't contort code): a cancelled note export clears its
+    #: token instead of failing it, the leave-veto toast built from the
+    #: veto's own reason (``_library_note_exit_veto_toast`` + the Discard
+    #: visibility predicate), the create path's per-note fact reset, and the
+    #: focus capture reading an operation's origin and a pruned control's
+    #: role: 38166 -> 38233 lines, 1373 -> 1374 methods (measured with
+    #: ``_measure``). Fix round 1 (same decision; review R0 I-1/M-1/M-3): the
+    #: pruned-control substitution narrowed to Textual's own landing, the
+    #: operation-origin capture rule removed (the origin now stays enabled),
+    #: and the Discard tail's docstring: 38233 -> 38228 lines, 1374 methods
+    #: (measured). Rebased 2026-10-26 onto polish-1a's PR #3259 CI fix round
+    #: (its +29 lines above): 38228 -> 38257 lines, 1374 methods (measured).
+    #: 2026-10-26, TASK-34000.29 (polish-1b Task 7, N-14 + TASK-34000.82;
+    #: owner decision "expand limits, don't contort code"): the Notes Space
+    #: binding, its gate and delegator (``_library_notes_space_claims``), the
+    #: select footer's "space toggle" and chooser tiers, Select all asking
+    #: the mounted canvas, the Actions… delegators and focus roles, and the
+    #: selection reconcile waiting out a tree reload
+    #: (``_library_notes_rows_reloading``), and the visit reload standing
+    #: down under a running Notes mutation: 38257 -> 38386 lines, 1374 -> 1379
+    #: methods (measured with ``_measure``).
+    #: 2026-10-27, Task 7 fix round 1 (review R0 I-1, M-1, M-3, M-10; same
+    #: owner decision): the Space gate narrowed to a note row, the deferred
+    #: visit reload (``_release_library_notes_mutation`` and every release
+    #: site through it), Textual's reset landing reported to the canvas whose
+    #: prune caused it (``_library_notes_reset_landing_canvas``), the entry
+    #: reconcile's detach window read through to its outgoing control, and
+    #: ``_ROW_SELECT_KEY``: 38386 -> 38441 lines, 1379 -> 1381 methods
+    #: (measured with ``_measure``).
+    #: 2026-10-27, TASK-34000.29 polish-1b Task 8, part 8a (N-29; same owner
+    #: decision -- expand limits, don't contort code): the Recently deleted
+    #: pager's two delegators, the Trash controls' portable focus roles
+    #: (Previous, Next, Back, each Restore) and the real-input withdrawal of
+    #: the Trash landing: 38441 -> 38474 lines, 1381 -> 1383 methods
+    #: (measured with ``_measure``).
+    #: 2026-10-27, Task 8 fix round 2 (review R1 N-2; same owner decision):
+    #: the Trash failure line's Retry delegator and its portable role:
+    #: 38474 -> 38484 lines, 1383 -> 1384 methods (measured with ``_measure``).
+    #: 2026-10-27, TASK-34000.40 polish-1b Task 9 (N-33, one Ctrl+S rule;
+    #: same owner decision -- expand limits, don't contort code): the one
+    #: ``ctrl+s`` binding, ``_EDITOR_SAVE_TARGETS``, the focus-decided target
+    #: (``_library_editor_save_target``, ``_library_focus_within``), its
+    #: refusal reading and the one chip seam (``_library_ctrl_s_chip``) at
+    #: every editor tier, the dispatcher (``action_library_editor_save``),
+    #: the notes refusal/clean branches, the skill and Folder files key
+    #: seams and the event-free metadata-form Save: 38484 -> 38735 lines,
+    #: 1384 -> 1394 methods (measured with ``_measure``).
+    #: 2026-10-27, Task 9 fix round 1 (review I-1/I-3/M-3/M-4, rulings
+    #: T9-g..j; same owner decision): the chip-only pending check
+    #: (``_library_editor_save_pending``), the Folder files and skill
+    #: save-state handlers that refresh the footer, the Media forms' busy
+    #: refusals, and the notes refusal on the status line with the conflict
+    #: callout revealed: 38735 -> 38781 lines, 1394 -> 1397 methods
+    #: (measured with ``_measure``).
+    #: 2026-10-27, Task 9 fix round 2 (review R1 N-2/N-3/N-6; same owner
+    #: decision): the interlock release clears the metadata form's refusal
+    #: line, the note save passes ``explicit`` to its outcome, and every
+    #: reset of the analysis form resets its save guard: 38781 -> 38796
+    #: lines, 1397 methods (measured with ``_measure``).
+    #: 2026-10-29, TASK-34000.40 Task 10 (N-34; owner decision "expand limits,
+    #: don't contort code"): the Notes import tier's Escape chip splits by phase
+    #: (``esc cancel`` while checking, ``esc notes`` while importing, ruling
+    #: T10-e) and F1 starts from the footer the screen paints, keeping F6:
+    #: 38796 -> 38812 lines, 1397 methods (measured with ``_measure``).
+    #: 2026-10-29, Task 10 fix round 1 (review R0 I-1/M-4; same owner
+    #: decision): the lasting tier's Escape chip names the folder list when
+    #: Escape returns there, and the import tier has one spelling for Escape:
+    #: 38812 -> 38819 lines, 1397 methods (measured with ``_measure``).
+    #: 2026-10-29, TASK-34000.29 Task 8b (N-29, Delete forever; owner ruling
+    #: "yes with confimration" and owner decision "expand limits, don't
+    #: contort code"): the Notes Trash ``x`` binding, its ``check_action``
+    #: gate, the footer's ``x delete forever`` chip read through that gate,
+    #: the Delete forever delegator, the focused-row lookup
+    #: (``_focused_library_notes_trash_delete``) and action, and the
+    #: real-input withdrawal dropping the Trash settling marker (parked R4-1):
+    #: 38819 -> 38885 lines, 1397 -> 1400 methods (measured with ``_measure``).
+    #: 2026-10-29, TASK-34000.29 polish-1b final review I-3 (same owner
+    #: decision): the screen's class-forwarded interlock release goes through
+    #: the controller's ONE release body (its docstring names what a release
+    #: owes): 38885 -> 38891 lines, 1400 methods (measured with ``_measure``).
+    #: 2026-10-29, TASK-34000.40 final review Task 10 N-1 + m-2 (same owner
+    #: decision): the two lasting-sync Back controls and Cancel import name
+    #: their Enter action (one decision with the Escape chip; the import tier
+    #: appends the focus chip), and the Folder files Ctrl+S refusal answers a
+    #: marker, never the raw state: 38891 -> 38912 lines, 1400 methods
+    #: (measured with ``_measure``).
+    #: 2026-11-05, rebased onto dev 29592ecc9b: 38177 -> 38894 lines,
+    #: 1373 -> 1400 methods (polish-1b's own +717 lines, +27 methods;
+    #: same owner decision: expand limits, don't contort code).
+    #: 2026-11-05, PR #3423 review m-6 (same owner decision: expand limits,
+    #: don't contort code): Ctrl+S on a plugin-owned skill answers the
+    #: read-only refusal: 38894 -> 38901 lines, 1400 methods (measured with
+    #: ``_measure``).
+    #: 2026-11-06, rebased onto dev 2684e5453f: 38149 -> 38873 lines,
+    #: 1375 -> 1402 methods (polish-1b's own +724 lines, +27 methods;
+    #: same owner decision: expand limits, don't contort code).
+    #: 2026-11-06, rebased onto dev 8b762b52fa: 38161 -> 38885 lines,
+    #: 1376 -> 1403 methods (polish-1b's own +724 lines, +27 methods;
+    #: same owner decision: expand limits, don't contort code).
+    #: 2026-11-12, rebased onto dev 4b90eb860b: 38164 -> 38888 lines,
+    #: 1376 -> 1403 methods (polish-1b's own +724 lines, +27 methods;
+    #: same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38888, 1403),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

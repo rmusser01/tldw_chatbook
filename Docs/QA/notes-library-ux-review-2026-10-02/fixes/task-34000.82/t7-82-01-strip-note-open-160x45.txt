@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                            │
+│   a  │ Library notes · Ready                                        │  o  Daily log 2026-09-28                                                               │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     Read-only preview · Not included in bulk selection                                 │
+│      │                                                              │     Read-only — this note cannot be changed; your draft is preserved. Next: Keep the … │
+│      │ Filter                                                       │         Edit     Preview     Info                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │         Save     Use in Console                                                        │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ┌────────────────────────────────────────────────────────────────────────────────┐ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │Daily log 2026-09-28                                                            │ │
+│      │                                                              │     │ Mood: 😐                                                                       │ │
+│      │  1 selected   Done     Select all 30 shown     Clear         │     │                                                                                │ │
+│ ---> │      Export selected       Actions…                          │     │ • Read 30 pages.                                                               │ │
+│      │ 1 selected                                                   │     │ • Meal-prepped dal.                                                            │ │
+│      │  ▸ Agent_Lessons                                             │     │ • Fixed the flaky test.                                                        │ │
+│      │  ▾ Journal                                                   │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-28 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-27 · 2m                               │<--- │                                                                                │ │
+│      │ █☑   Daily log 2026-09-26 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-25 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-24 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-23 · 2m                               │     │                                                                                │ │
+│ ---> │  ☐   Daily log 2026-09-22 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-21 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-20 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-19 · 2m                             ▅ │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-18 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-17 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-16 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-15 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-14 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-13 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-12 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-11 · 2m                               │     │                                                                                │ │
+│      │  ☐   Daily log 2026-09-10 · 2m                               │     └────────────────────────────────────────────────────────────────────────────────┘ │
+│      └──────────────────────────────────────────────────────────────┘                                                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

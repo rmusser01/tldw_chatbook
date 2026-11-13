@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation       Collapse      ││ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │ │
+│ │     Import…                    ││                                                                                                                        │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  ││        Run                                                                                                           ▆ │ │
+│ │ ▊ quokka lighthouse zepp ▎▊x▎  ││                                                                                                                        │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  ││                                                                                                                        │ │
+│ │                                ││ Sources                                                                                                                │ │
+│ │ ─────────────────────────────  ││  Scope: Notes (Media off)                                                                                              │ │
+│ │ Browse                    ▾    ││   ☑ Notes (98)                                                                                                         │ │
+│ │    Media (23) — your files     ││                                                                                                                        │ │
+│ │    Conversations (0)           ││                                                                                                                      ▆ │ │
+│ │    Notes (98)                  ││   ☐ Media (23)                                                                                                         │ │
+│ │    Prompts (0) — reuse         ││                                                                                                                        │ │
+│ │    Skills (1) — AI add-ons     ││                                                                                                                        │ │
+│ │    Collections (0)             ││   ☐ Conversations (0)                                                                                                  │ │
+│ │  ▸ Search / RAG — find all     ││                                                                                                                        │ │
+│ │ ─────────────────────────────  ││                                                                                                                        │ │
+│ │ Artifacts                 ▾    ││   ☐ Prompts (0)                                                                                                        │ │
+│ │    All artifacts               ││                                                                                                                        │ │
+│ │    Chatbooks                   ││                                                                                                                        │ │
+│ │    Reports                     ││                                                                                                                        │ │
+│ │    Dreams                      ││ Answer                                                                                                                 │ │
+│ │ ─────────────────────────────  ││  Answer failed: Network error making request to Llama.cpp: HTTPConnectionPool(host='127.0.0.1', port=9): Max retries   │ │
+│ │ Create                    ▾    ││  exceeded with url: /v1/chat/completions (Caused by NewConnectionError("HTTPConnection(host='127.0.0.1', port=9):      │ │
+│ │    New note                    ││  Failed to establish a new connection: [Errno 61] Connection refused"))                                                │ │
+│ │    New prompt                  ││                                                                                                                        │ │
+│ │    New skill                   ││  Run the query again to retry.                                                                                         │ │
+│ │ ─────────────────────────────  ││                                                                                                                        │ │
+│ │ Study                     ▾    ││                                                                                                                        │ │
+│ │    Study decks (0)             ││ Evidence · top 15                                                                                                      │ │
+│ │    Flashcards due: 0           ││  15 results for 'quokka lighthouse zeppelin'.                                                                          │ │
+│ │    Quizzes (0)                 ││                                                                                                                        │ │
+│ │ ─────────────────────────────  ││ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │ │
+│ │ Import / Export           ▾    ││ │                                                                                                                   │  │ │
+│ │    Import…                     ││ │ 1. Harbour lighthouse log | match: strong                                                                         │  │ │
+│ │    Export                      ││ │ note · 2 citations                                                                                                │  │ │
+│ │ ─────────────────────────────▇ ││ │ quokka lighthouse zeppelin harbour tide table, kept for the fix-round walk.                                       │  │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc leave field | after esc: u use Library context in Console · o open evidence · / focus search | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -531,6 +531,7 @@ from ...Library.library_note_import_state import (
     NoteImportPhase,
 )
 from ...Library.library_notes_lasting_sync_state import (
+    LASTING_SYNC_BACK_TO_ROOTS_LABEL,
     LibraryNotesLastingSyncSnapshot,
 )
 from ...Library.library_notes_session import (
@@ -545,6 +546,7 @@ from ...Library.library_notes_session import (
 )
 from ...Library.library_notes_state import (
     LIBRARY_NOTES_TRASH_PAGE_SIZE,
+    library_notes_trash_last_page,
     LibraryNoteDeleteReceipt,
     LibraryNoteEditorState,
     LibraryNotesFocusIdentity,
@@ -588,10 +590,16 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
 )
 from ...Widgets.Library.library_notes_canvas import (
     LIBRARY_NOTE_BACKLINK_DISPLAY_CAP,
+    PURGE_BUSY_NOTICE,
+    PURGE_CONFIRM_LABEL,
+    PURGE_CONFIRM_TITLE,
+    RESTORE_BUSY_NOTICE,
     LibraryNotePresentationState,
     NoteEditorTextArea,
     note_title_tiebreak_suffix,
     notes_sort_is_blocked,
+    purge_confirm_copy,
+    purge_notice,
     resolve_database_note_status_channels,
 )
 from ...Widgets.Library.library_note_link_picker import (
@@ -603,6 +611,11 @@ from ...Utils.fts5_match_forms import (
     NOTES_FILTER_MIN_PREFIX_CHARS as LIBRARY_NOTE_LINK_PICKER_MIN_QUERY,
 )
 from ...Notes.note_link_policy import link_kind, link_notice_text
+from ...Notes.notes_scope_service import (
+    PURGE_REFUSED_SYNC_UNKNOWN,
+    NotePurgeRefusedError,
+)
+from ...runtime_policy.types import PolicyDeniedError
 from ...Notes.note_import_plan_models import (
     note_link_entries,
     stored_note_link,
@@ -611,7 +624,11 @@ from ...Notes.note_import_plan_models import (
 from ...Widgets.Library.library_notes_sync_roots_canvas import (
     LibraryNotesSyncRootsCanvas,
 )
-from .canvas_sync import _previous_folder_row_above, _sync_library_canvas
+from .canvas_sync import (
+    _apply_library_row_toggle,
+    _previous_folder_row_above,
+    _sync_library_canvas,
+)
 from .library_notes_state import LibraryNotesState, notes_state_shim_attr
 from . import library_notes_sync_attention as notes_sync_attention
 from .library_notes_work_session import (
@@ -655,6 +672,58 @@ LibraryNotesTreeMutationReconciler = Callable[..., Awaitable[None]]
 _NOTES_SYNC_START_SETTLE_SECONDS = 0.5
 
 
+def _notes_noun(count: int) -> str:
+    """``note`` or ``notes`` for a bulk receipt's count (TASK-34000.29 N-14)."""
+    return "note" if count == 1 else "notes"
+
+
+#: PR #3423 re-review N-3: why a bulk keyword change left a note as it was,
+#: said after the receipt's count (the runtime policy's refusal says its own
+#: sentence, ``PolicyDeniedError.user_message``).
+BULK_KEYWORD_OPEN_NOTE_BUSY = "The open note has unsaved changes."
+BULK_KEYWORD_SYNC_NOT_READY = (
+    "Sync v2 is not ready to carry note keywords yet — see Manual Sync in "
+    "Settings."
+)
+
+
+def _bulk_keyword_refusal_reason(error: BaseException) -> str:
+    """The sentence a bulk keyword receipt names for ``error``, or ``""``.
+
+    A policy refusal carries its own sentence. A Sync v2 profile whose Notes
+    organization group is not ready raises a plain ``ValueError`` from
+    ``NotesOrganizationSyncService._require_ready``, recognised by its text.
+    Anything else stays a bare count.
+    """
+    if isinstance(error, PolicyDeniedError):
+        return str(error.user_message or "").strip()
+    if isinstance(error, ValueError) and "organization group is not ready" in str(
+        error
+    ):
+        return BULK_KEYWORD_SYNC_NOT_READY
+    return ""
+
+
+#: TASK-34000.29 8b (ruling T8b-e): how many refreshes a Trash landing's
+#: keep-in-view waits for a pruning sync's replay to put focus back.
+_TRASH_LANDING_SETTLE_DEFERRALS = 5
+
+
+def _is_framework_focus_landing(host: Any, focused: Any) -> bool:
+    """Whether focus sits where Textual parked it, not where anyone put it.
+
+    Nothing focused, or the reset landing a Notes canvas recorded while it
+    pruned its focused child (``LibraryScreen._library_notes_reset_landing_
+    canvas``). A host without a screen (a test fake) has no such landing.
+    """
+    if focused is None:
+        return True
+    reset_landing = getattr(
+        getattr(host, "_screen", None), "_library_notes_reset_landing_canvas", None
+    )
+    return bool(callable(reset_landing) and reset_landing(focused) is not None)
+
+
 class LibraryNotesController:
     """Owns the Library Notes cluster (185 methods).
 
@@ -678,6 +747,52 @@ class LibraryNotesController:
     #: "This screen failed to load." in
     #: ``test_a_whitespace_only_title_then_escape_shows_the_discard_receipt``.
     _library_note_location: tuple[str, str, bool] = ("", "", False)
+
+    #: TASK-34000.29 (review R0 M-1, ruling T7-f): a visit's full tree reload
+    #: that ``_refresh_library_visit_surfaces`` held back because a Notes
+    #: mutation owned the interlock. The interlock's release runs it once
+    #: (``_release_library_notes_mutation``); any full reload clears it.
+    _tree_reload_owed: bool = False
+
+    #: TASK-34000.29 (N-29, ruling T8-d): a Trash page read a Previous/Next
+    #: press asked for while a Restore held the interlock -- the pressed
+    #: control's role, run once by the release. Queued, never dropped: the
+    #: press already moved ``trash_page``.
+    _trash_reload_owed: str = ""
+
+    #: TASK-34000.29 (ruling T8-d): the Trash role focus belongs on after the
+    #: last Previous/Next/Restore press (or a reopen over another page). Its
+    #: lifetime (ruling T8-f, review R0 m-3): from that press until the next
+    #: real input (``LibraryScreen._withdraw_library_notes_pending_focus_
+    #: handoffs`` clears it from every real-input site), the next open, or
+    #: leaving the view -- it is NOT consumed when it lands. Every follow-up
+    #: sync in that window that captures a roleless landing falls back to it,
+    #: while the explicit landing (``_land_library_notes_trash_focus``) fires
+    #: at most once per press: only from the ``then=`` of the one read the
+    #: press starts, which a newer read cancels before it runs. Not the
+    #: focus-intent generation: every reload prunes the focused control and
+    #: Textual's reset of focus onto a pane grip bumps that generation too,
+    #: which vetoed every landing (traced). It is also what a capture that
+    #: read that grip falls back to in the Trash region, so a replay a later
+    #: sync replaced still lands on the right row (with the generation as the
+    #: veto, 18 of 24 runs under 8-way load ended on the first row).
+    #: Ruling T8-j (review R3-1): while a read's landing settles -- from its
+    #: page's publish until that landing's keep-in-view has run -- no capture
+    #: records the Trash list's scroll offset (``_trash_landing_settling``).
+    _trash_focus_role: str = ""
+    #: The owed role whose read has published and whose keep-in-view has not
+    #: run yet; honoured only while it is still the owed role, and dropped by
+    #: the keep-in-view, by every press that arms a role (the open among
+    #: them) and by leaving the view. TASK-34000.29 8b (ruling T8b-e): every
+    #: landing raises it too (a Restore's or a purge's same-page landing,
+    #: parked R4-2), and it is also dropped by the real-input withdrawal and
+    #: by a landing that runs for another role -- the one settling was
+    #: replaced and will never run (parked R4-1), and by a read that
+    #: publishes with no landing of its own (review R0, the R4 residual).
+    _trash_landing_settling: str = ""
+    #: Review R0, m-8: a Delete forever confirm is up. A second ``x`` or
+    #: click while it is never stacks another; its answer clears this.
+    _trash_purge_confirm_open: bool = False
 
     def __init__(
         self,
@@ -1574,6 +1689,7 @@ class LibraryNotesController:
             ),
             transfer_status=operation.status_line if operation is not None else "",
             transfer_running=bool(operation and operation.running),
+            transfer_origin=operation.origin_control if operation is not None else "",
             bulk_read_only=self._library_notes_select_mode,
             bulk_included=self._library_notes_row_selection.is_selected(
                 snapshot.note_id
@@ -1626,6 +1742,57 @@ class LibraryNotesController:
             getattr(self, "_library_notes_mutation_in_flight", False)
             or self._library_note_import_execution_active()
         )
+    def _library_notes_writer_held(self) -> bool:
+        """Whether a Notes mutation holds the single-writer interlock, alone.
+
+        TASK-34000.29 (final review I-2). The Trash's READS -- the opener,
+        Previous, Next and Retry -- wait behind this and nothing else: a
+        running import fences every WRITE (``_library_notes_mutation_fenced``)
+        but releases nothing for a read, so a page press queued behind it
+        stayed silent until the import ended (and the stale owed role then
+        fired on an unrelated release). A read behind a running Restore is
+        still queued for that Restore's release, which runs it once.
+        """
+        return bool(getattr(self, "_library_notes_mutation_in_flight", False))
+    def _release_library_notes_mutation(self) -> None:
+        """Release the Notes single-writer interlock (ruling T7-f).
+
+        THE one release (final review I-3): every site goes through this
+        body -- the controller's claim sites, the screen's class-forwarded
+        copy (``LibraryScreen._release_library_notes_mutation``), the bulk
+        workers' ``finally`` and the import's settle path. A visit reload
+        the interlock held back runs here, once, now that no mutation can
+        land under it; so does a Trash page read a press queued under a
+        Restore; and the Trash's busy reason clears. Class-forwarded at every
+        release site (``LibraryNotesController._release_library_notes_mutation
+        (self)``): the delete/undo orchestration tests run those methods on
+        a fake that carries a notes state and no controller, so the flag is
+        cleared through the state object every receiver shares.
+        """
+        self._notes_state.mutation_in_flight = False
+        LibraryNotesController._run_owed_library_notes_tree_reload(self)
+        LibraryNotesController._run_owed_library_notes_trash_reload(self)
+        LibraryNotesController._clear_library_notes_trash_busy(self)
+    def _run_owed_library_notes_tree_reload(self) -> None:
+        """Run the full tree reload a held-back visit refresh still owes."""
+        if not getattr(self, "_tree_reload_owed", False):
+            return
+        if self._library_notes_mutation_fenced():
+            return
+        self._tree_reload_owed = False
+        if (
+            self.is_mounted
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            self._request_library_notes_tree_initial_load()
+    def _run_owed_library_notes_trash_reload(self) -> None:
+        """Run the Trash page read a press made under the interlock (T8-d)."""
+        role = getattr(self, "_trash_reload_owed", "")
+        if not role or LibraryNotesController._library_notes_writer_held(self):
+            return
+        self._trash_reload_owed = ""
+        self._refresh_library_notes_trash(focus_role=role)
     def _library_notes_operation_is_current_and_active(
         self, operation: LibraryNotesOperationState
     ) -> bool:
@@ -1675,6 +1842,8 @@ class LibraryNotesController:
             token=self._library_notes_operation_counter,
             phase="running",
             region=region,
+            # Read before the apply below disables it (TASK-34000.29 N-12).
+            origin_control=getattr(self.focused, "id", "") or "",
         )
         self._library_notes_operation = operation
         self._apply_library_notes_operation_state()
@@ -1727,7 +1896,84 @@ class LibraryNotesController:
             return False
         self._library_notes_operation = terminal
         self._apply_library_notes_operation_state()
+        self._return_focus_to_library_notes_operation_origin(current)
         return True
+    def _cancel_library_notes_operation(
+        self, operation: LibraryNotesOperationState
+    ) -> bool:
+        """End the current token as the user's own cancel, not a failure.
+
+        TASK-34000.29 (N-12): a dismissed export dialog was finished as a
+        failure, so "Export failed — choose another destination and try
+        again." painted beside the "cancelled" toast. Clearing the token
+        leaves no operation status: the status line falls back to the
+        note's own saved state, and focus returns to the control that
+        started the operation, as after a finish.
+
+        Args:
+            operation: The token the caller claimed.
+
+        Returns:
+            Whether the token was current and its region still on screen.
+        """
+        current = self._library_notes_operation
+        if (
+            current is None
+            or current.token != operation.token
+            or current.kind != operation.kind
+        ):
+            return False
+        self._library_notes_operation = None
+        if current.region != self._library_notes_active_region():
+            return False
+        self._apply_library_notes_operation_state()
+        self._return_focus_to_library_notes_operation_origin(current)
+        return True
+    def _return_focus_to_library_notes_operation_origin(
+        self, operation: LibraryNotesOperationState, *, deferred: bool = False
+    ) -> None:
+        """Focus -- never press -- the control that started ``operation``.
+
+        TASK-34000.29 (N-12). Called right after the apply that re-enabled
+        it, and synchronously: a canvas sync captured in between would
+        replay the stop Textual moved focus to when the control was disabled
+        (Delete, in Info) over a deferred restore. A control the apply has
+        not re-enabled yet (a deferred apply) gets one retry after the
+        refresh, still in the operation's region and marked programmatic.
+        A backstop since the origin stays enabled while its transfer runs
+        (TASK-34000.29 fix round 1, A).
+
+        PR #3423 review m-3: it moves focus only while focus is on nothing,
+        on Textual's reset landing (``_is_framework_focus_landing``), or
+        still on the origin. The export's write runs in a worker, so its
+        finish lands after the user may have moved on -- into Info's
+        keywords field, say -- and in Info nothing captures or replays that
+        move (the apply patches in place): the return took focus from them.
+        """
+        if not operation.origin_control:
+            return
+        if deferred and operation.region != self._library_notes_active_region():
+            return
+        try:
+            target = self.query_one(f"#{operation.origin_control}", Widget)
+        except (NoMatches, QueryError):
+            return
+        focused = self.focused
+        if focused is target:
+            return
+        if not _is_framework_focus_landing(self, focused):
+            # The user's own move since the operation began wins.
+            return
+        if not target.focusable:
+            if not deferred:
+                self.call_after_refresh(
+                    self._return_focus_to_library_notes_operation_origin,
+                    operation,
+                    deferred=True,
+                )
+            return
+        self._library_notes_programmatic_focus_target = target
+        self.set_focus(target, scroll_visible=False)
     def _apply_library_note_presentation_state(self) -> None:
         """Synchronize the mounted canvas without changing its composition."""
         if not self.is_mounted or self._library_note_session.snapshot is None:
@@ -1886,13 +2132,36 @@ class LibraryNotesController:
             "lasting_add": "#notes-sync-body",
             "lasting_roots": "#notes-sync-roots-body",
             "import": "#library-note-import-canvas",
+            # TASK-34000.29 fix round 1 (review R0 m-6): the Trash list
+            # scrolls now, so a reload of the SAME page keeps its offset like
+            # every other region (a page change does not; see below).
+            "trash": "#library-notes-trash-list",
         }.get(region)
         if selector is None:
             return None
         # TASK-23025: positive ref cache -- a mounted owner is one attribute
         # read; absence still costs one walk, so callers should not probe
         # regions their route cannot mount (see the observer installer).
-        return self._library_layout_ref(selector)
+        owner = self._library_layout_ref(selector)
+        if region == "trash" and owner is not None:
+            # Review R1 N-1 (ruling T8-h): the list's offset belongs to the
+            # page it shows. A sync that paints ANOTHER page (Previous, Next,
+            # a clamp) finds no owner, so it captures no offset and its
+            # replay scrolls the landed control into view instead -- in either
+            # direction. Replaying the old page's offset hid the focused Next
+            # below the fold after Previous back to a full page (100x30).
+            trash = self._library_notes_trash
+            if trash is None or getattr(owner, "trash_page", None) != trash.page:
+                return None
+            # Ruling T8-j (review R3-1): nor while a read's landing settles.
+            # A sync captured after the landing but before the next refresh
+            # read the new list at offset 0 (layout pending) and re-applied it
+            # AFTER the keep-in-view, hiding the focused Next again. With no
+            # offset, its replay scrolls the focused control in -- either order.
+            settling = getattr(self, "_trash_landing_settling", "")
+            if settling and settling == getattr(self, "_trash_focus_role", ""):
+                return None
+        return owner
     def _capture_library_notes_recompose_state(
         self,
     ) -> _LibraryNotesRecomposeCapture | None:
@@ -1984,9 +2253,30 @@ class LibraryNotesController:
             # TASK-34000.28: the folder-conflict notice's Refresh control.
             "notice-refresh": "#library-notes-notice-refresh",
             "link-back": "#library-note-link-back",  # TASK-34000.28 N-21
+            "use-in-console": "#library-note-use-in-console",  # TASK-34000.29
+            # TASK-34000.29 (N-14): see the matching rows in
+            # ``_library_notes_semantic_role``; Select all and Clear are the
+            # TASK-39130 rows above.
+            "select-actions": "#library-notes-select-actions",
         }.get(role)
+        if role.startswith("trash-"):
+            # TASK-34000.29 (N-29, ruling T8-d): a Trash role names where focus
+            # BELONGS once the page it was captured on has changed, not one
+            # fixed widget -- see ``_library_notes_trash_focus_target``.
+            return self._library_notes_trash_focus_target(role)
         if role.startswith("context-action:"):
             selector = f"#{role.removeprefix('context-action:')}"
+        elif role.startswith("select-action-choice:"):
+            try:
+                return self.query_one(
+                    "#library-notes-select-action-"
+                    f"{role.removeprefix('select-action-choice:')}",
+                    Widget,
+                )
+            except (NoMatches, QueryError):
+                # The chooser closes on a pick or Escape; its opener is where
+                # a choice's focus belongs once it is gone (the Sort pair).
+                selector = "#library-notes-select-actions"
         elif role.startswith("sort-choice:"):
             try:
                 return self.query_one(
@@ -2074,6 +2364,61 @@ class LibraryNotesController:
                 if str(getattr(row, "template_key", "") or "") == template_key:
                     return row
         return None
+    def _library_notes_trash_focus_target(self, role: str) -> Widget | None:
+        """Resolve a Trash view role against the page now mounted (T8-d).
+
+        - ``trash-previous``/``trash-next``: the pressed control, else the
+          other pager control when the pressed one is now disabled (Next on
+          the last page) -- a disabled button cannot take focus, and Textual
+          would otherwise reset it to a pane grip;
+        - ``trash-restore:<i>``: the Restore at index ``i``, clamped to the
+          last row, so a Restore leaves focus on the row that took its place;
+        - ``trash-back``: Back.
+
+        Whatever has no target falls to the first row, then to Back (the one
+        control an empty Trash still has).
+
+        Args:
+            role: A ``trash-`` semantic role.
+
+        Returns:
+            The control focus belongs on, or ``None`` outside the Trash view.
+        """
+        pager_order = {
+            "trash-previous": (
+                "#library-notes-trash-previous",
+                "#library-notes-trash-next",
+            ),
+            "trash-next": (
+                "#library-notes-trash-next",
+                "#library-notes-trash-previous",
+            ),
+        }.get(role, ())
+        for selector in pager_order:
+            for button in self.query(selector).results(Button):
+                if not button.disabled:
+                    return button
+        if role == "trash-back":
+            for back in self.query("#library-notes-trash-back").results(Button):
+                return back
+        if role == "trash-retry":
+            for retry in self.query("#library-notes-trash-retry").results(Button):
+                return retry
+        rows = list(self.query(".library-notes-trash-restore").results(Button))
+        if rows:
+            index = 0
+            if role.startswith("trash-restore:"):
+                try:
+                    index = int(role.removeprefix("trash-restore:"))
+                except ValueError:
+                    index = 0
+            return rows[min(max(index, 0), len(rows) - 1)]
+        # No rows: a failed read's Retry before Back (review R1 N-2).
+        for retry in self.query("#library-notes-trash-retry").results(Button):
+            return retry
+        for back in self.query("#library-notes-trash-back").results(Button):
+            return back
+        return None
     def _library_notes_fallback_focus_target(
         self, identity: LibraryNotesFocusIdentity
     ) -> Widget | None:
@@ -2122,6 +2467,10 @@ class LibraryNotesController:
         if region == "create":
             return self._library_notes_role_target(
                 dataclasses.replace(identity, semantic_role="create-template:blank")
+            )
+        if region == "trash":
+            return self._library_notes_trash_focus_target(
+                getattr(self, "_trash_focus_role", "") or "trash-restore:0"
             )
         if region == "lasting_add":
             return self._library_notes_role_target(
@@ -3183,9 +3532,22 @@ class LibraryNotesController:
             self._apply_library_note_presentation_state()
             self._focus_library_note_control("#library-note-context")
             return
+        if self._library_notes_select_mode and self._notes_state.select_actions_visible:
+            # TASK-34000.29 (N-14): an open Actions… chooser closes first and
+            # hands focus back to its opener; select mode stays.
+            self._notes_state.select_actions_visible = False
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=lambda: self._focus_library_note_control(
+                    "#library-notes-select-actions"
+                ),
+            )
+            return
         if self._library_notes_select_mode:
             self._library_notes_select_mode = False
             self._library_notes_row_selection.clear()
+            self._notes_state.select_actions_visible = False
             _sync_library_canvas(
                 self,
                 "notes",
@@ -3236,11 +3598,29 @@ class LibraryNotesController:
             await self._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             return
         if self._library_notes_view in {"lasting_add", "lasting_roots"}:
+            # TASK-34000.40 fix round 1 (review R0 I-1): Escape goes where the
+            # visible back control goes -- "‹ Sync folders" for a review opened
+            # from Manage sync folders. A running step keeps the key inert, as
+            # ``_exit_library_notes_lasting_sync`` does.
+            if (
+                LibraryNotesController._library_notes_lasting_back_returns_to_roots(self)
+                and self._library_notes_sync_controller.snapshot.phase
+                not in {"checking", "activating"}
+            ):
+                LibraryNotesController._return_to_library_notes_sync_roots(self)
+                return
             await self._exit_library_notes_lasting_sync()
             return
         if self._library_notes_view == "import":
+            # TASK-34000.40 N-34 (AC#5): Escape is "‹ Notes" -- a navigation
+            # key may not stop a half-imported folder. A running import keeps
+            # running; the toolbar's "View import" re-enters it, progress and
+            # "Cancel import" included. Ruling T10-c: a running CHECK still
+            # cancels, because one that finished while the user was away would
+            # be lost (Add from files ▸ Import once starts a new selection) and
+            # a check writes nothing.
             phase = self._library_note_import_controller.snapshot.phase
-            if phase in {NoteImportPhase.CHECKING, NoteImportPhase.IMPORTING}:
+            if phase is NoteImportPhase.CHECKING:
                 self._library_note_import_controller.cancel()
                 return
             self._library_notes_view = "list"
@@ -3472,7 +3852,12 @@ class LibraryNotesController:
             "import_receipt_available": (
                 self._library_note_import_controller.snapshot.can_revisit_receipt
             ),
-            "lasting_sync_snapshot": self._library_notes_lasting_sync_snapshot,
+            # Class-forwarded: the kwargs tests run this method on a fake.
+            "lasting_sync_snapshot": (
+                LibraryNotesController._library_notes_lasting_snapshot_for_canvas(
+                    self
+                )
+            ),
             "tree_projection": tree_projection,
             "tree_selected_placement_id": getattr(
                 self, "_library_notes_tree_selected_placement_id", ""
@@ -3623,6 +4008,7 @@ class LibraryNotesController:
         followed link came from; every other open passes none and clears it.
         """
         navigation_generation = self._supersede_library_notes_navigation()
+        self._reset_library_note_facts()
         self._notes_state.link_origin = link_origin
         self._library_note_session.close_session()
         self._clear_finished_library_notes_operation()
@@ -3640,6 +4026,34 @@ class LibraryNotesController:
         self._library_note_delete_origin_preview = False
         self._library_note_delete_origin_scroll = None
         self._library_note_editor_armed = False
+        self._apply_library_notes_stage_visibility()
+        self.run_worker(
+            self._refresh_library_note_detail(
+                note_id,
+                entry_origin=entry_origin,
+            ),
+            exclusive=True,
+            group="library_note_detail",
+        )
+        self._start_library_note_fact_loads(note_id)
+        self.run_worker(
+            self._locate_library_notes_tree_target(
+                note_id=note_id,
+                focus=False,
+                navigation_generation=navigation_generation,
+            ),
+            exclusive=True,
+            group="library_notes_locator",
+        )
+    def _reset_library_note_facts(self) -> None:
+        """Forget every per-note fact the previous note left behind.
+
+        TASK-34000.29 (N-26): the one reset for both ways a note opens --
+        ``_begin_library_note_load`` and ``LibraryScreen._create_library_
+        note`` -- so a created note never shows the last note's "Linked
+        from" rows or location, nor its link-back origin (TASK-34000.28).
+        """
+        self._notes_state.link_origin = None
         self._library_notes_backlinks = ()
         self._library_notes_backlinks_status = "loading"
         self._library_note_location = ("", "", False)
@@ -3650,15 +4064,12 @@ class LibraryNotesController:
         # the next note and arms Enter routing there.
         self._library_notes_link_picker_latch = None
         self._dismiss_library_note_link_picker(self._library_note_body_or_none())
-        self._apply_library_notes_stage_visibility()
-        self.run_worker(
-            self._refresh_library_note_detail(
-                note_id,
-                entry_origin=entry_origin,
-            ),
-            exclusive=True,
-            group="library_note_detail",
-        )
+    def _start_library_note_fact_loads(self, note_id: str) -> None:
+        """Start the backlink and location lookups for the open ``note_id``.
+
+        Both settle through the real queries (TASK-34000.29 N-26): a
+        brand-new note can already be linked to by a typed ``[[Title]]``.
+        """
         self.run_worker(
             self._load_library_note_backlinks(note_id),
             exclusive=True,
@@ -3668,15 +4079,6 @@ class LibraryNotesController:
             self._load_library_note_location(note_id),
             exclusive=True,
             group="library_note_location",
-        )
-        self.run_worker(
-            self._locate_library_notes_tree_target(
-                note_id=note_id,
-                focus=False,
-                navigation_generation=navigation_generation,
-            ),
-            exclusive=True,
-            group="library_notes_locator",
         )
     async def _load_library_note_backlinks(self, note_id: str) -> None:
         """Fill Info's "Linked from" list for one opening note (task-32145).
@@ -4632,6 +5034,11 @@ class LibraryNotesController:
     def handle_library_note_save(self, event: Button.Pressed) -> None:
         """Explicitly save the open note, bypassing the autosave debounce."""
         event.stop()
+        self._begin_library_note_explicit_save()
+
+    def _begin_library_note_explicit_save(self) -> None:
+        """The Save button's commit, event-free; Ctrl+S runs exactly this
+        (TASK-34000.40 N-33, ADR-299 rule (a))."""
         # LIB-14: an explicit Save is the user's own deliberate "keep it"
         # act, even if the note is still blank -- never GC a note the user
         # just told the app to save (unlike autosave, which is not a
@@ -4777,8 +5184,14 @@ class LibraryNotesController:
             "saved" if is_current_clean_revision else "idle"
         )
         self._update_library_note_meta_static(content=snapshot.body)
-    def _apply_library_note_save_outcome(self, outcome: NoteSaveOutcome) -> None:
-        """Translate one typed coordinator save outcome into screen presentation."""
+    def _apply_library_note_save_outcome(
+        self, outcome: NoteSaveOutcome, *, explicit: bool = False
+    ) -> None:
+        """Translate one typed coordinator save outcome into screen presentation.
+
+        ``explicit``: a Save press or Ctrl+S asked, not the autosave. Only
+        that request is answered "Saved — no changes." (review R1 N-3).
+        """
         snapshot = self._library_note_session.snapshot
         if outcome.kind is NoteSaveOutcomeKind.STALE or snapshot is None:
             return
@@ -4788,7 +5201,16 @@ class LibraryNotesController:
             NoteSaveOutcomeKind.SAVED,
             NoteSaveOutcomeKind.ACKNOWLEDGED,
         }:
+            acknowledged = explicit and outcome.kind is NoteSaveOutcomeKind.ACKNOWLEDGED
+            if acknowledged and outcome.message:
+                # TASK-34000.40 ruling T9-g: a Save (press or Ctrl+S) with
+                # nothing unsaved says so on the status line, no toast. An
+                # autosave can reach ACKNOWLEDGED only by racing a save that
+                # landed first; it says nothing (review R1 N-3).
+                self._library_note_shortcut_status = outcome.message
             self._apply_library_note_saved_presentation(outcome)
+            if acknowledged and self.is_mounted:
+                self._apply_library_note_presentation_state()
             return
         if outcome.kind is NoteSaveOutcomeKind.CONFLICTED:
             self._library_note_autosave_state = "conflict"
@@ -4878,7 +5300,7 @@ class LibraryNotesController:
         service = getattr(self.app_instance, "notes_scope_service", None)
         delete_note = getattr(service, "delete_note", None)
         if not callable(delete_note):
-            self._library_notes_mutation_in_flight = False
+            LibraryNotesController._release_library_notes_mutation(self)
             return
         try:
             deleted = await self._run_library_service_call(
@@ -4911,7 +5333,7 @@ class LibraryNotesController:
             )
             return
         finally:
-            self._library_notes_mutation_in_flight = False
+            LibraryNotesController._release_library_notes_mutation(self)
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
         """Resolve a conflict through the coordinator's token-gated action.
 
@@ -5842,13 +6264,16 @@ class LibraryNotesController:
         except (NoMatches, QueryError):
             pass
     def _focus_library_note_import_control(self) -> None:
-        """Focus the enabled primary action after an import recompose."""
+        """Land a re-entry to the running import on its progress region.
+
+        TASK-34000.40 fix round 1 (review R0 M-7): this focused the enabled
+        primary action -- Cancel import while importing -- so a blind Enter
+        after View import cancelled a half-imported folder. The stepper's own
+        focusable scroll owner (role ``import-body``) has no Enter action;
+        Cancel import stays painted and one Tab away.
+        """
         try:
-            canvas = self.query_one(LibraryNoteImportCanvas)
-            for control in canvas.query(".note-import-primary"):
-                if isinstance(control, Button) and not control.disabled:
-                    control.focus()
-                    return
+            self.query_one("#note-import-body").focus()
         except (NoMatches, QueryError):
             pass
     async def _reconcile_library_notes_list_canvas(self) -> None:
@@ -5908,9 +6333,20 @@ class LibraryNotesController:
                 self._sync_library_notes_reader_layout_from_shell()
             _sync_library_canvas(self, "notes")
     def _refresh_after_library_note_import(self) -> None:
-        """Refresh local list/count and folder tree after execution settles."""
+        """Refresh local list/count and folder tree after execution settles.
+
+        Final review I-2: an import ending is a release like any other --
+        the one release body runs after the reload (which settles any owed
+        tree reload itself), so a Trash page read queued under a Restore
+        runs once and the Trash's busy reason ("Restore waits…" or "Delete
+        forever waits…") clears without the user pressing anything.
+        """
         self._refresh_local_source_snapshot()
         self._request_library_notes_tree_initial_load()
+        # A writer that was already in flight when the import began owns its
+        # own release (its ``finally``); the import must not clear its flag.
+        if not LibraryNotesController._library_notes_writer_held(self):
+            LibraryNotesController._release_library_notes_mutation(self)
     def _publish_library_notes_lasting_sync_snapshot(
         self, snapshot: LibraryNotesLastingSyncSnapshot
     ) -> None:
@@ -6312,17 +6748,54 @@ class LibraryNotesController:
         """Return from a directly mounted inert surface without mutation."""
 
         event.stop()
-        if (
-            isinstance(event, LibraryNotesAddFromFilesCanvas.BackRequested)
-            and self._library_notes_lasting_origin == "roots"
-        ):
-            self._library_notes_sync_controller.return_to_roots()
-            self._library_notes_lasting_origin = None
-            self._library_notes_view = "lasting_roots"
-            self._apply_library_notes_footer_context()
-            _sync_library_canvas(self, "notes")
+        if isinstance(
+            event, LibraryNotesAddFromFilesCanvas.BackRequested
+        ) and LibraryNotesController._library_notes_lasting_back_returns_to_roots(self):
+            LibraryNotesController._return_to_library_notes_sync_roots(self)
             return
         await self._exit_library_notes_lasting_sync()
+    def _library_notes_lasting_back_returns_to_roots(self) -> bool:
+        """The one decision: does this lasting-sync canvas go back to Sync folders?
+
+        TASK-34000.40 fix round 1 (review R0 I-1). True for the add-from-files
+        canvas of a review opened from Manage sync folders. The back control's
+        words (``_library_notes_lasting_snapshot_for_canvas``), the back
+        control, Escape and the footer's Escape chip all read this.
+        """
+        return (
+            self._library_notes_view == "lasting_add"
+            and self._library_notes_lasting_origin == "roots"
+        )
+    def _return_to_library_notes_sync_roots(self) -> None:
+        """Leave a review opened from Manage sync folders for the folder list.
+
+        Focus lands on the list's own back control, so the next key has
+        somewhere to go whichever way the user left (button or Escape).
+        """
+        self._library_notes_sync_controller.return_to_roots()
+        self._library_notes_lasting_origin = None
+        self._library_notes_view = "lasting_roots"
+        self._apply_library_notes_footer_context()
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=lambda: self._focus_library_note_control("#notes-sync-roots-back"),
+        )
+    def _library_notes_lasting_snapshot_for_canvas(
+        self,
+    ) -> LibraryNotesLastingSyncSnapshot | None:
+        """The lasting-sync snapshot, its back control named for the route in.
+
+        TASK-34000.40 N-34 (AC#6): a review opened from Manage sync folders
+        goes back there (``handle_library_notes_lasting_back``), yet its back
+        control read "‹ Notes" on every route.
+        """
+        snapshot = self._library_notes_lasting_sync_snapshot
+        if snapshot is None or not (
+            LibraryNotesController._library_notes_lasting_back_returns_to_roots(self)
+        ):
+            return snapshot
+        return dataclasses.replace(snapshot, back_label=LASTING_SYNC_BACK_TO_ROOTS_LABEL)
     async def _exit_library_notes_lasting_sync(self) -> bool:
         """Settle provisional authority before leaving a lasting-sync canvas."""
 
@@ -6678,6 +7151,7 @@ class LibraryNotesController:
             return
         self._library_notes_select_mode = not self._library_notes_select_mode
         self._library_notes_row_selection.clear()
+        self._notes_state.select_actions_visible = False  # TASK-34000.29 (N-14)
         _sync_library_canvas(self, "notes")
     @on(Button.Pressed, "#library-notes-select-clear")
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
@@ -6689,7 +7163,597 @@ class LibraryNotesController:
         if self._library_notes_mutation_fenced():
             return
         self._library_notes_row_selection.clear()
+        # TASK-34000.29 (N-14): nothing is checked, so no bulk action is open.
+        self._notes_state.select_actions_visible = False
         _sync_library_canvas(self, "notes")
+    def action_library_notes_toggle_row_selection(self) -> None:
+        """Keyboard Space: toggle the focused Notes row (TASK-34000.29 N-14).
+
+        The Notes twin of ``action_library_media_toggle_row_selection``, and
+        the same as pressing the row in select mode: memory only, nothing is
+        written. The binding is priority, and ``check_action`` claims only a
+        focused Notes row in select mode (ruling T7-c), so every other
+        control -- the pane grips included -- keeps its own Space.
+
+        Ruling T7-b: a priority binding never reaches ``on_key``, so the
+        user's own key withdraws a pending programmatic focus landing (Back's
+        row re-focus, the filter's Down hand-off) here, as every other
+        real-input site does.
+        """
+        self._screen._withdraw_library_notes_pending_focus_handoffs()
+        state = self._notes_state
+        if not state.select_mode or self._library_notes_mutation_fenced():
+            return
+        focused = self.focused
+        if focused is None or not focused.has_class("library-notes-row"):
+            return
+        note_id = str(getattr(focused, "note_id", "") or "")
+        if not note_id:
+            return
+        state.tree_selected_placement_id = str(getattr(focused, "placement_id", "") or "")
+        state.row_selection.toggle(note_id)
+        _apply_library_row_toggle(self._screen, "notes", focused, note_id)
+    @on(Button.Pressed, "#library-notes-select-actions")
+    def handle_library_notes_select_actions(self, event: Button.Pressed) -> None:
+        """Open or close the select strip's Actions… chooser (TASK-34000.29 N-14).
+
+        Owner question 4: Move to folder… / Add keyword… / Remove keyword…
+        in one strip under the select row, the Sort chooser's shape. Opening
+        lands focus on the first choice; closing returns it to Actions….
+        Nothing is written here.
+        """
+        event.stop()
+        state = self._notes_state
+        if (
+            self._library_notes_mutation_fenced()
+            or not state.select_mode
+            or not state.row_selection.count
+        ):
+            return
+        state.select_actions_visible = not state.select_actions_visible
+
+        def focus_open_strip() -> None:
+            self._focus_library_choice_strip_active(
+                ".library-notes-select-action-choice", ""
+            )
+
+        def focus_opener() -> None:
+            self._focus_library_note_control("#library-notes-select-actions")
+
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=focus_open_strip if state.select_actions_visible else focus_opener,
+        )
+    @on(Button.Pressed, ".library-notes-select-action-choice")
+    def handle_library_notes_select_action_choice(self, event: Button.Pressed) -> None:
+        """Open the picker or dialog one Actions… choice needs (TASK-34000.29 N-14).
+
+        A choice only ASKS: the bulk seams run from the picker's or dialog's
+        own Enter/Choose/Apply with a value, never from Escape, Cancel or the
+        backdrop (those return ``None``). The chooser closes first and focus
+        goes back to Actions…, so that is the opener the dialog returns focus
+        to when it is dismissed.
+        """
+        event.stop()
+        state = self._notes_state
+        choice = str(getattr(event.button, "choice_value", "") or "")
+        note_ids = tuple(sorted(state.row_selection.ids))
+        state.select_actions_visible = False
+        runnable = bool(
+            note_ids
+            and state.select_mode
+            and not self._library_notes_mutation_fenced()
+            and choice in {"move", "add_keyword", "remove_keyword"}
+        )
+
+        def focus_opener_then_ask() -> None:
+            # Synchronously (``Widget.focus`` is deferred): the dialog records
+            # the focused widget as the opener it returns focus to, and the
+            # choice that was focused is gone with the strip. Measured live:
+            # a deferred focus left the dialog returning focus to the filter.
+            for opener in self.query("#library-notes-select-actions").results(
+                Button
+            ):
+                self._library_notes_programmatic_focus_target = opener
+                self.set_focus(opener, scroll_visible=False)
+            if not runnable:
+                return
+            if choice == "move":
+                self._choose_library_notes_bulk_move_target(note_ids)
+            else:
+                self._ask_library_notes_bulk_keyword(
+                    note_ids, remove=choice == "remove_keyword"
+                )
+
+        _sync_library_canvas(self, "notes", then=focus_opener_then_ask)
+    def _choose_library_notes_bulk_move_target(self, note_ids: tuple[str, ...]) -> None:
+        """Push the all-folders picker for a bulk move (TASK-34000.29 N-14)."""
+        # Imported here (ADR-097): dev's ab43a0303b made the folder dialog a
+        # lazy import, so this keeps it out of the boot import graph.
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteFolderTargetDialog,
+        )
+
+        # The receipt names the folder the user picked, as the picker
+        # painted it -- remembered from the pages the picker was served.
+        paths: dict[str, str] = {}
+
+        async def loader(query: str, offset: int) -> NoteFolderChildPage:
+            page = await self._page_library_notes_folder_targets(query, offset)
+            paths.update(
+                (folder.folder_id, folder.path.strip("/").replace("/", " / "))
+                for folder in page.folders
+            )
+            return page
+
+        count = len(note_ids)
+        self.app.push_screen(
+            LibraryNoteFolderTargetDialog(
+                title=f"Move {count} {_notes_noun(count)} to…", loader=loader
+            ),
+            lambda target_id: (
+                self._bulk_move_library_notes(
+                    note_ids, target_id, destination_label=paths.get(target_id, "")
+                )
+                if target_id
+                else None
+            ),
+        )
+    def _ask_library_notes_bulk_keyword(
+        self, note_ids: tuple[str, ...], *, remove: bool
+    ) -> None:
+        """Push the one-keyword dialog for a bulk keyword change (N-14)."""
+        # Imported here (ADR-097), beside the folder dialogs it shares a
+        # module with.
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteKeywordDialog,
+        )
+
+        count = len(note_ids)
+        noun = _notes_noun(count)
+        self.app.push_screen(
+            LibraryNoteKeywordDialog(
+                title=(
+                    f"Remove a keyword from {count} {noun}"
+                    if remove
+                    else f"Add a keyword to {count} {noun}"
+                ),
+            ),
+            lambda keyword: (
+                self._bulk_keyword_library_notes(note_ids, keyword, remove=remove)
+                if keyword
+                else None
+            ),
+        )
+    def _claim_library_notes_bulk(self) -> bool:
+        """Take the Notes single-writer interlock for one bulk action.
+
+        The same claim ``_schedule_library_notes_tree_mutation`` makes:
+        synchronous, so a second bulk action, Create or a folder action
+        cannot start until the worker releases it, and the tree's paging is
+        fenced so a page in flight cannot land over the change.
+        """
+        if self._library_notes_mutation_fenced():
+            return False
+        self._library_notes_mutation_in_flight = True
+        self._screen._fence_library_notes_tree_mutation()
+        return True
+    def _bulk_move_library_notes(
+        self,
+        note_ids: tuple[str, ...],
+        destination_id: str,
+        *,
+        destination_label: str = "",
+    ) -> bool:
+        """Move every note in ``note_ids`` into one folder (TASK-34000.29 N-14).
+
+        Each note takes the single-note ``move_placement`` shape: placed in
+        the destination first, then detached from every MANUAL folder it was
+        in, so a failure part-way leaves it in both folders rather than in
+        none. Sync-managed placements are never touched.
+
+        Args:
+            note_ids: The checked notes.
+            destination_id: The folder the picker returned.
+            destination_label: That folder's path as the picker painted it.
+
+        Returns:
+            Whether the worker was started.
+        """
+        if not note_ids or not destination_id or not self._claim_library_notes_bulk():
+            return False
+        self.run_worker(
+            self._run_library_notes_bulk_move(
+                note_ids, destination_id, destination_label or "the folder"
+            ),
+            exclusive=True,
+            group="library_notes_bulk",
+        )
+        _sync_library_canvas(self, "notes")
+        return True
+    async def _run_library_notes_bulk_move(
+        self, note_ids: tuple[str, ...], destination_id: str, destination_label: str
+    ) -> None:
+        app = self.app_instance
+        try:
+            service = app.notes_scope_service
+        except AttributeError:
+            service = None
+        common = {"scope": "local_note", "user_id": self._library_notes_user_id()}
+        moved: list[str] = []
+        try:
+            for note_id in note_ids:
+                try:
+                    if await self._move_one_library_note(
+                        service, common, note_id, destination_id
+                    ):
+                        moved.append(note_id)
+                except Exception as exc:  # noqa: BLE001 - counted, never raised
+                    logger.warning(
+                        "Bulk note move left one note where it was; error_type={}",
+                        type(exc).__name__,
+                    )
+        finally:
+            # Final review I-3: the one release, so what it owes runs here
+            # too. The bulk's own in-place refresh (``_finish_library_notes_
+            # bulk`` below) IS the reload a held-back visit owed (ruling
+            # T7-f), rows kept, so the release must not start a fresh visit
+            # over the selection first.
+            self._tree_reload_owed = False
+            LibraryNotesController._release_library_notes_mutation(self)
+        total = len(note_ids)
+        receipt = (
+            f"Moved {len(moved)} of {total} {_notes_noun(total)} to {destination_label}"
+        )
+        failed = tuple(note_id for note_id in note_ids if note_id not in moved)
+        snapshot = self._library_note_session.snapshot
+        if snapshot is not None and snapshot.note_id in moved:
+            # Info's "Location" names the folders; the open note just moved.
+            self._start_library_note_fact_loads(snapshot.note_id)
+        await self._finish_library_notes_bulk(
+            receipt, failed, failed_verb="did not move"
+        )
+    @staticmethod
+    async def _move_one_library_note(
+        service: Any, common: dict[str, str], note_id: str, destination_id: str
+    ) -> bool:
+        """Place one note in ``destination_id``, then lift its other manual placements."""
+        placements = await service.list_note_placements_for_sync(
+            **common, note_id=note_id
+        )
+        sources = [
+            placement
+            for placement in placements
+            if placement.ownership == "manual"
+            and not placement.owner_id
+            and placement.folder_id != destination_id
+        ]
+        if not await service.attach_note_to_folder(
+            **common, folder_id=destination_id, note_id=note_id
+        ):
+            return False
+        for placement in sources:
+            if not await service.detach_note_from_folder(
+                **common,
+                folder_id=placement.folder_id,
+                note_id=note_id,
+                expected_version=placement.version,
+            ):
+                return False
+        return True
+    def _bulk_keyword_library_notes(
+        self, note_ids: tuple[str, ...], keyword: str, *, remove: bool
+    ) -> bool:
+        """Add or remove one keyword on every note in ``note_ids`` (N-14).
+
+        The keyword is parsed the way the editor's keywords field parses
+        one, so a comma cannot smuggle in a second keyword. The open note's
+        editor holds its keywords in its draft, and every save writes that
+        list whole -- so a busy open note is left alone (named in the
+        receipt), and a changed one is reloaded from the database.
+
+        Returns:
+            Whether the worker was started.
+        """
+        parsed = self._library_note_keywords_from_input(keyword) or []
+        if len(parsed) != 1:
+            app = self.app_instance
+            try:
+                notify = app.notify
+            except AttributeError:
+                notify = None
+            if callable(notify):
+                # A toast: select mode hides the status line a notice uses,
+                # and the dialog has closed (review R0 M-8: a lone comma
+                # used to close it with no word at all).
+                notify(
+                    "Enter one keyword at a time — a comma separates keywords."
+                    if parsed
+                    else "No keywords entered — nothing changed.",
+                    severity="warning",
+                    markup=False,
+                )
+            return False
+        if not note_ids or not self._claim_library_notes_bulk():
+            return False
+        self.run_worker(
+            self._run_library_notes_bulk_keyword(note_ids, parsed[0], remove),
+            exclusive=True,
+            group="library_notes_bulk",
+        )
+        _sync_library_canvas(self, "notes")
+        return True
+    async def _run_library_notes_bulk_keyword(
+        self, note_ids: tuple[str, ...], keyword: str, remove: bool
+    ) -> None:
+        """Change one keyword on every checked note (N-14), then the receipt.
+
+        PR #3423 review I-2: each note goes through
+        ``NotesScopeService.change_local_note_keyword`` -- the editor's own
+        keyword path -- not plain database link writes, so the scope
+        service's policy gate applies and a ready Sync v2 profile records
+        the organization intents another device syncs from. A note the gate
+        (or a sync group that is not ready) refuses is counted as not
+        changed: the receipt names it, and why, and it stays checked.
+
+        PR #3423 re-review N-1/N-2: each note commits on its own, so the
+        ChaChaNotes write lock is held for one note at a time and a note
+        whose change raises rolls back whole. TASK-34000.116: the Sync v2
+        profile is resolved, and its group's readiness checked, once before
+        the first note's transaction, so no note reads the profile store
+        while it holds that lock; a group that is not ready refuses every
+        note before any is written.
+        """
+        app = self.app_instance
+        try:
+            scope_service = app.notes_scope_service
+        except AttributeError:
+            scope_service = None
+        service = getattr(scope_service, "local_notes_service", None)
+        change_keyword = getattr(scope_service, "change_local_note_keyword", None)
+        resolve_profile = getattr(
+            scope_service, "resolve_local_note_keyword_profile", None
+        )
+        user_id = self._library_notes_user_id()
+        snapshot = self._library_note_session.snapshot
+        open_id = snapshot.note_id if snapshot is not None else ""
+        open_busy = snapshot is not None and (
+            snapshot.dirty or snapshot.saving or snapshot.in_conflict
+        )
+
+        def write() -> tuple[str, list[str], list[str], list[str], list[str]]:
+            if service is None or not callable(change_keyword):
+                raise RuntimeError("bulk keyword changes are unavailable")
+            changed: list[str] = []
+            unchanged: list[str] = []
+            failed: list[str] = []
+            reasons: list[str] = []
+
+            def note_failed(note_id: str, reason: str) -> None:
+                failed.append(note_id)
+                if reason and reason not in reasons:
+                    reasons.append(reason)
+
+            row = service.get_keyword_by_text(user_id, keyword)
+            keyword_id = row.get("id") if isinstance(row, dict) else None
+            # The receipt names the keyword as stored (matching ignores case).
+            label = str(row.get("keyword") or keyword) if keyword_id else keyword
+            resolved = None
+            try:
+                # Once, outside every note's transaction (TASK-34000.116).
+                if callable(resolve_profile):
+                    resolved = resolve_profile(user_id=user_id)
+            except Exception as exc:  # noqa: BLE001 - counted, never raised
+                logger.warning(
+                    "Bulk keyword change refused before any note; error_type={}",
+                    type(exc).__name__,
+                )
+                for note_id in note_ids:
+                    note_failed(note_id, _bulk_keyword_refusal_reason(exc))
+                return label, changed, unchanged, failed, reasons
+            profile_kwargs = {} if resolved is None else {"resolved_profile": resolved}
+            for note_id in note_ids:
+                if note_id == open_id and open_busy:
+                    note_failed(note_id, BULK_KEYWORD_OPEN_NOTE_BUSY)
+                    continue
+                try:
+                    # One ``BEGIN IMMEDIATE`` Notes transaction (the save
+                    # path's own, ``note_transaction``) PER NOTE. Immediate: a
+                    # deferred read-then-write upgrade loses to any concurrent
+                    # writer with SQLITE_BUSY_SNAPSHOT -- measured here as an
+                    # OperationalError on the first run that raced the tree
+                    # reload (TASK-34000.28 N-24's trap). Per note (PR #3423
+                    # re-review N-1/N-2): one transaction around the whole
+                    # run write-locked every ChaChaNotes table for its length
+                    # (a concurrent ``add_note`` failed at once), and a note
+                    # whose change raised after a write was committed
+                    # half-done. ``resolved_profile``: no Sync v2 profile
+                    # read in here (each used to pay about 0.12 s of them).
+                    with service.note_transaction(user_id) as cursor:
+                        linked = change_keyword(
+                            user_id=user_id,
+                            note_id=note_id,
+                            keyword=label,
+                            remove=remove,
+                            cursor=cursor,
+                            **profile_kwargs,
+                        )
+                except Exception as exc:  # noqa: BLE001 - counted, never raised
+                    logger.warning(
+                        "Bulk keyword change skipped one note; error_type={}",
+                        type(exc).__name__,
+                    )
+                    note_failed(note_id, _bulk_keyword_refusal_reason(exc))
+                    continue
+                (changed if linked else unchanged).append(note_id)
+            return label, changed, unchanged, failed, reasons
+
+        try:
+            (
+                label,
+                changed,
+                unchanged,
+                failed,
+                reasons,
+            ) = await self._run_library_service_call(write, isolate_in_worker=True)
+        except Exception as exc:  # noqa: BLE001 - one normalized boundary
+            logger.warning(
+                "Bulk keyword change failed before any note; error_type={}",
+                type(exc).__name__,
+            )
+            label, changed, unchanged, failed = keyword, [], [], list(note_ids)
+            reasons = []
+        finally:
+            # Final review I-3: the one release; the in-place refresh below is
+            # the owed reload (see ``_run_library_notes_bulk_move``).
+            self._tree_reload_owed = False
+            LibraryNotesController._release_library_notes_mutation(self)
+        done = len(changed)
+        receipt = (
+            f"Removed '{label}' from {done} {_notes_noun(done)}"
+            if remove
+            else f"Added '{label}' to {done} {_notes_noun(done)}"
+        )
+        if unchanged:
+            receipt += (
+                f" · {len(unchanged)} did not have it"
+                if remove
+                else f" · {len(unchanged)} already had it"
+            )
+        if open_id and open_id in changed:
+            # The editor's draft still lists the old keywords and its next
+            # save would write them back; the note is not dirty (``open_busy``
+            # above), so its session reopens from the database.
+            self.run_worker(
+                self._refresh_library_note_detail(open_id),
+                exclusive=True,
+                group="library_note_detail",
+            )
+        await self._finish_library_notes_bulk(
+            receipt,
+            tuple(failed),
+            failed_verb="could not be changed",
+            failed_reasons=tuple(reasons),
+        )
+    async def _finish_library_notes_bulk(
+        self,
+        receipt: str,
+        failed: tuple[str, ...],
+        *,
+        failed_verb: str,
+        failed_reasons: tuple[str, ...] = (),
+    ) -> None:
+        """Name the outcome, refresh the tree, and leave select mode on success.
+
+        A partial failure keeps select mode with exactly the notes that did
+        not change still checked, so the same action retries only those, and
+        says so: in select mode the status line is hidden, so the count is
+        also a warning toast. ``failed_reasons`` (PR #3423 re-review N-3)
+        are the sentences saying why, in the order first met, after it.
+        """
+        state = self._notes_state
+        state.select_actions_visible = False
+        why = f". {' '.join(failed_reasons)}" if failed and failed_reasons else ""
+        if failed and not state.select_mode:
+            # The user left select mode (Escape) while the worker ran: name
+            # what did not change, but check nothing behind a closed mode.
+            receipt += f" · {len(failed)} {failed_verb}{why}"
+            state.row_selection.clear()
+            app = self.app_instance
+            try:
+                notify = app.notify
+            except AttributeError:
+                notify = None
+            if callable(notify):
+                notify(receipt, severity="warning", markup=False)
+        elif failed:
+            receipt += (
+                f" · {len(failed)} {failed_verb} — still checked, so you can try again"
+                f"{why}"
+            )
+            state.row_selection.clear()
+            state.row_selection.select_all(failed)
+            app = self.app_instance
+            try:
+                notify = app.notify
+            except AttributeError:
+                notify = None
+            if callable(notify):
+                notify(receipt, severity="warning", markup=False)
+        else:
+            state.select_mode = False
+            state.row_selection.clear()
+        state.notice = receipt
+        if not self.is_mounted:
+            return
+        # Focus is still where the dialog returned it (Actions…) unless the
+        # user moved it while the worker ran -- then it stays put. Otherwise
+        # it goes, SYNCHRONOUSLY and before any resync, to the control whose
+        # portable role survives them: Actions… while select mode stays,
+        # else Done, whose ``select-toggle`` role is the "Select" the
+        # recompose puts in its place. A deferred focus after the sync lost
+        # to the tree reload's own captures: measured, focus ended in the
+        # filter after every bulk Move (fix the role, not the timing).
+        focused = self.focused
+        if focused is None or getattr(focused, "id", "") == "library-notes-select-actions":
+            target_id = (
+                "library-notes-select-actions"
+                if state.select_mode
+                else "library-notes-select-toggle"
+            )
+            for target in self.query(f"#{target_id}").results(Button):
+                if self.focused is not target:
+                    self._library_notes_programmatic_focus_target = target
+                    self.set_focus(target, scroll_visible=False)
+        _sync_library_canvas(self, "notes")
+        await self._refresh_library_notes_tree_in_place()
+    async def _refresh_library_notes_tree_in_place(self) -> None:
+        """Reload every loaded tree slice where it is, its rows kept on screen.
+
+        The single-note mutations' own way (``_reconcile_library_notes_tree_
+        mutation`` reloads exact slices over retained rows), applied to every
+        loaded slice, since a bulk action touches many. A fresh visit
+        (``_request_library_notes_tree_initial_load``) would clear the tree
+        first: no rows until the pages land, and the toolbar's Select
+        disabled meanwhile, which the focus replays then cannot land on.
+        """
+        screen = self._screen
+        state = self._notes_state
+        # Every loaded slice is the set a fresh visit requests (the roots and
+        # the open folders), so this refresh is the reload a held-back visit
+        # refresh owed (ruling T7-f) -- without clearing the rows first.
+        self._tree_reload_owed = False
+        screen._fence_library_notes_tree_mutation()
+        lifecycle = state.tree_lifecycle_generation
+        filter_state = state.tree_filter_state
+        if state.filter.strip() and filter_state is not None:
+            await screen._run_library_notes_filter(
+                filter_state.query,
+                offset=filter_state.start_offset,
+                direction="target",
+                navigation_generation=state.navigation_generation,
+            )
+            return
+        for key in sorted(
+            state.tree_branches,
+            key=lambda value: (
+                value.parent_id is not None,
+                value.parent_id or "",
+                value.slice_kind,
+            ),
+        ):
+            branch = state.tree_branches.get(key)
+            if branch is None:
+                continue
+            if state.tree_lifecycle_generation != lifecycle or not self.is_mounted:
+                return
+            await screen._load_library_notes_tree_slice(
+                key,
+                direction="target",
+                offset=branch.start_offset,
+                mutation_operation="bulk",
+            )
     @on(Button.Pressed, "#library-note-back")
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
         """Return the Library notes canvas from the editor to its list view.
@@ -6911,7 +7975,7 @@ class LibraryNotesController:
         try:
             await self._delete_library_note_claimed(admission)
         finally:
-            self._library_notes_mutation_in_flight = False
+            LibraryNotesController._release_library_notes_mutation(self)
             if (
                 self.is_mounted
                 and self._library_notes_view == "list"
@@ -6989,10 +8053,32 @@ class LibraryNotesController:
             event: Press event emitted by the "Recently deleted (N)" row.
         """
         event.stop()
-        if self._library_notes_mutation_fenced():
+        # Final review I-2: the open is a read -- a running import must not
+        # swallow it (the view it opens answers every write with its reason).
+        if LibraryNotesController._library_notes_writer_held(self):
             return
         self._library_notes_view = "trash"
-        self._refresh_library_notes_trash()
+        # TASK-34000.29 (N-29): the view opens on the newest deletions.
+        self._library_notes_trash_page = 1
+        # Review R2-1: the open owes focus to the first row (or, if its read
+        # fails, to Retry) until the user's own input moves it.
+        self._trash_focus_role = "trash-restore:0"
+        self._trash_landing_settling = ""
+        trash = self._library_notes_trash
+        if trash is not None and trash.page != 1:
+            # Review R0 m-7: never paint the page the last visit left behind.
+            # Page 1's loading state first, then the read -- the Media
+            # Trash's own entry (a fresh state, then ``request``). The total
+            # stays, so the opener's count does not move; focus is owed to
+            # the first row once the page lands.
+            # Review R2-3: and no failure left from the last visit -- its
+            # line would sit over "Loading…" and Retry re-read its page.
+            self._library_notes_trash = dataclasses.replace(
+                trash, rows=(), page=1, loading=True, retry_page=0
+            )
+            self._refresh_library_notes_trash(focus_role="trash-restore:0")
+        else:
+            self._refresh_library_notes_trash()
         self._apply_library_notes_footer_context()
         if self.is_mounted:
             _sync_library_canvas(
@@ -7016,6 +8102,15 @@ class LibraryNotesController:
     def _leave_library_notes_trash(self) -> None:
         """The single exit from the Trash view -- Back and Escape share it."""
         self._library_notes_view = "list"
+        self._trash_focus_role = ""
+        self._trash_landing_settling = ""
+        # Final review m-3: a page read queued under a Restore and then
+        # abandoned by leaving is dropped -- its role must never fire on a
+        # later, unrelated release.
+        self._trash_reload_owed = ""
+        # Review R0 m-7: the next visit starts on page 1, and the list view's
+        # own reloads (a delete, a visit) read page 1 meanwhile.
+        self._library_notes_trash_page = 1
         self._apply_library_notes_footer_context()
         if self.is_mounted:
             _sync_library_canvas(
@@ -7043,6 +8138,12 @@ class LibraryNotesController:
         """
         event.stop()
         if self._library_notes_mutation_fenced():
+            # Re-review NB-1: under an import the Trash is open (I-2), so say
+            # why, on its row, as ``x`` does. A Restore behind another Notes
+            # change stays as it was (TASK-34000.98).
+            if not LibraryNotesController._library_notes_writer_held(self):
+                button = getattr(event, "button", None)
+                LibraryNotesController._say_library_notes_trash_busy(self, button)
             return
         button = event.button
         note_id = getattr(button, "note_id", "")
@@ -7053,14 +8154,453 @@ class LibraryNotesController:
             title=getattr(button, "note_title", "") or "Untitled",
             expected_version=int(getattr(button, "note_version", 0) or 0),
         )
+        # TASK-34000.29 (ruling T8-d): where focus goes once the row is gone
+        # -- the row now at this index, clamped -- unless the user's own
+        # input moves it first (``_trash_focus_role``).
+        prefix = "library-notes-trash-restore-"
+        button_id = str(getattr(button, "id", "") or "")
+        trash_focus = ""
+        if button_id.startswith(prefix):
+            trash_focus = f"trash-restore:{button_id.removeprefix(prefix)}"
+            self._trash_focus_role = trash_focus
+            self._trash_landing_settling = ""
         self._library_notes_mutation_in_flight = True
         self.run_worker(
-            self._undo_library_note_delete(receipt),
+            self._undo_library_note_delete(receipt, trash_focus=trash_focus),
             exclusive=True,
             group="library_note_mutation",
         )
 
-    def _refresh_library_notes_trash(self) -> None:
+    @on(Button.Pressed, ".library-notes-trash-delete")
+    def handle_library_notes_trash_delete(self, event: Button.Pressed) -> None:
+        """Ask before deleting one Trash row's note for good (TASK-34000.29 8b).
+
+        The owner ruled "yes with confimration" (2026-10-29). ADR-055
+        Pattern B: the house ``ConfirmationDialog`` names the note and says
+        it cannot be undone (``markup=False``), opens on Cancel, and Escape
+        is its Cancel. Nothing is written until Delete forever is pressed in
+        it (ruling T8b-a).
+
+        Args:
+            event: Press of one row's Delete forever (or ``x`` on the row).
+        """
+        event.stop()
+        if self._library_notes_mutation_fenced():
+            # Review R0, m-5: say why on the Trash's own line, not silence.
+            button = getattr(event, "button", None)
+            LibraryNotesController._say_library_notes_trash_busy(self, button)
+            return
+        if LibraryNotesController._library_notes_purge_confirm_open(self):
+            return
+        button = event.button
+        note_id = str(getattr(button, "note_id", "") or "")
+        if not note_id:
+            return
+        title = str(getattr(button, "note_title", "") or "Untitled")
+        version = int(getattr(button, "note_version", 0) or 0)
+        prefix = "library-notes-trash-delete-"
+        button_id = str(getattr(button, "id", "") or "")
+        index = button_id.removeprefix(prefix) if button_id.startswith(prefix) else "0"
+        # Imported here (ADR-097), as the Notes dialogs are.
+        from ...Widgets.confirmation_dialog import ConfirmationDialog
+
+        def answer(confirmed: bool | None) -> None:
+            self._trash_purge_confirm_open = False
+            if confirmed:
+                self._confirm_library_notes_trash_delete(note_id, title, version, index)
+            else:
+                self._cancel_library_notes_trash_delete(index)
+
+        self._trash_purge_confirm_open = True
+        self.app.push_screen(
+            ConfirmationDialog(
+                title=PURGE_CONFIRM_TITLE,
+                message=purge_confirm_copy(
+                    title,
+                    kept_file=bool(getattr(button, "note_kept_file", False)),
+                    server_copy=bool(getattr(button, "note_server_copy", False)),
+                ),
+                confirm_label=PURGE_CONFIRM_LABEL,
+                cancel_label="Cancel",
+                # Review R0, m-4: the commit held >=3 cells from Cancel.
+                classes="destructive-confirm",
+            ),
+            answer,
+        )
+
+    def _library_notes_purge_confirm_open(self) -> bool:
+        """Whether a Delete forever confirm is still up (review R0, m-8).
+
+        A fast double ``x`` reaches the handler twice before the first
+        confirm takes the screen; the second must not stack another. A
+        confirm that left without answering (a quit flow popped it) no
+        longer counts once it is off the screen stack.
+        """
+        if not getattr(self, "_trash_purge_confirm_open", False):
+            return False
+        stack = getattr(getattr(self, "app", None), "screen_stack", None)
+        if stack is None:
+            return True
+        from ...Widgets.confirmation_dialog import ConfirmationDialog
+
+        if any(isinstance(screen, ConfirmationDialog) for screen in stack):
+            return True
+        self._trash_purge_confirm_open = False
+        return False
+
+    def _say_library_notes_trash_busy(self, button: object = None) -> None:
+        """Paint why a fenced Trash write did nothing, and owe its row.
+
+        Review R0, m-5 (Delete forever); re-review NB-1 (Restore under an
+        import). Another Notes change holds the single-writer interlock. The
+        reason stays under the Trash's purpose line until the interlock is
+        released (``_clear_library_notes_trash_busy``) or the page is read
+        again. Polish-1b finishing pass (live, 2 of 10 runs): painting that
+        line and clearing it at the release are syncs; one capturing while
+        focus is parked on a pane grip fell back to the first row. So the
+        row pressed (``button``, its Restore or Delete forever) is owed, as
+        Cancel does. Residual R-3: the line names the action pressed last
+        (a Restore says Restore waits; anything else, Delete forever).
+
+        Args:
+            button: The pressed row button, or ``None``.
+        """
+        button_id = str(getattr(button, "id", "") or "")
+        restore = "library-notes-trash-restore-"
+        notice = (
+            RESTORE_BUSY_NOTICE if button_id.startswith(restore) else PURGE_BUSY_NOTICE
+        )
+        for prefix in (restore, "library-notes-trash-delete-"):
+            if button_id.startswith(prefix):
+                self._trash_focus_role = f"trash-restore:{button_id.removeprefix(prefix)}"
+                self._trash_landing_settling = ""
+        trash = getattr(self, "_library_notes_trash", None)
+        if trash is None or trash.notice == notice:
+            return
+        self._library_notes_trash = dataclasses.replace(trash, notice=notice)
+        if getattr(self, "is_mounted", False) and self._library_notes_view == "trash":
+            _sync_library_canvas(self, "notes")
+
+    def _clear_library_notes_trash_busy(self) -> None:
+        """The interlock is free, so the busy reason no longer holds (m-5)."""
+        trash = getattr(self, "_library_notes_trash", None)
+        if trash is None or not getattr(trash, "notice", ""):
+            return
+        self._library_notes_trash = dataclasses.replace(trash, notice="")
+        if (
+            getattr(self, "is_mounted", False)
+            and getattr(self, "_library_notes_view", "") == "trash"
+        ):
+            _sync_library_canvas(self, "notes")
+
+    def _cancel_library_notes_trash_delete(self, index: str) -> None:
+        """Cancel or Escape: nothing written, focus owed back to the row.
+
+        The dialog's push withdrew every owed landing (suspend is a real-input
+        site), and its close resumes the screen into a visit reload whose
+        re-read recomposes the list; a capture taken while that recompose
+        has focus parked on a pane grip falls back to the owed role, which
+        was empty -- the first row. Owing the row the user pressed ``x`` on
+        keeps them there.
+        """
+        if self._library_notes_view != "trash":
+            return
+        self._trash_focus_role = f"trash-restore:{index}"
+        self._trash_landing_settling = ""
+
+    def _confirm_library_notes_trash_delete(
+        self, note_id: str, title: str, version: int, index: str
+    ) -> None:
+        """Start the purge the confirm approved, under the Notes interlock.
+
+        Focus is owed to the row that will take this one's place
+        (``trash-restore:<index>``, clamped; ruling T8b-e), through the same
+        record a Restore uses -- a real input since still wins.
+        """
+        if self._library_notes_view != "trash":
+            return
+        if self._library_notes_mutation_fenced():
+            app = self.app_instance
+            try:
+                notify = app.notify
+            except AttributeError:
+                notify = None
+            if callable(notify):
+                notify(
+                    "Nothing was deleted — another change to your notes is "
+                    "still running.",
+                    severity="warning",
+                    markup=False,
+                )
+            return
+        role = f"trash-restore:{index}"
+        self._trash_focus_role = role
+        self._trash_landing_settling = ""
+        self._library_notes_mutation_in_flight = True
+        self.run_worker(
+            self._purge_library_note_from_trash(
+                note_id, title, version, trash_focus=role
+            ),
+            exclusive=True,
+            group="library_note_mutation",
+        )
+
+    async def _purge_library_note_from_trash(
+        self, note_id: str, title: str, version: int, *, trash_focus: str
+    ) -> None:
+        """Delete one note forever through ``NotesScopeService.purge_note``.
+
+        Lasting sync is asked inside the purge, at this moment (ruling
+        T8b-c). On success: a notice (no receipt -- nothing can undo it),
+        the list's own delete receipt for the same note dropped (its Undo
+        would restore nothing), and the page re-read (clamped) with focus
+        landing on the row that took this one's place. A refusal keeps the
+        row and says why.
+
+        PR #3423 review I-1: the runtime is resolved with
+        ``_prepare_runtime``, never the non-constructing ``_runtime`` peek.
+        The peek answers ``None`` -- "no lasting sync in this app" -- while
+        the slot is empty, which it also is after a FAILED build, and the
+        purge then deleted a note a sync folder still held. A build that
+        could not say refuses here, before the purge is asked at all.
+        """
+        purged = False
+        message = ""
+        reload_page = False
+        app = self.app_instance
+        try:
+            try:
+                service = app.notes_scope_service
+            except AttributeError:
+                service = None
+            purge_note = getattr(service, "purge_note", None)
+            if not callable(purge_note):
+                message = "Delete forever is unavailable."
+            else:
+                try:
+                    sync_runtime = await notes_sync_attention._prepare_runtime(self)
+                    if sync_runtime is notes_sync_attention._COULD_NOT_SAY:
+                        raise NotePurgeRefusedError(
+                            reason_code="sync_unknown",
+                            user_message=PURGE_REFUSED_SYNC_UNKNOWN,
+                        )
+                    purged = bool(
+                        await self._run_library_service_call(
+                            purge_note,
+                            scope="local_note",
+                            note_id=note_id,
+                            version=version,
+                            user_id=self._library_notes_user_id(),
+                            sync_runtime=sync_runtime,
+                        )
+                    )
+                    if not purged:
+                        message = "This note is no longer in Recently deleted."
+                        reload_page = True
+                except NotePurgeRefusedError as refused:
+                    message = refused.user_message
+                    reload_page = refused.reason_code == "not_deleted"
+                except ConflictError:
+                    message = (
+                        "This deleted note changed elsewhere — refresh and try again."
+                    )
+                    reload_page = True
+                except Exception as exc:  # noqa: BLE001 - degrade to a notice
+                    # Metadata only: the frame holds the note's title.
+                    logger.warning(
+                        "Failed to delete a Library note forever; error_type={}",
+                        type(exc).__name__,
+                    )
+                    message = "Could not delete this note forever."
+        finally:
+            LibraryNotesController._release_library_notes_mutation(self)
+        # After the release, not before: the confirm's closing resumed the
+        # screen while the purge held the interlock, so the visit reload it
+        # owes runs in the release -- and its roleless Trash re-read, started
+        # after this one, cancelled it (exclusive group) and the landing with
+        # it (traced: focus arrived only through the fallback replay). Started
+        # last, this read supersedes that one instead.
+        if purged:
+            receipt = self._library_note_delete_receipt
+            if receipt is not None and receipt.note_id == note_id:
+                self._library_note_delete_receipt = None
+            self._refresh_library_notes_trash(focus_role=trash_focus)
+        elif reload_page:
+            self._refresh_library_notes_trash()
+        try:
+            notify = app.notify
+        except AttributeError:
+            notify = None
+        if not callable(notify):
+            return
+        if purged:
+            notify(purge_notice(title), markup=False)
+        else:
+            notify(message, severity="warning", markup=False)
+
+    @on(Button.Pressed, "#library-notes-trash-previous")
+    def handle_library_notes_trash_previous(self, event: Button.Pressed) -> None:
+        """Read the Trash page before this one (TASK-34000.29, N-29).
+
+        Args:
+            event: Press event emitted by the Trash pager's Previous.
+        """
+        event.stop()
+        self._page_library_notes_trash(-1, role="trash-previous")
+
+    @on(Button.Pressed, "#library-notes-trash-next")
+    def handle_library_notes_trash_next(self, event: Button.Pressed) -> None:
+        """Read the Trash page after this one (TASK-34000.29, N-29).
+
+        Args:
+            event: Press event emitted by the Trash pager's Next.
+        """
+        event.stop()
+        self._page_library_notes_trash(1, role="trash-next")
+
+    @on(Button.Pressed, "#library-notes-trash-retry")
+    def handle_library_notes_trash_retry(self, event: Button.Pressed) -> None:
+        """Re-run the Trash read that failed (review R1 N-2, ruling T8-i).
+
+        The same page the failed read asked for (a failed Next retries the
+        next page). A read, so no interlock; under a running Restore it is
+        queued like a page press (never under an import: final review I-2).
+        Once it lands focus goes to the first row, or Back when the Trash is
+        empty.
+
+        Args:
+            event: Press event emitted by the Trash failure line's Retry.
+        """
+        event.stop()
+        trash = self._library_notes_trash
+        if trash is not None:
+            self._library_notes_trash_page = trash.retry_page or trash.page
+        role = "trash-restore:0"
+        self._trash_focus_role = role
+        self._trash_landing_settling = ""
+        if LibraryNotesController._library_notes_writer_held(self):
+            self._trash_reload_owed = role
+            return
+        self._refresh_library_notes_trash(focus_role=role)
+
+    def _page_library_notes_trash(self, step: int, *, role: str) -> None:
+        """Move the Trash view one page and read it; focus follows the press.
+
+        Paging is a read, so it never takes the Notes interlock. It does not
+        START under one either: a press while a Restore holds it moves
+        ``trash_page`` and is queued (``_trash_reload_owed``) for the
+        release, which reads that page once -- the press is never dropped.
+        Only the writer interlock queues it (final review I-2): a running
+        import fences writes, not reads, and releases nothing a read could
+        wait for. The target is counted from the page last ASKED for, so a
+        second Next before the first page lands still moves on.
+
+        Args:
+            step: ``-1`` for Previous, ``1`` for Next.
+            role: The pressed control's portable focus role.
+        """
+        trash = self._library_notes_trash
+        if trash is None:
+            return
+        current = max(int(self._library_notes_trash_page or 1), 1)
+        last = library_notes_trash_last_page(trash.total, trash.page_size)
+        target = min(max(current + step, 1), last)
+        if target == current:
+            return
+        self._library_notes_trash_page = target
+        self._trash_focus_role = role
+        self._trash_landing_settling = ""
+        if LibraryNotesController._library_notes_writer_held(self):
+            self._trash_reload_owed = role
+            return
+        self._refresh_library_notes_trash(focus_role=role)
+
+    def _land_library_notes_trash_focus(self, role: str) -> None:
+        """Put focus on a Trash role's control after its reload (T8-d).
+
+        Through ``_restore_library_notes_focus_identity``, so the landing is
+        marked programmatic (never read as the user's move). Skipped once the
+        user's own input has moved focus since the press (it cleared
+        ``_trash_focus_role``) or the Trash view has closed.
+
+        TASK-34000.29 8b (ruling T8b-e, parked R4-1/R4-2). Every landing
+        withholds the list's offset until its keep-in-view has run -- a
+        Restore's (and a same-page) landing comes from its own canvas sync,
+        not a page read's publish, so nothing raised the marker and a sync
+        right after the landing replayed the new list's pre-layout offset
+        over the landed row (R4-2). And a landing that runs for another role
+        than the one settling means that one's ``then`` was replaced and will
+        never run, so its marker is dropped (R4-1): left up, the next sync
+        jumped the list back over the user's own wheel scroll.
+        """
+        if self._library_notes_view != "trash" or self._trash_focus_role != role:
+            settling = getattr(self, "_trash_landing_settling", "")
+            if settling and settling != role:
+                self._trash_landing_settling = ""
+            return
+        if role.startswith("trash-restore:") or role in {"trash-previous", "trash-next"}:
+            # Only a control IN the list (a row, the pager that is its last
+            # row): Retry and Back sit above it, and withholding the list's
+            # offset for them dropped the scroll the user had (measured: the
+            # failed-Next Retry pin at 100x30 lost the pager below the fold).
+            self._trash_landing_settling = role
+        self._restore_library_notes_focus_identity(
+            LibraryNotesFocusIdentity(
+                stage="notes", region="trash", note_id=None, semantic_role=role
+            )
+        )
+        # Review R2-2: a sync that lands while this read's recompose mounts
+        # finds the new list as the scroll owner and replays its offset (0)
+        # from ``call_after_refresh`` -- over a control this landing has
+        # already focused, so nothing scrolled it back. The one place it is
+        # settled: after those re-applies, the landed control is scrolled in.
+        # Class-forwarded: the landing tests run it on a fake.
+        self.call_after_refresh(
+            partial(LibraryNotesController._keep_landed_trash_control_in_view, self),
+            role,
+        )
+
+    def _keep_landed_trash_control_in_view(self, role: str, deferrals: int = 0) -> None:
+        """Scroll a landed Trash control into view, if it still has focus.
+
+        Only while the landing still stands: the owed role unchanged (a real
+        input since clears it) and its control the focused widget -- a user's
+        own move is never scrolled after. Either way the landing has settled,
+        so the Trash list's offset is captured again (ruling T8-j).
+
+        TASK-34000.29 8b (ruling T8b-e): one exception to "either way". A
+        sync whose recompose prunes the landed control right after it landed
+        leaves focus on Textual's reset landing (a pane grip) or on nothing,
+        and that sync's own replay puts it back on the owed control a refresh
+        later. Settling then dropped the marker under the replay, so a
+        capture read the rebuilt list at offset 0 and re-applied it over the
+        landed row below the fold (traced at 100x30: a Restore of the last
+        row, one sync injected right after its landing). So while focus sits
+        on that framework landing, the check is deferred to the next refresh
+        -- a bounded number of times -- with the offset still withheld.
+        """
+        in_view = self._library_notes_view == "trash" and self._trash_focus_role == role
+        target = self._library_notes_trash_focus_target(role) if in_view else None
+        focused = self.focused
+        if (
+            target is not None
+            and focused is not target
+            and deferrals < _TRASH_LANDING_SETTLE_DEFERRALS
+            and _is_framework_focus_landing(self, focused)
+        ):
+            self.call_after_refresh(
+                partial(LibraryNotesController._keep_landed_trash_control_in_view, self),
+                role,
+                deferrals + 1,
+            )
+            return
+        if getattr(self, "_trash_landing_settling", "") == role:
+            self._trash_landing_settling = ""
+        if target is None or focused is not target:
+            return
+        target.scroll_visible(animate=False, force=True, immediate=True)
+
+    def _refresh_library_notes_trash(self, *, focus_role: str = "") -> None:
         """Reload the soft-deleted snapshot the row and the view both read.
 
         Always starts a read. An in-flight one is SUPERSEDED, not a reason to
@@ -7068,51 +8608,198 @@ class LibraryNotesController:
         worker, so a read that began before a delete or restore committed can
         neither finish into the snapshot nor swallow the refresh that mutation
         asked for.
-        """
-        self.run_worker(
-            self._load_library_notes_trash(),
-            exclusive=True,
-            group="library_notes_trash",
-        )
 
-    async def _load_library_notes_trash(self) -> None:
-        """Read one bounded page of soft-deleted notes, degrading quietly.
+        Args:
+            focus_role: A Trash role to land focus on once the page is
+                painted (a Previous/Next press), or ``""`` for none.
+        """
+        loader = (
+            self._load_library_notes_trash(focus_role=focus_role)
+            if focus_role
+            else self._load_library_notes_trash()
+        )
+        self.run_worker(loader, exclusive=True, group="library_notes_trash")
+
+    async def _read_library_notes_trash_page(
+        self, list_deleted_notes: Any, page: int
+    ) -> Mapping[str, Any] | None:
+        """One ``list_deleted_notes`` read of ``page``; ``None`` on failure."""
+        try:
+            result = await self._run_library_service_call(
+                list_deleted_notes,
+                scope="local_note",
+                user_id=self._library_notes_user_id(),
+                limit=LIBRARY_NOTES_TRASH_PAGE_SIZE,
+                offset=(page - 1) * LIBRARY_NOTES_TRASH_PAGE_SIZE,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning("Failed to read the Library notes trash")
+            return None
+        return result if isinstance(result, Mapping) else None
+
+    async def _read_library_notes_trash_purge_scope(
+        self, items: Any
+    ) -> Mapping[str, tuple[bool, bool]]:
+        """What Delete forever would leave elsewhere, for this page (m-9).
+
+        Read with the page, off the event loop, so the confirm can say it
+        without a read of its own: ``{}`` (no clause) when it cannot be read.
+        The runtime comes from the purge's own resolver (PR #3423 review
+        I-1), so a runtime not built yet is built for the read; one that
+        could not build adds no kept-file clause -- and its purge refuses.
+        """
+        app = self.app_instance
+        try:
+            service = app.notes_scope_service
+        except AttributeError:
+            service = None
+        try:
+            sync_state = app.sync_state_repository
+        except AttributeError:
+            sync_state = None
+        read = getattr(service, "deleted_notes_purge_scope", None)
+        if not callable(read):
+            return {}
+        note_ids = [
+            str(item.get("id"))
+            for item in items
+            if isinstance(item, Mapping) and item.get("id")
+        ]
+        try:
+            sync_runtime = await notes_sync_attention._prepare_runtime(self)
+            if sync_runtime is notes_sync_attention._COULD_NOT_SAY:
+                sync_runtime = None
+            return dict(
+                await read(
+                    note_ids,
+                    sync_runtime=sync_runtime,
+                    sync_state=sync_state,
+                )
+            )
+        except Exception:  # noqa: BLE001 - no clause; the guide says it
+            return {}
+
+    async def _load_library_notes_trash(
+        self,
+        *,
+        page: int | None = None,
+        focus_role: str = "",
+    ) -> None:
+        """Read one page of soft-deleted notes, degrading quietly.
 
         A failed or absent seam leaves the previous snapshot in place rather
         than publishing an empty one: hiding the "Recently deleted" row
         because a read failed would claim there is nothing to recover.
+
+        TASK-34000.29 (N-29, ruling T8-d): ``page`` (default: the page the
+        view is on) is read at ``offset=(page-1)*size`` and clamped READ-SIDE:
+        when the total no longer reaches it -- a Restore emptied the last
+        page, or notes were restored elsewhere -- the last page is read
+        instead, once. The view is never left on an empty page.
+
+        Args:
+            page: The 1-based page to read; ``None`` re-reads ``trash_page``.
+            focus_role: A Trash role to land focus on after the paint.
         """
-        page: Any = None
         service = getattr(self.app_instance, "notes_scope_service", None)
         list_deleted_notes = getattr(service, "list_deleted_notes", None)
-        if callable(list_deleted_notes):
-            try:
-                page = await self._run_library_service_call(
-                    list_deleted_notes,
-                    scope="local_note",
-                    user_id=self._library_notes_user_id(),
-                    limit=LIBRARY_NOTES_TRASH_PAGE_SIZE,
-                    isolate_in_worker=True,
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Failed to read the Library notes trash"
-                )
-                page = None
-        if not isinstance(page, Mapping):
+        if not callable(list_deleted_notes):
             return
-        total = page.get("total")
+        requested = max(
+            int(page if page is not None else self._library_notes_trash_page or 1), 1
+        )
+        def keep_the_painted_page(tried: int) -> None:
+            # Review R0 m-1: a failed read keeps the painted snapshot, so the
+            # page the view asks for goes back to the one it shows -- left on
+            # the target, the next Next counted from it and did nothing.
+            # Review R1 N-2 (ruling T8-i): and the snapshot SAYS the read
+            # failed -- the Trash paints one failure line and a Retry for the
+            # page that failed, the Media Trash's own shape -- instead of
+            # leaving "Loading…" up forever. ``None`` (never read) stays
+            # ``None``: the opener row is not shown off a failed read.
+            shown = self._library_notes_trash
+            self._library_notes_trash_page = shown.page if shown is not None else 1
+            if shown is None:
+                return
+            self._library_notes_trash = dataclasses.replace(
+                shown, loading=False, retry_page=tried
+            )
+            if self.is_mounted and self._library_notes_view == "trash":
+                # Review R2-1: focus goes to Retry, the Media Trash's rule --
+                # through the owed record, so it only moves a landing still
+                # owed by the press, open or Restore (a real input since
+                # cleared it, and then focus stays where the user put it).
+                land = None
+                if self._trash_focus_role:
+                    self._trash_focus_role = "trash-retry"
+                    land = partial(self._land_library_notes_trash_focus, "trash-retry")
+                _sync_library_canvas(self, "notes", then=land)
+
+        # Class-forwarded: the loader's clamp tests run it on a fake.
+        read_page = LibraryNotesController._read_library_notes_trash_page
+        result = await read_page(self, list_deleted_notes, requested)
+        if result is None:
+            keep_the_painted_page(requested)
+            return
+        total = result.get("total")
+        if isinstance(total, int):
+            last = library_notes_trash_last_page(total)
+            if requested > last:
+                requested = last
+                result = await read_page(self, list_deleted_notes, requested)
+                if result is None:
+                    keep_the_painted_page(requested)
+                    return
+                total = result.get("total")
+        self._library_notes_trash_page = requested
+        items = result.get("items") or ()
+        # Class-forwarded: the loader's tests run it on a fake.
+        purge_scope = await LibraryNotesController._read_library_notes_trash_purge_scope(
+            self, items
+        )
         self._library_notes_trash = build_library_notes_trash_state(
-            page.get("items") or (),
+            items,
             total=total if isinstance(total, int) else None,
+            page=requested,
+            purge_scope=purge_scope,
         )
         if self.is_mounted:
-            _sync_library_canvas(self, "notes")
+            if focus_role:
+                # Ruling T8-j: this landing settles from here until its
+                # keep-in-view has run; no capture records the list's offset.
+                self._trash_landing_settling = focus_role
+            else:
+                # Review R0 (the R4 residual): a read with no landing of its
+                # own replaces the ``then`` of any landing whose keep-in-view
+                # has not run -- that one never runs now, and its marker,
+                # left up, withheld the list's offset until the next input.
+                self._trash_landing_settling = ""
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=(
+                    partial(self._land_library_notes_trash_focus, focus_role)
+                    if focus_role
+                    else None
+                ),
+            )
 
     async def _undo_library_note_delete(
-        self, receipt: LibraryNoteDeleteReceipt
+        self,
+        receipt: LibraryNoteDeleteReceipt,
+        *,
+        trash_focus: str = "",
     ) -> None:
-        """Undo one delete through ``NotesScopeService.restore_note``."""
+        """Undo one delete through ``NotesScopeService.restore_note``.
+
+        Args:
+            receipt: The deleted note's recovery identity.
+            trash_focus: The pressed Restore's role when the Trash view's
+                Restore asked: focus stays on the trash list (ruling T8-d), on
+                the row now at the restored index, instead of seeking the
+                note's tree row in the list pane beside it.
+        """
         restored_record: Mapping[str, Any] | None = None
         failure_message = ""
         try:
@@ -7176,7 +8863,7 @@ class LibraryNotesController:
                     failure_message or "Could not restore this note."
                 )
         finally:
-            self._library_notes_mutation_in_flight = False
+            LibraryNotesController._release_library_notes_mutation(self)
             if self.is_mounted:
                 if restored_record is not None:
                     # task-32124: the folder tree is projected from paged
@@ -7210,6 +8897,10 @@ class LibraryNotesController:
                     finish = partial(
                         self._restore_library_notes_focus_identity, identity
                     )
+                    if trash_focus and self._library_notes_view == "trash":
+                        finish = partial(
+                            self._land_library_notes_trash_focus, trash_focus
+                        )
                 else:
                     finish = partial(
                         self._focus_library_note_control,
@@ -7304,7 +8995,7 @@ class LibraryNotesController:
         if create_token != self._library_note_create_token:
             return False
         self._library_note_create_running = False
-        self._library_notes_mutation_in_flight = False
+        LibraryNotesController._release_library_notes_mutation(self)
         self._library_note_create_status = status
         return True
     @on(Button.Pressed, "#library-note-discard-new")

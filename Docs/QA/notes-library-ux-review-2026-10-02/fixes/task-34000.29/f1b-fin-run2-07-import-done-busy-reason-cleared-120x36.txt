@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Ready · Next: Create a note or add from files.   │
+│   a  │ Library notes · Ready · Next: Create a note or add     │  o  Recently deleted                                 │
+│   v  │ from files.                                            │  t  Deleted notes stay here until you restore them.  │
+│      │ Notes (123)                                            │  e  Restore puts a note back; Delete forever removes │
+│      │ These notes live in the Library's own database — for   │  s  it for good.                                     │
+│      │ notes that live in a folder on disk, switch to Folder  │       ‹ Notes                                        │
+│      │ files. To copy or keep a folder synced, choose Add     │     Old draft 21 · … ┃ Restore ┃   Delete forever    │
+│      │ from files.                                            │     Old draft 22 · 20h                   Restore     │
+│      │                                                        │     Old draft 23 · 20h                   Restore     │
+│ ---> │ Filter                                                 │     Old draft 24 · 20h                   Restore     │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Old draft 25 · 20h                   Restore     │
+│      │ ▊ Filter notes… (Enter)                              ▎ │     21–25 of 25 · Page 2 of 2                        │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │       Previous   ○ Next                              │
+│      │                                                        │<---                                                  │
+│      │    New     Sort: Newest     Select                     │                                                      │
+│      │    Add from files…     Export     Last import          │                                                      │
+│      │ Folders & placement                                    │                                                      │
+│      │    New folder     ○ Add to folder     ○ Move note      │                                                      │
+│ ---> │    ○ Remove placement                                  │                                                      │
+│      │ Note actions unavailable — select a note in the list   │                                                      │
+│      │                                                        │                                                      │
+│      │                                                        │                                                      │
+│      │  ▸ Agent_Lessons                                       │                                                      │
+│      │  ▸ import60                                            │                                                      │
+│      │  ▸ import60b                                           │                                                      │
+│      │  ▾ Unfiled                                           ▇ │                                                      │
+│      │    Trip packing · 15m                                  │                                                      │
+│      └────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  r restore note | x delete forever | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

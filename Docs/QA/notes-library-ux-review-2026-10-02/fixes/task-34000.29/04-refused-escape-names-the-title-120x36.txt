@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Title begins or ends with whitespace — remove it │
+│   a  │ Library notes · Ready                                  │  o  to save. · Next: Fix the marked field, or press  │
+│   v  │ Notes (122)                                            │  t  Save to go to it.                                │
+│      │ These notes live in the Library's own database — for   │  e    ‹ Notes   Advisor meeting 2026-09-24           │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │                                                      │
+│      │ from files.                                            │      In the Library database only — no file on disk  │
+│      │                                                        │     Title begins or ends with whitespace — remove i… │
+│      │ Filter                                                 │         Edit     Preview     Info                    │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │         Save     Use in Console                      │
+│      │ ▊ advisor meeting                                    ▎ │     Title                                            │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │                                                        │     ▊ Advisor meeting 2026-09-24                   ▎ │
+│      │    New     ○ Sort: Newest     Select                   │<--- ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    Add from files…     Export                          │                                                      │
+│      │ Folders & placement                                    │      Title begins or ends with whitespace — remove   │
+│      │    New folder     Add to folder     Move note          │      it to save.                                     │
+│      │    Remove placement                                    │     Keywords                                         │
+│ ---> │ Sort unavailable — clear the filter                    │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ filter: advisor meeting · 3 results                    │     ▊ meeting, thesis                              ▎ │
+│      │                                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │   Clear filter                                    ╭─────────────────────────────────────────────────────────╮ │
+│      │  ▾ Meetings                                       │                                                         │ │
+│      │    Advisor meeting 2026-09-10 · Meetings · now    │ Can't leave yet — Title begins or ends with whitespace  │ │
+│      │    Advisor meeting 2026-09-24 · Meetings · now    │ — remove it to save.                                    │ │
+│      │  ▾ Projects                                       │                                                         │ │
+│      │    ▾ Thesis                                       ╰─────────────────────────────────────────────────────────╯ │
+│      └────────────────────────────────────────────────────────┘                                      60 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
