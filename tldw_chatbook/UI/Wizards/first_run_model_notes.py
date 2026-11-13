@@ -1,8 +1,8 @@
 """The Model step's note on what else the chosen model is used for.
 
 TASK-34100.2 AC#8 (coverage-17): document analysis (Library's
-analyze-after-import, the Media analysis panel and the Reader's Generate)
-follows the chat model while ``[analysis_defaults]`` still equals the shipped
+analyze-after-import and the Reader's Generate; dev's TASK-38605 deleted the
+Media analysis panel) follows the chat model while ``[analysis_defaults]`` still equals the shipped
 template (``Library.ingest_analysis.effective_analysis_defaults``); a value
 the user set is kept. Setup says which applies, so picking a model here never
 silently decides -- or fails to decide -- what analysis spends on.
@@ -41,7 +41,7 @@ def analysis_note(app_config: Mapping[str, Any]) -> str:
     defaults, follows = effective_analysis_defaults(probe)
     if follows:
         return (
-            "Document analysis and summaries (Library import, Media, Reader) "
+            "Document analysis and summaries (Library import, Reader) "
             "use this model too."
         )
     provider = str(defaults.get("provider") or "").strip()

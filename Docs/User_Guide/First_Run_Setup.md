@@ -285,7 +285,7 @@ you continued without one), the row reads "(key not checked)" too.
 
 The Model step also says what else the model is used for. While
 `[analysis_defaults]` still has its shipped values, it reads "Document
-analysis and summaries (Library import, Media, Reader) use this model too."
+analysis and summaries (Library import, Reader) use this model too."
 If you set your own analysis model, it names that model instead.
 
 ## What each step does

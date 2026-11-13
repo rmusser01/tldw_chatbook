@@ -428,8 +428,11 @@ def test_the_model_step_says_analysis_follows_the_chat_model() -> None:
     template = {"analysis_defaults": dict(DEFAULT_CONFIG_FROM_TOML["analysis_defaults"])}
     own = {"analysis_defaults": {"provider": "anthropic", "model": "claude-haiku-4-5"}}
 
+    # Rebase onto dev 4b90eb860b: dev's TASK-38605 deleted the Media analysis
+    # panel (Widgets/Media), so the note names only the surfaces that still
+    # read [analysis_defaults]: Library's analyze-after-import and the Reader.
     assert analysis_note(template) == (
-        "Document analysis and summaries (Library import, Media, Reader) use "
+        "Document analysis and summaries (Library import, Reader) use "
         "this model too."
     )
     assert analysis_note(own) == (
