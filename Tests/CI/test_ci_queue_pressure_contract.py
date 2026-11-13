@@ -26,6 +26,8 @@ PR_TEST_RUNNER = (
     "github.event.pull_request.head.repo.full_name == github.repository && "
     "vars.CI_TEST_RUNNER || 'ubuntu-latest' }}"
 )
+#: The push-to-dev-only jobs' condition (library-shell-dev, backup-owner-suites-dev).
+DEV_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/dev'"
 LANES = (
     "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
     "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
@@ -473,6 +475,9 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Persona_Buddy/test_controller_failure_logging.py",
     # TASK-39053: the backup owner inventory, red since it landed, now matches.
     "Tests/Architecture/test_backup_owner_inventory.py",
+    # TASK-39116 review r13b-rev2: the detached layout's persona.actor_packs
+    # validation (both cases, ~25 s serial); the rest of that file is unlaned.
+    "Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source",
     # TASK-39060: whole, now that its persona/workspace boundary is green.
     "Tests/test_persistent_diagnostic_boundary.py",
     # TASK-39061: the shared log sanitizer.
@@ -663,7 +668,7 @@ RECOVERED_SUITES_TARGETS = (
 RECOVERED_SUITES_DESELECTED = (
     "Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_is_emergency_detachment",
 )
-#: TASK-40307: the Backup_Recovery owner suites, in their own job, whole.
+#: TASK-40307: the Backup_Recovery owner suites, whole, on pushes to dev only.
 BACKUP_OWNER_SUITE_TARGETS = (
     "Tests/Backup_Recovery/test_builtin_later_snapshot.py",
     "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
@@ -1095,7 +1100,6 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "architecture-guards",
         "pr-fast-lane-arch",
         "recovered-suites",
-        "backup-owner-suites",
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
@@ -1130,7 +1134,6 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("architecture-guards", "Require successful Architecture guard contracts"),
         ("pr-fast-lane-arch", "Require successful PR fast lane (architecture-review tests)"),
         ("recovered-suites", "Require successful PR lane (recovered suites)"),
-        ("backup-owner-suites", "Require successful PR lane (Backup_Recovery owner suites)"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
@@ -1148,7 +1151,6 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "architecture-guards",
         "pr-fast-lane-arch",
         "recovered-suites",
-        "backup-owner-suites",
     ):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
@@ -1527,19 +1529,29 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     assert others == []
 
 
-def test_backup_owner_suites_lane_is_one_bounded_python_312_job() -> None:
-    """TASK-40307: the Backup_Recovery owner suites run whole on every PR.
+def test_backup_owner_suites_run_on_dev_pushes_only_and_are_never_required() -> None:
+    """TASK-40307 (owner decision 2026-11-12, "Push-to-dev job only").
 
-    Their own job; the fast-lane install plus hypothesis and pytest-xdist;
-    four workers, under a step budget inside the job's cap; and each file in
-    no other PR-lane step.
+    The Backup_Recovery owner suites run whole on each push to dev and on no
+    pull request, like library-shell-dev; a red run never reaches the
+    required aggregate. The fast-lane install plus hypothesis and
+    pytest-xdist, four workers, a step budget inside the job's cap, and no
+    file listed whole by another step.
     """
     workflow = _workflow("derived-artifacts.yml")
-    job = workflow["jobs"]["backup-owner-suites"]
+    jobs = workflow["jobs"]
+    job = jobs["backup-owner-suites-dev"]
 
-    assert job["name"] == "PR lane (Backup_Recovery owner suites)"
+    assert job["name"] == "Backup_Recovery owner suites (push to dev)"
     assert job["needs"] == ["preflight"]
-    assert job["if"] == LANES
+    assert job["if"] == DEV_PUSH == jobs["library-shell-dev"]["if"]
+    required = jobs["derived-artifacts"]
+    assert "backup-owner-suites-dev" not in required["needs"]
+    assert not any(
+        "backup-owner-suites-dev" in str(step.get("if", "")) + str(step.get("run", ""))
+        for step in required["steps"]
+    )
+    assert not job.get("continue-on-error", False)
     assert job["runs-on"] == "ubuntu-latest"
     assert "strategy" not in job
     assert len(job["steps"]) == 4
@@ -1548,7 +1560,7 @@ def test_backup_owner_suites_lane_is_one_bounded_python_312_job() -> None:
     )
     assert setup["with"]["python-version"] == "3.12"
     install = _named_step(job, "Install fast-lane dependencies")["run"]
-    fast = _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")
+    fast = _named_step(jobs["pr-fast-lane"], "Install fast-lane dependencies")
     assert shlex.split(install) == [*shlex.split(fast["run"]), "hypothesis", "pytest-xdist"]
     step = _named_step(job, "Run the Backup_Recovery owner suites")
     assert "if" not in step
@@ -1567,18 +1579,22 @@ def test_backup_owner_suites_lane_is_one_bounded_python_312_job() -> None:
         assert "::" not in target and (PROJECT_ROOT / target).is_file()
     for node in BACKUP_OWNER_SUITES_DESELECTED:
         assert node.split("::", 1)[0] in BACKUP_OWNER_SUITE_TARGETS
+    # No other step lists one of these files whole. The detached layout's
+    # actor-pack node stays in architecture-guards, so PRs still run it.
     others = [
         f"{key}: {candidate['name']}"
-        for key, other in workflow["jobs"].items()
-        if key != "backup-owner-suites"
+        for key, other in jobs.items()
+        if key != "backup-owner-suites-dev"
         for candidate in other.get("steps", ())
         if set(BACKUP_OWNER_SUITE_TARGETS)
-        & {
-            target.split("::", 1)[0]
-            for target in _pytest_targets(str(candidate.get("run", "")))
-        }
+        & set(_pytest_targets(str(candidate.get("run", ""))))
     ]
     assert others == []
+    assert (
+        "Tests/Backup_Recovery/test_detached_layout.py::"
+        "test_actor_pack_persona_images_are_validated_in_a_detached_source"
+        in ARCHITECTURE_GUARD_TARGETS
+    )
 
 
 def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
@@ -1680,12 +1696,14 @@ def test_architecture_guards_lane_is_one_serial_minimal_python_312_job() -> None
     # Bare names: a parametrized test runs every case from its function id.
     assert all("[" not in name for name in listed)
     assert listed == defined - {"test_cli_prints_the_real_source_census_and_enforces_it"}
-    # Each target runs once: no other PR-lane step lists its file.
+    # Each target runs once: no other PR-lane step lists its file. A
+    # push-to-dev job is no PR lane (TASK-40307: backup-owner-suites-dev runs
+    # test_detached_layout whole on dev pushes, where this job never runs).
     files = {target.split("::", 1)[0] for target in ARCHITECTURE_GUARD_TARGETS}
     others = [
         f"{key}: {candidate['name']}"
         for key, other in workflow["jobs"].items()
-        if key != "architecture-guards"
+        if key != "architecture-guards" and other.get("if") != DEV_PUSH
         for candidate in other.get("steps", ())
         if files & {
             target.split("::", 1)[0]
@@ -1884,10 +1902,7 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("derived-artifacts", "Require successful Architecture guard contracts"),
         ("recovered-suites", None),
         ("recovered-suites", "Run the recovered suites"),
-        ("backup-owner-suites", None),
-        ("backup-owner-suites", "Run the Backup_Recovery owner suites"),
         ("derived-artifacts", "Require successful PR lane (recovered suites)"),
-        ("derived-artifacts", "Require successful PR lane (Backup_Recovery owner suites)"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("dreams-boundary", None),
