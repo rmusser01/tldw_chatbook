@@ -1289,7 +1289,9 @@ SmartContentTree Tree > .selected-node {
     height: auto;
     margin-top: $ds-space-1;
 }
-.setup-rag-extras-row Static {
+/* Keyed on a class, not `.setup-rag-extras-row Static`: an ancestor-scoped
+ * bare-type rule is what MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES ratchets. */
+.setup-extras-package {
     width: auto;
     margin-right: $ds-space-2;
 }
