@@ -37,7 +37,18 @@ CAPTURED_COMMAND_DRAFT: ContextVar[Any] = ContextVar(
     "console_captured_command_draft", default=None
 )
 """The ``ConsoleDraftStash`` the send captured for the command running in
-this task, set by ``command_handoff`` inside the command's own worker."""
+this task, set by ``command_handoff`` inside the command's own worker.
+
+It leaks, as ``command_handoff.COMMAND_ORIGIN`` does: a task copies the
+context it was created in, so a worker a command starts and a screen a
+command pushes (its message pump is such a task) both see the command's
+capture. A take from there is still harmless. ``take_command_draft`` removes
+the captured revision only while the composer is on that capture's draft
+generation, and the command's own take, another send, a load or a chat
+switch moves the generation on, so a stale capture then removes nothing.
+``take_ran_command_draft`` and ``take_or_clear_command_draft`` also spend the
+capture in their own context once they have taken it, so nothing the command
+starts after its take can take again (PR #3458 review)."""
 
 
 @dataclass(frozen=True)
@@ -118,6 +129,31 @@ def take_ran_command_draft(owner: Any) -> None:
         return
     clear_draft = getattr(owner, "_clear_console_composer_draft", None)
     take_command_draft(composer, clear_draft or composer.clear_draft)
+    CAPTURED_COMMAND_DRAFT.set(None)
+
+
+def take_or_clear_command_draft(owner: Any) -> None:
+    """Take a command's own text where it used to clear the whole composer.
+
+    For the commands that always cleared the composer when they ran:
+    /prefill, /steer, /redirect, /stop, /fewer-permission-prompts and the
+    action commands (/model, /new, ...). Inside a sent command it takes only
+    the captured revision, as ``take_ran_command_draft`` does, so text typed
+    after Enter stays and another chat's draft is never cleared (PR #3458
+    review). A direct call has no capture and still clears the draft through
+    the owner's own clear, exactly as these commands always did.
+
+    Args:
+        owner: The Console screen (``_clear_console_composer_draft`` and,
+            inside a sent command, ``_console_composer_or_none()``).
+    """
+    if CAPTURED_COMMAND_DRAFT.get() is None:
+        owner._clear_console_composer_draft()
+        return
+    take_command_draft(
+        owner._console_composer_or_none(), owner._clear_console_composer_draft
+    )
+    CAPTURED_COMMAND_DRAFT.set(None)
 
 
 def ran_command_draft_taker(owner: Any) -> Callable[[], None]:
