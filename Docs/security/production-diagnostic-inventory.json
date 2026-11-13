@@ -71,8 +71,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "3f7b527a59376b688df4",
+      "call_count": 3,
+      "diagnostic_digest": "e2e75d15730c1cc21e58",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/full_agent_tools_upgrade.py",
       "reason": "remaining Chatbook production diagnostic owner"

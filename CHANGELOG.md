@@ -29,8 +29,11 @@ and this project adheres to Some kind of Versioning
   workspaces database is replaced, or restored without that record, is
   checked again), and never overrides a value you set, so switching Full
   agent tools off afterwards keeps it off. If it cannot read the profile's
-  data, it changes nothing and tries again at the next launch or server
-  start. The app runs the check in the background once it is open;
+  data or save the line, it changes nothing and tries again at the next
+  launch or server start. Once the line is saved, Full agent tools is on,
+  even if a later step of the check fails; the next launch or server start
+  finishes the check without touching the file again. The app runs the
+  check in the background once it is open;
   `tldw-serve` runs it as it starts, before it accepts connections, so a
   profile used only from the mobile companion is checked before its next
   phone send, and a new profile first used from the phone is recorded before
