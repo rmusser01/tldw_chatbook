@@ -24,6 +24,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
+from textual.widgets import Input
 
 from Tests.UI.test_console_model_switcher import _settle, list_lines
 from Tests.UI.test_console_switcher_local_probe import (  # noqa: F401 - fixture
@@ -324,3 +325,45 @@ async def test_a_refused_marked_sample_sent_to_its_own_api_base_url_keeps_its_ro
 
     assert "tabbyapi" in setup, setup
     assert not any("TabbyAPI" in row.text for row in quiet), quiet
+
+
+@pytest.mark.asyncio
+async def test_a_marked_mlx_lm_pointed_at_the_users_port_is_theirs(servers):
+    """Review v5r2 G2C-R3-3, in the shape the live app builds (G2C-R3-6).
+
+    ``chat_with_mlx_lm`` posts to its ``host``/``port`` (default
+    127.0.0.1:8080), never to ``api_url``. A user who points MLX-LM at their
+    own server with ``port`` and keeps the shipped model was hidden as
+    'MLX-LM (Apple silicon) (not checked)' under NOT RUNNING, because the
+    sample identity read only the URL keys. It is the user's: READY
+    PROVIDERS carries its 'no models reported' line (a hand edit adds no
+    catalog row; the template's list is ``["None"]``), and the name and an
+    id typed in Find pick it.
+    """
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            config=_with_template("local_mlx_lm", port=5679),
+            providers_models={**MODELS, "local_mlx_lm": ["None"]},
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        quiet = " ".join(row.text for row in _group(switcher, "NOT RUNNING"))
+        ready = " ".join(row.text for row in _group(switcher, "READY PROVIDERS"))
+        # The provider's whole name, then the id (the line's own advice).
+        switcher.query_one("#console-popover-find", Input).value = (
+            "MLX-LM (Apple silicon) custom-model-gamma"
+        )
+        await _settle(app, pilot)
+        row = switcher.highlighted_row()
+
+    assert "MLX-LM" not in quiet, quiet
+    assert "MLX-LM (Apple silicon) · no models reported" in ready, ready
+    assert row is not None
+    assert (row.kind, row.provider, row.model) == (
+        "typed",
+        "local_mlx_lm",
+        "custom-model-gamma",
+    )
+    assert not {5678, 5679} & set(servers.ports)  # never contacted
