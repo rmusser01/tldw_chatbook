@@ -25613,3 +25613,10 @@ An expiry-only assertion must establish the coordinator-free render precondition
 **Incident.** The Collections rail-press test waited for `not any(w.group == "library_collections_capture_entry" and not w.is_finished for w in app.workers)`, where `app` came from `_build_test_app()`. That object is handed to `LibraryHarness(app)`, but the running Textual app is the harness, so `app.workers` was empty and the wait passed before the entry loader had finished. A probe that printed the same list next to a loader step that was plainly still running showed `[]`. With `screen.app.workers` the base count of whole-screen recomposes for one press read 4, not the 3 the vacuous wait had caught.
 
 **What to do.** In mounted Library tests, read workers, focus and timers through the screen (`screen.app.workers`, `screen.focused`), never through the factory app. Before trusting a settle predicate, check it is False at least once on the path it is meant to wait for.
+
+## A new credential disclosure code can make every include-mode archive unrestorable (TASK-40135, 2026-11-13)
+
+**Incident.** TASK-40134 disclosed the Personal Context link keys in include mode as `credential_personal_context_link_keys_excluded:<id>`, with capture and preview tests. Capture treats every credential issue except `credential_manual_recovery_required:` as a consistency gap, so each such archive was written `partial`, and `plan_restore` refuses a partial archive for Replace (`partial_replacement`). Nothing failed until TASK-40135's first end-to-end Replace restore.
+
+**What to do.** When you add a `credential_*` issue that only discloses something left out by design, list it in `credential_policies.MANUAL_CREDENTIAL_ISSUES`, and prove the archive with a real Replace restore, not only with capture and preview tests.
+

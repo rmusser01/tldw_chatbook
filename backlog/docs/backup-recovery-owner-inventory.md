@@ -4058,12 +4058,29 @@ selectable `personal_context` group ("Personal Context").
 | the profile key (`profile_meta.key_account` names its keyring account) | — | `include`/`rollback` only: a `personal_context` credential record (service `tldw_chatbook.personal_context`, not remappable), written only after the key authenticates the captured copy's manifest; `credential_manual_recovery_required` like the citation key. An empty reference, a removed profile or a recovery marker carries no record. `exclude` (the default) never reads it and never rewrites the database: the reference is not a secret, and the preview says the key is not in the backup. |
 | link keys (device wrapping key, staged integrity keys, dataset staging keys) | — | never captured (decision 5); `include` mode discloses them as `credential_personal_context_link_keys_excluded:<id>`, like skill-trust keys |
 
-**Restore.** Until readable restores ship (TASK-40135), `restore_plan.plan_restore`
-never plans the repository for publication in replace or isolated mode, the group
-is not offered for restore, the live database is preserved byte-for-byte, the
-archive keeps its copy, and the plan carries `personal_context_not_restored`.
-`relocate` refuses as a second line. The owner is activation-required: every
-restore binds it. Personal Context sync (`app._load_personal_context_sync_runtime`)
+**Restore (TASK-40135).** A replace restore publishes the repository; an isolated
+restore still leaves it out (`personal_context_not_restored`, TASK-40136 changes
+that). The plan carries, per repository, `personal_context_restore_readable:<id>`
+or `personal_context_restore_locked:<reason>:<id>` (`personal_context_key_not_in_backup`,
+`personal_context_key_install_unavailable`), computed from the archive's own copy:
+the key is the archive's record, else the account the copy names on this device
+(the target path's legacy account for an empty reference), used only once it
+authenticates the copy's manifest head. Staging recomputes it and refuses a
+different result, then rewrites only `profile_meta.key_account` in the staged
+copy: a fresh, unused `personal-context:recovery_<hex>` account, or the marker
+`recovery:setup_required:<reason>` (a removed profile names nothing). No keyring
+entry is written while staging; `replacement._install_personal_context_keys`
+re-derives the key from the archive and writes it set-if-absent just before
+publication, and `recover --finish` repeats that idempotently. After publication
+(and after `--finish`) the service opens the copy with that key; on failure it
+deletes only that `recovery_` account and reports `personal_context_key_unverified`.
+No restore overwrites or deletes an entry it did not create (ADR-126 decision 8),
+so a rollback reopens the original with its own account. A `personal_context`
+record is still retained in the encrypted restore copy, so the
+`credential_isolated_retention_required` review applies. Link-key disclosure
+(`credential_personal_context_link_keys_excluded`) no longer makes an include-mode
+archive partial (`credential_policies.MANUAL_CREDENTIAL_ISSUES`). The owner is
+activation-required: every restore binds it. Personal Context sync (`app._load_personal_context_sync_runtime`)
 loads only when `execution_allowed` passes for `personal_context.repository` and
 `runtime.sync_state` (`recovery.require_sync_allowed`), and so do the link service's `resume` and `resume_after_local_activation` and the Settings link flow for a stored link, before any state or keyring read. Settings' review approves
 only `personal_context.repository`, and only for a generation whose restore plan

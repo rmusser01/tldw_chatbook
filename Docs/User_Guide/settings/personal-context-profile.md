@@ -357,9 +357,18 @@ Personal Context merge or resolution action in Settings.
   or removed. The keys that link this device to your home server always stay on
   this device. While a first link is in progress, the database is not copied, and
   the preview says to finish linking and back up again.
-- Restores: restoring Personal Context is not available yet. Every restore leaves
-  your current Personal Context profile exactly as it is, and the restore review
-  says so before anything is written. After any restore, Personal Context sync
+- Restores: a **Replace** restore brings Personal Context back, and the restore
+  review says first whether it will be readable or locked, and why. Its key goes
+  into a new keyring entry; no existing keyring entry is changed, so a later
+  rollback still opens your previous profile with its own key, even after the
+  restored profile is linked or removed. The key comes from the backup when it
+  includes credentials, or else from this device if it still holds it. If no key
+  opens the restored profile, or this device has no secure keyring, Personal
+  Context is restored but stays locked, and its data is kept. To move Personal
+  Context to another device, make an encrypted backup with credentials on the
+  original device, then restore it there with Replace. A separately restored
+  copy (an isolated restore) leaves Personal Context out. After any restore,
+  Personal Context sync
   stays off. Settings > Personal Context shows **Review restored profile** when
   the restore did not bring back saved sync state; reviewing confirms the profile
   on this device but does not turn sync back on. When the restore did bring back
