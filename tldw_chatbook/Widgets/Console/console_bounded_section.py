@@ -332,7 +332,8 @@ class ConsoleBoundedSection(Vertical):
 
     def _wait_for_reconcile_layout(self) -> None:
         """Wait for a covered screen; retain normal visible-screen scheduling."""
-        if self.screen.is_current:
+        # Textual's is_current also includes background screens with stale geometry.
+        if self.screen is self.app.screen:
             self.request_reconcile()
             return
         # Keep the original full-retry semantics, including demotion of a scoped

@@ -133,6 +133,12 @@ attachment reconciliation still owns FULL. A real unread token retains the
 existing FULL, after-paint scheduling, current-owner checks and compare-and-clear.
 This avoids queuing a second FULL behind attachment for unsaved/already-read chats.
 
+Bounded sidebar sections defer geometry retries while their owning screen is below
+the top screen, waking through that owner's layout-refresh signal (TASK-40728).
+Textual's `Screen.is_current` includes background screens, so this scheduling seam
+uses identity with `app.screen`; background visibility alone does not establish
+fresh layout. Foreground reconciliation and unmount cleanup retain their existing paths.
+
 CSS application retains upstream Textual style resolution. A bounded 1024-entry
 candidate LRU uses live subject/ancestor names and the parsed rules-map identity;
 it retains no widgets or resolved styles. Dynamic pseudo-classes, sibling order,
