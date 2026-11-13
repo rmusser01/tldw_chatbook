@@ -3803,11 +3803,14 @@ def _load_settings_uncached(
     return config_dict
 
 
-#: TASK-34100.2 AC#6 (gap-03): Google's rolling Flash alias. Every pinned id
-#: this app shipped (gemini-2.5-flash and older) was retired upstream and 404s
-#: on generateContent; the alias moves with Google instead of rotting.
+#: TASK-34100.2 AC#6 (gap-03): a Google rolling alias. Every pinned id this
+#: app shipped (gemini-2.5-flash and older) was retired upstream and 404s on
+#: generateContent; the alias moves with Google instead of rotting. Review
+#: v5r2 (G2C-R3-1): the Flash-Lite alias, because gemini-flash-latest stopped
+#: answering (503 'high demand' or a timeout on every call since 2026-10-06)
+#: while this one answered every run.
 #: ``Helper_Scripts/smoke_shipped_model_ids.py`` re-checks the catalog live.
-DEFAULT_GOOGLE_CHAT_MODEL = "gemini-flash-latest"
+DEFAULT_GOOGLE_CHAT_MODEL = "gemini-flash-lite-latest"
 
 # --- Define API Models (Combined Cloud & Local) ---
 # (Keep your existing API_MODELS_BY_PROVIDER and LOCAL_PROVIDERS dictionaries)
@@ -3870,9 +3873,7 @@ API_MODELS_BY_PROVIDER = {
     # TASK-34100.2 AC#6: every id here answered a 1-output-token
     # generateContent call on 2026-10-03; the rolling alias leads.
     "Google": [
-        "gemini-flash-latest",
         "gemini-flash-lite-latest",
-        "gemini-3.8-flash",
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
         "gemini-3.1-flash-lite",

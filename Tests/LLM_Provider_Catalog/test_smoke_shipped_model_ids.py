@@ -129,22 +129,88 @@ def test_a_retired_id_fails_the_run_and_a_refused_key_stops_its_provider(
     assert "AIza-test-smoke" not in out and "sk-test-smoke" not in out
 
 
-def test_a_transient_outage_never_fails_the_run(smoke, monkeypatch) -> None:
-    template = {"api_settings": {"google": {"model": "gemini-live"}}, "providers": {}}
+def test_a_catalog_ids_transient_outage_never_fails_the_run(
+    smoke, monkeypatch, capsys
+) -> None:
+    """F9: a 503 'high demand' on a catalog id is transient. It is named in
+    the summary (review v5r2 G2C-R3-1: never hidden) but does not fail the
+    run; only the default is held to answering (below)."""
+    template = {
+        "api_settings": {"google": {"model": "gemini-live"}},
+        "providers": {"Google": ["gemini-busy"]},
+    }
     monkeypatch.setattr(smoke, "shipped_template", lambda: template)
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-smoke")
-    _route(monkeypatch, smoke, {"gemini-live": _http_error(503, "high demand")})
+    _route(monkeypatch, smoke, {"gemini-busy": _http_error(503, "high demand")})
 
     assert smoke.main(["--providers", "google"]) == 0
+    assert "Did not answer (retry later): google/gemini-busy" in capsys.readouterr().out
 
 
-def test_an_unreachable_id_never_fails_the_run_and_is_documented(
+def test_an_unreachable_catalog_id_never_fails_the_run_and_is_documented(
     smoke, monkeypatch
 ) -> None:
-    template = {"api_settings": {"google": {"model": "gemini-live"}}, "providers": {}}
+    template = {
+        "api_settings": {"google": {"model": "gemini-live"}},
+        "providers": {"Google": ["gemini-slow"]},
+    }
     monkeypatch.setattr(smoke, "shipped_template", lambda: template)
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-smoke")
-    _route(monkeypatch, smoke, {"gemini-live": TimeoutError("timed out")})
+    _route(monkeypatch, smoke, {"gemini-slow": TimeoutError("timed out")})
 
     assert smoke.main(["--providers", "google"]) == 0
     assert "``unreachable``" in smoke.__doc__
+
+
+def _flaky(monkeypatch, smoke, model: str, answers: list[object]) -> list[str]:
+    """``model`` answers each of ``answers`` in turn (the last repeats)."""
+    asked: list[str] = []
+
+    def urlopen(request, timeout):
+        asked.append(request.full_url)
+        answer = answers[min(len(asked), len(answers)) - 1]
+        if isinstance(answer, Exception):
+            raise answer
+        return _Answer()
+
+    monkeypatch.setattr(smoke.urllib.request, "urlopen", urlopen)
+    return asked
+
+
+@pytest.mark.parametrize(
+    "silence",
+    [_http_error(503, "high demand"), TimeoutError("timed out")],
+    ids=("503", "timeout"),
+)
+def test_a_shipped_default_that_never_answers_fails_the_run(
+    smoke, monkeypatch, capsys, silence
+) -> None:
+    """Review v5r2 G2C-R3-1: the shipped Google default (gemini-flash-latest)
+    timed out or answered 503 on every smoke run for five weeks, and the
+    script exited 0 each time ('unreachable'/'unavailable' never fail a
+    run). The default is what a first chat sends to, so one that does not
+    answer in three attempts fails the run and is named."""
+    template = {"api_settings": {"google": {"model": "gemini-default"}}, "providers": {}}
+    monkeypatch.setattr(smoke, "shipped_template", lambda: template)
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-smoke")
+    asked = _flaky(monkeypatch, smoke, "gemini-default", [silence])
+
+    status = smoke.main(["--providers", "google"])
+
+    out = capsys.readouterr().out
+    assert status == 1
+    assert len(asked) == smoke.DEFAULT_ATTEMPTS == 3
+    assert "Shipped default did not answer (3 tries): google/gemini-default" in out
+    assert "AIza-test-smoke" not in out
+
+
+def test_a_shipped_default_that_answers_on_a_retry_passes(smoke, monkeypatch) -> None:
+    template = {"api_settings": {"google": {"model": "gemini-default"}}, "providers": {}}
+    monkeypatch.setattr(smoke, "shipped_template", lambda: template)
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test-smoke")
+    asked = _flaky(
+        monkeypatch, smoke, "gemini-default", [_http_error(503, "high demand"), "ok"]
+    )
+
+    assert smoke.main(["--providers", "google"]) == 0
+    assert len(asked) == 2
