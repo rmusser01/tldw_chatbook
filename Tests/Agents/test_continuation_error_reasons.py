@@ -49,7 +49,23 @@ from tldw_chatbook.Chat.provider_continuation_diagnostics import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_STORE = _REPO_ROOT / "tldw_chatbook" / "Chat" / "console_chat_store.py"
+_CHAT = _REPO_ROOT / "tldw_chatbook" / "Chat"
+_STORE = _CHAT / "console_chat_store.py"
+#: Every function on the store's continuation persist path that raises one of
+#: its fixed failure sentences. Dev moved two of them out of the store
+#: (TASK-35582's binding module, and the dispatch settlement body).
+_PERSIST_PATH = {
+    _STORE: {
+        "persist_provider_continuation_event",
+        "_continuation_write_value",
+        "ensure_provider_continuation_durable",
+    },
+    _CHAT / "console_continuation_binding.py": {
+        "continuation_event_value",
+        "validate_durable_continuation_binding",
+    },
+    _CHAT / "console_native_commit.py": {"_store_settle_dispatch_recovery"},
+}
 
 
 @pytest.fixture
@@ -335,13 +351,20 @@ def _literal_strings(node: ast.AST) -> list[str]:
 
 def _store_precondition_messages() -> set[str]:
     """Every fixed failure text on the store's continuation persist path."""
-    tree = ast.parse(_STORE.read_text(encoding="utf-8"))
-    wanted = {
-        "persist_provider_continuation_event",
-        "_continuation_event_value",
-        "ensure_provider_continuation_durable",
-        "_settle_dispatch_recovery",
+    messages: set[str] = set()
+    for path, wanted in _PERSIST_PATH.items():
+        messages.update(_failure_messages(path, wanted))
+    return messages
+
+
+def _failure_messages(path: Path, wanted: set[str]) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name in wanted
     }
+    assert found == wanted, f"{path.name} lost {sorted(wanted - found)}"
     messages: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef) or node.name not in wanted:
@@ -653,7 +676,8 @@ def test_every_continuation_error_exit_passes_a_distinct_code() -> None:
     ]
 
     assert shape_sites == 1
-    assert len(literals) == 20, sorted(literals)
+    # 20 exits, plus dev's instruction-deferral transition (105f593355).
+    assert len(literals) == 21, sorted(literals)
     assert len(shape_codes) == 6, shape_codes
     duplicates = sorted(
         code for code in set(literals) if literals.count(code) > 1
