@@ -62,10 +62,15 @@ Both run the same steps, in order:
    lock; every other byte of config.toml (comments, table order, spacing) is
    kept. Then the marker. No signal: only the marker.
 
-Any failure writes nothing and records no marker, so the profile stays on the
-light set for this launch and the next launch tries again. Logs name the
-outcome, the first signal found and an exception type; never a path, a tool
-name or other user content.
+Any failure before the line is saved writes nothing and records no marker, so
+the profile stays on the light set for this launch and the next launch tries
+again. Once the line is saved, a failure after it -- the runtime config
+refresh (``ConfigPostCommitError``) or the marker write -- is not "nothing
+written" (pre-merge review 2026-11-12): the run reports ``KEPT_ON`` with the
+failed step, the app mirrors it, and the next launch reads the saved value
+as explicit and records the marker (step 2). Logs name the outcome, the
+first signal found, a failed step and an exception type; never a path, a
+tool name or other user content.
 
 A lost marker (the workspaces database replaced, rebuilt or restored without
 it) makes the next launch run the upgrade again. A rerun writes only when the
@@ -122,6 +127,8 @@ __all__ = [
     "SIGNAL_SUBAGENT_RUN",
     "SIGNAL_TOOL_CALL",
     "SIGNAL_WORKSPACE_BINDING",
+    "STEP_MARKER",
+    "STEP_RUNTIME_REFRESH",
     "UpgradeOutcome",
     "UpgradeResult",
     "detect_agent_feature_use",
@@ -210,6 +217,9 @@ class UpgradeOutcome(str, enum.Enum):
     #: The config sets the key itself: left exactly as it is.
     EXPLICIT = "explicit"
     #: Agent features in use: ``full_agent_tools_enabled = true`` written.
+    #: Also when a step after the write failed (``unfinished_step``): the
+    #: line is saved, so Full agent tools is on, and the next launch reads
+    #: it as an explicit value and records the marker.
     KEPT_ON = "kept_on"
     #: No agent feature in use: the light set stays, config untouched.
     LIGHT = "light"
@@ -217,13 +227,25 @@ class UpgradeOutcome(str, enum.Enum):
     FAILED = "failed"
 
 
+#: ``UpgradeResult.unfinished_step`` values: the line was saved, then the
+#: runtime config refresh (``ConfigPostCommitError``) or the marker write
+#: failed (pre-merge review 2026-11-12).
+STEP_RUNTIME_REFRESH = "runtime_refresh"
+STEP_MARKER = "marker"
+
+
 @dataclass(frozen=True)
 class UpgradeResult:
-    """One run's outcome, the first signal found, and why a run failed."""
+    """One run's outcome, the first signal found, and why a run failed.
+
+    ``error_type`` names the exception of a ``FAILED`` run, or of the step
+    after the write that failed in a ``KEPT_ON`` run (``unfinished_step``).
+    """
 
     outcome: UpgradeOutcome
     signal: str | None = None
     error_type: str | None = None
+    unfinished_step: str | None = None
 
 
 class _DetectionTimeout(Exception):
@@ -505,6 +527,8 @@ def _write_full_agent_tools_on() -> bool:
         set it by the time the lock was held (nothing written).
 
     Raises:
+        ConfigPostCommitError: The line was saved, but the runtime config
+            refresh after it failed.
         Exception: The write did not land, or the file cannot take the line
             without a rewrite (``ConfigTextInsertError``); nothing written.
     """
@@ -550,11 +574,20 @@ def run_full_agent_tools_upgrade(
         )
         if signal is None:
             outcome = UpgradeOutcome.LIGHT
-        elif _write_full_agent_tools_on():
-            outcome = UpgradeOutcome.KEPT_ON
         else:
-            outcome = UpgradeOutcome.EXPLICIT
-        workspace_db.mark_agent_backfill_complete(FULL_AGENT_TOOLS_UPGRADE_MARKER)
+            from tldw_chatbook.config import ConfigPostCommitError
+
+            try:
+                written = _write_full_agent_tools_on()
+            except ConfigPostCommitError as exc:  # the line is saved
+                return _logged(_kept_on_unfinished(signal, STEP_RUNTIME_REFRESH, exc))
+            outcome = UpgradeOutcome.KEPT_ON if written else UpgradeOutcome.EXPLICIT
+        try:
+            workspace_db.mark_agent_backfill_complete(FULL_AGENT_TOOLS_UPGRADE_MARKER)
+        except Exception as exc:
+            if outcome is not UpgradeOutcome.KEPT_ON:
+                raise
+            return _logged(_kept_on_unfinished(signal, STEP_MARKER, exc))
         return _logged(UpgradeResult(outcome, signal))
     except Exception as exc:  # noqa: BLE001 -- any failure keeps the light set
         return _logged(
@@ -562,11 +595,31 @@ def run_full_agent_tools_upgrade(
         )
 
 
+def _kept_on_unfinished(signal: str, step: str, exc: Exception) -> UpgradeResult:
+    """KEPT_ON whose ``step`` after the write failed (pre-merge review
+    2026-11-12): the line is on disk, so it is reported, mirrored into the
+    app and logged as on, never as "nothing written"."""
+    return UpgradeResult(
+        UpgradeOutcome.KEPT_ON, signal, type(exc).__name__, step
+    )
+
+
 def _logged(result: UpgradeResult) -> UpgradeResult:
     if result.outcome is UpgradeOutcome.FAILED:
         logger.warning(
             "Full agent tools upgrade check failed; plain chat keeps the light "
             "tool set and the next launch retries (error_type={})",
+            result.error_type,
+        )
+    elif result.unfinished_step is not None:
+        logger.warning(
+            "Full agent tools upgrade check: outcome={} signal={}; "
+            "full_agent_tools_enabled = true is saved in config.toml, but the "
+            "step after it failed (step={}, error_type={}); the next launch "
+            "finishes the check",
+            result.outcome.value,
+            result.signal or "none",
+            result.unfinished_step,
             result.error_type,
         )
     else:

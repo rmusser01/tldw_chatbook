@@ -109,8 +109,12 @@ left as it was. The check runs once per profile: the profile's workspaces databa
 records that it ran. If that database is replaced, or restored from a copy
 without that record, the check runs again on what the profile holds then.
 It never changes a value you set yourself, so switching Full agent tools off
-afterwards keeps it off, even then. If it cannot read the profile's data, it
-changes nothing and tries again at the next launch or server start.
+afterwards keeps it off, even then. If it cannot read the profile's data, or
+cannot save the line, it changes nothing and tries again at the next launch
+or server start. Once the line is saved, Full agent tools is on, even if a
+step after it fails (refreshing the app's settings, or recording that the
+check ran); the next launch or server start finishes the check without
+changing the file again.
 
 The Chatbook app runs the check in the background once it is open.
 `tldw-serve` runs it as it starts, before it accepts connections, so a
