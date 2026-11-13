@@ -156,6 +156,48 @@ async def test_a_console_with_no_runs_db_has_nothing_to_recover(rig):
 
 
 @pytest.mark.asyncio
+async def test_workflow_projection_without_saved_workflows_cannot_fence_delivery(
+    rig, monkeypatch
+):
+    """TASK-40717: with workflow runs off and no saved workflow, the runtime's
+    workflow recovery projection still built the workflow service. When that
+    raised ("Native workflow stores are unavailable"), wake recovery stayed
+    unready for the session and no sub-agent result reached an ordinary chat.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents import run_log
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    monkeypatch.setattr(
+        run_log,
+        "_setting",
+        lambda key, default: False if key == "workflow_runs_enabled" else default,
+    )
+    _, _, db, _, session, gateway, _, _ = rig
+    chain = db.automatic_work.create_chain(session.id, root_submission_id="manual")
+    child = result_for(rig, chain)
+    runtime = ConsoleRuntime(None)
+    # No persistence: building the workflow service raises.
+    runtime.set_chat_controller(
+        SimpleNamespace(
+            _agent_bridge=SimpleNamespace(runs_db=db),
+            store=SimpleNamespace(persistence=None, sessions=list),
+        )
+    )
+    wake = replacement(rig)
+    wake._recovery_projection = runtime._project_workflow_recovery
+    try:
+        await wake.recover()
+        assert await wake.wait_for_recovery()
+        assert getattr(runtime, "_workflow_service", None) is None
+        assert await _settle(lambda: db.get_run(child)["wake_delivered_at"] is not None)
+        assert len(gateway.payloads) == 1
+    finally:
+        await close_rig(rig)
+
+
+@pytest.mark.asyncio
 async def test_recovery_failure_explains_results_in_a_later_resumed_session(
     rig, monkeypatch
 ):

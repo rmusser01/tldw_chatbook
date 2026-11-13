@@ -41,9 +41,9 @@ So for the rest of the session, finished sub-agent results are not delivered to 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With `workflow_runs_enabled` off and no workflow runs in the startup audit, startup recovery builds no workflow service. Workflow runs left by an earlier session still get their worktree protections.
+- [x] #1 With `workflow_runs_enabled` off and no workflow runs in the startup audit, startup recovery builds no workflow service. Workflow runs left by an earlier session still get their worktree protections.
 - [ ] #2 A failing workflow projection does not stop sub-agent result delivery to chats that have no workflow runs.
-- [ ] #3 A test with workflow runs off and a raising workflow projection shows a sub-agent result still delivered to an ordinary chat.
+- [x] #3 A test with workflow runs off and a raising workflow projection shows a sub-agent result still delivered to an ordinary chat.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,3 +56,17 @@ ADR required: no. Reason: a no-op skip inside the existing recovery projection; 
 4. Pin protections with the flag off (including the closed-but-active shape the audit's `workflows` tuple leaves out).
 5. Mutation check, covering files base vs head, preflight, Tests/Architecture.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+The startup audit (`RuntimeRecoveryResult`) now records `workflow_history`: whether any non-removed workflow run exists, read in the same ledger transaction that already reads `workflow_runs` (`DB/automatic_work.py`). `ConsoleRuntime._project_workflow_recovery` returns before building the workflow service when it is false, so a profile that never ran a workflow cannot have wake recovery fenced by workflow code, whatever the flag says.
+
+Why not "the audit's `workflows` tuple is empty": that tuple leaves out closed, completed and stopped runs, but `recovery_protections` still protects a closed run with live evidence (the `legacy_closed` shape). A mutation to `bool(workflows)` fails three protection cases, including the new flag-off one.
+
+Tests: `test_workflow_projection_without_saved_workflows_cannot_fence_delivery` (flag off, workflow service unbuildable, sub-agent result delivered) failed on base with "wake recovery failed (exception_type=RuntimeError)" and passes now; it fails again with the guard removed. The protection test gains two flag-off cases (plain, legacy closed); both keep the folder protected.
+
+AC #2 is met only where there is no saved workflow run. With saved workflow runs, a failing projection still fences delivery to every chat: worktree protections are runtime-wide, so letting any chat's woken turn run without them would weaken folder protection. Needs an owner decision; left open.
+
+Files: `Agents/automatic_work_budget.py`, `DB/automatic_work.py`, `Chat/console_runtime.py`, `Tests/Chat/test_automatic_wake_recovery.py`, `Tests/Chat/test_workflow_recovery.py`.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

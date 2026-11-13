@@ -244,21 +244,31 @@ async def test_actual_startup_owner_projects_workflows_once_before_ready(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "closed,opaque,replaced_root,legacy_closed",
+    "closed,opaque,replaced_root,legacy_closed,enabled_at_startup",
     [
-        (False, False, False, False),
-        (False, True, False, False),
-        (False, False, True, False),
-        (False, False, "symlink", False),
-        (True, False, False, False),
-        (True, True, False, False),
-        (True, False, True, False),
-        (False, False, False, True),
-        (False, True, False, True),
+        (False, False, False, False, True),
+        (False, True, False, False, True),
+        (False, False, True, False, True),
+        (False, False, "symlink", False, True),
+        (True, False, False, False, True),
+        (True, True, False, False, True),
+        (True, False, True, False, True),
+        (False, False, False, True, True),
+        (False, True, False, True, True),
+        # TASK-40717: a later session with workflow runs off still protects
+        # history, including closed history the audit's `workflows` omits.
+        (False, False, False, False, False),
+        (False, False, False, True, False),
     ],
 )
 async def test_startup_scopes_historical_protection_and_reconciliation_releases_it(
-    tmp_path, monkeypatch, closed, opaque, replaced_root, legacy_closed
+    tmp_path,
+    monkeypatch,
+    closed,
+    opaque,
+    replaced_root,
+    legacy_closed,
+    enabled_at_startup,
 ):
     import json
 
@@ -278,10 +288,11 @@ async def test_startup_scopes_historical_protection_and_reconciliation_releases_
         WorktreeScope,
     )
 
+    enabled = [True]
     monkeypatch.setattr(
         run_log,
         "_setting",
-        lambda key, default: True if key == "workflow_runs_enabled" else default,
+        lambda key, default: enabled[0] if key == "workflow_runs_enabled" else default,
     )
     root = tmp_path / "project"
     root.mkdir()
@@ -342,6 +353,7 @@ async def test_startup_scopes_historical_protection_and_reconciliation_releases_
             root.symlink_to(target, target_is_directory=True)
         else:
             root.mkdir()
+    enabled[0] = enabled_at_startup
     try:
         assert not runtime.worktree_activity.recovery_blockers(
             WorktreeFootprint(opaque=True)

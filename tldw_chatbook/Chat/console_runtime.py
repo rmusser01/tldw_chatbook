@@ -5335,6 +5335,10 @@ class ConsoleRuntime:
         controller = self._chat_controller
         if self._disposed or controller is None:
             return
+        if not audit.workflow_history:
+            # TASK-40717: nothing to project or protect, so workflow code
+            # cannot fence wake recovery for chats that never ran a workflow.
+            return
         service = self.ensure_workflow_service()
         await service.call(service.project_recovery, audit)
         protections = await service.call(service.recovery_protections, audit)
