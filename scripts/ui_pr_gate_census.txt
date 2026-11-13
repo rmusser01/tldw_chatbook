@@ -2926,16 +2926,6 @@ Tests/UI/test_console_subscription_readiness.py::test_console_send_refreshes_exp
 Tests/UI/test_settings_subscription_readiness.py::test_settings_mount_and_overview_refresh_without_another_edit
 Tests/UI/test_settings_subscription_readiness.py::test_settings_provider_check_refreshes_and_preserves_unsaved_fields
 Tests/UI/test_console_skill_context_worker.py::test_eager_mount_discovery_closing_during_held_trust_build_publishes_nothing
-# TASK-40720 (2026-11-13): native sync admission, rewritten off the profiler;
-# its publication case had never passed and no lane ran the file.
-Tests/UI/test_console_sync_worker_admission.py
-# TASK-34601.1: natural Sending/Waiting/Streaming, Stop draft preservation and physical image-reader retirement.
-Tests/UI/test_console_received_intent_feedback.py::test_send_feedback_survives_preparation_and_provider_wait
-Tests/UI/test_console_received_intent_feedback.py::test_stopping_received_send_clears_feedback_and_keeps_draft
-Tests/UI/test_console_recovered_image_shutdown.py
-Tests/UI/test_console_configuration_worker_feedback.py::test_actual_send_composes_new_input_while_configuration_reader_is_held
-# TASK-34601.1: background and repeated skill reads cannot claim a spoken Send fixture.
-Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignores_background_and_repeated_fetches
 
 # Shared mobile integration: real native phone trace Retry/Cancel preservation.
 Tests/UI/test_console_phone_trace_recovery.py
@@ -3234,3 +3224,16 @@ Tests/UI/test_mcp_workbench.py::test_open_add_server_form_local_source_shows_pro
 
 # PR #3345: retain the complete Python style inventory.
 Tests/UI/test_python_style_inventory.py
+
+# TASK-40720 (2026-11-13): native sync admission, rewritten off the profiler;
+# its publication case had never passed and no lane ran the file.
+Tests/UI/test_console_sync_worker_admission.py
+
+# TASK-34601.1: natural Sending/Waiting/Streaming, Stop draft preservation and physical image-reader retirement.
+Tests/UI/test_console_received_intent_feedback.py::test_send_feedback_survives_preparation_and_provider_wait
+Tests/UI/test_console_received_intent_feedback.py::test_stopping_received_send_clears_feedback_and_keeps_draft
+Tests/UI/test_console_recovered_image_shutdown.py::test_empty_image_selection_needs_no_reader_and_preserves_owned_work
+Tests/UI/test_console_recovered_image_shutdown.py::test_app_shutdown_joins_recovered_image_native_read
+Tests/UI/test_console_configuration_worker_feedback.py::test_actual_send_composes_new_input_while_configuration_reader_is_held
+# TASK-34601.1: background and repeated skill reads cannot claim a spoken Send fixture.
+Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignores_background_and_repeated_fetches
