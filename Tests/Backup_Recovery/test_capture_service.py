@@ -254,9 +254,13 @@ def test_unenrolled_default_profile_backs_up_through_the_known_profiles_selectio
     Backup & Restore asks for "all known local profiles" plus the running
     config. Builds from 2026-10-05 refused that capture on a fresh, unenrolled
     profile with ``capture_source_outside_scope``: the selected config path was
-    outside the maintenance session's roots. On 4de437a5c5 it no longer
-    reproduces live. This keeps the UI's selection shape, the default config
-    location under a scratch HOME and real stores, through a verified archive.
+    outside the maintenance session's roots. It no longer reproduces live
+    (4de437a5c5, and again on the dev 26b2e677dd rebase: g161v5-a/05). This is
+    a non-reproduction pin, not a RED test: it passes on that base, and fails
+    when a mutation drops the config from the capture roots. It keeps the UI's
+    selection shape, the default config location under a scratch HOME and real
+    stores, through a verified archive. Should the refusal return, it now
+    reaches the user as its own actionable code (``test_group_issues``).
     """
     import json
 
