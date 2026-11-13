@@ -107,6 +107,8 @@ _BUDGETS: dict[str, int] = {
     # 2875 -> 2884 (+9), the MCP row says off, and why, for an unbound store.
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 +22
     # (rebased 2026-11-12 onto dev 4b90eb860b, measured 2,874 -> 2,896).
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +9 (review v5r2
+    # G2C-R3-2: the capacity blocker opens no setup link; 2,896 -> 2,905).
     "tldw_chatbook/Chat/console_display_state.py": 2906,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
