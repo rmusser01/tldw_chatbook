@@ -1038,10 +1038,13 @@ def test_append_and_flush_handle_each_record_once(tmp_path, monkeypatch):
     assert flushed == [names[5]]
 
 
-@pytest.mark.parametrize("damage", [None, "tampered", "reordered", "truncated"])
+@pytest.mark.parametrize(
+    "damage", [None, "tampered", "retyped", "reordered", "truncated"]
+)
 def test_cached_journal_history_still_refuses_changed_records(tmp_path, damage):
     """TASK-40310: the parsed history a journal keeps is reused only for records
-    whose read contents and order are unchanged."""
+    whose read contents and order are unchanged, and a warm journal reads
+    exactly what a fresh one does."""
     from tldw_chatbook.Backup_Recovery.journal import Journal
 
     journal = _published_journal(tmp_path, 4)
@@ -1049,6 +1052,11 @@ def test_cached_journal_history_still_refuses_changed_records(tmp_path, damage):
     if damage == "tampered":
         value = json.loads(third.read_bytes())
         value["evidence"]["observed"]["size"] += 1
+        third.write_text(json.dumps(value))
+    elif damage == "retyped":
+        # Equal under Python's ==, refused by the strict parse (review r14bk-rev1).
+        value = json.loads(third.read_bytes())
+        value["evidence"]["observed"]["device"] = True
         third.write_text(json.dumps(value))
     elif damage == "reordered":
         third.rename(journal.root / "held")
@@ -1067,4 +1075,14 @@ def test_cached_journal_history_still_refuses_changed_records(tmp_path, damage):
             else:
                 with pytest.raises(ValueError):
                     call(parent)
-    assert Journal(tmp_path, "op").recover() == "recovery_required"
+    fresh = Journal(tmp_path, "op")
+    with fresh._locked(exclusive=False) as parent:
+        if damage is not None:
+            with pytest.raises(ValueError):
+                fresh._records(parent)
+            return
+        rows = fresh._records(parent)
+    with journal._locked(exclusive=False) as parent:
+        warm = journal._records(parent)
+    assert [row.model_dump() for row in rows] == [row.model_dump() for row in warm]
+    assert len(rows) == 7

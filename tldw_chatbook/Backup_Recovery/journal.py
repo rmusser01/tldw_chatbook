@@ -1600,7 +1600,7 @@ class Journal:
             self._identity = info.st_dev, info.st_ino
         # TASK-40310: the members last read and the events they parsed to, and
         # each record this journal flushed with the identity it had then.
-        self._members: list[tuple[str, dict]] = []
+        self._members: list[tuple[str, str]] = []
         self._events: list[_Event] = []
         self._flushed: dict[str, tuple] = {}
 
@@ -1642,19 +1642,20 @@ class Journal:
         # Every record is read and checked on every call. Parsing is a pure
         # function of the ordered members, so only the members from the first
         # one that differs from the last read are parsed again (TASK-40310).
-        members: list[tuple[str, dict]] = []
+        # Members compare as JSON text: dict equality would take 1 for 1.0 or
+        # true, which the strict parse refuses.
+        members: list[tuple[str, str]] = []
 
         def read():
             for name in names:
-                members.append(
-                    (name, _read(parent, name, max_bytes=RECOVERY_RECORD_BYTES))
-                )
-                yield members[-1]
+                value = _read(parent, name, max_bytes=RECOVERY_RECORD_BYTES)
+                members.append((name, json.dumps(value)))
+                yield name, value
 
         stream = read()
         same = 0
         for member in stream:
-            if same < len(self._members) and member == self._members[same]:
+            if same < len(self._members) and members[-1] == self._members[same]:
                 same += 1
                 continue
             records = _extend_records(
