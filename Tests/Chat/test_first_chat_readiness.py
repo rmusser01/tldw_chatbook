@@ -174,6 +174,39 @@ def test_a_server_window_belongs_to_the_endpoint_that_reported_it() -> None:
     ) == (4096, True)
 
 
+def test_an_empty_window_ledger_never_interprets_the_endpoint(monkeypatch) -> None:
+    """PR #3517 CI (ADR-097 boot ratchets): readiness asks the ledger on every
+    build, and ``window_for`` resolved the endpoint before looking for a
+    record -- at first paint, with nothing recorded, that loaded the provider
+    setup facts. Only a recorded window can be refused for another server, so
+    only then is the endpoint interpreted."""
+    interpreted = []
+    real = session_settings._window_endpoint
+
+    def _counting(provider, endpoint):
+        interpreted.append(endpoint)
+        return real(provider, endpoint)
+
+    monkeypatch.setattr(session_settings, "_window_endpoint", _counting)
+
+    assert (
+        CONSOLE_SEND_OUTCOMES.window_for("llama_cpp", "qwen-small", "http://127.0.0.1:9099")
+        is None
+    )
+    assert _llama_blocker() is None
+    assert interpreted == []
+
+    CONSOLE_SEND_OUTCOMES.record_window(
+        "llama_cpp", "qwen-small", 4096, True, endpoint="http://127.0.0.1:9099"
+    )
+    interpreted.clear()
+    assert (
+        CONSOLE_SEND_OUTCOMES.window_for("llama_cpp", "qwen-small", "http://127.0.0.1:9431")
+        is None
+    )
+    assert interpreted == ["http://127.0.0.1:9431"]
+
+
 def test_a_larger_server_report_unblocks_readiness() -> None:
     CONSOLE_SEND_OUTCOMES.record_window("llama_cpp", "qwen-small", 4096, True)
     assert _llama_blocker() == "capacity_exhausted"
