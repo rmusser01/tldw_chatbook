@@ -70,7 +70,9 @@ def _is_str(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
-def _parameter(func: ast.FunctionDef | ast.AsyncFunctionDef, name: str):
+def _parameter(
+    func: ast.FunctionDef | ast.AsyncFunctionDef, name: str
+) -> tuple[int | None, str] | None:
     """``(position, name)`` of ``name`` among ``func``'s parameters, else None.
 
     The position skips a leading ``self``/``cls`` (callers pass it implicitly)
@@ -204,8 +206,9 @@ def _scan(
 
     # ponytail: a name taken from a dict, a module-level tuple, a nested loop or
     # a call's return value is not followed (its row reaches ``-``), so a
-    # literal added there is not counted. Follow those sources if one hides a
-    # private name.
+    # literal added there is not counted; and helper call sites match by name,
+    # so a same-named unrelated call over-counts. Follow those sources, or
+    # resolve callees, if either bites.
     def reaches(module: str, arg: ast.expr) -> str:
         name = _receiver(arg)
         if not (name and _CONSTANT.fullmatch(name)):
