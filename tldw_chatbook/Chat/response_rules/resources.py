@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from threading import RLock
+from concurrent.futures import Executor, Future
+from contextvars import copy_context
+from threading import RLock, Thread
 from typing import Literal, TypeVar
 from uuid import uuid4
 
@@ -15,6 +17,32 @@ from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from .models import MAX_APP_HELPERS, MAX_CHAT_HELPERS, MAX_HELPER_SECONDS, RuleSource
 
 T = TypeVar("T")
+
+
+class _DaemonThreadExecutor(Executor):
+    """One daemon thread per helper call (TASK-40325).
+
+    ``asyncio.run`` joins the default executor and interpreter exit joins every
+    pool thread, so a helper whose provider never answers would keep the quit
+    process alive. A daemon thread is abandoned at exit instead; its lease
+    still settles in the worker's own ``finally`` if the call ever returns.
+    """
+
+    def submit(self, fn, /, *args, **kwargs):
+        future = Future()
+
+        def run():
+            if future.set_running_or_notify_cancel():
+                try:
+                    future.set_result(fn(*args, **kwargs))
+                except BaseException as error:  # noqa: BLE001 - delivered to the awaiter
+                    future.set_exception(error)
+
+        Thread(target=run, name="response-rule-helper", daemon=True).start()
+        return future
+
+
+_HELPER_THREADS = _DaemonThreadExecutor()
 
 
 class RuleHelperPool:
@@ -33,7 +61,7 @@ class RuleHelperPool:
         self._lock = RLock()
         self._closed = False
         self._leases: dict[str, RuleHelperLease] = {}
-        self._tasks: set[asyncio.Task] = set()
+        self._tasks: set[asyncio.Future] = set()
         self._undelivered: list[tuple[RuleSource, str, ProviderUsage | None]] = []
 
     @property
@@ -78,10 +106,25 @@ class RuleHelperPool:
                 lease.cancel_acceptance("shutdown")
                 lease.release_unused()
 
-    async def wait_for_cleanup(self) -> None:
-        """Wait for physical finalizers, even if retained asyncio tasks were cancelled."""
-        while self.unsettled_count:
-            await asyncio.sleep(0.01)
+    async def wait_for_cleanup(self, timeout: float | None = None) -> None:
+        """Wait for physical finalizers, even if retained asyncio tasks were cancelled.
+
+        Args:
+            timeout: Seconds to wait before abandoning the helpers still out
+                (logged by count and purpose); ``None`` waits for all of them.
+        """
+        try:
+            async with asyncio.timeout(timeout):
+                while self.unsettled_count:
+                    await asyncio.sleep(0.01)
+        except TimeoutError:
+            with self._lock:
+                purposes = sorted(lease.purpose for lease in self._leases.values())
+            logger.warning(
+                "response_rule_helpers_abandoned_at_exit count={} purposes={}",
+                len(purposes),
+                ",".join(purposes),
+            )
 
     def usage_purpose(self, usage_id: str) -> str | None:
         """Read original attribution while physical settlement owns the lease."""
@@ -96,10 +139,10 @@ class RuleHelperPool:
                 if lease.source.session_id == session_id:
                     lease.cancel_acceptance(reason)
 
-    def _retain(self, task: asyncio.Task) -> None:
+    def _retain(self, task: asyncio.Future) -> None:
         self._tasks.add(task)
 
-        def observed(done: asyncio.Task) -> None:
+        def observed(done: asyncio.Future) -> None:
             self._tasks.discard(done)
             if not done.cancelled():
                 done.exception()  # Observe late errors without exposing their body.
@@ -214,7 +257,7 @@ class RuleHelperLease:
     async def run_sync(
         self, call: Callable[[], T], usage: Callable[[T], ProviderUsage | None]
     ) -> T:
-        """Reuse asyncio's existing executor and witness the thread's finally."""
+        """Run on a daemon helper thread and witness the thread's finally."""
         self._begin_transport()
 
         def worker() -> T:
@@ -230,7 +273,9 @@ class RuleHelperLease:
             finally:
                 self._settle(charged, account=dispatched)
 
-        task = asyncio.create_task(asyncio.to_thread(worker))
+        task = asyncio.get_running_loop().run_in_executor(
+            _HELPER_THREADS, copy_context().run, worker
+        )
         self._pool._retain(task)
         return await asyncio.shield(task)
 

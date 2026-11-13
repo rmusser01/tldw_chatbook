@@ -403,6 +403,10 @@ CONSOLE_RUNTIME_SHUTDOWN_GRACE_SECONDS = 3.0
 #: How long app exit waits for a message Delete or Undo still saving before
 #: it ends the store (TASK-33628.5). A 3,000-message save takes ~0.2-0.3 s.
 CONSOLE_DURABLE_WRITE_TEARDOWN_SECONDS = 5.0
+#: How long app exit waits for response-rule helpers still in their provider
+#: call before abandoning them to their daemon threads (TASK-40325). Their
+#: results are already refused at shutdown; only usage accounting is lost.
+RULE_HELPER_EXIT_WAIT_SECONDS = 5.0
 
 
 @dataclass(slots=True)
@@ -6732,12 +6736,19 @@ class ConsoleRuntime:
                 except asyncio.CancelledError:
                     cancel_requested = True
         # Helpers and admitted rule SQL outlive logical cancellation and grace.
-        # Their original owners must finish before store/gateway disposal.
+        # Their original owners must finish before store/gateway disposal; a
+        # helper whose provider never answers is abandoned after its own bound.
         rule_drains = list(self._rule_cleanup_tasks)
         if self._response_rules is not None:
             rule_drains.append(asyncio.create_task(self._response_rules.wait_for_cleanup()))
         if self._rule_helper_pool is not None:
-            rule_drains.append(asyncio.create_task(self._rule_helper_pool.wait_for_cleanup()))
+            rule_drains.append(
+                asyncio.create_task(
+                    self._rule_helper_pool.wait_for_cleanup(
+                        RULE_HELPER_EXIT_WAIT_SECONDS
+                    )
+                )
+            )
         for task in rule_drains:
             while True:
                 try:
