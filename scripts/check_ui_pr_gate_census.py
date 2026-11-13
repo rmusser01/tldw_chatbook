@@ -1038,7 +1038,7 @@ MINIMUM_FILES = 2072
 MINIMUM_FILES = 2079
 # Console sync-tick storage files' ten nodes at the tail. The floor is the
 # measured entry count.
-MINIMUM_FILES = 2038
+MINIMUM_FILES = 2080
 # TASK-40324 (2026-11-12): append the readiness projection's unstarted-worker
 # settlement node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2087
