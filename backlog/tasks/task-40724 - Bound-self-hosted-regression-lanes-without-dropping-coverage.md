@@ -5,7 +5,7 @@ status: In Progress
 created_date: 2026-11-13 19:39
 assignee:
 - '@codex'
-updated_date: 2026-11-13 19:43
+updated_date: 2026-11-13 20:36
 ---
 
 ## Description
@@ -26,19 +26,19 @@ The first sustained local gate reaches the Console P0 and Dreams job time limits
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
 ADR path: backlog/decisions/359-isolated-self-hosted-ci-runners.md
-Reason: Rebalance existing required test invocations inside the accepted disposable runner boundary.
+Reason: Partition existing required tests within the accepted runner boundary.
 
-1. Preserve cancelled gate43487945840 evidence and compare executed steps with the previous hosted run.
-2. Split Console P0's two unchanged pytest invocations using a fail-fast-disabled matrix; bound it and Dreams at35minutes, preserving test deadlines and required aggregation.
-3. Update and run focused workflow contracts, independently review, then start the normal PR gate after the coordinated idle benchmark completes. Record full-run timing separately from failed attempts.
+1. Preserve attempt4 evidence: Dreams and P0 admission pass, but sandboxed reaches35min; its three response-rule restore selectors alone took25m46s and completed successfully.
+2. Move exactly those three selectors into a third required P0 matrix profile named restore. Keep the other sandboxed selectors, flags, profiles, required aggregation and35-minute limits unchanged; update all exact coverage/count contracts.
+3. Run focused workflow contracts and an exact before/after target multiset assertion; independently review. Publish with the prepared TASK40725 ingest fix, then verify the normal full PR gate and measure it separately.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Split Console P0's unchanged sandboxed and admission-sensitive pytest commands into two matrix profiles with fail-fast disabled. Each profile and Dreams/Guardian now uses35minutes, below the controller45-minute deadline. Required aggregation, runner routing, command arguments, per-test deadlines and isolation are unchanged. Updated exact workflow contracts, profile-selection/count checks, ADR-103 current capacity statements, local-runner README and the incident lesson. Existing ADR-359 applies; no new boundary.
+Console P0 now has three required matrix profiles: sandboxed, restore and admission-sensitive, with fail-fast disabled. The restore profile contains exactly the three existing response-rule restore selectors moved from sandboxed; their parameterizations and180-second deadlines are unchanged. Each profile and Dreams uses35minutes, below the controller45-minute deadline. Routing, required aggregation and all other jobs remain unchanged. Exact coverage, profile-selection, overlap/resolution and runner-count contracts updated; ADR-103 records48 eligible application jobs. Existing ADR-359 applies.
 
-Evidence: gate43487945840 cancelled after37m49s following two annotated20-minute job timeouts; not a successful full timing. Its final run/jobs/summary files are retained in /tmp/tldw-ci-third-attempt-final-*.json. New profile contract failed before the workflow edit. Focused run passed833tests under --noconftest; its sole harness-dependent storage-lease test passed separately with normal conftest. Ruff and small-file format checks passed; parsed comparison confirms every job shell command and runner expression unchanged. Independent review found no blocking issues; stale combined-order documentation corrected. AC3 remains pending the new normal PR gate after the coordinated benchmark releases the host.
+Evidence: attempt43487945840 hit20-minute P0/Dreams limits. Attempt43496035687 passed Dreams21m08s and P0 admission13m27s, but sandboxed reached35minutes after the restore selectors alone completed in25m46s. This motivated the third profile instead of another timeout increase. The selector multiset is identical before/after and every selector occurs once. The revised profile contract failed before the edit;839 focused checks passed under --noconftest, and the single harness-dependent storage-lease test passed normally. Ruff, small-file formatting and whitespace checks pass; independent review found no blockers. README and incident evidence updated. New normal PR run remains necessary to qualify the final three-profile layout; AC3 stays pending. Failed attempt timings are stored separately under /tmp/tldw-ci-{third,fourth}-attempt-final-*.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

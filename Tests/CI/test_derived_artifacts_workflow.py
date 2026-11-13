@@ -500,6 +500,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
         "pr-fast-lane-admission-2: Run admission-sensitive suites 2",
         "pr-fast-lane-admission-3: Run admission-sensitive suites 3",
         "console-p0-gate: Run the sandboxed Console P0 regression tests",
+        "console-p0-gate: Run the restore Console P0 regression tests",
         "console-p0-gate: Run the admission-sensitive Console P0 regression tests",
         "dreams-boundary: Run Dreams and Guardian boundary contracts",
         "dreams-boundary: Run Dreams admission-sensitive contracts",
