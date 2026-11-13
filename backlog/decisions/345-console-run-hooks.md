@@ -78,5 +78,7 @@ workflow history remains available. This does not qualify Windows native groups.
 
 Ordinary Windows hook commands reuse the existing suspended-process Job Object
 launcher. The original consent guard covers command creation and Job admission.
-Shutdown kills the Job and observes direct-child exit and Job emptiness under
-the existing cleanup deadline. Native POSIX workflow attachment is unchanged.
+Shutdown retains verified Job-member handles before killing the Job. It
+requires process-handle exit signals and an empty Job within the existing
+cleanup deadline. A failed membership snapshot or new admission during
+shutdown makes completion unproven. Native POSIX workflow attachment is unchanged.
