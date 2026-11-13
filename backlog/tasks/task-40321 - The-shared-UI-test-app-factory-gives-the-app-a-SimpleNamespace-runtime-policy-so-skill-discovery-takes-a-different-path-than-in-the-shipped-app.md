@@ -74,3 +74,7 @@ Results (load 33-87):
 No difference comes from the factory change. The popup and visit-dispatch reds that TASK-40323 exposed fail the same way with the stand-in.
 
 **Files.** `Tests/UI/app_factory.py`, `Tests/UI/test_app_factory_cleanup.py`, `Tests/UI/test_study_quizzes_screen.py`, `test_study_flashcards_real_service_contract.py`, `test_settings_configuration_hub.py`, `test_study_dashboard.py`, `test_product_maturity_phase3_source_study_generation.py`, `test_study_flashcards_screen.py`, `test_study_screen.py`, `test_home_screen.py`.
+
+**Review r14ti-rev1 (2026-11-13).** Two more factory-app sites still assigned `app.runtime_policy.state`: `Tests/Live/test_library_collections_capture_walkthrough.py` :376 and :721. Both now call `set_runtime_source_state`.
+- A grep of all of `Tests/` for `runtime_policy.state =` now finds only `Tests/Sync_Interop/test_notes_organization_app_wiring.py` (:315, :333). That test builds its own `SimpleNamespace` app, not a factory app.
+- Both Live sites are in `test_live_server_45_capture_source_replacement_geometry_and_lifecycle`, which skips without the isolated TASK-18919 server (`TLDW_TASK18919_SERVER_URL`). They could not be run here; the file collects (3 tests).

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from textual.widgets import Button, Input, TextArea
 
+from Tests.UI.app_factory import set_runtime_source_state
 from Tests.UI.test_library_adaptive_reader_closeout import (
     _assert_inside_items,
     _focus_closeout_work_via_f6,
@@ -373,10 +374,13 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
                 for item in page.items
             )
 
-        app.runtime_policy.state = RuntimeSourceState(
-            active_source="server",
-            server_configured=True,
-            active_server_id="task-18919-isolated-profile",
+        set_runtime_source_state(
+            app,
+            RuntimeSourceState(
+                active_source="server",
+                server_configured=True,
+                active_server_id="task-18919-isolated-profile",
+            ),
         )
         app.server_collections_capture_authority = server_authority
         app.server_collections_capture_service = server_service
@@ -718,9 +722,9 @@ async def test_live_server_45_capture_source_replacement_geometry_and_lifecycle(
                 )
             ).press()
 
-            app.runtime_policy.state = RuntimeSourceState(
-                active_source="local",
-                server_configured=True,
+            set_runtime_source_state(
+                app,
+                RuntimeSourceState(active_source="local", server_configured=True),
             )
             scope.activate(local_authority, local_service)
             await screen._load_library_collections_capture_entry()
