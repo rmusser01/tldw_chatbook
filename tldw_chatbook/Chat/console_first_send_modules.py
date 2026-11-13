@@ -16,7 +16,10 @@ The app's post-UI-ready pre-import pass (``TldwCli._preimport_heavy_screens``,
 a daemon thread behind the same on/off switch, off in the census) imports them
 after the speculative screen routes, paced like them, then parses the built-in
 MCP manifest's source once (every send's configuration capture reads that
-manifest) and requests Console idle heap maintenance (ADR-198). Nothing moves before UI-ready.
+manifest). Its completion re-freezes the heap on the UI loop when the Console
+is idle, so a first send finds these modules frozen; otherwise it requests
+Console idle heap maintenance (ADR-198, TASK-33620.15.57). Nothing moves before
+UI-ready.
 TASK-33620.15.14: run first, the warm-up pushed every screen import back by
 its own time, so a Library click one second after the Console's first frame
 found Library cold in 8 of 8 launches (0 of 8 on origin/dev) and imported
@@ -194,9 +197,12 @@ def preimport_first_send_modules(app: Any, on_complete: Callable[[], None]) -> N
     ``INPUT_QUIET_SECONDS`` and parks again, so a click's navigation finds
     no new step started under it. A module that fails to import is left to fail
     again, identically, where the send imports it (a failed import is never
-    cached). Completion requests the existing Console idle owner on the UI
-    loop. Imports can overlap foreground work, so their additions use runtime
-    full collection and growth accounting rather than exempt boot freezes.
+    cached). The completion is a step too: it is dispatched to the UI loop
+    behind the same park and input wait, and there it re-freezes the heap
+    when the Console is idle, or else requests the Console's idle maintenance
+    (TASK-33620.15.57). Imports can overlap foreground work, so their
+    additions use a runtime full collection and growth accounting rather than
+    exempt boot freezes (TASK-33620.15.50).
 
     Args:
         app: The running ``TldwCli``. Its ``_shutting_down`` stops the
@@ -259,4 +265,7 @@ def _warm_first_send(app: Any, on_complete: Callable[[], None]) -> None:
         logger.debug(
             "First-send manifest warm-up failed (error_type={})", type(exc).__name__
         )
+    _pause(app, 0.0)  # the completion re-freezes on the UI loop: a step's wait
+    if getattr(app, "_shutting_down", False):
+        return
     app.call_from_thread(on_complete)

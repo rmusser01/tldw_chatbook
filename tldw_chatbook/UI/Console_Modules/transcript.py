@@ -89,6 +89,7 @@ handlers.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -490,6 +491,35 @@ def request_transcript_sync(screen: Any) -> None:
     screen._start_console_transcript_sync_timer()
 
 
+def finish_console_heap_warm_up(screen: Any, reason: str) -> None:
+    """Re-freeze what the first-send warm-up imported, then ask for idle maintenance.
+
+    TASK-33620.15.57. Runs on the UI loop at the warm-up's completion, which
+    the pass's thread dispatches only after waiting out input. The
+    re-freeze runs there and then unless the Console is busy in the
+    foreground (:func:`_console_foreground_busy`; the pre-import pass is
+    itself still running while it waits for this callback), so a first send
+    typed straight after the warm-up finds its modules frozen.
+
+    The idle request is the fallback when the re-freeze could not run, and
+    runs a compaction owed for stranded garbage at the next idle moment.
+    Otherwise none follows: a second re-freeze 2 s later finds almost
+    nothing unfrozen, and a full collection that small leaves CPython's
+    next automatic generation-2 pass almost nothing to wait for (it runs
+    once a quarter of what the last full collection kept is pending). In
+    this fix's first live launches it did, and the first send ran two
+    generation-2 passes on the UI loop where origin/dev ran one.
+
+    Args:
+        screen: The attached Console ``ChatScreen``.
+        reason: ``first_send_preimport``.
+    """
+    refreezer = heap_refreezer()
+    action = refreezer.refreeze_now(reason, screen, _console_foreground_busy)
+    if action != "refreeze" or refreezer.owes_stranded_compaction():
+        request_console_heap_refreeze(screen, reason)
+
+
 def note_console_conversation_painted(screen: Any) -> None:
     """Request a re-freeze when the transcript shows a different conversation.
 
@@ -524,6 +554,29 @@ def note_console_conversation_painted(screen: Any) -> None:
 
 
 def _console_heap_busy(screen: Any) -> bool:
+    """Whether idle maintenance must wait: the foreground is busy, or a pass imports.
+
+    A runtime re-freeze inside one of the app's pre-import passes freezes
+    the modules imported so far as growth, and the pass's own boot freeze
+    then credits only what is left (TASK-33620.15.57: live, the Console's
+    paint request re-froze inside the screen-route pass; on origin/dev
+    29592ecc9b that growth made a compaction due in 4 of 36 launches, and the
+    first reply's maintenance compacted on the UI loop). The pass's end
+    re-freezes, or asks again.
+    """
+    return _console_foreground_busy(screen) or _preimport_pass_running(screen.app)
+
+
+def _preimport_pass_running(app: Any) -> bool:
+    """Whether the app's initial-screen or whole-registry pre-import thread runs."""
+    for name in ("_screen_preimport_thread", "_initial_screen_preimport_thread"):
+        thread = getattr(app, name, None)
+        if isinstance(thread, threading.Thread) and thread.is_alive():
+            return True
+    return False
+
+
+def _console_foreground_busy(screen: Any) -> bool:
     """Whether a re-freeze must wait: from Enter to a settled run, or off screen.
 
     A visible send is in flight from its press (``_console_send_flight``)

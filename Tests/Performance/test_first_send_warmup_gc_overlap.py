@@ -1,4 +1,11 @@
-"""Actual threaded imports must not permanently freeze foreground cycles."""
+"""Actual threaded imports must not permanently freeze foreground cycles.
+
+TASK-33620.15.57: the warm-up's completion now runs for real, on the event
+loop, through an idle Console, so its closing re-freeze (a full collection,
+then a freeze) runs after the overlapping foreground cycle has retired. The
+call had also lost its completion argument when the warm-up gained one, so
+every case failed with a TypeError before it measured anything.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +33,7 @@ from tldw_chatbook.app_navigation import NavigationMixin
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat import console_first_send_modules as warm
 from tldw_chatbook.MCP import server
+from tldw_chatbook.UI.Console_Modules import transcript
 from tldw_chatbook.Utils import ui_responsiveness as policy
 
 owner, measured, original = sys.argv[1:]
@@ -66,13 +74,39 @@ class Host(NavigationMixin):
         TldwCli._pause_between_preimports(self, gap)
 
     def call_from_thread(self, callback, *args):
+        # As Textual's: run on the event loop and wait for it.
         self.callbacks.append((callback, args))
+
+        async def run():
+            return callback(*args)
+
+        return asyncio.run_coroutine_threadsafe(run(), self.loop).result(15)
+
+class Console:
+    # An idle Console on top: only what the foreground busy check reads.
+    _closing = _closed = False
+    app_instance = _console_pending_send = _console_transcript_sync_timer = None
+
+    def __init__(self, app):
+        self.app = app
+        self._console_send_flight = SimpleNamespace(tasks=set(), deferred=None)
+
+    def _console_transcript_poll_needed(self):
+        return False
+
+    def set_timer(self, delay, callback):
+        pass
 
 class Cycle:
     pass
 
 async def main():
     app = Host()
+    app.loop = asyncio.get_running_loop()
+    app.screen = console = Console(app)
+
+    def complete():
+        transcript.finish_console_heap_warm_up(console, 'first_send_preimport')
     held = asyncio.Event()
     finish = asyncio.Event()
     references = []
@@ -87,7 +121,9 @@ async def main():
         del cycle
         return True
 
-    worker = threading.Thread(target=warm.preimport_first_send_modules, args=(app,), daemon=True)
+    worker = threading.Thread(
+        target=warm.preimport_first_send_modules, args=(app, complete), daemon=True
+    )
     worker.start()
     try:
         assert await asyncio.to_thread(entered.wait, 15), 'actual import not entered'
@@ -123,8 +159,10 @@ async def main():
         gc.unfreeze()
         gc.collect(2)
         cleaned = references[0]() is None
+        actions = [list(action) for action in policy._HEAP_REFREEZER.actions]
         print('OVERLAP_JSON:' + json.dumps({'retained': retained, 'cleaned': cleaned,
-                                          'callbacks': len(app.callbacks)}))
+                                          'callbacks': len(app.callbacks),
+                                          'actions': actions}))
     finally:
         release.set()
         retire.set()
@@ -163,6 +201,10 @@ def test_import_overlap_cycles_retire_without_boot_retention(
         )
     )
     assert outcome["cleaned"], "unfreeze/full collection did not reclaim the cycle"
+    assert ["refreeze", "first_send_preimport"] in outcome["actions"], (
+        "the warm-up's completion did not re-freeze",
+        outcome,
+    )
     assert outcome["retained"] is (arm == "control"), (
         "first-send boot freezing retained an overlapping foreground cycle",
         outcome,

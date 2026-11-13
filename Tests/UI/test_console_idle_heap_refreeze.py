@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import threading
 import weakref
 from types import SimpleNamespace
 
@@ -454,3 +455,142 @@ def test_a_new_chat_gaining_its_conversation_id_is_not_a_switch(
     assert (
         refreezer.compaction_due()
     ), "the rows frozen while the new chat was shown were left stranded"
+
+
+@pytest.mark.parametrize(
+    "pass_thread", ["_screen_preimport_thread", "_initial_screen_preimport_thread"]
+)
+def test_a_running_pre_import_pass_holds_idle_maintenance_off(pass_thread) -> None:
+    """No runtime re-freeze lands inside a pre-import pass (TASK-33620.15.57).
+
+    A pass's modules are long-lived, and its closing boot freeze moves them
+    into the baseline. Live, the Console's paint request fired while the
+    screen-route pass was still importing: its re-freeze froze the routes
+    imported so far, which counted as growth, and the pass's own freeze then
+    credited only what was left. On origin/dev 29592ecc9b (TASK-33620.15.51)
+    that growth made a compaction due in 4 of 36 launches, and the first
+    reply's maintenance compacted on the UI loop for 241-298 ms.
+
+    Negative control: once the pass's thread has ended, the same idle
+    screen reads idle.
+
+    Args:
+        pass_thread: Which of the app's pre-import threads is running.
+    """
+    release = threading.Event()
+    thread = threading.Thread(target=release.wait, daemon=True)
+    screen = BusyScreen()
+    setattr(screen.app, pass_thread, thread)
+    assert not console_transcript._console_heap_busy(screen), (
+        "an unstarted pass held it"
+    )
+    thread.start()
+    try:
+        assert console_transcript._console_heap_busy(screen), (
+            "idle maintenance could run inside the pre-import pass"
+        )
+    finally:
+        release.set()
+        thread.join(timeout=5)
+    assert not console_transcript._console_heap_busy(screen)  # negative control
+
+
+class _Ops:
+    """A fake collector: what each re-freeze and walk was asked for."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def refreeze(self, reason: str) -> int:
+        self.calls.append(f"refreeze:{reason}")
+        return 0
+
+    def compact(self, reason: str) -> int:
+        self.calls.append(f"compact:{reason}")
+        return 1_000_000
+
+
+class WarmUpConsole(BusyScreen):
+    """An attached Console whose timers the test fires by hand."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.timers: list[tuple[float, object]] = []
+
+    def set_timer(self, delay: float, callback) -> None:
+        self.timers.append((delay, callback))
+
+
+@pytest.mark.parametrize("console_state", ["idle", "covered", "stranded"])
+def test_the_warm_ups_end_freezes_its_modules_before_the_next_send(
+    monkeypatch: pytest.MonkeyPatch, console_state: str
+) -> None:
+    """The warm-up's completion re-freezes at once on an idle Console (TASK-33620.15.57).
+
+    The completion only asked for idle maintenance, which runs after 2 s
+    with no input, so a first send typed sooner found the warm-up's modules
+    unfrozen; live on origin/dev 29592ecc9b (TASK-33620.15.51), 4 of 36 such
+    requests met a due compaction, waited for 5 s of quiet and were dropped
+    by the first send. The
+    completion runs on the UI loop while the pass's own thread waits for it,
+    so it re-freezes there and then, past the pass's own hold. An idle
+    request follows only as the fallback (a covered Console: a modal or
+    another screen on top) or for a compaction owed to stranded garbage: a
+    second re-freeze 2 s later found almost nothing unfrozen and made the
+    first send's automatic generation-2 passes come sooner.
+
+    Negative control: a request pending from before (a paint) is satisfied
+    by the re-freeze, and its timer does nothing.
+
+    Args:
+        monkeypatch: Installs a refreezer over a fake collector.
+        console_state: The Console's state when the warm-up completes.
+    """
+    from tldw_chatbook.app import TldwCli
+
+    ops = _Ops()
+    refreezer = IdleHeapRefreezer(
+        quiet_seconds=0.0,
+        compaction_quiet_seconds=0.0,
+        enabled=lambda: True,
+        refreeze=ops.refreeze,
+        compact=ops.compact,
+        freeze_count=lambda: 1_000_000,
+        unfrozen_count=lambda: 30_000,
+        min_growth=10_000_000,
+    )
+    monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+    console = WarmUpConsole()
+    release = threading.Event()
+    pass_thread = threading.Thread(target=release.wait, daemon=True)
+    console.app._screen_preimport_thread = pass_thread
+    console_transcript.request_console_heap_refreeze(console, "conversation_painted")
+    painted_timer = console.timers[-1][1]
+    if console_state == "covered":
+        console.app.screen = object()
+    elif console_state == "stranded":
+        refreezer.note_stranded()
+    app = SimpleNamespace(
+        console_runtime=SimpleNamespace(view=console), _shutting_down=False
+    )
+    pass_thread.start()
+    try:
+        TldwCli._finish_first_send_warmup(app)
+    finally:
+        release.set()
+        pass_thread.join(timeout=5)
+    if console_state == "covered":
+        assert ops.calls == [], "a covered Console was re-frozen"
+        assert len(console.timers) == 2, "the fallback idle request was not made"
+        return
+    assert ops.calls == ["refreeze:first_send_preimport"], (
+        "the warm-up's modules were left to an idle timer"
+    )
+    painted_timer()  # negative control: satisfied by the re-freeze
+    assert ops.calls == ["refreeze:first_send_preimport"]
+    if console_state == "idle":
+        assert len(console.timers) == 1, "a second re-freeze was requested"
+        return
+    assert len(console.timers) == 2, "the owed compaction was not requested"
+    console.timers[-1][1]()
+    assert ops.calls[-1] == "compact:compact:first_send_preimport"
