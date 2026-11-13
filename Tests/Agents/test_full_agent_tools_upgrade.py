@@ -1253,6 +1253,143 @@ def test_a_config_write_that_does_not_land_records_no_marker(
     assert not _marker_recorded(profile)
 
 
+def _boot_worker_run(profile, app_config: dict, calls: list[str]):
+    return run_for_profile(
+        workspace_db=profile.workspace_db,
+        chachanotes_db=SimpleNamespace(db_path=profile.data / "ChaChaNotes.db"),
+        app_config=app_config,
+        call_from_thread=_mirroring_call_from_thread(calls),
+    )
+
+
+def _assert_saved_on_and_reported_on(profile, result, app_config, calls, logged):
+    """The line landed, so the run says Full agent tools is on, and so do
+    the running app's config (setup's Tools step and Summary) and the log."""
+    assert (result.outcome, result.signal) == (
+        UpgradeOutcome.KEPT_ON,
+        SIGNAL_WORKSPACE_BINDING,
+    )
+    assert _raw(profile)["tools"]["full_agent_tools_enabled"] is True
+    assert calls == ["_mirror_into_app_config"]
+    assert app_config["tools"] == {
+        "read_file_enabled": True,
+        "full_agent_tools_enabled": True,
+    }
+    assert "outcome=kept_on signal=workspace_binding" in logged
+    assert "light tool set" not in logged
+    assert str(profile.tmp_path) not in logged
+
+
+def test_a_refresh_that_fails_after_the_line_is_saved_reports_full_agent_tools_on(
+    profile, monkeypatch, captured_logs
+) -> None:
+    """Pre-merge review 2026-11-12 (item 2): the runtime refresh after the
+    write raised (``ConfigPostCommitError``) with the line already on disk.
+    That was FAILED: the log said plain chat keeps the light set, and
+    ``app_config`` was not mirrored, so setup showed Full agent tools off
+    while sends, reading the saved file, planned the full surface.
+
+    The failed write's in-memory config is rolled back (the config
+    participants restore it); the file is not, so the session's next
+    throttled stat (``_CONFIG_STAT_THROTTLE_SECONDS``) reloads it."""
+    import tldw_chatbook.config as config_module
+
+    _bind_folder(profile)
+    publish = config_module._publish_runtime_config_unlocked
+
+    def refresh_fails(*_args, **_kwargs):
+        raise ValueError("Configuration runtime reload failed")
+
+    monkeypatch.setattr(
+        config_module, "_publish_runtime_config_unlocked", refresh_fails
+    )
+    app_config = {"tools": {"read_file_enabled": True}}
+    calls: list[str] = []
+
+    result = _boot_worker_run(profile, app_config, calls)
+
+    _assert_saved_on_and_reported_on(
+        profile, result, app_config, calls, "\n".join(captured_logs)
+    )
+    assert (result.unfinished_step, result.error_type) == (
+        "runtime_refresh",
+        "ConfigPostCommitError",
+    )
+    monkeypatch.setattr(config_module, "_publish_runtime_config_unlocked", publish)
+    # This session's sends read the saved file at its next throttled stat.
+    monkeypatch.setattr(config_module, "_CONFIG_STAT_THROTTLE_SECONDS", 0.0)
+    assert light_surface_configured() is False
+    # The next launch finishes it: the saved value is explicit, so it records
+    # the marker and leaves the file alone.
+    written = profile.config_path.read_bytes()
+    assert _run(profile).outcome is UpgradeOutcome.EXPLICIT
+    assert _marker_recorded(profile)
+    assert profile.config_path.read_bytes() == written
+
+
+def test_a_marker_write_that_fails_after_the_line_is_saved_reports_full_agent_tools_on(
+    profile, monkeypatch, captured_logs
+) -> None:
+    """Pre-merge review 2026-11-12 (item 2): the marker write raised after a
+    successful insert. That was FAILED, with the line on disk."""
+    import sqlite3
+
+    _bind_folder(profile)
+    record = profile.workspace_db.mark_agent_backfill_complete
+    failing = [True]
+
+    def mark(key):
+        if failing[0]:
+            raise sqlite3.OperationalError("database is locked")
+        return record(key)
+
+    monkeypatch.setattr(profile.workspace_db, "mark_agent_backfill_complete", mark)
+    app_config = {"tools": {"read_file_enabled": True}}
+    calls: list[str] = []
+
+    result = _boot_worker_run(profile, app_config, calls)
+
+    logged = "\n".join(captured_logs)
+    _assert_saved_on_and_reported_on(profile, result, app_config, calls, logged)
+    assert (result.unfinished_step, result.error_type) == (
+        "marker",
+        "OperationalError",
+    )
+    assert "database is locked" not in logged
+    assert light_surface_configured() is False
+    assert not _marker_recorded(profile)
+    # The next launch finishes it, as above.
+    failing[0] = False
+    written = profile.config_path.read_bytes()
+    assert _run(profile).outcome is UpgradeOutcome.EXPLICIT
+    assert _marker_recorded(profile)
+    assert profile.config_path.read_bytes() == written
+
+
+def test_a_marker_write_that_fails_with_nothing_written_still_fails_closed(
+    profile, monkeypatch
+) -> None:
+    """Control for the two above: with no signal nothing is written, so a
+    failed marker write is still a failure (retried next launch)."""
+    import sqlite3
+
+    before = profile.config_path.read_bytes()
+
+    def mark(_key):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(profile.workspace_db, "mark_agent_backfill_complete", mark)
+
+    result = _run(profile)
+
+    assert (result.outcome, result.error_type) == (
+        UpgradeOutcome.FAILED,
+        "OperationalError",
+    )
+    assert profile.config_path.read_bytes() == before
+    assert light_surface_configured() is True
+
+
 def test_a_missing_workspaces_database_fails_closed(profile) -> None:
     result = run_full_agent_tools_upgrade(
         workspace_db=None, agent_runs_path=profile.runs_path
