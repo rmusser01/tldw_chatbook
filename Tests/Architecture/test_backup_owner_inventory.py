@@ -1330,3 +1330,19 @@ def test_actor_pack_activation_in_flight_keeps_a_capture_drain_waiting(
         release.set()
         worker.join(30)
         db.close_connection()
+
+
+def test_actor_pack_and_reaction_trees_have_their_own_review_labels():
+    """TASK-40305 AC1: restore, recovery-copy and rollback review name owners
+    through ``owner_label``; these two trees read as "Other saved data"."""
+    from tldw_chatbook.Backup_Recovery.recovery_service import owner_label
+
+    persona = (
+        "persona.actor_packs",
+        "persona.visual_identity",
+        "persona.assets",
+        "persona.visual_identity_builtin",
+    )
+    labels = [owner_label(owner) for owner in persona]
+    assert "Other saved data" not in labels, labels
+    assert len(set(labels)) == len(persona), labels

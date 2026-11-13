@@ -3217,9 +3217,18 @@ maintenance makes the activation wait for native admission. Before, a pause that
 began between two asset writes drained at once and left a published asset with no
 committed row behind.
 
-Limits, as of 2026-11-10: the owner is not in the later-rollback safety scope that
-`persona.assets` and the builtin owner have (neither is `persona.visual_identity`),
-and it has no recovery-review label of its own ("Other saved data").
+Review labels and later rollback (TASK-40305): restore, recovery-copy and
+portable-relocation review name owners through `recovery_service.owner_label`;
+`persona.actor_packs` reads "Actor Pack persona artwork" and `persona.visual_identity`
+"Reaction artwork" (both were "Other saved data"). Neither owner is in the
+later-rollback safety scope that `persona.assets` and the builtin owner have. A
+restore that changed their trees is rolled back as an ordinary restored destination:
+`Tests/Backup_Recovery/test_created_persona_subtree_rollback.py::test_later_rollback_of_a_restore_that_changed_actor_pack_trees`
+restores a Conversations and Workspaces backup over a profile that gained a second
+Actor Pack since, then rolls the restore back, and every file of both trees comes
+back byte for byte. A rollback plan that leaves those trees out is refused
+(`target_changed` at review, `rollback_dependency_selection_required` at start).
+Not covered: a restore that creates either tree in a profile that never had it.
 
 The Actor_Packs rows: activation producers are `qualified` under the owner they write
 into; import staging rows, and `_preflight_space` (which checks free space on the

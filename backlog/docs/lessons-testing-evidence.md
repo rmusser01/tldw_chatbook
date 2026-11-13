@@ -23,6 +23,12 @@ Three traps cost a run each while finding it:
 
 **What to do.** Pin a function's globals as `function.__globals__`, not as `vars(<the module you imported it from>)`. When a sys.monitoring control fails with an empty `AssertionError`, record the line before reading the product.
 
+## A test that accepts "restores, or refuses with a reason" passed its own negative control (TASK-40305, 2026-11-13)
+
+**Incident.** The criterion read "a later rollback restores the prior files byte-equal or refuses with a named reason", and the first version of the end-to-end test took both branches: it asserted byte equality when the review succeeded and an unchanged tree when it refused. The real rollback succeeded, byte for byte. A negative control then dropped the Actor Pack trees from the rollback plan. The review refused with `target_changed`, the test took its refusal branch, and it passed. A 5-minute run proved nothing.
+
+**What to do.** When a criterion allows either of two outcomes, run the real code first and pin the outcome it actually produces. Assert the other branch only in a test that forces it. Then run the negative control against the pinned test; a test that passes under the control proves nothing.
+
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
 **Incident.** `test_migration_immutable_failure_retains_complete_destination[True]` monkeypatched `os.close` and expected 6 closes after a failed view close, "Admission also owns two directory pins for a file-backed view." It failed `assert 4 == 6` on dev. A first-parent bisect over 905 commits (a `git archive` tree per step, one 4 s node) named 5a915a43e5, a test-only commit that moved `Tests/DB` to the bootstrap profile. Stacks recorded in the spy showed the two missing closes came from the `chatbook-storage-admission` hold thread (`admission._lock` and `native_files.pinned_directory`), which a per-test profile's admission happened to run in that window. The cleanup under test closed the same 4 descriptors under both profiles.

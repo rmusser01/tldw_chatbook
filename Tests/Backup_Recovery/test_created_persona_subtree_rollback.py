@@ -535,3 +535,162 @@ def test_native_persona_retirement_keeps_ancestor_exclusion(
         timeout=180 if sys.platform == "win32" else 60,
     )
     assert "NATIVE_PERSONA_OVERLAP_REFUSED" in output
+
+
+
+# TASK-40305 AC2: a later rollback of a restore that changed the Actor Pack and
+# reaction-artwork trees. One orchestrating child, as the selected-group service
+# tests do; the activations run in their own processes so this one never
+# imports config and holds no lease across maintenance (TASK-40132 lesson).
+_ACTOR_TREES_ROLLBACK = r"""
+import hashlib,json,os,subprocess,sys
+from pathlib import Path
+from threading import Event
+from Tests import network_guard
+network_guard.install()
+os.environ['PYTHON_KEYRING_BACKEND']='keyring.backends.null.Keyring'
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import bootstrap,credentials
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+from tldw_chatbook.Backup_Recovery.later_rollback import preview_rollback
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
+credential_store=KeyringServerCredentialStore(keyring_backend=Keyring())
+credentials._credential_store=lambda:credential_store
+source=Path(os.environ['TLDW_CONFIG_PATH'])
+data=Path(os.environ['XDG_DATA_HOME'])/'fixture';data.mkdir(mode=0o700)
+source.write_text('[general]\nusers_name="default_user"\n[paths]\ndata_dir='+json.dumps(str(data))+'\n')
+source.chmod(0o600)
+admission_authority(bootstrap.default_bootstrap_root())
+producer='''
+import json,os,sys,tomllib
+from pathlib import Path
+from Tests import network_guard
+network_guard.install()
+for name in ('sounddevice','pyaudio'):sys.modules[name]=None
+selector=Path(os.environ['TLDW_CONFIG_PATH'])
+if sys.argv[1]=='prepare':
+    from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
+    from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
+    _populate_required_dependencies(preview_capture((selector,),options={'allow_partial':True}))
+from Tests.Actor_Packs.test_actor_pack_activation import _persona_runtime_section,_shared_visual_section,_write_archive
+from tldw_chatbook.Actor_Packs.activation import ActorPackActivationService
+from tldw_chatbook.Actor_Packs.importer import ActorPackImportService
+from tldw_chatbook.Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
+from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
+from tldw_chatbook.Backup_Recovery.chat_source_participants import build_persona_service
+from tldw_chatbook.Backup_Recovery.profile_paths import database_path
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.config import get_user_data_dir
+root=get_user_data_dir()
+db=CharactersRAGDB(database_path(tomllib.loads(selector.read_text()),'chachanotes_db_path'),'actor-pack-rollback')
+try:
+    repository=ActorPackRepository(db);local=build_persona_service(db)
+    importer=ActorPackImportService(repository,staging_root=root/'actor_pack_imports',profile_root=root,local_service=local)
+    activation=ActorPackActivationService(db,local,repository,PersonaActorPackCoordinator(repository,local),importer)
+    archive=_write_archive(Path.home()/(sys.argv[2]+'.tldw-actor-pack'),actor_kind='persona',portable_uuid=sys.argv[2],sections=(_shared_visual_section(),_persona_runtime_section()))
+    review=importer.inspect_archive(archive)
+    activation.activate(review,'create_new')
+finally:
+    db.close_connection()
+print(json.dumps({'root':str(root),'digest':review.content_digest}))
+'''
+
+def produce(*args):
+    result=subprocess.run([sys.executable,'-c',producer,*args],capture_output=True,text=True,timeout=240)
+    assert result.returncode==0,result.stderr[-4000:]+result.stdout[-1000:]
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+def trees(root):
+    return {p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
+            for name in ('actor_packs','visual_identities') for p in sorted((root/name).rglob('*')) if p.is_file()}
+
+def succeeded(service,operation):
+    result=service.wait(operation)
+    assert result['state']=='succeeded',dict(result)
+    return result
+
+def reviewed(service,start,retry):
+    result=service.wait(start())
+    if result['state']=='recovery_required' and result['review_issues']:
+        issues=tuple(result['review_issues'])
+        assert all(code.startswith('credential_') for code in issues),issues
+        succeeded(service,service.start_recovery(result['result']['journal_operation_id'],action='abort'))
+        result=service.wait(retry(issues))
+    assert result['state']=='succeeded',dict(result)
+    return result
+
+first=produce('prepare','123e4567-e89b-42d3-a456-426614174000')
+root=Path(first['root'])
+# The populated workspace and agent-run stores link to the ChaChaNotes core.
+groups=('conversations','workspaces')
+destination=Path.home()/'conversations.tldw-backup.zip'
+service=RecoveryService(Path.home()/'recovery-control')
+try:
+    preview=service.preview_backup((source,),options={'data_groups':groups})
+    assert preview.complete,preview.issues
+    owners={row.owner for row in preview.items if row.path is not None and row.status=='included'
+            and any(row.path.is_relative_to(root/name) for name in ('actor_packs','visual_identities'))}
+    assert owners=={'persona.actor_packs','persona.visual_identity'},owners
+    succeeded(service,service.start_backup((source,),preview.scope_digest,destination,options={'data_groups':groups},password=None))
+    backed=trees(root)
+    assert any(first['digest'] in key for key in backed),backed
+    # After the backup, a second activation adds a pack to both trees.
+    second=produce('activate','223e4567-e89b-42d3-a456-426614174000')
+    changed=trees(root)
+    added=set(changed)-set(backed)
+    assert set(backed)<set(changed) and {key.split('/')[0] for key in added}=={'actor_packs','visual_identities'},added
+    assert all(second['digest'] in key for key in added),added
+    inspection=service.start_inspection(destination,password=None)
+    succeeded(service,inspection)
+    summary=service.summary(inspection)
+    assert {'Actor Pack persona artwork','Reaction artwork'}<=set(summary['owner_labels']),summary['owner_labels']
+    profile=summary['profile_ids'][0]
+    def plan(issues=()):
+        return service.preview_restore(inspection,mode='replace',profile_bases={},target_configs={profile:source},
+            external_destinations={},profile_names={},target=service.preview_backup((source,),options={}),
+            data_groups=groups,acknowledged_credential_issues=issues)
+    restored=reviewed(service,lambda:service.start_restore(inspection,plan(),rollback_password=b'rollback-test-password'),
+        lambda issues:service.start_restore(inspection,plan(issues),rollback_password=b'rollback-test-password'))
+    # The restore retired the second pack from both trees.
+    assert trees(root)==backed,'restore did not bring back the backed-up trees'
+    operation=restored['result']['journal_operation_id']
+    current=service.preview_backup((source,),options={})
+    # Both owners are ordinary restored tree owners: the review maps them like
+    # any other and the rollback republishes their files from the safety copy.
+    rollback=preview_rollback(operation,control_root=service.control_root,old_password=b'rollback-test-password',target=current,cancel=Event())
+    assert rollback.effective_groups==groups
+    def later(issues=()):
+        approved=rollback if not issues else service.preview_rollback(operation,old_password=b'rollback-test-password',
+            target=service.preview_backup((source,),options={}),acknowledged_credential_issues=issues)
+        return service.start_rollback(operation,approved,old_password=b'rollback-test-password',new_password=b'second-safety-password')
+    reviewed(service,later,later)
+    after=trees(root)
+    assert after==changed,{'missing':sorted(set(changed)-set(after)),'extra':sorted(set(after)-set(changed)),
+        'differ':sorted(key for key in set(after)&set(changed) if after[key]!=changed[key])}
+    final=service.preview_backup((source,),options={'data_groups':groups})
+    assert final.complete,final.issues
+finally:
+    service.close()
+assert not network_guard.blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.timeout(1500)
+def test_later_rollback_of_a_restore_that_changed_actor_pack_trees(tmp_path):
+    """TASK-40305 AC2: restore a Conversations backup over a profile whose
+    Actor Pack (``actor_packs/``) and reaction-artwork (``visual_identities/``)
+    trees changed since, then roll that restore back later. Every file of both
+    trees comes back byte for byte."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(
+        tmp_path,
+        "actor-pack-trees",
+        "rollback",
+        script=_ACTOR_TREES_ROLLBACK,
+        timeout=1400,
+    )
