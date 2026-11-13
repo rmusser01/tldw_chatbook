@@ -34051,14 +34051,17 @@ async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> No
         await wait_footer("enter create | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
-        await wait_footer("n new | / find | g folder | esc rail")
+        # TASK-40294: leaving Create and Add-from-files restores the
+        # navigator's "filter" role, and since TASK-34000.40 (N-31) a focused
+        # text field drops the printable keys it would swallow.
+        await wait_footer("esc rail | typing in field")
 
         screen.query_one("#library-notes-add-from-files").press()
         await _wait_for_selector(screen, pilot, "#notes-add-import-once")
         await wait_footer("enter act | esc notes")
         await pilot.press("escape")
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
-        await wait_footer("n new | / find | g folder | esc rail")
+        await wait_footer("esc rail | typing in field")
 
         await pilot.press("escape")
         await _wait_for_condition(

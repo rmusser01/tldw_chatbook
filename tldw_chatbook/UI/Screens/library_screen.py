@@ -9118,8 +9118,10 @@ class LibraryScreen(BaseAppScreen):
         of the editor/viewer's several call sites (see
         ``_library_note_editor_active`` etc.) can never leave the footer
         stale the way an easily-missed per-call-site registration could.
+        TASK-40294: through the Notes dispatcher, so a caller here (a pane
+        visibility flip) cannot overwrite a Notes tier with the generic set.
         """
-        shortcuts = self._library_footer_shortcuts_for_current_state()
+        shortcuts = self._library_notes_footer_shortcuts()
         self.register_footer_shortcuts(source="library", shortcuts=shortcuts)
         for bar in self.query(LibraryEmergencyReturn):
             self._sync_library_emergency_return(bar)
