@@ -1487,8 +1487,9 @@ _LIBRARY_INIT_LAMBDAS = 416
 #: so read the number as "test sites coupled to LibraryScreen", not as fake
 #: selves. A static helper lowers it by moving to its owner.
 #: Not counted (known limit): 18 references handed to something that calls
-#: them later with the fake, 16 `_press(fake, LibraryScreen.x)` and 2
-#: `asyncio.to_thread(LibraryScreen.x, ...)`; and a class held in a variable.
+#: them later, 16 `_press(fake, LibraryScreen.x)` (with the fake) and 2
+#: `asyncio.to_thread(LibraryScreen.x, ...)` (a static helper called with a
+#: service); and a class held in a variable.
 _LIBRARY_UNBOUND_TEST_CALLS = 724
 
 
@@ -1524,7 +1525,7 @@ def _unbound_class_calls(source: str, class_name: str) -> int:
     subprocess child program).
 
     Not counted: a reference handed to a helper or executor that calls it
-    later with the fake (``_press(fake, C.m)``, ``asyncio.to_thread(C.m, ...)``),
+    later (``_press(fake, C.m)``, ``asyncio.to_thread(C.m, ...)``),
     and a class held in a variable.
     """
     tree = ast.parse(source)
