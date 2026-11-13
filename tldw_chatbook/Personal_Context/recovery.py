@@ -16,8 +16,11 @@ reachable layouts, in ``sqlite_schema`` order (type, name): the fresh one and
 one per historical fresh schema (v1 ca75629011, v2 90a82c2dcd, v4 7e10c08f66,
 v5 70e6a25935, v6 ab416d4612, v7 9f49e47dc4, v8 fd8e1ec4b9) migrated by the
 current repository. v3 never had a constructor; it is only a migration step.
-v1/v2 and v5/v6 migrate to the same catalog. Captured from the real
-constructors; ``Tests/Personal_Context/test_repository.py`` rebuilds each.
+v1/v2 and v5/v6 migrate to the same catalog. The v7 build's own 6 -> 7 step
+created the rebaseline table without ``target_key_record_id`` (added later by
+the v8 step), so a v1-v6 database that build migrated has three more layouts.
+Captured from the real constructors; ``Tests/Personal_Context/test_repository.py``
+rebuilds each.
 """
 
 from contextlib import closing
@@ -91,6 +94,21 @@ REPOSITORY_SCHEMAS = (
     (
         REPOSITORY_SCHEMA_VERSION,
         (_QUARANTINE_INDEX, _ENCRYPTED_OBJECTS, _OUTBOX, _FREEZE, _REBASELINE, _LOCAL_RECORD_LINKS, _LOCAL_RUNTIME_POLICY, _LOCAL_SCOPE_BINDINGS, _LOCAL_UNDO, _LOCAL_UNLINKED_SCOPES, _OBJECT_HEADS, _SCHEMA_MARKER, _PROFILE_META_MIGRATED, _QUARANTINE),
+    ),
+    # v1 or v2, migrated by the v7 build, then by the current repository
+    (
+        REPOSITORY_SCHEMA_VERSION,
+        (_OUTBOX_SEQUENCE_INDEX_FROM_V1_V2, _QUARANTINE_INDEX, _ENCRYPTED_OBJECTS, _OUTBOX_FROM_V1_V2, _FREEZE_FROM_V4, _REBASELINE_FROM_V7, _LOCAL_RECORD_LINKS, _LOCAL_RUNTIME_POLICY, _LOCAL_SCOPE_BINDINGS, _LOCAL_UNDO, _LOCAL_UNLINKED_SCOPES, _OBJECT_HEADS, _SCHEMA_MARKER, _PROFILE_META_MIGRATED, _QUARANTINE),
+    ),
+    # v4, migrated by the v7 build, then by the current repository
+    (
+        REPOSITORY_SCHEMA_VERSION,
+        (_QUARANTINE_INDEX, _ENCRYPTED_OBJECTS, _OUTBOX, _FREEZE_FROM_V4, _REBASELINE_FROM_V7, _LOCAL_RECORD_LINKS, _LOCAL_RUNTIME_POLICY, _LOCAL_SCOPE_BINDINGS, _LOCAL_UNDO, _LOCAL_UNLINKED_SCOPES, _OBJECT_HEADS, _SCHEMA_MARKER, _PROFILE_META_MIGRATED, _QUARANTINE),
+    ),
+    # v5 or v6, migrated by the v7 build, then by the current repository
+    (
+        REPOSITORY_SCHEMA_VERSION,
+        (_QUARANTINE_INDEX, _ENCRYPTED_OBJECTS, _OUTBOX, _FREEZE_FROM_V5_V6, _REBASELINE_FROM_V7, _LOCAL_RECORD_LINKS, _LOCAL_RUNTIME_POLICY, _LOCAL_SCOPE_BINDINGS, _LOCAL_UNDO, _LOCAL_UNLINKED_SCOPES, _OBJECT_HEADS, _SCHEMA_MARKER, _PROFILE_META_MIGRATED, _QUARANTINE),
     ),
 )
 
@@ -177,6 +195,7 @@ class _Repository(_SQLiteDeclaration):
 SYNC_OWNERS = (OWNER, "runtime.sync_state")
 REVIEW_AVAILABLE = "personal_context_restore_review_available"
 RESTORED_LINK_STATE = "personal_context_restored_link_state"
+REVIEW_UNAVAILABLE = "personal_context_restore_review_unavailable"
 
 
 SYNC_REVIEW_REQUIRED = "personal_context_sync_restore_review_required"
@@ -202,12 +221,17 @@ def require_sync_allowed(db_path: Path | None = None) -> None:
 
 def _published_owners(witness) -> frozenset[str] | None:
     """Owners whose payload the generation's restore plan published, if known."""
+    from tldw_chatbook.Backup_Recovery import bootstrap
     from tldw_chatbook.Backup_Recovery.journal import Journal
     from tldw_chatbook.Backup_Recovery.plan_records import load_plan
 
     try:
-        journal = Journal(Path(witness["store_root"]).parent, witness["operation_id"])
-        restored = load_plan(journal).restore
+        control = Path(witness["store_root"]).parent
+        operation = witness["operation_id"]
+        # A read never creates the operation directory (as activation.py does).
+        if not (control / ("operation-" + bootstrap._key(operation))).is_dir():
+            return None
+        restored = load_plan(Journal(control, operation)).restore
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
         return None
     return frozenset(key.split(":")[2] for key, _ in restored if key.count(":") >= 2)
@@ -237,14 +261,15 @@ def _restore_reviews(db_path: Path, *, approve: bool) -> tuple[str, ...]:
 
 
 def restore_review(db_path: Path) -> str | None:
-    """The restore review Settings shows: None, available, or the named refusal.
+    """The restore review Settings shows: None, available, or a named reason.
 
-    A failed read shows nothing; the sync gate above fails closed on its own.
+    A failed read names the reason only while the (fail-closed) gate keeps sync
+    off; an ordinary profile then shows nothing.
     """
     try:
         states = _restore_reviews(Path(db_path), approve=False)
     except (OSError, ValueError, RuntimeError, KeyError, TypeError):
-        return None
+        return None if sync_allowed(db_path) else REVIEW_UNAVAILABLE
     if RESTORED_LINK_STATE in states:
         return RESTORED_LINK_STATE
     return REVIEW_AVAILABLE if states else None

@@ -1345,12 +1345,17 @@ def test_every_reachable_v9_catalog_is_listed_and_built_by_the_repository(
     fresh = tmp_path / "fresh.db"
     PersonalContextRepository(fresh, key_protector=InMemoryProfileKeyProtector())
     built = {"fresh": _catalog(fresh)}
-    for version, digest in _HISTORICAL_FRESH_DIGESTS.items():
+    builds = [(version, False) for version in _HISTORICAL_FRESH_DIGESTS]
+    # The v7 build's 6 -> 7 step made the rebaseline table from its own v7
+    # constant; the v8 step added target_key_record_id. Migrating with that
+    # constant in place reproduces what a v1-v6 database looks like after it.
+    builds += [(version, True) for version in (1, 2, 4, 5, 6)]
+    for version, via_v7_build in builds:
         statements = _historical_fresh_schema(version)
         assert hashlib.sha256(
             "\x00".join(sorted(statements)).encode()
-        ).hexdigest() == digest, version
-        db_path = tmp_path / f"v{version}.db"
+        ).hexdigest() == _HISTORICAL_FRESH_DIGESTS[version], version
+        db_path = tmp_path / f"v{version}-{via_v7_build}.db"
         with closing(sqlite3.connect(db_path)) as connection, connection:
             for statement in statements:
                 connection.execute(statement)
@@ -1360,11 +1365,89 @@ def test_every_reachable_v9_catalog_is_listed_and_built_by_the_repository(
                 (version,),
             )
         os.chmod(db_path, 0o600)
-        PersonalContextRepository(db_path, key_protector=InMemoryProfileKeyProtector())
+        with pytest.MonkeyPatch.context() as patch:
+            if via_v7_build:
+                patch.setattr(
+                    repository_module, "_FIRST_LINK_REBASELINE_SCHEMA", _V7_REBASELINE
+                )
+            PersonalContextRepository(
+                db_path, key_protector=InMemoryProfileKeyProtector()
+            )
         assert _schema_version(db_path) == 9
-        built[f"v{version}"] = _catalog(db_path)
+        built[f"v{version}-{via_v7_build}"] = _catalog(db_path)
 
     listed = [schema for version, schema in REPOSITORY_SCHEMAS]
     assert {version for version, _ in REPOSITORY_SCHEMAS} == {9}
     assert len(listed) == len(set(listed))
     assert set(built.values()) == set(listed)
+
+
+@pytest.mark.parametrize("operation", ["remove", "link"])
+def test_a_reference_rewritten_after_open_is_never_acted_on(tmp_path, operation) -> None:
+    """Review r14pca-rev1: Remove and the first link check the account the row
+    names at that moment against its own keyring material, not only the
+    handle's in-memory key."""
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    other_path = tmp_path / "b" / "personal-context.db"
+    other_path.parent.mkdir(mode=0o700)
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    service.create_profile()
+    PersonalContextService(_keyring_repo(other_path, backend)).create_profile()
+    _set_stored_account(db_path, _stored_account(other_path))
+    before = dict(backend.values)
+
+    with pytest.raises(ProfileLockedError):
+        if operation == "remove":
+            service.remove_local_profile(confirm_only_copy=True)
+        else:
+            _link(service._repository)
+
+    assert backend.values == before
+    assert _keyring_repo(other_path, backend).get_manifest() is not None
+
+
+def test_upgrade_keeps_a_pending_v8_secure_removal(tmp_path) -> None:
+    """Review r14pca-rev1: a v8 Remove whose key deletion failed still owes the
+    path-account key a deletion after the v9 upgrade."""
+    backend = SecureKeyring()
+    db_path = tmp_path / "personal-context.db"
+    _keyring_repo(db_path, backend).create_provisional_profile()
+    _as_v8(db_path, backend)
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute("UPDATE profile_meta SET destroyed = 1")
+    path_entry = (_KEYRING_SERVICE, _path_account(db_path))
+    assert path_entry in backend.values
+
+    repo = _keyring_repo(db_path, backend)
+    assert _stored_account(db_path) == _path_account(db_path)
+    PersonalContextService(repo).finish_secure_removal()
+
+    assert path_entry not in backend.values
+    assert _stored_account(db_path) == ""
+
+
+def test_a_failure_after_commit_keeps_the_new_profile_key(tmp_path, monkeypatch) -> None:
+    """Review r14pca-rev1: cleanup deletes the fresh account only while the
+    database does not name it."""
+    from contextlib import contextmanager
+
+    backend = SecureKeyring()
+    db_path = tmp_path / "personal-context.db"
+    repo = _keyring_repo(db_path, backend)
+    committing = repo._mutation
+
+    @contextmanager
+    def fails_after_commit(**kwargs):
+        with committing(**kwargs) as connection:
+            yield connection
+        raise RuntimeError("injected failure after commit")
+
+    monkeypatch.setattr(repo, "_mutation", fails_after_commit)
+    with pytest.raises(RuntimeError, match="after commit"):
+        repo.create_provisional_profile()
+
+    account = _stored_account(db_path)
+    assert (_KEYRING_SERVICE, account) in backend.values
+    assert _keyring_repo(db_path, backend).get_manifest() is not None

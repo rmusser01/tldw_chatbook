@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 17:13
-updated_date: '2026-11-13 03:50'
+updated_date: '2026-11-13 16:01'
 labels:
 - follow-up
 - backup
@@ -85,4 +85,10 @@ Schema v9 gives the repository a stored key reference, and every key operation g
 **Evidence.** On base source (repository/key_protector/native_compatibility restored from HEAD) 15 of the 16 new nodes fail. Most fail on assertions (`assert None == <path account>`, `DID NOT RAISE ProfileLockedError`, keyring dict changed, `assert 8 == 9`); the four stored-account cases, the occupied-account case and the link/Remove case error instead, because the column or `create()` does not exist on base, so those invariants carry the negative controls below. Negative controls on the new code, each red on an assertion and then reverted: no open-time authentication (2 nodes `DID NOT RAISE`), any stored string accepted as an account (2), `create` adopting an occupied account (1), Remove deleting the path account (3), Remove without in-transaction authentication (1), link replacing the path account (2). Contract changes in existing tests: two first-open tests now pin "no key at open" (`test_simultaneous_first_openers_create_no_key_and_one_profile_wins`, `test_schema_initialization_failure_creates_no_key`); `test_bootstrap_does_not_claim_an_empty_profile_is_present` (an empty database is absent, not locked; creation fails instead); the secure-removal retry count is 2, not 3; the barrier-route test reads the stored account.
 
 **Files.** `tldw_chatbook/Personal_Context/{repository.py,repository_keys.py,key_protector.py,native_compatibility.py,recovery.py}` (the key-custody helpers live in the new `repository_keys.py` mixin so `repository.py` stays at its 4,997-line ratchet; `_authenticate_keys` stays in `repository.py` with the other protected native routes); `Tests/Personal_Context/{test_repository.py,test_runtime_policy.py,test_service.py,test_native_profile_barrier_routes.py}`.
+
+**Review r14pca-rev1 fixes (2026-11-13).**
+- Remove and the first link now act on the account the row names at that moment only if that account's own material equals the key that authenticated the transaction (`RepositoryKeyCustody._authenticated_account`). A reference rewritten after open (to another database's account) refuses with `ProfileLockedError` and leaves the keyring unchanged. Test: `test_a_reference_rewritten_after_open_is_never_acted_on[remove|link]`; on the previous commit, both cases fail with `DID NOT RAISE`.
+- The v8 -> v9 step stamps removed rows with the path-derived account, so a v8 secure removal still pending at upgrade is still owed. Test: `test_upgrade_keeps_a_pending_v8_secure_removal` (on the previous commit, `'' == path account` fails).
+- `_new_profile_key` deletes its fresh account only while the database does not name it, so a failure after commit keeps the key. Test: `test_a_failure_after_commit_keeps_the_new_profile_key` (on the previous commit, the key is gone).
+- AC#8: the v7 build's own 6 -> 7 step created the rebaseline table without `target_key_record_id`, so a v1-v6 database it migrated has three more layouts (nine in all). The catalog test now also emulates that step, patching the rebaseline constant to the v7 text while migrating each historical fresh schema; on the previous commit, the listed-versus-built comparison fails.
 

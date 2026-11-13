@@ -719,7 +719,7 @@ class PersonalContextRepository(RepositoryKeyCustody):
                 )
             version = 8
         if version == 8:
-            self._add_key_account_column(connection)
+            self._add_key_account_column(connection)  # stamps pending removals
             version = SCHEMA_VERSION
         connection.execute(
             "UPDATE personal_context_schema SET version = ? WHERE singleton = 1",
@@ -2076,7 +2076,7 @@ class PersonalContextRepository(RepositoryKeyCustody):
                 self._require_legacy_on_connection(
                     connection, consumer_id="repository.apply_reviewed_link"
                 )
-                link_account = self._account_on(connection)  # just authenticated
+                link_account = self._authenticated_account(connection, old_keys)
                 freeze = connection.execute(
                     "SELECT plan_id, snapshot_token FROM first_link_freeze "
                     "WHERE singleton = 1"
@@ -4979,7 +4979,7 @@ class PersonalContextRepository(RepositoryKeyCustody):
                 self._manifest_on_connection(
                     connection, consumer_id="repository.destroy_profile_content"
                 )
-                account = self._named_key_account(account)
+                account = self._authenticated_account(connection, self._keys)
                 for table in _PROFILE_CONTENT_TABLES:
                     connection.execute(f"DELETE FROM {table}")
                 connection.execute(

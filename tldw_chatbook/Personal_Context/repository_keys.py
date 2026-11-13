@@ -46,6 +46,30 @@ class RepositoryKeyCustody:
         ).fetchone()
         return self._named_key_account(None if row is None else row["key_account"])
 
+    def _authenticated_account(
+        self, connection: sqlite3.Connection, keys: ProfileKeyMaterial | None
+    ) -> str:
+        """The account the row names now, only if it holds exactly these keys.
+
+        The caller's ``keys`` already authenticated this transaction's manifest;
+        a reference rewritten after open (another database's account) refuses
+        before link or Remove touches that entry.
+        """
+
+        account = self._account_on(connection)
+        if keys is None or self._protector.load(account) != keys:
+            raise ProfileLockedError("Profile key account changed.")
+        return account
+
+    def _names_account(self, account: str) -> bool:
+        with closing(self._connect()) as connection:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM profile_meta WHERE key_account = ?", (account,)
+                ).fetchone()
+                is not None
+            )
+
     def _open_keys(self, connection, recovery_integrity_key):
         """Load the named key at open; adopt it only once it authenticates.
 
@@ -121,14 +145,24 @@ class RepositoryKeyCustody:
         try:
             yield account, keys
         except BaseException:
-            self._keys = previous
-            with suppress(Exception):
-                self._protector.delete(account)
+            # A failure after commit must not delete the key the row now names;
+            # if that cannot be read, keep the key (an orphan entry is harmless).
+            try:
+                named = self._names_account(account)
+            except Exception:  # noqa: BLE001
+                named = True
+            self._keys = keys if named else previous
+            if not named:
+                with suppress(Exception):
+                    self._protector.delete(account)
             raise
 
-    @staticmethod
-    def _add_key_account_column(connection: sqlite3.Connection) -> None:
-        """v8 -> v9: only the empty reference; stamping waits for an authenticated key."""
+    def _add_key_account_column(self, connection: sqlite3.Connection) -> None:
+        """v8 -> v9: the empty reference; stamping waits for an authenticated key.
+
+        A removed v8 row may still owe its path-account key a deletion (a failed
+        secure removal), so it records that account for the retry.
+        """
 
         columns = {
             row["name"] for row in connection.execute("PRAGMA table_info(profile_meta)")
@@ -136,6 +170,10 @@ class RepositoryKeyCustody:
         if "key_account" not in columns:
             connection.execute(
                 "ALTER TABLE profile_meta ADD COLUMN key_account TEXT NOT NULL DEFAULT ''"
+            )
+            connection.execute(
+                "UPDATE profile_meta SET key_account = ? WHERE destroyed = 1",
+                (self._profile_ref,),
             )
 
     def _delete_removed_account(self, account: object) -> None:
