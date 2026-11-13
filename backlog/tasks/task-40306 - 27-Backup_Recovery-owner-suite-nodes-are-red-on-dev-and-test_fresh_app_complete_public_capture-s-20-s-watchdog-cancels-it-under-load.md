@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 06:26
+updated_date: 2026-11-13 08:40
 labels:
 - follow-up
 - tests
@@ -66,9 +66,11 @@ Base 26b2e677dd, five files at `-n 4` (load 70-100): 10 failed, 19 errors (29; t
 - **`test_created_persona_subtree_rollback.py` (19 errors, 1 failure): slow children, not hung.** The module fixture's replacement child runs two whole-profile replaces (the credential review aborts the first), and every xdist worker builds the fixture, so at load 40-100 it outlasted its fixed 150 s. At base the restore journal's quadratic cost (TASK-40310) made it slower still. With TASK-40310 it still took >150 s at load ~40-50, and passed with the budget lifted (fixture setup 283 s). Fix: the replacement and later-rollback children now fail only once their process tree uses no CPU for 60 s (`_wait_while_busy` in `test_config_sibling_capture.py`, opt-in `_child(..., idle=)`), under a cap. `test_child_wait_fails_only_an_idle_child` pins it; with the idle check disabled by a temporary edit its idle case fails `DID NOT RAISE`.
 - **`test_builtin_later_snapshot.py`: load.** `test_fresh_process_rederives_finite_sources_and_executes_later_rollback`'s child repeats a later rollback that took 87 s in-process at load 50 against a fixed 60 s; it now uses the same idle wait. The two `test_shared_builtin_later_preview_and_execution_preserve_both_profile_trees` cases ran into pytest's 300 s default (setup 107-135 s plus call 122-172 s at load 36-57); unchanged, they passed in later runs.
 
-AC #1: every node of the five files passed at `-n 4` in TASK-40307's lane runs (all lane files together): run 1, 509 passed at load 26-57; run 2, 509 passed at load 29-51.
-
-Still seen, not fixed (proposed follow-up): in one `-n 4` run at load 36-57, one of the five persona fixture builds failed in its reopen child with `sqlite3.OperationalError: database is locked` on `add_note` right after the app mounted (the test's `observe_notes_write_failure` record was lost with the basetemp). It did not recur in the lane runs below.
+Persona file flakiness (review r14bk-rev1: 18 passed and 2 setup errors in one `-n 4` run at load 19-27; that run kept no error text):
+- **What was seen.** One reopen child in one `-n 4` run at load 36-57 failed with `sqlite3.OperationalError: database is locked` on `add_note`, about 9 s after the app mounted (the INSERT, under ChaChaNotes' 15 s busy timeout, so another connection held the write lock that long). Its `observe_notes_write_failure` thread record was lost with the basetemp.
+- **Reproduction attempts.** Seven more `-n 4` runs with `-rE`, three of them at once to add load (load 7-24): 140 of 140 nodes passed, 35 of 35 fixture reopen children completed, no lock. Rate seen so far: 1 lock in about 45 fixture builds, all of them at load 36 or more.
+- **Root cause: not found.** No fixture defect was found; the only failure text points at a long-held ChaChaNotes write lock during app startup in the reopen child, which would be a product question, and it did not reproduce at today's load. The reviewer's two setup errors have no captured cause. To capture the next one, the fixture now attaches the reopen child's thread record (`persona-note-write.log`) to the failure (`_prepare_native`, fixture-only, so TASK-40305's new tests in this file stack cleanly).
+- **AC #1 scope.** Every node of the five files passed at `-n 4` in TASK-40307's lane runs 1 and 2 (load 26-57) and in eight persona-file runs (the seven above and one after the diagnostic change, load 7-24). The persona file still has an intermittent failure under heavier load whose cause is not captured; that is a proposed follow-up, not claimed fixed.
 
 AC #2: `test_inventory_unused_owners.py` passed 3 of 3 at `-n 4`: in the five-file run (load 46-55) and twice alone at load ~50 (fresh node 72 s and 62 s).
 

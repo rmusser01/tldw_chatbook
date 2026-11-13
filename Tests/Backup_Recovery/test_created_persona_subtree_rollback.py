@@ -324,12 +324,20 @@ def _prepare_native(tmp_path):
         timeout=600,
         idle=_HANG_SECONDS,
     )
-    _child(
-        tmp_path / "target",
-        _REOPEN,
-        "persona-reopen",
-        timeout=300 if sys.platform == "win32" else 90,
-    )
+    try:
+        _child(
+            tmp_path / "target",
+            _REOPEN,
+            "persona-reopen",
+            timeout=300 if sys.platform == "win32" else 90,
+        )
+    except AssertionError as failure:
+        # TASK-40306: one reopen failed `database is locked` on add_note under
+        # load and its thread record was lost with the basetemp; keep it.
+        record = tmp_path / "target" / "persona-note-write.log"
+        if record.is_file():
+            failure.add_note(record.read_text(encoding="utf-8")[-6000:])
+        raise
     return tmp_path / "target"
 
 
