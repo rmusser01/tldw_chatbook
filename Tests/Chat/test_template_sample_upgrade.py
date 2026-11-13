@@ -302,3 +302,87 @@ def test_the_sample_endpoint_keys_are_the_ones_a_send_reads() -> None:
         TEMPLATE_SAMPLE_ENDPOINT_KEYS
         == console_provider_endpoints._ENDPOINT_SETTING_KEYS
     )
+
+
+# --- Review v5r2 G2C-R3-3: MLX-LM is pointed at a server by host and port ---
+
+#: Edits to the shipped MLX-LM table, and whether they make it the user's.
+#: ``chat_with_mlx_lm`` builds its URL from ``host``/``port`` (defaults
+#: 127.0.0.1 and 8080) and the Console forwards it no base URL, so ``api_url``
+#: never routes a send: editing it alone leaves the endpoint a send uses (and
+#: so the sample) unchanged.
+MLX_EDITS = (
+    ({"port": 5679}, True),
+    ({"host": "10.0.0.5"}, True),
+    ({"api_url": "http://127.0.0.1:5679/v1/chat/completions"}, False),
+    ({"port": 8080}, False),
+)
+MLX_EDIT_IDS = ("port", "host", "api_url-only", "port-at-the-handler-default")
+
+
+@pytest.mark.parametrize(("edit", "users"), MLX_EDITS, ids=MLX_EDIT_IDS)
+def test_mlx_lm_is_the_users_once_the_host_or_port_its_send_uses_differs(
+    edit: dict, users: bool
+) -> None:
+    """Values decide by the endpoint a send would use. For MLX-LM that is
+    the host/port pair: a user who points it at their own server with
+    ``port`` and keeps the shipped model was hidden under NOT RUNNING as
+    'MLX-LM (Apple silicon) (not checked)', while an ``api_url`` edit, which
+    the send ignores, read as theirs. Marked (the switcher) and pre-marker
+    (the loader) tables read the same rule."""
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.console_session_settings import (
+        provider_holds_template_sample_values,
+    )
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    marked = {**deepcopy(DEFAULT_CONFIG_FROM_TOML["api_settings"]["local_mlx_lm"]), **edit}
+    assert marked["template_sample"] is True  # a hand edit, never a Save
+    pre_marker = {key: value for key, value in marked.items() if key != "template_sample"}
+
+    holds = provider_holds_template_sample_values(
+        {"api_settings": {"local_mlx_lm": marked}}, "local_mlx_lm"
+    )
+    settled = config_module._atomic_config_values_from_raw(
+        {"api_settings": {"local_mlx_lm": pre_marker}}
+    )
+
+    assert holds is (not users)
+    assert settled["api_settings"]["local_mlx_lm"]["template_sample"] is (not users)
+
+
+@pytest.mark.parametrize(("edit", "_users"), MLX_EDITS, ids=MLX_EDIT_IDS)
+def test_mlx_lm_sample_identity_is_the_url_its_send_posts_to(
+    monkeypatch, edit: dict, _users: bool
+) -> None:
+    """The identity mirrors ``chat_with_mlx_lm``'s own URL, so the two
+    cannot drift apart: the handler is called with the same table (no
+    network; its downstream request is captured) and the base URL it would
+    post to is the endpoint the sample identity compares."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+
+    table = {**deepcopy(config_module.DEFAULT_CONFIG_FROM_TOML["api_settings"]["local_mlx_lm"]), **edit}
+    sent: dict = {}
+    monkeypatch.setattr(
+        local_calls,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={"api_settings": {"local_mlx_lm": table}}),
+    )
+    monkeypatch.setattr(
+        local_calls,
+        "_chat_with_openai_compatible_local_server",
+        lambda **kwargs: sent.update(kwargs) or {"choices": []},
+    )
+
+    local_calls.chat_with_mlx_lm(
+        [{"role": "user", "content": "hi"}], provider_name="local_mlx_lm"
+    )
+
+    endpoint, model = config_module._template_sample_identity(
+        table, section="local_mlx_lm"
+    )
+    assert endpoint == sent["api_base_url"]
+    assert model == sent["model_name"] == table["model"]

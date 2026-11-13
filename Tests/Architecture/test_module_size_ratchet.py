@@ -905,6 +905,8 @@ _BUDGETS: dict[str, int] = {
     # so this branch measures 8,837 (dev 8,835, +2); exact measurement.
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 +148 (rebased
     # 2026-11-12 onto dev 4b90eb860b, measured 8,835 -> 8,983).
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +32 (review v5r2
+    # G2C-R3-3: MLX-LM's sample identity is its host/port; 8,983 -> 9,015).
     "tldw_chatbook/config.py": 8837,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -1186,7 +1188,9 @@ _BUDGETS: dict[str, int] = {
     # holds the shipped endpoint and model: 4,202.
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 +762 in all
     # (rebased 2026-11-12 onto dev 4b90eb860b, measured 3,502 -> 4,264).
-    "tldw_chatbook/Chat/console_session_settings.py": 4264,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +2 (review v5r2
+    # G2C-R3-3: the section reaches the sample identity; 4,264 -> 4,266).
+    "tldw_chatbook/Chat/console_session_settings.py": 4266,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that

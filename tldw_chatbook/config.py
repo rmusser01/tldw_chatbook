@@ -814,8 +814,32 @@ PRE_MARKER_TEMPLATE_SAMPLES: Mapping[str, Mapping[str, str]] = (
 )
 
 
-def _template_sample_identity(table: Mapping[str, Any]) -> tuple[Optional[str], Any]:
-    """The endpoint a send of ``table`` would use, and the model it names."""
+#: Sample sections whose send never reads the URL keys: ``chat_with_mlx_lm``
+#: builds ``http://{host}:{port}/v1`` from its table (these defaults), and the
+#: Console forwards it no base URL. Both table spellings are listed, the
+#: template's and the switcher's (TASK-34100.2 review v5r2, G2C-R3-3).
+TEMPLATE_SAMPLE_HOST_PORT_DEFAULTS: Mapping[str, tuple[str, int]] = {
+    "local_mlx_lm": ("127.0.0.1", 8080),
+    "mlx_lm": ("127.0.0.1", 8080),
+}
+
+
+def _template_sample_identity(
+    table: Mapping[str, Any], *, section: Optional[str] = None
+) -> tuple[Optional[str], Any]:
+    """The endpoint a send of ``table`` would use, and the model it names.
+
+    Args:
+        table: The provider table (merged over the template's).
+        section: Its ``api_settings`` section; one in
+            ``TEMPLATE_SAMPLE_HOST_PORT_DEFAULTS`` is identified by the
+            host/port URL its handler builds, never by ``api_url``.
+    """
+    host_port = TEMPLATE_SAMPLE_HOST_PORT_DEFAULTS.get(section or "")
+    if host_port is not None:
+        host, port = host_port
+        endpoint = f"http://{table.get('host', host)}:{table.get('port', port)}/v1"
+        return endpoint, table.get("model")
     endpoint = next(
         (
             value.strip()
@@ -831,6 +855,8 @@ def holds_template_sample_identity(
     table: Mapping[str, Any],
     template_table: Mapping[str, Any],
     pre_marker_table: Optional[Mapping[str, Any]] = None,
+    *,
+    section: Optional[str] = None,
 ) -> bool:
     """Whether a provider table still points at its template sample.
 
@@ -849,13 +875,19 @@ def holds_template_sample_identity(
         template_table: The shipped template's table for the same section.
         pre_marker_table: The section's ``PRE_MARKER_TEMPLATE_SAMPLES`` entry,
             if it has one.
+        section: The table's ``api_settings`` section. MLX-LM's send uses
+            its ``host``/``port``, so that pair is its endpoint (review v5r2,
+            G2C-R3-3).
 
     Returns:
         Whether the table's endpoint and model equal one of the samples'.
     """
-    identity = _template_sample_identity({**template_table, **table})
+    identity = _template_sample_identity({**template_table, **table}, section=section)
     samples = (template_table, pre_marker_table) if pre_marker_table else (template_table,)
-    return any(identity == _template_sample_identity(sample) for sample in samples)
+    return any(
+        identity == _template_sample_identity(sample, section=section)
+        for sample in samples
+    )
 
 
 def settle_pre_marker_template_samples(user_config: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -895,7 +927,7 @@ def settle_pre_marker_template_samples(user_config: Mapping[str, Any]) -> Mappin
         and isinstance(template.get(name), dict)
         and template[name].get("template_sample") is True
         and not holds_template_sample_identity(
-            table, template[name], PRE_MARKER_TEMPLATE_SAMPLES.get(name)
+            table, template[name], PRE_MARKER_TEMPLATE_SAMPLES.get(name), section=name
         )
     ]
     if not pre_marker:

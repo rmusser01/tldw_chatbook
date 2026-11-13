@@ -2814,7 +2814,9 @@ def provider_holds_template_sample_values(
     return (
         isinstance(table, Mapping)
         and isinstance(template, Mapping)
-        and holds_template_sample_identity(table, template, pre_marker or None)
+        and holds_template_sample_identity(
+            table, template, pre_marker or None, section=provider_key
+        )
     )
 
 
