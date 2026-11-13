@@ -556,11 +556,15 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
         table.focus()
         # Let focus land first: `focus()` is deferred, and SourcesPane only
         # acts on a highlight from a focused table (TASK-38586), as a real
-        # click or key press always is.
-        await pilot.pause()
+        # click or key press always is. TASK-40333: under load one pause can
+        # return before focus lands, and the pane then ignores the highlight.
+        await _until(pilot, lambda: screen.focused is table)
         table.move_cursor(row=1, animate=False)
         pane.set_selected_source_ids((first["id"],))
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (screen.selected_source or {}).get("id") == second["id"],
+        )
         assert screen.focused is table
         assert table.cursor_row == 1
         assert screen.selected_source is not None
