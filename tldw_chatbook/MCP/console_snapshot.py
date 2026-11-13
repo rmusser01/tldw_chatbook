@@ -273,6 +273,19 @@ def standard_console_sources(service: Any, *, _include_log: bool = True) -> bool
     return True
 
 
+def unbound_console_sources(service: Any) -> bool:
+    """A stock MCP service whose store never bound to backup custody.
+
+    ``bind`` skips without POSIX pinned I/O (every Windows install) and for a
+    store outside the selected profile. No reader can prove such a source, so
+    a Console turn runs without MCP tools rather than being refused (TASK-40714).
+    """
+    if type(service) is not UnifiedMCPControlPlaneService:
+        return False
+    store = getattr(service.local_service, "store", None)
+    return type(store) is LocalMCPStore and store not in sources._BINDINGS
+
+
 def standard_console_catalog_sources(service: Any, *, _include_log: bool = True) -> bool:
     """Preserve explicit custom catalog callbacks' late receiver contract."""
     return (
