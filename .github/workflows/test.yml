@@ -1,8 +1,7 @@
 name: Tests
 
 on:
-  push:
-    branches: ["main"]
+  workflow_call:
   workflow_dispatch:
     inputs:
       backup_platform_only:
@@ -26,11 +25,11 @@ on:
           - qodo-review
         default: full
 
-# Comprehensive tests run on main pushes or explicit dispatch. Pull requests
-# use the bounded fast lane in derived-artifacts.yml; scheduled full-tree
-# breadth lives in nightly-deep.yml, activated from default-branch main.
+# Comprehensive tests run through release callers or explicit dispatch. Dev PRs
+# use derived-artifacts.yml. regression-nightly.yml dispatches its preserved
+# regression census; the former nightly-deep.yml remains disabled (ADR-360).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.backup_platform_selection == 'support-diagnostic' && '-support-diagnostic' || '' }}
+  group: comprehensive-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.backup_platform_selection == 'support-diagnostic' && '-support-diagnostic' || '' }}
   # Keep the shared push-only cancellation policy. `main` and manual runs are
   # never cancelled; this workflow no longer accepts pull_request events.
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
@@ -313,7 +312,7 @@ jobs:
   all-tests:
     name: Full Test Suite (Manual)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.backup_platform_only != true
+    if: github.workflow == 'Tests' && github.event_name == 'workflow_dispatch' && inputs.backup_platform_only != true
     timeout-minutes: 60
     
     steps:
