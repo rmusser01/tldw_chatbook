@@ -21092,6 +21092,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     raise RuntimeError(
                         "Provider continuation terminal settlement failed."
                     )
+                # The settlement completed the reply, so no later terminal
+                # write drains its trace handoff (call stays response_started).
+                self._settle_provider_trace_settlements(
+                    message.id, message.persisted_message_id
+                )
                 return
 
         message_version: int | None = None
