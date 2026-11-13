@@ -14,8 +14,6 @@ from urllib.parse import urlsplit
 
 import requests
 
-from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
-
 from tldw_chatbook.Provider_Contract import (
     ChatProviderError,
     ChatBadRequestError,
@@ -298,7 +296,10 @@ def _chat_with_openai_compatible_local_server(
         # RetryError this block's RequestException branch called 'Network
         # error' 503). TASK-34100.5 review (B-F1): a read timeout means the
         # server is still working on this prompt; re-sending makes it start
-        # over, so read errors are never retried.
+        # over, so read errors are never retried. Imported here, not at
+        # module scope: this module is on the boot path (ADR-097).
+        from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
+
         retry_strategy = chat_transport_retry(
             llm_retry_count(api_retries), api_retry_delay, read=0
         )
@@ -1178,6 +1179,8 @@ def chat_with_kobold(
     try:
         # TASK-34100.2 review round 2 (R3-1): no 429 retry, and the last
         # response reaches raise_for_status (see chat_transport_retry).
+        from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
+
         retry_strategy = chat_transport_retry(
             llm_retry_count(api_retries), api_retry_delay
         )

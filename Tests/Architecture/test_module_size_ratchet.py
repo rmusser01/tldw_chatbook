@@ -1122,7 +1122,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-12 onto dev 4b90eb860b, measured 5,189 -> 5,215).
     # 2026-11-12, TASK-34100.2 pre-merge review I-1: lowered to the
     # measurement, 5,215 -> 5,206 (OpenAI's non-streaming retry mount removed).
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5206,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +16 (PR #3517 CI,
+    # ADR-097: the transport retry and 429 reason helpers are imported in the
+    # eight handler sites that use them, off the boot path; 5,206 -> 5,222).
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5222,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
@@ -1200,7 +1203,10 @@ _BUDGETS: dict[str, int] = {
     # (rebased 2026-11-12 onto dev 4b90eb860b, measured 3,502 -> 4,264).
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 +2 (review v5r2
     # G2C-R3-3: the section reaches the sample identity; 4,264 -> 4,266).
-    "tldw_chatbook/Chat/console_session_settings.py": 4266,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +2 (PR #3517
+    # CI, ADR-097: window_for reads the endpoint only for a recorded window,
+    # keeping the setup facts off first paint; 4,266 -> 4,268).
+    "tldw_chatbook/Chat/console_session_settings.py": 4268,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that

@@ -68,8 +68,8 @@ from tldw_chatbook.Utils.egress import (
     create_owned_default_session,
     create_pooled_default_session,
 )
-from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
-from tldw_chatbook.LLM_Calls.provider_reason import rate_limit_reason
+# chat_transport_retry and rate_limit_reason are imported where a send mounts
+# its retry or raises its 429: this module is on the boot path (ADR-097).
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.LLM_Calls.moonshot import (
     chat_with_moonshot as _strict_chat_with_moonshot,
@@ -1978,6 +1978,8 @@ def chat_with_anthropic(
         retry_delay = float(anthropic_config.get("api_retry_delay", 1))
         # TASK-34100.2 AC#18: a 429 reaches the 429 branch below with
         # Anthropic's reason, not an exhausted-retry 'Network error' 504.
+        from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
+
         retry_strategy = chat_transport_retry(
             llm_retry_count(retry_count), retry_delay
         )
@@ -2454,6 +2456,8 @@ def chat_with_anthropic(
                 provider="anthropic", message=f"Auth failed. Detail: {error_text[:200]}"
             ) from e
         elif status_code == 429:
+            from tldw_chatbook.LLM_Calls.provider_reason import rate_limit_reason
+
             raise ChatRateLimitError(
                 provider="anthropic",
                 message=f"Rate limit. Detail: {error_text[:200]}",
@@ -3017,6 +3021,8 @@ def chat_with_cohere(
     )  # Ensure float for backoff_factor
 
     # TASK-34100.2 AC#18: no 429 retry, and the last response is returned.
+    from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
+
     retry_strategy = chat_transport_retry(llm_retry_count(retry_count), retry_delay)
 
     def _cohere_registry_session() -> requests.Session:
@@ -3447,6 +3453,8 @@ def chat_with_cohere(
                 message=f"Authentication failed. Detail: {error_text[:200]}",
             )
         elif status_code == 429:
+            from tldw_chatbook.LLM_Calls.provider_reason import rate_limit_reason
+
             raise ChatRateLimitError(
                 provider="cohere",
                 message=f"Rate limit exceeded. Detail: {error_text[:200]}",
@@ -3872,6 +3880,8 @@ def chat_with_google(
         # more of the quota). And an exhausted 5xx retry returns Google's own
         # answer: with raise_on_status on it raised RetryError, reported as
         # 'Network error' 504.
+        from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
+
         google_retry = chat_transport_retry(
             llm_retry_count(int(google_config.get("api_retries", 3))),
             float(google_config.get("api_retry_delay", 1)),
@@ -4322,6 +4332,8 @@ def chat_with_google(
                 provider="google", message=f"Auth failed. Detail: {error_text[:200]}"
             ) from e
         elif status_code == 429:
+            from tldw_chatbook.LLM_Calls.provider_reason import rate_limit_reason
+
             reason = rate_limit_reason(error_text, secrets=(final_api_key,))
             raise ChatRateLimitError(
                 provider="google",
@@ -4830,6 +4842,8 @@ def chat_with_huggingface(
             )
             # TASK-34100.2 AC#18: no 429 retry, and the last response is
             # returned to raise_for_status.
+            from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
+
             adapter = HTTPAdapter(
                 max_retries=chat_transport_retry(
                     llm_retry_count(int(hf_config.get("api_retries", 3))),
@@ -4947,6 +4961,8 @@ def chat_with_huggingface(
                 message=f"Endpoint or Model not found (404) at {endpoint_copy}. Detail: {error_text[:200]}",
             )
         elif status_code == 429:
+            from tldw_chatbook.LLM_Calls.provider_reason import rate_limit_reason
+
             raise ChatRateLimitError(
                 provider="huggingface",
                 message=f"Rate limit exceeded. Detail: {error_text[:200]}",

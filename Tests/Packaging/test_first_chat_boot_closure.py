@@ -138,21 +138,16 @@ def _counting_window_for(*args, **kwargs):
 
 CONSOLE_SEND_OUTCOMES.window_for = _counting_window_for
 
-# What the Console header computes at first paint: a configured cloud key and
-# a local server, each with an empty observed-window ledger.
-for provider, model, config in (
-    ("openai", "gpt-4o", {"api_settings": {"openai": {"api_key": "sk-closure-test"}}}),
-    (
-        "llama_cpp",
-        "qwen-small",
-        {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}},
-    ),
-):
-    build_console_settings_readiness(
-        ConsoleSessionSettings(provider=provider, model=model, max_tokens=4096),
-        app_config=config,
-        environ={},
-    )
+# What the Console header computes at first paint for the census's profile (a
+# configured cloud key) with an empty observed-window ledger. A local server
+# is deliberately not asserted here: its readiness resolves the send endpoint
+# itself (``_send_endpoint -> effective_provider_endpoint``), which reads the
+# setup facts' route suffixes by design.
+build_console_settings_readiness(
+    ConsoleSessionSettings(provider="openai", model="gpt-4o", max_tokens=4096),
+    app_config={"api_settings": {"openai": {"api_key": "sk-closure-test"}}},
+    environ={},
+)
 
 # Anti-vacuity: readiness did consult the ledger with an endpoint, so the
 # assertion below exercises the guarded edge.

@@ -3967,7 +3967,6 @@ class ConsoleSendOutcomes:
         key = (_send_outcome_provider_key(provider), str(model or "").strip())
         scope = self._scope(key[0])
         now = self._clock()
-        wanted = _window_endpoint(provider, endpoint)
         with self._lock:
             record = self._windows.get(key)
             if record is None:
@@ -3976,9 +3975,12 @@ class ConsoleSendOutcomes:
             if seen_scope != scope or now >= expires_at:
                 del self._windows[key]
                 return None
-            if wanted and reported_by and wanted != reported_by:
-                return None  # another server's window; kept for its own chats
-            return tokens, verified
+        # Only a recorded window reads the endpoint: first paint's empty ledger
+        # never loads the provider setup facts (PR #3517 CI, ADR-097).
+        wanted = _window_endpoint(provider, endpoint) if reported_by else ""
+        if wanted and wanted != reported_by:
+            return None  # another server's window; kept for its own chats
+        return tokens, verified
 
     def clear(self) -> None:
         """Forget everything (tests)."""
