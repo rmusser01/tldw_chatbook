@@ -1014,6 +1014,8 @@ MINIMUM_FILES = 2107
 MINIMUM_FILES = 2199
 # PR #3345 on dev 4b90eb8 retains all 117 incoming entries and the prior census.
 MINIMUM_FILES = 2316
+# Retain the reviewed PR census positions and append the incoming sync admission file.
+MINIMUM_FILES = 2317
 
 
 def read_census(path: Path) -> list[str]:
