@@ -5,6 +5,12 @@ Date: 2026-08-29
 Related Tasks: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md), [TASK-25705](../tasks/task-25705%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
 Supersedes: N/A
 
+## Proposed tier-policy amendment (2026-11-13)
+
+[ADR-360](360-tiered-development-and-release-ci.md) records the owner-requested
+opt-in dev smoke, nightly regression and exact-candidate release policy. Existing
+requirements below remain active until that rollout qualifies and is enabled.
+
 ## Decision
 
 ### Amendment 2026-10-29: observe qualification cost (TASK-38100)
