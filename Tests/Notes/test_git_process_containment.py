@@ -982,6 +982,28 @@ def _ctypes_windows_kernel_for_create_process(
     return kernel, calls
 
 
+def test_windows_hook_member_list_uses_dwords_and_aligned_pointer_ids() -> None:
+    import ctypes
+    import struct
+
+    class Calls:
+        @staticmethod
+        def QueryInformationJobObject(handle, info, data, size, _length):
+            assert (handle, info) == (100, 3)
+            capacity = (size - 8) // ctypes.sizeof(ctypes.c_size_t)
+            listed = min(capacity, 2)
+            struct.pack_into("=II", data, 0, 2, listed)
+            for i in range(listed):
+                ctypes.c_size_t.from_buffer(data, 8 + i * ctypes.sizeof(ctypes.c_size_t)).value = 1000 + i
+            return True
+
+    kernel = object.__new__(containment._WindowsKernel)
+    kernel.ctypes = ctypes
+    kernel.kernel32 = Calls()
+    assert kernel.job_member_pids(100, 1) == ((), 2)
+    assert kernel.job_member_pids(100, 2) == ((1000, 1001), 2)
+
+
 @pytest.mark.parametrize("ordinary_lookup", [False, True])
 def test_windows_containment_createprocess_uses_exact_abi_contract(
     ordinary_lookup: bool,
