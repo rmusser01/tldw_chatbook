@@ -1,4 +1,13 @@
-"""Every SQL catalog a Personal Context repository at schema v9 can have.
+"""Backup owner for the Personal Context repository (TASK-40133, TASK-40134).
+
+Importing opens no store. The repository is ordinary SQLite with ciphertext
+columns, so it is captured as it is, without its key, through the SQLite backup
+route, and validated against the exact v9 catalogs below. The profile key
+travels only as an encrypted credential record (``Backup_Recovery.credentials``).
+No restore publishes the repository yet (``restore_plan``): readable restores
+are TASK-40135. While a first link is frozen or committing, capture is refused.
+
+Every SQL catalog a Personal Context repository at schema v9 can have.
 
 The repository migrates in place with ``ALTER TABLE`` (``repository.py``
 ``_inspect_schema``), so a fresh v9 database and a migrated one differ
@@ -11,6 +20,24 @@ v1/v2 and v5/v6 migrate to the same catalog. Captured from the real
 constructors; ``Tests/Personal_Context/test_repository.py`` rebuilds each.
 """
 
+from contextlib import closing
+from dataclasses import replace
+from pathlib import Path
+from threading import Event
+
+from tldw_chatbook.Backup_Recovery.models import (
+    OwnerAdapter,
+    StorageItem,
+    discovery_context,
+    storage_logical_id,
+)
+from tldw_chatbook.DB.recovery_operations import _SQLiteDeclaration
+
+OWNER = "personal_context.repository"
+LEAF = "tldw_chatbook_personal_context.db"
+FIRST_LINK_IN_PROGRESS = "personal_context_first_link_in_progress"
+NOT_RESTORED = "personal_context_not_restored"
+VERSION_QUERY = "SELECT version FROM personal_context_schema WHERE singleton = 1"
 REPOSITORY_SCHEMA_VERSION = 9
 
 _QUARANTINE_INDEX = 'CREATE INDEX quarantine_object_idx ON quarantine(object_type, object_id, version_id)'
@@ -66,3 +93,173 @@ REPOSITORY_SCHEMAS = (
         (_QUARANTINE_INDEX, _ENCRYPTED_OBJECTS, _OUTBOX, _FREEZE, _REBASELINE, _LOCAL_RECORD_LINKS, _LOCAL_RUNTIME_POLICY, _LOCAL_SCOPE_BINDINGS, _LOCAL_UNDO, _LOCAL_UNLINKED_SCOPES, _OBJECT_HEADS, _SCHEMA_MARKER, _PROFILE_META_MIGRATED, _QUARANTINE),
     ),
 )
+
+
+class _Repository(_SQLiteDeclaration):
+    def _state(self, connection) -> tuple[str, ...]:
+        from tldw_chatbook.DB.recovery_sqlite import _validate_sqlite
+
+        issues = _validate_sqlite(
+            connection, self.versions, self.schemas, version_query=VERSION_QUERY
+        )
+        if issues:
+            return issues
+        # Mid-link state is never captured (decision 7).
+        if connection.execute(
+            "SELECT 1 FROM first_link_freeze UNION ALL "
+            "SELECT 1 FROM first_link_rebaseline_commit LIMIT 1"
+        ).fetchone():
+            return (FIRST_LINK_IN_PROGRESS,)
+        return ()
+
+    def validate(self, candidate: Path) -> tuple[str, ...]:
+        import sqlite3
+
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+        try:
+            with closing(
+                connect_private_sqlite(
+                    "recovery.personal_context.repository", candidate, read_only=True
+                )
+            ) as connection:
+                return self._state(connection)
+        except (OSError, ValueError, sqlite3.Error):
+            return ("personal_context_validation_unavailable",)
+
+    def discover(self, config) -> tuple[StorageItem, ...]:
+        items = super().discover(config)
+        item = items[0]
+        if item.status != "included":
+            return items
+        issues = self.validate(item.path)
+        if not issues:
+            return items
+        if issues != (FIRST_LINK_IN_PROGRESS,):
+            return (replace(item, status="unsupported"),)
+        return (
+            replace(item, status="unavailable"),
+            StorageItem(
+                OWNER,
+                storage_logical_id(discovery_context(config), OWNER, "first_link"),
+                None,
+                "unavailable",
+                item.dependencies,
+            ),
+        )
+
+    def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
+        from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
+        from tldw_chatbook.DB.recovery_sqlite import _checked_capture
+
+        with _checked_capture(
+            self.owner_id, item, destination, cancel, self.validate
+        ) as guard:
+            # Mid-link state is refused before a byte is copied, not after.
+            if FIRST_LINK_IN_PROGRESS in self.validate(item.path):
+                raise ValueError(FIRST_LINK_IN_PROGRESS)
+            copy_private_sqlite(
+                "recovery.personal_context.repository",
+                item.path,
+                destination,
+                progress_guard=guard,
+            )
+
+    def relocate(self, candidate: Path, mapping) -> None:
+        # The restore planner never publishes the repository until TASK-40135.
+        raise ValueError(NOT_RESTORED)
+
+
+# Personal Context sync needs both owners approved for every restored
+# generation. This review approves only the repository, and only where the
+# restore published neither (TASK-40134 AC#9-10); `runtime.sync_state` and
+# `config` keep their own review (TASK-40137), so sync does not resume here.
+SYNC_OWNERS = (OWNER, "runtime.sync_state")
+REVIEW_AVAILABLE = "personal_context_restore_review_available"
+RESTORED_LINK_STATE = "personal_context_restored_link_state"
+
+
+SYNC_REVIEW_REQUIRED = "personal_context_sync_restore_review_required"
+
+
+def sync_allowed(db_path: Path | None = None) -> bool:
+    """Whether Personal Context sync may load; false for any unreviewed restore.
+
+    Like Sync V2's ``_sync_call``, the check without a path covers the selected
+    profile's own generations; a repository path is checked as well.
+    """
+    from tldw_chatbook.Backup_Recovery.activation import execution_allowed
+
+    paths = dict.fromkeys((None, None if db_path is None else Path(db_path)))
+    return all(execution_allowed(SYNC_OWNERS, path) for path in paths)
+
+
+def require_sync_allowed(db_path: Path | None = None) -> None:
+    """Refuse to load Personal Context sync until every restore is reviewed."""
+    if not sync_allowed(db_path):
+        raise ValueError(SYNC_REVIEW_REQUIRED)
+
+
+def _published_owners(witness) -> frozenset[str] | None:
+    """Owners whose payload the generation's restore plan published, if known."""
+    from tldw_chatbook.Backup_Recovery.journal import Journal
+    from tldw_chatbook.Backup_Recovery.plan_records import load_plan
+
+    try:
+        journal = Journal(Path(witness["store_root"]).parent, witness["operation_id"])
+        restored = load_plan(journal).restore
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None
+    return frozenset(key.split(":")[2] for key, _ in restored if key.count(":") >= 2)
+
+
+def _restore_reviews(db_path: Path, *, approve: bool) -> tuple[str, ...]:
+    from tldw_chatbook.Backup_Recovery.activation import ActivationStore
+    from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+    states = []
+    with acquire_storage(db_path) as lease:
+        for witness in _witnesses(db_path, lease):
+            store = ActivationStore(Path(witness["store_root"]))
+            if OWNER not in witness["owners"] or store.allowed(
+                witness["generation"], OWNER
+            ):
+                continue
+            published = _published_owners(witness)
+            if published is None or published & set(SYNC_OWNERS):
+                states.append(RESTORED_LINK_STATE)  # Unknown counts as published.
+            elif approve:
+                store.approve(witness["generation"], OWNER)
+            else:
+                states.append(REVIEW_AVAILABLE)
+    return tuple(states)
+
+
+def restore_review(db_path: Path) -> str | None:
+    """The restore review Settings shows: None, available, or the named refusal.
+
+    A failed read shows nothing; the sync gate above fails closed on its own.
+    """
+    try:
+        states = _restore_reviews(Path(db_path), approve=False)
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+        return None
+    if RESTORED_LINK_STATE in states:
+        return RESTORED_LINK_STATE
+    return REVIEW_AVAILABLE if states else None
+
+
+def approve_restore_review(db_path: Path) -> None:
+    """Approve only ``personal_context.repository`` for reviewable generations."""
+    if RESTORED_LINK_STATE in _restore_reviews(Path(db_path), approve=True):
+        raise ValueError(RESTORED_LINK_STATE)
+
+
+def recovery_adapters() -> tuple[OwnerAdapter, ...]:
+    return (
+        _Repository(
+            OWNER, None, LEAF, (REPOSITORY_SCHEMA_VERSION,), REPOSITORY_SCHEMAS,
+            optional_default=True,
+        ),
+    )

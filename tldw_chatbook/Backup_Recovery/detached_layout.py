@@ -625,6 +625,11 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
     for owner_id, path in sqlite_paths.items():
         if owner_id not in owners:
             raise ValueError("detached_owner_unsupported:" + owner_id)
+        if owner_id == "personal_context.repository" and any(
+            Path(str(path) + suffix).exists() for suffix in ("", "-wal", "-shm", "-journal")
+        ):
+            # TASK-40134: detached import carries no key (decision 10).
+            raise ValueError("detached_owner_unavailable:" + owner_id)
         for suffix in ("", "-wal", "-shm", "-journal"):
             candidate = Path(str(path) + suffix)
             if candidate.exists():

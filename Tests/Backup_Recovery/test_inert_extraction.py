@@ -452,3 +452,78 @@ def test_overlapping_groups_copy_each_member_once_and_report_both(tmp_path):
     report = json.loads(result.report_path.read_text())
     assert len(report["files"]) == 2 and len(report["groups"]) == 2
     assert len(list((result.destination / "payload").iterdir())) == 2
+
+
+@pytest.mark.parametrize(
+    "groups", [("credentials",), ("credentials_and_repository",), ("repository",)]
+)
+def test_manual_extraction_never_writes_credential_material(tmp_path, groups):
+    """TASK-40134 AC#6: credential material (where the Personal Context profile
+    key travels) is never offered for, nor written by, manual extraction."""
+    from tldw_chatbook.Backup_Recovery.inert_extraction import (
+        extract_inert,
+        preview_inert_extraction,
+    )
+
+    key = b'{"records": [{"kind": "personal_context", "value": "profile-key-v1:AAAA"}]}'
+    payloads = {"credentials": key, "repository": b"ciphertext rows"}
+    doc = manifest()
+    doc["owners"] = [
+        {"owner_id": "personal_context.repository", "schema_version": 9, "capabilities": []},
+        {"owner_id": "recovery.credentials", "schema_version": 1, "capabilities": []},
+    ]
+    doc["files"] = [
+        {
+            "logical_id": name,
+            "root_id": "root",
+            "parent_id": "root",
+            "relative_path": name,
+            "owner_id": "recovery.credentials"
+            if name == "credentials"
+            else "personal_context.repository",
+            "payload": "payload/" + name,
+            "size": len(value),
+            "sha256": hashlib.sha256(value).hexdigest(),
+        }
+        for name, value in payloads.items()
+    ]
+    doc["dependency_groups"] = [
+        {"group_id": "credentials", "members": ["credentials"], "complete": True},
+        {
+            "group_id": "credentials_and_repository",
+            "members": ["credentials", "repository"],
+            "complete": True,
+        },
+        {"group_id": "repository", "members": ["repository"], "complete": True},
+    ]
+    source = tmp_path / "archive.zip"
+    with zipfile.ZipFile(source, "w") as output:
+        output.writestr("manifest.json", json.dumps(doc))
+        for name, value in payloads.items():
+            output.writestr("payload/" + name, value)
+    archive = archive_reader.acquire(
+        source, tmp_path / "acquisition", ArchiveLimits(), None, Event()
+    )
+    destination = tmp_path / "manual"
+    if groups != ("repository",):
+        with pytest.raises(ValueError, match="extraction_group_unknown"):
+            preview_inert_extraction(
+                archive,
+                group_ids=groups,
+                destination=destination,
+                limits=ArchiveLimits(),
+                cancel=Event(),
+            )
+        assert not destination.exists()
+        return
+    plan = preview_inert_extraction(
+        archive,
+        group_ids=groups,
+        destination=destination,
+        limits=ArchiveLimits(),
+        cancel=Event(),
+    )
+    assert [row.logical_id for row in plan.files] == ["repository"]
+    result = extract_inert(archive, plan, cancel=Event())
+    written = [path for path in result.destination.rglob("*") if path.is_file()]
+    assert all(key not in path.read_bytes() for path in written)

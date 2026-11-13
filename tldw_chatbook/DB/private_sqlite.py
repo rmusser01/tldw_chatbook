@@ -473,14 +473,14 @@ _SQLITE_OWNER_POLICIES = {
         "unchanged (`db.base` allows exactly the same two).",
     ),
     "personal_context.repository": SQLiteOwnerPolicy(
-        "tldw_chatbook/Personal_Context/repository",
-        _PRIVATE_AND_READ_ONLY,
-        "The encrypted Personal Context repository owns one private local database.",
-        preserve_read_only_source_mode=True,
+        "tldw_chatbook/Personal_Context/repository", _PRIVATE_AND_READ_ONLY,
+        "The encrypted Personal Context repository owns one private local database.", preserve_read_only_source_mode=True,
     ),
+    "recovery.personal_context.repository": SQLiteOwnerPolicy(  # TASK-40134
+        "tldw_chatbook/Personal_Context/recovery", _PRIVATE_AND_READ_ONLY, "Personal Context repository snapshot; ciphertext only, its key travels as an encrypted credential record.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True, recovery_capture_allowed=True),
     "personal_context.interview_drafts": SQLiteOwnerPolicy(
-        "tldw_chatbook/Personal_Context/interview_draft_repository",
-        _PRIVATE_FILE,
+        "tldw_chatbook/Personal_Context/interview_draft_repository", _PRIVATE_FILE,
         "Encrypted interview drafts are local-only and excluded from centralized backup.",
     ),
     "rag.chachanotes_keyword_leg": SQLiteOwnerPolicy(

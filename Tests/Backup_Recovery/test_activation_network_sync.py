@@ -225,3 +225,81 @@ def test_inactive_sync_preserves_real_pending_outbox(tmp_path):
         "    assert repo.list_sync_v2_outbox_entries(**scope_args, dataset_id='dataset-1') == outbox",
     )
     _run(tmp_path, "local", "inactive", script=script)
+
+
+_PERSONAL_CONTEXT_SCRIPT = r"""
+import os, sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import bind_activation, ActivationStore
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+import tldw_chatbook.Personal_Context.recovery as pc
+case = sys.argv[1]
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+data = selector.parent.parent / 'data'
+selector.write_text('[general]\nusers_name="test"\n')
+selector.chmod(0o600)
+db = data / 'tldw_chatbook_personal_context.db'
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('profile', (selector.parent, data))
+control = selector.parent.parent / 'operation'
+control.mkdir(mode=0o700)
+if case == 'ordinary':
+    assert pc.sync_allowed(db) and pc.restore_review(db) is None
+    print('retired and reopened')
+    raise SystemExit(0)
+register_pending(root, 'restore', ('profile',), control, (selector,))
+with authority.maintenance(('profile',), 2) as session:
+    bind_activation(root, 'restore', selector, 'generation',
+        ('config', 'personal_context.repository', 'runtime.sync_state'), session=session)
+(root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
+# The restore plan's published owners (read from its journal in production).
+published = {
+    'neither': frozenset({'config'}),
+    'sync_state': frozenset({'config', 'runtime.sync_state'}),
+    'repository': frozenset({'personal_context.repository'}),
+    'unknown': None,
+}[case]
+pc._published_owners = lambda witness: published
+# AC#9: the guard holds on its own, before any review.
+assert not pc.sync_allowed(db)
+try:
+    pc.require_sync_allowed(db)
+except ValueError as error:
+    assert str(error) == pc.SYNC_REVIEW_REQUIRED
+else:
+    raise AssertionError('restored Personal Context sync resumed')
+store = ActivationStore(control / 'activation')
+if case == 'neither':
+    assert pc.restore_review(db) == pc.REVIEW_AVAILABLE
+    pc.approve_restore_review(db)
+    assert store.allowed('generation', 'personal_context.repository')
+    assert pc.restore_review(db) is None
+else:
+    assert pc.restore_review(db) == pc.RESTORED_LINK_STATE
+    try:
+        pc.approve_restore_review(db)
+    except ValueError as error:
+        assert str(error) == pc.RESTORED_LINK_STATE
+    else:
+        raise AssertionError('review approved after link state was restored')
+    assert not store.allowed('generation', 'personal_context.repository')
+# AC#10: never the shared owners, so Personal Context sync stays off.
+assert not store.allowed('generation', 'config')
+assert not store.allowed('generation', 'runtime.sync_state')
+assert not pc.sync_allowed(db)
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize(
+    "case", ["ordinary", "neither", "sync_state", "repository", "unknown"]
+)
+def test_restored_personal_context_sync_waits_for_its_own_review(tmp_path, case):
+    """TASK-40134 AC#9-10: after any restore Personal Context sync does not load;
+    its review approves only ``personal_context.repository``, and only when the
+    restore published neither it nor ``runtime.sync_state``."""
+    _run(tmp_path, case, "unused", script=_PERSONAL_CONTEXT_SCRIPT)

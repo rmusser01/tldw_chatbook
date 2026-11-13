@@ -760,6 +760,12 @@ def plan_restore(
         ):
             raise ValueError("safety_scope_unverified")
     doc = _document(archive)
+    # TASK-40134: until readable restores ship (TASK-40135), no restore publishes
+    # the Personal Context repository; the live copy stays exactly as it is.
+    held_back = {
+        row.root_id for row in doc.files if row.owner_id == "personal_context.repository"
+    }
+    destinations = {k: v for k, v in destinations.items() if k not in held_back}
     group_scope = None
     group_ids = None
     if data_groups is not None or doc.group_scope is not None:
@@ -774,6 +780,11 @@ def plan_restore(
         if retain_config and group_scope.support_ids and not retained_configs:
             raise ValueError("retained_config_relation_required")
         group_ids = selected_archive_ids(doc, group_scope, retain_config=retain_config)
+        group_ids = group_ids - {
+            row.logical_id
+            for row in (*doc.files, *doc.directories)
+            if row.root_id in held_back
+        }
     if mode == "replace" and doc.consistency != "coherent":
         raise ValueError("partial_replacement")
     names = dict(profile_names or {})
@@ -1400,7 +1411,8 @@ def plan_restore(
     metadata, issues = (
         [],
         ["owner_setup_required:" + owner for owner in sorted(deferred_selected)]
-        + sorted(set(projection_issues)),
+        + sorted(set(projection_issues))
+        + (["personal_context_not_restored"] if held_back else []),
     )
     restored_ids = {key for key, _ in restore}
     for record in records:

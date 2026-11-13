@@ -18,7 +18,11 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager, suppress
 
-from .key_protector import ProfileKeyMaterial, ProfileLockedError
+from .key_protector import (
+    ProfileKeyMaterial,
+    ProfileLockedError,
+    decode_keyring_material,
+)
 
 # Any other stored value (a recovery marker, say) names no usable account.
 KEY_ACCOUNT = re.compile(r"personal-context:[0-9a-z_]{1,128}")
@@ -146,3 +150,31 @@ class RepositoryKeyCustody:
                 "WHERE singleton = 1 AND destroyed = 1 AND key_account = ?",
                 (account,),
             )
+
+
+def profile_key_opens(connection: sqlite3.Connection, account: str, value) -> bool:
+    """Whether a stored keyring value authenticates this database; no writes.
+
+    Backup uses it on a captured copy before it records the key (TASK-40134).
+    """
+
+    from .repository import PersonalContextRepository
+
+    try:
+        keys = decode_keyring_material(value)
+    except (ProfileLockedError, ValueError):
+        return False
+    live = "SELECT 1 FROM profile_meta WHERE singleton = 1 AND destroyed = 0"
+    if connection.execute(live).fetchone() is None:
+        return False
+    probe = PersonalContextRepository.__new__(PersonalContextRepository)
+    probe._keys, probe._profile_ref = None, account
+    factory = connection.row_factory
+    connection.row_factory = sqlite3.Row
+    try:
+        probe._authenticate_keys(connection, keys)
+        return True
+    except Exception:  # noqa: BLE001 - any failure means the key does not open it
+        return False
+    finally:
+        connection.row_factory = factory

@@ -494,54 +494,64 @@ def test_sqlite_registry_members_have_explicit_census_rows():
 
 
 def test_personal_context_stores_preview_under_their_installed_owners(tmp_path):
-    """TASK-39110: both Personal Context databases previewed as owner
-    ``unknown``. The interview drafts (and sidecars) are intentionally
-    excluded and refuse capture; the repository stays an explicit
-    ``unsupported`` row until its capture lands (owner decision 2026-11-06)."""
+    """TASK-39110 / TASK-40134: the interview drafts (and sidecars) are
+    intentionally excluded and refuse capture. The repository, with its live
+    ``-wal``, previews as captured in the selectable Personal Context group and
+    no longer makes the preview incomplete."""
     from threading import Event
 
     import pytest
 
-    from tldw_chatbook.Backup_Recovery.inventory import discover
+    from tldw_chatbook.Backup_Recovery.data_groups import (
+        BACKUP_GROUPS,
+        group_for_owner,
+    )
+    from tldw_chatbook.Backup_Recovery.inventory import BLOCKING, discover
     from tldw_chatbook.Backup_Recovery.owner_registry import (
         install_adapters,
         registered,
     )
 
-    config = tmp_path / "selected.toml"
-    config.write_text(
-        f'[general]\nusers_name = "Ada"\n[paths]\ndata_dir = "{tmp_path / "data"}"\n'
-    )
-    root = tmp_path / "data" / "Ada"
-    root.mkdir(parents=True)
+    config, root = _personal_context_profile(tmp_path)
     suffixes = ("", "-wal", "-shm", "-journal")
     drafts = root / "tldw_chatbook_personal_context_interviews.db"
+    for suffix in suffixes:
+        Path(str(drafts) + suffix).write_bytes(b"private")
     repository = root / "tldw_chatbook_personal_context.db"
-    for database in (drafts, repository):
-        for suffix in suffixes:
-            Path(str(database) + suffix).write_bytes(b"private")
-    install_adapters()
-    items = {
-        item.path: item for item in discover((config,)).items if item.path is not None
-    }
+    with _wal_writer(repository):
+        install_adapters()
+        inventory = discover((config,))
+    items = {item.path: item for item in inventory.items if item.path is not None}
 
-    def rows(database):
-        return [
-            (items[path].owner, items[path].status)
-            for path in (Path(str(database) + suffix) for suffix in suffixes)
-        ]
-
-    assert (rows(drafts), rows(repository)) == (
-        [("personal_context.interview_drafts", "intentionally_excluded")] * 4,
-        [("personal_context.repository", "unsupported")] * 4,
+    assert [
+        (items[Path(str(drafts) + suffix)].owner, items[Path(str(drafts) + suffix)].status)
+        for suffix in suffixes
+    ] == [("personal_context.interview_drafts", "intentionally_excluded")] * 4
+    assert (items[repository].owner, items[repository].status) == (
+        "personal_context.repository",
+        "included",
     )
+    wal = items[Path(str(repository) + "-wal")]
+    assert wal.status not in BLOCKING
+    assert not [
+        item
+        for item in inventory.items
+        if item.status in BLOCKING
+        and (
+            item.owner == "personal_context.repository"
+            or item.path is not None
+            and item.path.name.startswith(repository.name)
+        )
+    ]
+    assert group_for_owner("personal_context.repository") == "personal_context"
+    assert ("personal_context", "Personal Context") in {
+        (group.group_id, group.label) for group in BACKUP_GROUPS
+    }
     owners = {adapter.owner_id: adapter for adapter in registered()}
-    for owner, database in (
-        ("personal_context.interview_drafts", drafts),
-        ("personal_context.repository", repository),
-    ):
-        with pytest.raises(ValueError, match="personal_context"):
-            owners[owner].capture(items[database], tmp_path / "archive", Event())
+    with pytest.raises(ValueError, match="personal_context"):
+        owners["personal_context.interview_drafts"].capture(
+            items[drafts], tmp_path / "archive", Event()
+        )
     assert not (tmp_path / "archive").exists()
 
 
@@ -1473,3 +1483,214 @@ def test_actor_pack_and_reaction_trees_have_their_own_review_labels():
     labels = [owner_label(owner) for owner in persona]
     assert "Other saved data" not in labels, labels
     assert len(set(labels)) == len(persona), labels
+
+
+# TASK-40134: the Personal Context repository is a captured backup owner. These
+# fixtures use the in-memory key protector; no test here reaches an OS keyring.
+
+
+def _personal_context_profile(tmp_path, *, layout="fresh"):
+    """A selected config whose data dir holds a repository with a device-only record."""
+    import os
+    import sqlite3
+    from contextlib import closing
+
+    from Tests.Personal_Context.test_repository import _historical_fresh_schema
+    from tldw_chatbook.Personal_Context.key_protector import (
+        InMemoryProfileKeyProtector,
+    )
+    from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+    from tldw_chatbook.Personal_Context.service import PersonalContextService
+
+    config = tmp_path / "selected.toml"
+    config.write_text(
+        f'[general]\nusers_name = "Ada"\n[paths]\ndata_dir = "{tmp_path / "data"}"\n'
+    )
+    root = tmp_path / "data" / "Ada"
+    root.mkdir(parents=True)
+    root.chmod(0o700)
+    path = root / "tldw_chatbook_personal_context.db"
+    if layout != "fresh":
+        with closing(sqlite3.connect(path)) as connection, connection:
+            for statement in _historical_fresh_schema(layout):
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO personal_context_schema(singleton, version) VALUES (1, ?)",
+                (layout,),
+            )
+        os.chmod(path, 0o600)
+    protector = InMemoryProfileKeyProtector()
+    repository = PersonalContextRepository(path, key_protector=protector)
+    PersonalContextService(repository).create_profile()
+    repository.commit_record_version(
+        _device_only_record(repository), expected_version_id=None
+    )
+    _personal_context_profile.protector = protector
+    return config, root
+
+
+def _device_only_record(repository):
+    from tldw_profile_core import (
+        AgentVisibility,
+        PreferencePayload,
+        ProfileControls,
+        ProfileProvenance,
+        ProfileRecord,
+        ProvenanceSource,
+        RecordKind,
+        RecordState,
+        SemanticKey,
+        SyncMode,
+    )
+    from tldw_profile_core.models import ActorType
+
+    manifest = repository.get_manifest()
+    scope = repository.list_scopes()[0]
+    return ProfileRecord(
+        profile_id=manifest.profile_id,
+        record_id="record-device-only",
+        scope_id=scope.scope_id,
+        kind=RecordKind.PREFERENCE,
+        payload=PreferencePayload(subject="response.detail", polarity="like", value="v"),
+        semantic_key=SemanticKey(namespace="preference", subject="response.detail"),
+        state=RecordState.ACTIVE,
+        controls=ProfileControls(
+            sync_mode=SyncMode.DEVICE_ONLY,
+            agent_visibility=AgentVisibility.AGENT_VISIBLE,
+        ),
+        provenance=ProfileProvenance(
+            source=ProvenanceSource.MANUAL,
+            actor=ActorType.USER,
+            reason_code="settings_edit",
+        ),
+        version_id="record-device-only-v1",
+        parent_version_id=None,
+        created_at=manifest.created_at,
+        updated_at=manifest.created_at,
+    )
+
+
+class _wal_writer:
+    """Keep committed frames in the repository's ``-wal`` while the preview runs."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def __enter__(self):
+        import sqlite3
+
+        self.connection = sqlite3.connect(self.path)
+        self.connection.execute("PRAGMA journal_mode=WAL")
+        self.connection.execute("PRAGMA wal_autocheckpoint=0")
+        self.connection.execute(
+            "INSERT INTO quarantine VALUES "
+            "('q-wal', 'record', 'r', NULL, 'fixture', '2026-11-12T00:00:00.000Z')"
+        )
+        self.connection.commit()
+        assert Path(str(self.path) + "-wal").stat().st_size > 0
+        return self.connection
+
+    def __exit__(self, *_exc):
+        self.connection.close()
+
+
+def _capture_personal_context(tmp_path, monkeypatch, root):
+    from threading import Event
+
+    from Tests.Backup_Recovery.test_core_owners import application_authority
+    from tldw_chatbook.Backup_Recovery.models import StorageItem
+    from tldw_chatbook.Personal_Context.recovery import recovery_adapters
+
+    (adapter,) = recovery_adapters()
+    path = root / "tldw_chatbook_personal_context.db"
+    item = StorageItem(
+        adapter.owner_id, "profile:test:" + adapter.owner_id, path, "included", ()
+    )
+    authority = application_authority(tmp_path, root, monkeypatch)
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700, exist_ok=True)
+    destination = stage / path.name
+    with (
+        authority.maintenance(("core", "bootstrap.unbound"), 1) as session,
+        session.capture_scope((path,), stage),
+    ):
+        adapter.capture(item, destination, Event())
+        # The installed validation, as capture and archive checks run it.
+        return adapter.validate(destination), destination
+
+
+@pytest.mark.parametrize("layout", ["fresh", 1, 2, 4, 5, 6, 7, 8])
+def test_personal_context_capture_is_a_validated_copy_of_every_v9_layout(
+    tmp_path, monkeypatch, layout
+):
+    """TASK-40134 AC#2: the archive copy (WAL frames folded in) passes the installed
+    exact-schema validation for every v9 layout and keeps device-only records."""
+    import sqlite3
+    from contextlib import closing
+
+    from tldw_chatbook.Personal_Context.recovery import REPOSITORY_SCHEMAS
+
+    _config, root = _personal_context_profile(tmp_path, layout=layout)
+    with _wal_writer(root / "tldw_chatbook_personal_context.db"):
+        issues, captured = _capture_personal_context(tmp_path, monkeypatch, root)
+
+    assert issues == ()
+    with closing(sqlite3.connect(captured)) as connection:
+        catalog = tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
+        assert connection.execute(
+            "SELECT 1 FROM quarantine WHERE quarantine_id = 'q-wal'"
+        ).fetchone()
+        # Device-only rows travel too (decision 8); their bodies stay ciphertext.
+        assert connection.execute(
+            "SELECT object_id FROM object_heads WHERE object_type = 'record'"
+        ).fetchall() == [("record-device-only",)]
+    assert catalog in {schema for _, schema in REPOSITORY_SCHEMAS}
+
+
+@pytest.mark.parametrize("marker", ["freeze", "rebaseline"])
+def test_personal_context_capture_refuses_a_first_link_in_flight(
+    tmp_path, monkeypatch, marker
+):
+    """TASK-40134 AC#7: a freeze or rebaseline row refuses capture by name, in the
+    preview and in capture itself."""
+    import sqlite3
+    from contextlib import closing
+
+    from tldw_chatbook.Backup_Recovery.inventory import discover
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Backup_Recovery.recovery_service import issue_message
+
+    config, root = _personal_context_profile(tmp_path)
+    path = root / "tldw_chatbook_personal_context.db"
+    with closing(sqlite3.connect(path)) as connection, connection:
+        if marker == "freeze":
+            connection.execute(
+                "INSERT INTO first_link_freeze VALUES "
+                "(1, 'plan-1', 'token', 'profile', 0, 1, '2026-11-12T00:00:00.000Z')"
+            )
+        else:
+            connection.execute(
+                "INSERT INTO first_link_rebaseline_commit VALUES "
+                "(1, 'plan-1', 'server', 'key-1', 'record-1', 0, 2, "
+                "'2026-11-12T00:00:00.000Z')"
+            )
+    install_adapters()
+    inventory = discover((config,))
+
+    assert "personal_context_first_link_in_progress" in inventory.issues
+    assert not inventory.complete
+    rows = [item for item in inventory.items if item.owner == "personal_context.repository"]
+    assert {(item.path, item.status) for item in rows} >= {(path, "unavailable")}
+    assert any(item.logical_id.endswith(":first_link") for item in rows)
+    assert "linking to your home server" in issue_message(
+        "personal_context_first_link_in_progress"
+    )
+    with pytest.raises(ValueError, match="personal_context_first_link_in_progress"):
+        _capture_personal_context(tmp_path, monkeypatch, root)
+    assert not (tmp_path / "stage" / path.name).exists()
+

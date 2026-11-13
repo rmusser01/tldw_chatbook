@@ -1160,18 +1160,11 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             leaf="image_generation_styles",
             tree=True,
         ),
-        # TASK-39110: Personal Context's two databases. The interview drafts
-        # are local-only by policy; the repository's capture (and its key
-        # custody) waits for its own design task (owner decision 2026-11-06).
+        # TASK-39110: the interview drafts are local-only by policy. The
+        # repository is captured by Personal_Context/recovery.py (TASK-40134).
         _LocalSQLite(
             "personal_context.interview_drafts",
             "tldw_chatbook_personal_context_interviews.db",
             "personal_context_interview_drafts_excluded",
-        ),
-        _LocalSQLite(
-            "personal_context.repository",
-            "tldw_chatbook_personal_context.db",
-            "personal_context_repository_capture_unsupported",
-            excluded=False,
         ),
     )

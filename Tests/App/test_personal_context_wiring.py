@@ -108,3 +108,29 @@ def test_app_retry_and_interview_never_recreate_present_v2_profile(
         TldwCli.prepare_personal_context_interview_request(app, kind="personal")
     assert calls == [None, None, None]
     assert sql_state(repo) == before
+
+
+def test_restored_personal_context_sync_loader_refuses_before_any_link_read(
+    monkeypatch,
+) -> None:
+    """TASK-40134 AC#9: an unreviewed restored generation keeps Personal Context
+    sync off before the loader reads link state or a keyring key."""
+    import pytest
+
+    import tldw_chatbook.Personal_Context.recovery as recovery
+
+    seen = []
+    monkeypatch.setattr(
+        recovery, "sync_allowed", lambda path=None: seen.append(path) or False
+    )
+
+    class Links:
+        def get_personal_context_link_state(self, **_kwargs):
+            raise AssertionError("restored link state was read")
+
+    app = SimpleNamespace(sync_state_repository=Links())
+    with pytest.raises(ValueError, match=recovery.SYNC_REVIEW_REQUIRED):
+        TldwCli._load_personal_context_sync_runtime(
+            app, server_profile_id="server", authenticated_principal_id=None
+        )
+    assert seen == [None]

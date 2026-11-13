@@ -60,6 +60,9 @@ def _installed_owner(owner_id):
     from .config_adapter import recovery_adapters as config
     from .rag_indexing import recovery_adapters as rag_indexing
     from .recovered_media import recovery_adapters as recovered
+    from tldw_chatbook.Personal_Context.recovery import (
+        recovery_adapters as personal_context,
+    )
 
     for factory in (
         core_adapters,
@@ -79,6 +82,7 @@ def _installed_owner(owner_id):
         config,
         rag_indexing,
         plugins,
+        personal_context,
     ):
         for owner in factory():
             if owner.owner_id == owner_id:
@@ -1352,6 +1356,8 @@ def _version(connection, owner_id):
         query = "SELECT CAST(value AS INTEGER) FROM local_kanban_schema_meta WHERE key='schema_version'"
     elif owner_id == "notes.file_notes":
         query = "SELECT 0"
+    elif owner_id == "personal_context.repository":
+        query = "SELECT version FROM personal_context_schema WHERE singleton = 1"
     else:
         query = "PRAGMA user_version"
     if owner_id == "db.dreams":

@@ -583,3 +583,93 @@ async def test_restore_review_lists_newer_plugin_downloads_and_removes_them(
         assert not button.display and screen._fetch_removal == ()
 
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credential_mode", ["exclude", "include"])
+async def test_backup_review_tells_personal_context_before_anything_is_written(
+    tmp_path, credential_mode
+):
+    """TASK-40134 AC#4 and AC#7: a backup without credentials says the
+    Personal Context key is not in it, and a first link in flight is refused with
+    a reason that says what to do."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
+
+    repository = StorageItem(
+        "personal_context.repository",
+        "profile:p:personal_context.repository",
+        tmp_path / "tldw_chatbook_personal_context.db",
+        "included",
+        (),
+    )
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await press(pilot, "#backup-open-create")
+        details = {
+            "inventory": Inventory(
+                (repository,),
+                False,
+                "scope",
+                ("personal_context_first_link_in_progress",),
+            ),
+            "complete": False,
+            "maintenance": "Writers resume after copying.",
+            "availability": (True, ""),
+            "capacity": (),
+            "credential_mode": credential_mode,
+        }
+        screen._show_preview(
+            screen._revision,
+            details,
+            ((tmp_path / "config.toml",), tmp_path / "backup.zip", screen._options()),
+        )
+        coverage = str(screen.query_one("#backup-coverage", Static).render())
+    assert ("Its key is not in this backup" in coverage) is (
+        credential_mode == "exclude"
+    )
+    assert "linking to your home server" in coverage
+    assert "back up again" in coverage
+
+
+@pytest.mark.asyncio
+async def test_restore_review_says_personal_context_is_not_restored(tmp_path):
+    """TASK-40134 AC#5: the plan says, before the restore runs, that Personal
+    Context will not be restored."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
+
+    plan = RestorePlan(
+        "digest", "isolated", (), (), (), "fingerprint",
+        issues=("personal_context_not_restored",),
+    )
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await screen._restore_ready(screen._revision, plan, None)
+        await pilot.pause()
+        review = str(screen.query_one("#backup-restore-preview", Static).render())
+    assert "Issue: personal_context_not_restored" in review
+    assert "Personal Context will not be restored" in review
+    assert "stays exactly as it is" in review
+
+
+@pytest.mark.asyncio
+async def test_credential_review_names_the_personal_context_link_keys_left_out(
+    tmp_path,
+):
+    """TASK-40134 AC#8: like skill-trust keys, the review of a backup with
+    credentials says which Personal Context keys stay on this device."""
+    from textual.widgets import Checkbox
+
+    code = (
+        "credential_personal_context_link_keys_excluded:"
+        "profile:p:personal_context.repository"
+    )
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await screen._show_credential_review((code,))
+        await pilot.pause()
+        (box,) = screen.query(".backup-acknowledge-credential").results(Checkbox)
+        label = str(box.label)
+    assert box.name == code
+    for name in ("device wrapping key", "staged integrity keys", "dataset staging keys"):
+        assert name in label

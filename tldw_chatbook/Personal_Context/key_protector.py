@@ -222,15 +222,19 @@ class KeyringProfileKeyProtector:
             ) from exc
         if payload is None:
             return None
-        if not payload.startswith(_KEYRING_PREFIX):
-            raise ProfileLockedError("Profile key material is invalid.")
-        try:
-            decoded = base64.b64decode(
-                payload.removeprefix(_KEYRING_PREFIX), validate=True
-            )
-        except (ValueError, TypeError) as exc:
-            raise ProfileLockedError("Profile key material is invalid.") from exc
-        return _deserialize_material(decoded)
+        return decode_keyring_material(payload)
+
+
+def decode_keyring_material(payload: object) -> ProfileKeyMaterial:
+    """Decode one stored keyring value; anything else is invalid material."""
+
+    if not isinstance(payload, str) or not payload.startswith(_KEYRING_PREFIX):
+        raise ProfileLockedError("Profile key material is invalid.")
+    try:
+        decoded = base64.b64decode(payload.removeprefix(_KEYRING_PREFIX), validate=True)
+    except (ValueError, TypeError) as exc:
+        raise ProfileLockedError("Profile key material is invalid.") from exc
+    return _deserialize_material(decoded)
 
 
 class PassphraseProfileKeyProtector:
