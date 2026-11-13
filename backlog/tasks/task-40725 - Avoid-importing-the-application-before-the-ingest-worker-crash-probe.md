@@ -1,11 +1,11 @@
 ---
 id: TASK-40725
 title: Avoid importing the application before the ingest worker crash probe
-status: In Progress
+status: Done
 created_date: 2026-11-13 20:16
 assignee:
 - '@codex'
-updated_date: 2026-11-13 20:18
+updated_date: 2026-11-13 20:59
 ---
 
 ## Description
@@ -18,7 +18,7 @@ The real pool crash regression can exhaust its short observation budget importin
 <!-- AC:BEGIN -->
 - [x] #1 The regression still crashes a real production-created spawn worker and verifies owning-generation failure and physical teardown using unchanged deadlines.
 - [x] #2 The crash payload no longer imports the test module or application solely to call the standard-library exit function.
-- [ ] #3 The exact regression and adjacent generation-sentinel tests pass, with an independent review and live required-lane rerun.
+- [x] #3 The exact regression and adjacent generation-sentinel tests pass, with an independent review and live required-lane rerun.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,9 +36,9 @@ Reason: Test-only removal of an unnecessary import boundary; production behavior
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Removed the test-module wrapper and submitted the picklable standard-library os._exit with exit code17 directly to the same production-created spawn pool. No production code, initializer, generation/sentinel ownership, assertions, isolation or deadlines changed. A wrapper target imports the large test module/application before the intended fault; the direct builtin removes that unrelated startup cost. The CI log alone cannot establish when its child reached the original wrapper, so live loaded verification remains pending.
+Removed the test-module wrapper and submitted the picklable standard-library os._exit with exit code17 directly to the same production-created spawn pool. No production code, initializer, generation/sentinel ownership, assertions, isolation or deadlines changed. A wrapper target imports the large test module/application before the intended fault; the direct builtin removes that unrelated startup cost. The CI log alone cannot establish when its child reached the original wrapper, and the subsequent loaded run now passes.
 
-Exact test before edit:1passed in3.02s locally. Exact plus adjacent current-generation sentinel test after edit:2passed in1.19s. A temporary external pytest plugin disabled only the production sentinel monitor; the changed exact regression then failed as expected at the original10-second observation budget, proving it still detects missing crash reporting. Independent review found no blockers and confirmed native builtin pickle round-trip. Ruff comparison found no new issues; pre-existing ASYNC110 remains unchanged, and lint passes with only that existing rule excluded. Whitespace check passed. Added the incident to lessons-testing-evidence.md. ADR not required for this test-only simplification. Normal PR lane rerun remains pending.
+Exact test before edit:1passed in3.02s locally. Exact plus adjacent current-generation sentinel test after edit:2passed in1.19s. A temporary external pytest plugin disabled only the production sentinel monitor; the changed exact regression then failed as expected at the original10-second observation budget, proving it still detects missing crash reporting. Independent review found no blockers and confirmed native builtin pickle round-trip. Ruff comparison found no new issues; pre-existing ASYNC110 remains unchanged, and lint passes with only that existing rule excluded. Whitespace check passed. Added the incident to lessons-testing-evidence.md. ADR not required for this test-only simplification. Live required lane132157621312 in run43503216961 passed at20:56:58Z:1060passed,1 existing Windows-only skip,1 existing deselection in685.04s. Evidence: /tmp/tldw-ci-ingest-fix-live.log. Completion bookkeeping stays local to avoid restarting the healthy full gate.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
