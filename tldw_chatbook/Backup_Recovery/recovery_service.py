@@ -132,9 +132,10 @@ _ISSUE_MESSAGES = {
     ),
     "admission_timeout": "The application could not pause background work in time. Review the recovery status, let active work finish, then retry.",
     "capture_source_outside_scope": (
-        "A file this backup selected is outside the storage Chatbook registered "
-        "when it started, for example after setup or a settings change moved a "
-        "folder. Quit and reopen Chatbook, then review and create the backup again."
+        "The backup stopped: a configuration or data file it selected is outside "
+        "the storage Chatbook registered for this backup, so it could not be "
+        "copied. To move your data now, carry config.toml and the data folder by "
+        "hand, as the User Guide's \"Setting up another machine\" describes."
     ),
     "registered_storage_missing": (
         "The location shown above no longer exists, but Chatbook registered it "
@@ -208,8 +209,8 @@ def issue_code(error: Exception, *, kind: str = "") -> str:
     if isinstance(error, RecoveryRequired) and error.args == (
         "capture_source_outside_scope",
     ):
-        # TASK-34100.16.1: a capture refusal the user can act on (restart so
-        # the app registers its current storage), not a generic failure.
+        # TASK-34100.16.1: its own code, not the generic failure. Its copy
+        # claims no cause: five raise sites and no live reproduction.
         return "capture_source_outside_scope"
     if isinstance(error, RecoveryRequired) and error.args == (
         "registered_storage_missing",
