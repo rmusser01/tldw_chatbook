@@ -976,6 +976,10 @@ class PersonasScreen(BaseAppScreen):
         # load; with the list's cursor moves it says whether a newer intent
         # arrived since an import's picker opened (frame slice B2b).
         self._import_intent: int = 0
+        # Bumped by every user change to the list (search typing, kind switch,
+        # sort cycle, tag pick, Escape's clear): a landing restores the search
+        # it cleared only when none came after (TASK-33910.51).
+        self._list_state_changes: int = 0
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
@@ -4068,6 +4072,7 @@ class PersonasScreen(BaseAppScreen):
     def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
         message.stop()
         # Search does not change selection or center pane — no unsaved guard needed.
+        self._list_state_changes += 1
         previous_query = self.state.search_query
         self.state.search_query = message.query.strip()
         if self.state.search_query != previous_query:
@@ -4128,6 +4133,7 @@ class PersonasScreen(BaseAppScreen):
     async def _cycle_sort(self) -> None:
         """Move ``sort_key`` to the next option and reload from row 0."""
         self._bump_import_intent()  # the user's sort: a newer intent (B2b)
+        self._list_state_changes += 1
         cycle = [key for key, _ in self._character_sort_cycle()]
         current = self.state.sort_key if self.state.sort_key in cycle else cycle[0]
         self.state.sort_key = cycle[(cycle.index(current) + 1) % len(cycle)]
@@ -4174,6 +4180,7 @@ class PersonasScreen(BaseAppScreen):
     async def _apply_tag_filter(self, tag: str | None) -> None:
         """Set the characters tag filter and reload (and recount) from row 0."""
         self._bump_import_intent()  # the user's tag pick: a newer intent (B2b)
+        self._list_state_changes += 1
         self.state.tag_filter = tag
         self._count_cache_key = None  # (search, tag) changed → recount
         await self._reload_character_page()
@@ -4568,6 +4575,7 @@ class PersonasScreen(BaseAppScreen):
                 a saved-mode restore) keep the default and wait.
         """
         self._bump_import_intent()
+        self._list_state_changes += 1
         self._advance_persona_buddy_session()
         if mode != "characters":
             self._clear_character_tts_profile_suggestion()
@@ -14222,7 +14230,7 @@ class PersonasScreen(BaseAppScreen):
             # _run_guarded bumped the intent once for this transition; only
             # a newer one may stop the select below.
             expected = self._import_intent_now()
-            cleared: tuple[tuple[str, str, str | None, str], str] | None = None
+            cleared: tuple[tuple[str, str, str], str, int] | None = None
             if self.state.active_mode != mode:
                 # Clean, so no draft is asked about; the new kind's list
                 # starts unfiltered.
@@ -14261,15 +14269,16 @@ class PersonasScreen(BaseAppScreen):
 
     def _clear_search_for_import_landing(
         self, kind: str
-    ) -> tuple[tuple[str, str, str | None, str], str]:
+    ) -> tuple[tuple[str, str, str], str, int]:
         """Clear the search (and a character search's relevance sort) to land.
 
         Args:
             kind: The imported item's kind.
 
         Returns:
-            The search, sort, tag and box before the clear, and the sort the
-            clear left: ``_restore_search_after_import_landing``'s arguments.
+            The search, sort and box before the clear, the sort the clear
+            left, and the count of the user's list changes so far:
+            ``_restore_search_after_import_landing``'s arguments.
         """
         try:
             box: Input | None = self.query_one("#personas-library-search", Input)
@@ -14278,7 +14287,6 @@ class PersonasScreen(BaseAppScreen):
         before = (
             self.state.search_query,
             self.state.sort_key,
-            self.state.tag_filter,
             box.value if box is not None else "",
         )
         self._cancel_search_debounce()
@@ -14291,44 +14299,40 @@ class PersonasScreen(BaseAppScreen):
             # dev this write posted it; as _apply_mode, TASK-33910.39).
             with box.prevent(Input.Changed):
                 box.value = ""
-        return before, self.state.sort_key
+        return before, self.state.sort_key, self._list_state_changes
 
     def _restore_search_after_import_landing(
         self,
-        before: tuple[str, str, str | None, str],
+        before: tuple[str, str, str],
         cleared_sort: str,
+        changes: int,
         *,
         mode: str,
     ) -> None:
         """Put back the search and sort a landing cleared when it then toasts.
 
         TASK-33910.51: on dev a same-kind landing whose second decision failed
-        left the search cleared and a relevance sort reset to name. The import
-        intent cannot tell a draft started meanwhile (restore) from a search
-        typed meanwhile (keep it), so the list's own state decides: the
-        restore is skipped when the kind, search, box, sort or tag is no
-        longer what the clear left, because the user's change is newer.
+        left the search cleared and a relevance sort reset to name. A draft
+        started or a row picked meanwhile gets the search back; any user
+        change to the list since the clear (``_list_state_changes``) is newer
+        and stays. The import intent cannot tell those apart, and comparing
+        the list's values missed a change that ended on the cleared values (a
+        key typed and erased, a switch away and back; fix round 1).
 
         Args:
-            before: The search, sort, tag and box before the clear.
+            before: The search, sort and box before the clear.
             cleared_sort: The sort the clear left.
+            changes: ``_list_state_changes`` right after the clear.
             mode: The landing's mode.
         """
-        query, sort_key, tag, box_value = before
+        query, sort_key, box_value = before
         if (query, sort_key, box_value) == ("", cleared_sort, ""):
             return  # nothing was cleared
-        if self._closed or self.state.active_mode != mode:
+        if self._closed or self._list_state_changes != changes:
             return
         try:
             box = self.query_one("#personas-library-search", Input)
         except QueryError:
-            return
-        if (
-            self.state.search_query,
-            self.state.sort_key,
-            self.state.tag_filter,
-            box.value,
-        ) != ("", cleared_sort, tag, ""):
             return
         self._cancel_search_debounce()
         self.state.search_query = query
@@ -16835,6 +16839,7 @@ class PersonasScreen(BaseAppScreen):
         # like a typed search (B2b Task 5); the prevented Input.Changed below
         # would otherwise skip _handle_search_changed's bump.
         self._bump_import_intent()
+        self._list_state_changes += 1
         self._stop_also_in()
         self._cancel_search_debounce()
         self.state.search_query = ""

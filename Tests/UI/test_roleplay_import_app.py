@@ -1457,11 +1457,12 @@ async def test_a_lore_import_clears_a_search_its_book_does_not_match_and_selects
     import_env, mock_app_instance, monkeypatch
 ):
     """A selecting landing clears an active Lore books search, so the imported
-    book is listed as well as selected. Dev cleared only Characters' search: a
-    lore landing re-read the list with the query, so a book it did not match
-    was selected out of the list. B2b clears every kind's search, so this is
-    green on dev since B2b; mutation M45-B (the characters-only clear, the
-    lore list re-read with the query) turns it red (TASK-33910.45 AC#2)."""
+    book is listed as well as selected. Before B2b, dev cleared only
+    Characters' search: a lore landing re-read the list with the query, so a
+    book it did not match was selected out of the list. B2b clears every
+    kind's search, so this is green on dev since B2b; mutation M45-B (the
+    characters-only clear, the lore list re-read with the query) turns it
+    red (TASK-33910.45 AC#2)."""
     harbour = WorldBookManager(import_env.db).create_world_book("Harbour Lore")
     fake_file_picker(monkeypatch, import_env.files["lore_tldw_export.json"])
     async with open_styled_roleplay(
@@ -1502,7 +1503,17 @@ async def test_a_lore_import_clears_a_search_its_book_does_not_match_and_selects
 # ---- TASK-33910.51: a landing that then toasts gives the search back ----
 
 
-@pytest.mark.parametrize("meanwhile", ["draft", "search"])
+@pytest.mark.parametrize(
+    "meanwhile",
+    [
+        "draft",
+        "search",
+        "typed-and-erased",
+        "kind-round-trip",
+        "sort-round-trip",
+        "tag-round-trip",
+    ],
+)
 async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleared(
     meanwhile, import_env, mock_app_instance, monkeypatch
 ):
@@ -1510,11 +1521,16 @@ async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleare
     sort) before its refresh and decides again after it. When that second
     decision fails (a draft started during the refresh), the search, the box
     and the sort come back and the list is read once with them. On dev they
-    stayed cleared (exists on dev; TASK-33910.51 fixes it). A search the
-    user typed during the refresh is newer, so it stays. Mutations: M51-A
-    (no restore) and M51-C (the box restored without ``prevent``, a second
-    read) turn the draft case red; M51-B (no check for a newer search)
-    turns the search case red."""
+    stayed cleared (exists on dev; TASK-33910.51 fixes it). Any change the
+    user made to the list during the refresh is newer and stays, even one
+    that ends on the cleared values: a typed search, a key typed and erased,
+    a switch to Lore and back (whose own clear leaves Characters
+    unfiltered), the sort cycled back to Name, or a tag picked and cleared.
+    Mutations: M51-A (no restore) and M51-C (the box restored without
+    ``prevent``, a second read) turn the draft case red; M51-B (no check for
+    a newer change) turns every other case red; M51-D (the check compares
+    the list's values instead of counting the user's changes, fix round 1's
+    finding) turns the four round-trip cases red."""
     fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
     async with open_styled_roleplay(
         "mock", mock_app_instance, size=SIZE, character_db=import_env.db
@@ -1540,7 +1556,7 @@ async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleare
         )
         if meanwhile == "draft":
             name = await _dirty_character_draft(pilot)
-        else:
+        elif meanwhile == "search":
             search.focus()
             await pilot.press(*"Zed")
             await wait_until(
@@ -1548,6 +1564,43 @@ async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleare
                 lambda: screen.state.search_query == "Zed",
                 what="the newer search",
             )
+        elif meanwhile == "typed-and-erased":
+            search.focus()
+            await pilot.press("Z")
+            await wait_until(
+                pilot, lambda: screen.state.search_query == "Z", what="the key"
+            )
+            await pilot.press("backspace")
+            await wait_until(pilot, lambda: search.value == "", what="the key erased")
+            await settle(pilot)
+        elif meanwhile == "sort-round-trip":
+            item_list = screen.query_one("#personas-library-rows")
+            item_list.focus()
+            for expected_sort in ("modified_desc", "created_desc", "name_asc"):
+                await pilot.press("s")
+                await wait_until(
+                    pilot,
+                    lambda key=expected_sort: screen.state.sort_key == key,
+                    what=f"the sort {expected_sort}",
+                )
+            await settle(pilot)
+        elif meanwhile == "tag-round-trip":
+            await screen._apply_tag_filter("hero")
+            await screen._apply_tag_filter(None)
+            await settle(pilot)
+        else:
+            assert await pilot.click("#personas-mode-lore")
+            await wait_until(
+                pilot, lambda: screen.state.active_mode == "lore", what="Lore"
+            )
+            await settle(pilot)
+            assert await pilot.click("#personas-mode-characters")
+            await wait_until(
+                pilot,
+                lambda: screen.state.active_mode == "characters",
+                what="Characters again",
+            )
+            await settle(pilot)
         reads: list[str] = []
         real_reload = screen._reload_character_page
 
@@ -1572,8 +1625,15 @@ async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleare
             assert reads.count("Abel") == 1, reads
             assert [item.name for item in list_state(screen).items] == [SEED]
             assert _draft_kept(screen, name)
-        else:
+        elif meanwhile == "search":
             assert (search.value, screen.state.search_query) == ("Zed", "Zed")
+            assert "Abel" not in reads, reads
+        else:
+            assert (search.value, screen.state.search_query, screen.state.sort_key) == (
+                "",
+                "",
+                "name_asc",
+            )
             assert "Abel" not in reads, reads
 
 

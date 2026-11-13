@@ -377,7 +377,10 @@ _BUDGETS: dict[str, int] = {
     # sort it cleared: +79 (16,927 -> 17,006).
     # TASK-33910.48 interim, a lore Settings draft or save in flight holds the
     # import landing: +27 (17,006 -> 17,033).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 17033,
+    # PR 5 fix round 1, 2026-11-12, same owner rule: TASK-33910.51's restore
+    # counts the user's list changes instead of comparing values: +5
+    # (17,033 -> 17,038).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17038,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a

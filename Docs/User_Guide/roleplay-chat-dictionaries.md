@@ -141,9 +141,11 @@ search, sort or tag change, or Escape clearing the search. Edited lore book
 Settings that are not saved yet, or a Settings save still running, count as
 unsaved here. Otherwise the open draft and the list stay as they are and a
 toast names where it went: "Imported Wren · in Lore books". Opening the new
-item clears the list's search so the item shows; if something newer happens
-while the list reloads, the item is not opened and your search and sort come
-back.
+item clears the list's search so the item shows. If you start a draft, pick a
+row or leave Roleplay while the list reloads, the item is not opened and your
+search and sort come back. A search, sort, tag or kind change you make in
+that moment stays as you left it, and an import of another kind clears the
+search as any kind switch does.
 
 **Empty states.** A kind with nothing in it says so and names the way
 out: "No characters yet - use New or Import to add one.", and the same for
