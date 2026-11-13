@@ -28,7 +28,7 @@ Use a private GitHub App installed on **only `rmusser01/tldw_chatbook`**, with r
 2. Verify public HTTPS/DNS succeeds and known reachable local/LAN services become unreachable under the actual service policy. Test the guest path as well as the controller process.
 3. Install App credentials and verify the installation is restricted to this repository. Start the service and require both pool labels online: `tldw-ci-test`, `tldw-ci-control`.
 4. Run an existing UI shard and two sequential runner jobs to prove correctness, job isolation/disposal and automatic renewal. Record timing and peak resources; preserve genuine failures.
-5. Land the routing patch with both variables unset. Set `CI_CONTROL_RUNNER=tldw-ci-control` and `CI_TEST_RUNNER=tldw-ci-test` only after qualification. Bulk/nightly workflows and fork PRs retain hosted labels. Never use generic `ubuntu-latest` labels on these local workers.
+5. Land the routing patch with both variables unset. Set `CI_CONTROL_RUNNER=tldw-ci-control` and `CI_TEST_RUNNER=tldw-ci-test` only after qualification. Both PR lint jobs use the control label too. Bulk/nightly workflows and fork PRs retain hosted labels. Never use generic `ubuntu-latest` labels on these local workers.
 
 Clear the two repository variables to restore hosted selection for newly scheduled jobs. An already queued/running job keeps its selected runner: let it finish or explicitly rerun it after rollback. Drain with `systemctl stop github-qemu-runner` (up to 45 minutes for test jobs); do not force-stop active jobs. Do not delete the backing filesystem, key or App as part of ordinary rollback. No branch-protection or required-check name change is needed.
 
@@ -53,3 +53,5 @@ Initial GitHub qualification [43478237685](https://github.com/rmusser01/tldw_cha
 Controller patch SHA256: `d881d91bb348fa8f3371c51068f97fb2b6dffecf8aabe9962fd9b474412bacec`. Race-enabled pool/config/controller/GitHub/QEMU tests and Go vet passed. Busy-job deadlines are 45 minutes for tests and 15 minutes for control; idle waiting does not consume that budget. Continuously offline runners are reclaimed after the existing five-minute liveness grace; transient API errors are not treated as proof of being offline. At nine slots, ten-second status polling uses about 3,240 App requests/hour before registration/cleanup: check rate limits before expanding further.
 
 Integration status: the routing changes must land on `dev` to migrate its existing control workflow. A PR containing this patch uses the local labels immediately through its updated workflow. Required merge checks and review policy still apply. The first complete eight-worker PR gate has not yet established sustained-load timing.
+
+Final routing coverage includes both lint jobs; all 380 routing-matrix cases passed after that extension, with Ruff and formatting checks clean.

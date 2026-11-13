@@ -28,6 +28,8 @@ ROUTES = [
     ("derived-artifacts.yml", "queue-tick", "control", "ubuntu-latest"),
     ("merge-queue.yml", "cancel-superseded", "control", "ubuntu-latest"),
     ("merge-queue.yml", "queue", "control", "ubuntu-latest"),
+    ("lint.yml", "gate-new", "control", "ubuntu-latest"),
+    ("lint.yml", "gate-ratchet", "control", "ubuntu-latest"),
     ("derived-artifacts.yml", "library-shell-dev", "hosted", "ubuntu-latest"),
 ]
 
