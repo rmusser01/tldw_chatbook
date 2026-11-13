@@ -100,6 +100,12 @@ STORE_FAILURE_CODES: Mapping[str, str] = MappingProxyType(
 #: The runtime could not project the checkpoint, so the store was never called.
 PROJECTION_FAILED = "projection_failed"
 
+#: The store returned (the checkpoint is committed), then the runtime's
+#: ``acknowledge_provider_continuation`` hook raised. Whatever that exception
+#: says, nothing is unwritten, so this code is never in
+#: ``UNWRITTEN_STORE_FAILURES`` and the run fails closed.
+ACKNOWLEDGE_FAILED = "acknowledge_failed"
+
 #: Failures raised before the store wrote the continuation or settled the
 #: dispatch (a failed terminal settlement is one atomic, rolled-back write),
 #: for which keeping the delivered reply loses only reasoning replay. The
