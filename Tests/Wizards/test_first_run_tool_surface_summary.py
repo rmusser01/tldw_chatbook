@@ -265,3 +265,41 @@ async def test_turning_the_upgraded_switch_off_in_setup_writes_false():
         assert ok
         committed = wizard.commit_config.call_args.args[0]
         assert committed == {"tools": {"full_agent_tools_enabled": False}}
+
+
+@pytest.mark.asyncio
+async def test_a_switch_the_user_moved_keeps_their_value_when_tools_is_shown_again():
+    """Review v5r1 (F3): ``on_show`` brings only switches the user has NOT
+    moved up to the saved gates. Here the upgrade had landed before the step
+    composed (switch ON); the user turns Full agent tools off, goes Back and
+    comes forward again (``show_step`` -> ``on_show``). Their OFF must
+    survive -- re-showing the saved ON would silently undo their choice --
+    and commit must write it. A switch they never moved still follows a
+    gate saved meanwhile."""
+    from textual.widgets import Switch
+
+    from Tests.Wizards.test_first_run_setup_wizard import _StepHost
+
+    app_config: dict = {"tools": {"full_agent_tools_enabled": True}}
+    wizard, step = _tools_step_over(app_config)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        switch = step.query_one("#setup-tool-full_agent_tools", Switch)
+        read_file = step.query_one("#setup-tool-read_file", Switch)
+        assert (switch.value, read_file.value) == (True, False)
+        switch.value = False  # the user's own choice
+        await pilot.pause()
+
+        app_config["tools"]["read_file_enabled"] = True  # saved meanwhile
+        step.on_show()  # Back, then forward to Tools again
+        await pilot.pause()
+
+        assert switch.value is False, "the user's OFF was overridden"
+        assert read_file.value is True
+
+        ok, _ = await step.commit()
+
+        assert ok
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {"tools": {"full_agent_tools_enabled": False}}

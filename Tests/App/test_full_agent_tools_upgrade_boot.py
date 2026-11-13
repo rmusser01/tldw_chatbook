@@ -144,6 +144,9 @@ async def test_an_upgraded_profile_with_a_workspace_binding_boots_with_full_agen
         folder = tmp_path / "project"
         folder.mkdir()
         registry.add_folder_binding("ws-project", folder)
+        # Review v5r1 (F1): a real pre-upgrade profile already has the
+        # workspace agent backfill's own row in the same table.
+        seed.mark_agent_backfill_complete()
     finally:
         seed.close()
     assert "full_agent_tools_enabled" not in _raw_config().get("tools", {})
