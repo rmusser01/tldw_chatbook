@@ -111,7 +111,9 @@ the **Manage plugin** dialog for that preview, with the workspace it captured
 
 Changing any input after **Review action** clears the review ("Inputs changed.
 Review again before confirming."). **Close** (or **Escape**) keeps your draft
-for the next time you open it; **Discard draft** throws it away.
+for the next time you open it; **Discard draft** throws the draft away. On an
+install review it also releases the previewed copy, but **Review preview…**
+stays enabled, so preview again before reviewing.
 
 ### Manage plugin (installed plugins)
 
@@ -134,9 +136,13 @@ action**.
 | Uninstall; keep saved data | Remove the plugin. Its saved data stays on disk. |
 | Delete exact saved roots / Resume pending saved-data cleanup / Review qualified reboot reconciliation | Remove or recover the plugin's saved data (enter root IDs, or leave blank for the listed ones). |
 
-The other buttons: **Refresh status** reads the current state again; **Cancel
-operation** and **Cancel affected work** stop an update, a selection change or
-a saved-data deletion that is still running; **Console** takes you to Console
+The other buttons: **Refresh status** reads the current state again.
+**Cancel operation** and **Cancel affected work** are available only while a
+confirmed change is waiting: a component-selection change, update or rollback
+waits for work still using the current revision to finish, and a saved-data
+deletion or resumed cleanup waits for the data's users to finish. **Cancel
+operation** withdraws the change; **Cancel affected work** stops the work it is
+waiting for. **Console** takes you to Console
 so you can pick a chat for a test, with the hint "Select an existing chat in
 the captured workspace. Return with F8 and Manage; your exact draft is
 retained."
@@ -208,7 +214,8 @@ and [Local backup and recovery](../Backup-and-Recovery.md).
    uses. Press **Add source**.
 2. In **3 Marketplaces**, select the new source and press **Refresh source**.
 3. Choose **2 Browse**, select a plugin, and press **Preview entry**.
-4. Press **Review preview…** and continue as in step 4 above.
+4. Press **Review preview…** and continue from step 4 of
+   [Install a plugin from a repository or a folder](#install-a-plugin-from-a-repository-or-a-folder).
 
 ### Turn a plugin off for one workspace
 1. Make that workspace the active one; the scope line names it.

@@ -3,7 +3,7 @@ id: TASK-40332
 title: "The Plugins User Guide page is a stub that explains none of the install, authority or restore flows"
 status: Done
 assignee: ['@claude']
-updated_date: '2026-11-13 02:34'
+updated_date: '2026-11-13 03:17'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -58,3 +58,8 @@ Found in round 13 of the 2026-10-23 burn-down (docs stream). Checked by reading 
 **Capture.** New `plugins` target in `scripts/capture_user_guide.py` (`_plugins`, `:367`; listed in `TARGETS` and the module docstring; `_template.md`'s target list updated): F8, wait for the first load, export. Run through the wrapper: `run.sh … python scripts/capture_user_guide.py plugins` -> `wrote Docs/User_Guide/images/plugins/overview.svg` (viewBox 2885 × 1318.8 = 235×52, no cdnjs). The driver's profile uses the null keyring, so plugin authority cannot be set up there; the capture therefore shows the fresh-profile state ("Plugin metadata unavailable…"), and the page says so. An attempt to drive Add source… in that profile failed with "Operation unavailable…", which is the second quirk on the page.
 
 **Tests.** No new test (the criteria ask for none); `Tests/Docs/` 32 passed (image links, F-key lists, index nav table); local links of plugins.md/index.md/_template.md checked with `missing_local_links`: none missing.
+
+**Review round 2** (coordinator, 2026-11-13):
+- Discard draft: on an install review it also releases the previewed copy (`plugin_review_modal.py:1609-1621` -> `Plugins/source_service.py:1276-1300` `_discard_candidate`), while Review preview… stays enabled because `browse.preview` is untouched (`plugins_screen.py:497-499`). The page now says so and says to preview again.
+- Common task "Add a marketplace" step 4 now links step 4 of "Install a plugin from a repository or a folder" (it pointed at itself).
+- Cancel operation / Cancel affected work: enabled from `runtime_status["cancel_operation"]` (`plugin_review_modal.py:1564-1566`), which `Plugins/service.py:459-483` sets for a revision drain in phase reserved/waiting and for a saved-data operation in phase waiting. Drains are reserved only by `coordinator.review_selection` (`:279`, Save component selection) and `review_revision` (`:321`; Check for update via `source_service.py:963/983`, Rollback via `coordinator.py:352`); saved-data operations come from `data_cleanup._begin_data_operation` (`:1113`), used by Delete exact saved roots and Resume pending saved-data cleanup. `RevisionDrain.cancel` withdraws the proposal before committing, `cancel_work` cancels the runs the drain waits for (`Plugins/revisions.py:148-170`). The sentence now names exactly those cases.
