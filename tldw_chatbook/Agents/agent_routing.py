@@ -469,6 +469,22 @@ def freeze_spawn_target(
                     "fallback endpoint settings are invalid",
                     level=target.source,
                 ) from exc
+    if base_url:
+        # TASK-40300 review I1: a frozen endpoint the contract refuses would
+        # otherwise reach the adapter through the run's dispatch overlay.
+        from tldw_chatbook.Chat.custom_endpoint_registry import split_custom_endpoint_id
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+            endpoint_refusal,
+        )
+
+        identity = resolve_console_provider_identity(execution)
+        refusal = endpoint_refusal(
+            "llama_cpp" if identity.uses_direct_llama_path else identity.readiness_key,
+            base_url,
+            custom_endpoint=bool(split_custom_endpoint_id(target.provider)),
+        )
+        if refusal:
+            raise RoutingError("provider_not_ready", refusal, level=target.source)
     return SpawnTarget(
         target.provider, target.model, base_url, target.params, target.source, execution
     )

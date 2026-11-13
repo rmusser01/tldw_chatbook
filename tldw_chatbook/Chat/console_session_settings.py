@@ -36,10 +36,8 @@ from tldw_chatbook.Chat.console_provider_support import (
 from tldw_chatbook.Chat.console_provider_endpoints import (
     CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
-    INVALID_BASE_URL_COPY,
     INVALID_LLAMACPP_BASE_URL_COPY,
     URL_BASED_PROVIDER_KEYS,  # also re-exported; console_settings_modal imports it from here
-    contract_refuses_endpoint,
     effective_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
@@ -55,6 +53,7 @@ from tldw_chatbook.Chat.provider_catalog import (
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     REMOTE_ENDPOINT_SCHEME_REQUIRED,
     canonical_connection_identity,
+    endpoint_refusal,
     read_schemeless_loopback,
     resolve_provider_endpoint,
 )
@@ -2004,9 +2003,12 @@ def build_console_settings_readiness(
             if provider_key in {"llama_cpp", "local_llamacpp"}
             else effective_provider_endpoint(provider_key, None, provider_settings)
         )
-    endpoint_invalid = bool(
-        checked_url and not _valid_base_url(provider_key, checked_url)
+    endpoint_error = (
+        endpoint_refusal(provider_key, checked_url, custom_endpoint=entry is not None)
+        if checked_url
+        else ""
     )
+    endpoint_invalid = bool(endpoint_error)
     invalid_endpoint = (
         _invalid_endpoint_kind(provider_key, checked_url) if endpoint_invalid else None
     )
@@ -2074,7 +2076,7 @@ def build_console_settings_readiness(
             detail = (
                 INVALID_LLAMACPP_BASE_URL_COPY
                 if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
-                else INVALID_BASE_URL_COPY
+                else f"Provider blocked: {endpoint_error}"
             )
         label = "Invalid URL"
     elif blocker == "endpoint_not_saved":
@@ -3262,7 +3264,7 @@ def _valid_base_url(provider_key: str, base_url: str) -> bool:
     # TASK-40300: the endpoint contract decides, as the save and the send do
     # (TASK-39042 took only its scheme rule; ``validate_url`` let a zone id,
     # ``-bad.corp``, ``127.1``, an IDN and a query through).
-    return not contract_refuses_endpoint(provider_key, base_url)
+    return not endpoint_refusal(provider_key, base_url)
 
 
 def _float_in_range(value: object, minimum: float, maximum: float) -> bool:

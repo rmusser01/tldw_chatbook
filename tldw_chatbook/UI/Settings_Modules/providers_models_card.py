@@ -2254,7 +2254,7 @@ def compose_custom_endpoints_children(screen: SettingsScreen) -> ComposeResult:
         form, the built-in slot rows, and the shared status line.
     """
     config = screen._custom_endpoints_view_config()
-    entries = load_custom_endpoints(config)
+    entries = load_custom_endpoints(config, include_refused=True)  # TASK-40300
     rows = custom_endpoint_rows(config)
     if not rows:
         yield Static(

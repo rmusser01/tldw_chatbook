@@ -3084,3 +3084,7 @@ Tests/UI/test_library_collection_reader_journeys.py::test_a_pane_repaint_cancell
 # TASK-40328 review r14ls-rev3 (2026-11-13): the Collections first-visit
 # focus retry never moves a user's own focus.
 Tests/UI/test_library_collection_reader_journeys.py::test_collections_focus_retry_never_moves_a_users_own_focus
+# TASK-40300 review r14ep-rev1 (2026-11-13, owner decision): a custom endpoint
+# refused at load is listed in Settings with its reason and Edit fixes it
+# (private profile, ~15 s serial).
+Tests/UI/test_settings_custom_endpoint_default.py::test_settings_lists_a_refused_endpoint_with_its_reason_and_edit_fixes_it

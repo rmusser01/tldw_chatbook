@@ -1074,6 +1074,9 @@ MINIMUM_FILES = 2031
 # TASK-40328 review r14ls-rev3 (2026-11-13): append the focus-retry guard node
 # at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2142
+# TASK-40300 review r14ep-rev1 (2026-11-13): append the refused custom
+# endpoint Settings node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2143
 
 
 def read_census(path: Path) -> list[str]:

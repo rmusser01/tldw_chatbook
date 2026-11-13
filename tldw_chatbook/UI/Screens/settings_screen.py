@@ -19267,7 +19267,7 @@ class SettingsScreen(BaseAppScreen):
         slug = self._custom_endpoint_rename_slug
         if slug is None:
             return
-        entry = load_custom_endpoints(self._custom_endpoints_view_config()).get(slug)
+        entry = load_custom_endpoints(self._custom_endpoints_view_config(), include_refused=True).get(slug)
         if entry is None:
             self._custom_endpoints_report(f"Endpoint '{slug}' is no longer available.")
             return
@@ -19290,7 +19290,7 @@ class SettingsScreen(BaseAppScreen):
         slug = self._custom_endpoint_edit_slug
         if slug is None:
             return
-        entry = load_custom_endpoints(self._custom_endpoints_view_config()).get(slug)
+        entry = load_custom_endpoints(self._custom_endpoints_view_config(), include_refused=True).get(slug)
         if entry is None:
             self._custom_endpoints_report(f"Endpoint '{slug}' is no longer available.")
             return

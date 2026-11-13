@@ -20,10 +20,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleEgressClass
-from tldw_chatbook.Chat.console_provider_endpoints import (
-    INVALID_BASE_URL_COPY,
-    SAVE_ENDPOINT_ACTION_LABEL,
-)
+from tldw_chatbook.Chat.console_provider_endpoints import SAVE_ENDPOINT_ACTION_LABEL
 from tldw_chatbook.Chat.console_provider_gateway import (
     MAX_AUXILIARY_OUTPUT_TOKENS,
     AuxiliaryCompletionRequest,
@@ -610,7 +607,8 @@ async def test_capture_on_sanitizes_verified_shadow_before_adapter_entry() -> No
 
     resolution = ConsoleProviderResolution(
         provider="openai",
-        base_url="https://api.openai.com/v1?token=also-secret",
+        # TASK-40300 review I1: a query is refused at dispatch now.
+        base_url="https://api.openai.com/v1",
         model="gpt-4.1",
         ready=True,
         execution_key="openai",
@@ -3482,7 +3480,9 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     )
 
     assert with_user_info.ready is False
-    assert with_user_info.visible_copy == INVALID_BASE_URL_COPY
+    assert with_user_info.visible_copy == (
+        "Provider blocked: Endpoint URL must not include user information."
+    )
 
 
 @pytest.mark.asyncio
@@ -3713,7 +3713,9 @@ async def test_a_configured_endpoint_with_user_info_or_a_query_is_refused():
     )
 
     assert resolved.ready is False
-    assert resolved.visible_copy == INVALID_BASE_URL_COPY
+    assert resolved.visible_copy == (
+        "Provider blocked: Endpoint URL must not include a query."
+    )
 
 
 @pytest.mark.asyncio
@@ -3859,7 +3861,7 @@ async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashi
 
     assert resolved.ready is False
     # TASK-40300: the endpoint contract refuses it first, as readiness does.
-    assert resolved.visible_copy == INVALID_BASE_URL_COPY
+    assert resolved.visible_copy == "Provider blocked: Endpoint URL is malformed."
 
 
 @pytest.mark.asyncio
@@ -9633,7 +9635,7 @@ async def test_stream_without_usage_leaves_signals_none() -> None:
 def _auxiliary_resolution(**overrides) -> ConsoleProviderResolution:
     values = {
         "provider": "OpenAI",
-        "base_url": "https://api.example.test/v1?token=ENDPOINT-CANARY",
+        "base_url": "https://api.example.test/ENDPOINT-CANARY/v1",
         "model": "gpt-test",
         "ready": True,
         "readiness_key": "openai",
@@ -9942,7 +9944,7 @@ async def test_auxiliary_completion_is_one_shot_nonstreaming_and_tool_free() -> 
     call = calls[0]
     assert call == {
         "api_endpoint": "openai",
-        "api_base_url": "https://api.example.test/v1?token=ENDPOINT-CANARY",
+        "api_base_url": "https://api.example.test/ENDPOINT-CANARY/v1",
         "system_message": "OPTIMIZER-CANARY",
         "messages_payload": [{"role": "user", "content": "USER-CANARY"}],
         "api_key": "API-KEY-CANARY",

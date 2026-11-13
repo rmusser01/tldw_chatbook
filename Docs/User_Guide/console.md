@@ -806,11 +806,13 @@ was removed reads the same, in Chat settings and when you send.
 Every other address **s** refuses is refused the same way, for every
 provider: a host such as `-bad.corp`, `127.1`, `localhost..` or a non-ASCII
 one such as `bücher.example`, an IPv6 address with a zone ID, and an address
-with a query or a fragment read "Invalid URL" ("Provider blocked: invalid base
-URL. Use an http(s) URL."), whether it is the chat's endpoint or the
-provider's configured one, and Console neither sends to it nor checks it. A
-custom endpoint whose base URL is one of these is skipped when the config
-loads, like the llama.cpp one above.
+with a query, a fragment or a user name and password read "Invalid URL",
+whether it is the chat's endpoint or the provider's configured one, and a
+send says why, as in "Provider blocked: Endpoint URL must not include a
+query." Console neither sends to such an address nor checks it, and neither
+does an agent's sub-call. A custom endpoint whose base URL is one of these is
+not loaded, like the llama.cpp one above; Settings lists it with the reason
+so you can fix or delete it.
 A value typed without a scheme and without a port is shown as "invalid
 endpoint" unless it is on this computer (`localhost`, any `127.x.x.x` address
 or `[::1]`), because it could be a key pasted into the field.

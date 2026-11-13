@@ -94,7 +94,10 @@ def test_entry_for_resolves_provider_id():
 
 def test_validate_entry_rejects_bad_family_and_url():
     assert validate_entry("N", "groq", "http://h:1") == ["Unknown endpoint family: groq."]
-    assert any("http(s)" in e for e in validate_entry("N", "llama_cpp", "ftp://h"))
+    # TASK-40300 review M1: the endpoint contract's own reason.
+    assert validate_entry("N", "llama_cpp", "ftp://h") == [
+        "Start the address with http:// or https:// (for example http://127.0.0.1:8080)."
+    ]
 
 def test_mutation_round_trips_and_omits_none():
     entry = CustomEndpointEntry(slug="s", display_name="D", family="ollama",

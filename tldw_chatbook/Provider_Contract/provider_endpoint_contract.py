@@ -11,7 +11,7 @@ from typing import Literal
 from unicodedata import category
 from urllib.parse import urlparse, urlsplit, urlunparse, urlunsplit
 
-from tldw_chatbook.provider_registry import ALL_RECORDS, ProviderRecord
+from tldw_chatbook.provider_registry import ALL_RECORDS, CUSTOM_HOSTED, ProviderRecord
 
 EndpointForm = Literal[
     "origin",
@@ -314,6 +314,20 @@ def _resolve_provider_endpoint(
     if native:
         # Only from a plain root: an API suffix before the route is ambiguous.
         suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
+    if (
+        suffix is None
+        and provider_key == "custom_hosted"
+        and not (segments[-1] == "completions" and segments[-2:-1] != ("chat",))
+    ):
+        # TASK-40300, owner decision 2026-11-13: an OpenAI-compatible custom
+        # endpoint's path is its API base even when its v1 is not the last
+        # segment (DeepInfra /v1/openai, Cloudflare /v1/<acct>/<gw>/compat),
+        # read as its custom-hosted engine reads it. A legacy /completions
+        # route is not a base (chat would post to .../completions/chat/
+        # completions) and stays refused.
+        return _engine_preset_resolution(
+            CUSTOM_HOSTED, provider_key, scheme, netloc, canonical_host, segments
+        )
     if suffix is None:
         return _invalid_resolution(
             provider_key, "Endpoint path has ambiguous API suffixes."
@@ -346,6 +360,34 @@ def _resolve_provider_endpoint(
         form=form,
         warnings=warnings,
     )
+
+
+def endpoint_refusal(
+    provider: object, value: object, *, custom_endpoint: bool = False
+) -> str:
+    """The contract's reason for refusing an endpoint, or "" when it accepts it.
+
+    TASK-40300: Console's send, readiness, dispatch and custom endpoint
+    registry, agent routing and ``chat_with_llama`` all decide with this, so
+    none accepts a value the save refuses. The reason never names any part
+    of the value.
+
+    Args:
+        provider: Provider key; one the contract cannot name (``local-llm``)
+            reads as the generic ``custom``.
+        value: The endpoint as typed, stored or resolved.
+        custom_endpoint: True for a custom endpoint entry: an
+            OpenAI-compatible one reads as its custom-hosted engine reads it
+            (owner decision 2026-11-13).
+
+    Returns:
+        The first error the contract reports, or "".
+    """
+    key = normalize_provider_key_for_contract(provider) or "custom"
+    if custom_endpoint and key == "custom":
+        key = "custom_hosted"
+    errors = resolve_provider_endpoint(key, value).errors
+    return errors[0] if errors else ""
 
 
 def _engine_preset_resolution(

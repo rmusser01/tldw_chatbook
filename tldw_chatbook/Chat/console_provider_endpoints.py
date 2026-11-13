@@ -6,10 +6,11 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 
+from tldw_chatbook.Provider_Contract import ChatConfigurationError
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
+    endpoint_refusal,
     normalize_generic_endpoint_for_compare as normalize_generic_endpoint_for_compare,
-    normalize_provider_key_for_contract,
     read_schemeless_loopback,
     resolve_provider_endpoint,
     safe_endpoint_display as safe_endpoint_display,
@@ -34,9 +35,6 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
     "Use an http(s) URL such as http://127.0.0.1:9099."
 )
-#: An endpoint the contract refuses, for every provider but llama.cpp's own
-#: copy above; readiness and the send both say it (TASK-40300).
-INVALID_BASE_URL_COPY = "Provider blocked: invalid base URL. Use an http(s) URL."
 #: A ``custom-ep:`` id with no configured entry (removed, or skipped at load);
 #: the send and readiness both say it (TASK-40302).
 CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY = (
@@ -350,22 +348,44 @@ def unsaved_endpoint_copy(
     return f"{UNSAVED_ENDPOINT_COPY} Selected endpoint: {selected}. Saved endpoint: {configured}."
 
 
-def contract_refuses_endpoint(provider_key: str, endpoint: str) -> bool:
-    """Whether the provider endpoint contract refuses ``endpoint`` (TASK-40300).
+def refuse_a_refused_endpoint(resolution: object) -> None:
+    """Refuse a dispatch whose endpoint the contract refuses (TASK-40300 I1).
 
-    Console's send, readiness and custom endpoint registry decide with this,
-    so none accepts a value the save refuses, or refuses one it accepts.
+    ``resolve_for_send`` checks the endpoint it resolves, but an agent
+    sub-call or a run snapshot can overlay another ``base_url`` afterwards,
+    so the gateway's stream and auxiliary dispatch check the endpoint they
+    are about to use, before any request, trace shadow or adapter call.
 
     Args:
-        provider_key: Provider readiness key; a key the contract cannot name
-            (such as ``local-llm``) is read as the generic ``custom`` one.
-        endpoint: The endpoint as typed, stored or resolved.
+        resolution: The ``ConsoleProviderResolution`` about to be dispatched.
 
-    Returns:
-        True when the contract reports any error for the value.
+    Raises:
+        ChatConfigurationError: Status-less (nothing reached the provider),
+            with the contract's reason, which names no part of the value.
     """
-    key = normalize_provider_key_for_contract(provider_key) or "custom"
-    return bool(resolve_provider_endpoint(key, endpoint).errors)
+    from tldw_chatbook.Chat.custom_endpoint_registry import split_custom_endpoint_id
+
+    provider = str(getattr(resolution, "provider", "") or "")
+    base_url = getattr(resolution, "base_url", None)
+    if provider in {"llama_cpp", "local_llamacpp"}:
+        error = endpoint_refusal("llama_cpp", base_url or DEFAULT_LLAMACPP_BASE_URL)
+    elif isinstance(base_url, str) and base_url:
+        key = getattr(resolution, "readiness_key", "") or getattr(
+            resolution, "execution_key", ""
+        )
+        error = endpoint_refusal(
+            key or provider,
+            base_url,
+            custom_endpoint=bool(
+                split_custom_endpoint_id(getattr(resolution, "selected_provider", ""))
+            ),
+        )
+    else:
+        return
+    if error:
+        raise ChatConfigurationError(
+            f"Provider blocked: {error}", provider=provider or None, status_code=None
+        )
 
 
 def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:

@@ -1061,8 +1061,15 @@ OpenAI-compatible server — saved in `config.toml` under
 `[custom_endpoints.<slug>]`. Each entry runs as one of three families and
 behaves exactly like that built-in provider pointed at another origin. The
 editor refuses a base URL that **s** would refuse for that provider, such as
-`http://-bad.corp:8080`, `http://127.1:8080` or one with a query, and an
-entry holding one in `config.toml` is skipped when the config loads:
+`http://-bad.corp:8080`, `http://127.1:8080` or one with a query, and says
+why. An entry holding one in `config.toml` is not loaded: **Custom
+endpoints** still lists it, as in "not loaded: Endpoint URL must not include
+a query.", with **Edit** and **Delete**, so you can fix or remove it there.
+An OpenAI-compatible endpoint's path is its API base, so a documented base
+whose `v1` is not the last part, such as `https://api.deepinfra.com/v1/openai`
+or Cloudflare's `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/compat`,
+is accepted; `/v1/completions` is the legacy text route, not a base, and is
+refused:
 
 | Family | Behavior |
 |---|---|

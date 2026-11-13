@@ -2575,6 +2575,8 @@ _CONTRACT_REFUSED_BASES = {
     "double-dot": "http://localhost..:8000",
     "query": "http://127.0.0.1:8000?mode=fast",
     "fragment": "http://127.0.0.1:8000#part",
+    # Review r14ep-rev1 M2.
+    "user-info": "http://user:pw@127.0.0.1:8000",
 }
 #: Values the contract accepts, which resolve as before (AC#3).
 _CONTRACT_ACCEPTED_BASES = (
@@ -2806,6 +2808,7 @@ async def test_a_llamacpp_send_never_drops_a_query_to_reach_the_server(base_url)
         ConsoleRequestRoute,
         ConsoleTraceCaptureMode,
     )
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
 
     seen: list[str] = []
 
@@ -2821,10 +2824,11 @@ async def test_a_llamacpp_send_never_drops_a_query_to_reach_the_server(base_url)
         execution_key="llama_cpp",
         streaming=False,
     )
+    bundles: list = []
     async with _client(handler) as client:
-        gateway = ConsoleProviderGateway(http_client=client, trace_shadow_sink=lambda _: None)
+        gateway = ConsoleProviderGateway(http_client=client, trace_shadow_sink=bundles.append)
         prepared = _capture_on_prepared_request(gateway, resolution)
-        with pytest.raises(ValueError) as caught:
+        with pytest.raises((ValueError, ChatConfigurationError)) as caught:
             [
                 chunk
                 async for chunk in gateway.stream_chat(
@@ -2837,6 +2841,8 @@ async def test_a_llamacpp_send_never_drops_a_query_to_reach_the_server(base_url)
 
     assert seen == []
     assert "endpoint-secret" not in str(caught.value)
+    # Review r14ep-rev1 M3: refused before the trace shadow is built.
+    assert bundles == []
 
 
 @pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
@@ -2872,5 +2878,206 @@ def test_chat_with_llama_refuses_what_the_contract_refuses_without_echoing_it(
         )
 
     assert calls == []
-    for part in ("fe80", "bad.corp", "127.1", "cher", "localhost", "mode=fast", "part"):
+    for part in (
+        "fe80", "bad.corp", "127.1", "cher", "localhost", "mode=fast", "part", "pw@"
+    ):
         assert part not in str(caught.value)
+
+
+def _dispatch_resolution(provider, base_url, **fields):
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+
+    return ConsoleProviderResolution(
+        provider=provider,
+        base_url=base_url,
+        model="m",
+        ready=True,
+        readiness_key=fields.pop("readiness_key", provider),
+        execution_key=fields.pop("execution_key", provider),
+        streaming=False,
+        **fields,
+    )
+
+
+def _recording_gateway(seen):
+    def adapter(**kwargs):
+        seen.append(f"adapter:{kwargs.get('api_base_url')}")
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    return ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {}},
+        environ={},
+        http_client=_client(handler),
+        chat_api_call_fn=adapter,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize("provider", _ENDPOINT_PROVIDERS)
+async def test_a_dispatch_never_reaches_an_endpoint_the_contract_refuses(provider, shape):
+    """TASK-40300 review r14ep-rev1 I1: only ``resolve_for_send`` checked the
+    endpoint, and an agent sub-call's overlay (a frozen spawn target or a run
+    snapshot) replaces ``base_url`` afterwards, so ``127.1``, ``-bad.corp`` or
+    ``?token=`` reached the adapter for every provider but llama.cpp. The
+    stream and the auxiliary dispatch both refuse, with the contract's reason."""
+    from tldw_chatbook.Chat.console_provider_gateway import AuxiliaryCompletionRequest
+
+    endpoint = _with_path(provider, _CONTRACT_REFUSED_BASES[shape])
+    seen: list[str] = []
+    gateway = _recording_gateway(seen)
+    resolution = _dispatch_resolution(provider, endpoint)
+
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    with pytest.raises(ChatConfigurationError) as streamed:
+        [c async for c in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    with pytest.raises(ChatConfigurationError) as auxiliary:
+        await gateway.complete_auxiliary(
+            AuxiliaryCompletionRequest(
+                resolution=resolution,
+                messages=({"role": "user", "content": "x"},),
+                response_format=None,
+                max_output_tokens=8,
+            )
+        )
+
+    assert seen == []
+    for caught in (streamed, auxiliary):
+        assert caught.value.status_code is None  # nothing reached the provider
+        assert "Provider blocked" in str(caught.value)
+        for part in ("fe80", "bad.corp", "127.1", "cher", "mode=fast", "part", "pw@"):
+            assert part not in str(caught.value)
+
+
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize("provider", ["vllm", "openai", "llama_cpp"])
+def test_a_spawn_target_never_freezes_an_endpoint_the_contract_refuses(provider, shape):
+    """TASK-40300 review r14ep-rev1 I1: ``freeze_spawn_target`` froze any
+    endpoint, which the run's dispatch overlay then sent to."""
+    from tldw_chatbook.Agents.agent_routing import (
+        RoutingError,
+        SpawnTarget,
+        freeze_spawn_target,
+    )
+
+    endpoint = _with_path(provider, _CONTRACT_REFUSED_BASES[shape])
+    target = SpawnTarget(provider, "m", endpoint, (), "override")
+
+    with pytest.raises(RoutingError) as caught:
+        freeze_spawn_target({"api_settings": {}}, target)
+
+    assert caught.value.code == "provider_not_ready"
+    assert caught.value.level == "override"
+    frozen = freeze_spawn_target(
+        {"api_settings": {}}, SpawnTarget(provider, "m", _with_path(provider, _SAFE_LOOPBACK), (), "override")
+    )
+    assert frozen.base_url == _with_path(provider, _SAFE_LOOPBACK)
+
+
+#: TASK-40300, owner decision 2026-11-13 ("Accept them for custom endpoints"):
+#: documented OpenAI-compatible bases whose v1 is not the last path segment.
+_CUSTOM_HOSTED_BASES = (
+    "https://api.deepinfra.com/v1/openai",
+    "https://gateway.ai.cloudflare.com/v1/acct123/gw1/compat",
+)
+
+
+def _entry_config(base_url, family="openai_compatible", slug="box"):
+    return {
+        "api_settings": {},
+        "custom_endpoints": {
+            slug: {"display_name": "Box", "family": family, "base_url": base_url}
+        },
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("base_url", _CUSTOM_HOSTED_BASES)
+async def test_an_openai_compatible_custom_endpoint_keeps_a_v1_that_is_not_last(base_url):
+    """TASK-40300 owner decision 2026-11-13: the registry, readiness, the send,
+    the dispatch and agent routing all read an OpenAI-compatible custom
+    endpoint as its custom-hosted engine does, so these bases load, read
+    Ready and send to ``<base>/chat/completions``; the generic ``custom``
+    provider still refuses them (its reading has no API base of its own)."""
+    from tldw_chatbook.Agents.agent_routing import SpawnTarget, freeze_spawn_target
+    from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+    from tldw_chatbook.Chat.custom_endpoint_registry import load_custom_endpoints
+
+    config = _entry_config(base_url)
+    assert list(load_custom_endpoints(config)) == ["box"]
+    settings = ConsoleSessionSettings(provider="custom-ep:box", model="m")
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    assert readiness.blocker is None, readiness
+    seen: list[str] = []
+    gateway = _recording_gateway(seen)
+    gateway._config_provider = lambda: config
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="custom-ep:box", explicit_model="m", streaming=False)
+    )
+    assert resolution.ready is True, resolution.visible_copy
+    [c async for c in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    assert seen and seen[0].startswith(f"adapter:{base_url}"), seen
+    freeze_spawn_target(config, SpawnTarget("custom-ep:box", "m", base_url, (), "override"))
+
+    assert resolve_provider_endpoint("custom", base_url).errors == (
+        "Endpoint path has ambiguous API suffixes.",
+    )
+
+
+def test_a_legacy_completions_route_is_not_a_custom_endpoint_base():
+    """TASK-40300 owner decision 2026-11-13: ``/v1/completions`` is the legacy
+    text route, not an API base (a chat would post to
+    ``/v1/completions/chat/completions``), so it stays refused, with the
+    contract's reason."""
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        custom_endpoint_refusals,
+        load_custom_endpoints,
+        validate_entry,
+    )
+
+    config = _entry_config("http://localhost:8000/v1/completions")
+
+    assert load_custom_endpoints(config) == {}
+    assert custom_endpoint_refusals(config) == {
+        "box": "Endpoint path has ambiguous API suffixes."
+    }
+    assert validate_entry("Box", "openai_compatible", "http://localhost:8000/v1/completions") == [
+        "Endpoint path has ambiguous API suffixes."
+    ]
+
+
+def test_a_refused_custom_endpoint_is_listed_in_settings_with_its_reason():
+    """TASK-40300 owner decision 2026-11-13: an entry still refused at load was
+    only logged, so it vanished from Settings and could not be fixed there.
+    It is listed after the valid ones with the contract's reason, which never
+    names the value, and Edit and Delete can reach it."""
+    from tldw_chatbook.Chat.custom_endpoint_registry import load_custom_endpoints
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import (
+        custom_endpoint_rows,
+    )
+
+    config = _entry_config("http://127.0.0.1:8000/v1")
+    config["custom_endpoints"]["leaky"] = {
+        "display_name": "Leaky",
+        "family": "openai_compatible",
+        "base_url": "http://127.0.0.1:8000/v1?token=not-a-real-secret",
+    }
+
+    rows = custom_endpoint_rows(config)
+
+    assert [row.key for row in rows] == ["custom-ep:box", "custom-ep:leaky"]
+    assert rows[1].label == "Leaky"
+    assert rows[1].value == (
+        "OpenAI-compatible · not loaded: Endpoint URL must not include a query. · 0 models"
+    )
+    assert "not-a-real-secret" not in rows[1].value
+    assert list(load_custom_endpoints(config)) == ["box"]
+    assert list(load_custom_endpoints(config, include_refused=True)) == ["box", "leaky"]

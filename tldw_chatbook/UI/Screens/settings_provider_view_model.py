@@ -15,6 +15,7 @@ from ...Chat.custom_endpoint_registry import (
     ENV_VAR_NAME_RULE_COPY,
     CustomEndpointEntry,
     build_entry_mutation,
+    custom_endpoint_refusals,
     derive_slug,
     family_execution_key,
     family_normalizes_like_llama,
@@ -417,14 +418,19 @@ def custom_endpoint_rows(
 
     Returns:
         Rows keyed by the entry's ``custom-ep:<slug>`` provider id; empty
-        when the registry has no valid entries.
+        when the registry has no entries. An entry refused at load follows
+        the valid ones and reads "not loaded" with its reason in place of
+        its endpoint (TASK-40300), so it can be edited or deleted here.
     """
     rows: list[SettingsOverviewRow] = []
-    for entry in load_custom_endpoints(app_config).values():
+    refusals = custom_endpoint_refusals(app_config)
+    for entry in load_custom_endpoints(app_config, include_refused=True).values():
         family_label = _CUSTOM_ENDPOINT_FAMILY_LABELS.get(
             entry.family, entry.family
         )
         endpoint_display = safe_endpoint_display(entry.base_url) or "not set"
+        if entry.slug in refusals:
+            endpoint_display = f"not loaded: {refusals[entry.slug]}"
         model_count = len(entry.models)
         models_label = f"{model_count} model" if model_count == 1 else f"{model_count} models"
         rows.append(
@@ -511,7 +517,7 @@ def detach_and_delete_entry(
     slug = split_custom_endpoint_id(provider_id)
     if slug is None:
         return
-    entry = load_custom_endpoints(app_config).get(slug)
+    entry = load_custom_endpoints(app_config, include_refused=True).get(slug)
     if entry is None:
         return
     family_provider = family_execution_key(entry.family)

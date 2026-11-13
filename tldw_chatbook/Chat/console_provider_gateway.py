@@ -62,10 +62,9 @@ from tldw_chatbook.Chat.console_library_destination import resolve_console_desti
 from tldw_chatbook.Chat.console_provider_endpoints import (
     CONFIG_READING_LOCAL_EXECUTION_KEYS,
     CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
-    INVALID_BASE_URL_COPY,
     URL_BASED_PROVIDER_KEYS,
     adapter_api_base_url,
-    contract_refuses_endpoint,
+    refuse_a_refused_endpoint,
     effective_provider_endpoint,
     generic_endpoint_differs,
     meaningful_adapter_base_url,
@@ -73,6 +72,7 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     unsaved_endpoint_copy,
 )
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    endpoint_refusal,
     read_schemeless_loopback,
 )
 from tldw_chatbook.Chat.console_prepared_request import (
@@ -3975,7 +3975,7 @@ class ConsoleProviderGateway:
         """
         model = config.explicit_model or config.configured_model
         base_url = normalize_llamacpp_base_url(config.base_url)
-        if contract_refuses_endpoint("llama_cpp", base_url):  # TASK-40300
+        if endpoint_refusal("llama_cpp", base_url):  # TASK-40300
             return ConsoleProviderResolution(
                 provider="llama_cpp",
                 base_url=config.base_url,
@@ -4715,14 +4715,15 @@ class ConsoleProviderGateway:
         # TASK-40300: the endpoint contract decides, before the unsaved guard,
         # as readiness does; a refused custom entry never falls back to its
         # raw value.
-        if effective_base_url and contract_refuses_endpoint(
-            identity.readiness_key, effective_base_url
-        ):
+        endpoint_error = effective_base_url and endpoint_refusal(
+            identity.readiness_key, effective_base_url, custom_endpoint=bool(custom_entry)
+        )
+        if endpoint_error:
             return self._blocked_resolution(
                 selection,
                 provider=selection.provider,
                 model=model,
-                visible_copy=INVALID_BASE_URL_COPY,
+                visible_copy=f"Provider blocked: {endpoint_error}",
                 readiness_key=identity.readiness_key,
                 execution_key=identity.execution_key,
             )
@@ -4996,7 +4997,7 @@ class ConsoleProviderGateway:
             Assistant-visible content chunks.
         """
         normalized_base_url = normalize_llamacpp_base_url(base_url)
-        if contract_refuses_endpoint("llama_cpp", normalized_base_url):
+        if endpoint_refusal("llama_cpp", normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
         prepared = self._automatic_local_request(
@@ -5318,7 +5319,7 @@ class ConsoleProviderGateway:
             Assistant-visible completion text.
         """
         normalized_base_url = normalize_llamacpp_base_url(base_url)
-        if contract_refuses_endpoint("llama_cpp", normalized_base_url):
+        if endpoint_refusal("llama_cpp", normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
         prepared = self._automatic_local_request(
@@ -5546,6 +5547,7 @@ class ConsoleProviderGateway:
 
         if not isinstance(request, AuxiliaryCompletionRequest):
             raise TypeError("request must be an AuxiliaryCompletionRequest")
+        refuse_a_refused_endpoint(request.resolution)
         if route not in {None, ConsoleRequestRoute.AUTO_COMPACTION}:
             raise TraceProvenanceAlignmentError(
                 "auxiliary completion route is not capture-off"
@@ -5981,6 +5983,7 @@ class ConsoleProviderGateway:
             capture_mode=capture_mode,
             ephemeral=ephemeral,
         )
+        refuse_a_refused_endpoint(resolution)
         if type(dispatch_purpose) is not ConsoleProviderCallPurpose:
             raise TraceProvenanceAlignmentError("provider purpose is invalid")
         if provisional_trace_attempt is not None and (

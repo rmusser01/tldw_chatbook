@@ -25,6 +25,7 @@ import tldw_chatbook.LLM_Calls.LLM_API_Calls as cloud_adapters
 import tldw_chatbook.LLM_Calls.LLM_API_Calls_Local as local_adapters
 import tldw_chatbook.LLM_Calls.hosted_chat as hosted_chat
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+from tldw_chatbook.Provider_Contract import ChatConfigurationError
 from tldw_chatbook.Chat.Chat_Functions import SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -1033,10 +1034,13 @@ async def test_sensitive_direct_llama_rejects_embedded_userinfo_without_logging_
         max_output_tokens=8,
     )
 
-    with _captured_logs() as logs, pytest.raises(ChatProviderError):
+    # TASK-40300 review I1: refused before dispatch, as a status-less
+    # configuration error (nothing reached the provider).
+    with _captured_logs() as logs, pytest.raises(ChatConfigurationError) as caught:
         await gateway.complete_auxiliary(request)
 
-    _assert_canaries_absent(logs)
+    assert caught.value.status_code is None
+    _assert_canaries_absent(logs, caught.value)
     await client.aclose()
 
 

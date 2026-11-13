@@ -3,7 +3,7 @@ id: TASK-40302
 title: "Console readiness for a removed or skipped custom endpoint says it is not available in Console yet and shows a mangled id, while the send says to restore the entry"
 status: Done
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 02:56
+updated_date: 2026-11-13 19:21
 assignee:
 - '@claude'
 labels:
@@ -55,3 +55,5 @@ Readiness for a `custom-ep:` id with no configured entry now says what the send 
 - **Docs**: `Docs/User_Guide/console.md` says a chat whose custom endpoint was removed reads the same copy, in Chat settings and on send.
 - **Runs** (run.sh, `-n 4`, load 57-70): the discovery file, `test_custom_endpoint_registry.py` and `Tests/Agents/test_preset_fallback.py`: 491 passed. The wider covering run is recorded in TASK-40300, which touches the same modules.
 - Files: `tldw_chatbook/Chat/console_session_settings.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `tldw_chatbook/Chat/console_provider_gateway.py`, `Tests/Chat/test_local_server_discovery.py`, `Docs/User_Guide/console.md`.
+
+**Follow-up (TASK-40300 review round, 2026-11-13).** Two Settings Overview pins in `Tests/UI/test_settings_custom_endpoint_default.py` (a dangling `custom-ep:gone` default and the `CUSTOM-EP:gpu-box` malformed default) read "Status: Not ready · unsupported"; with this task's `provider_missing` blocker they read "Status: Not ready · no provider" and were rewritten on purpose (in TASK-40300's round-2 commit). This round's UI base comparison had run at this task's own commit, so it did not see them.
