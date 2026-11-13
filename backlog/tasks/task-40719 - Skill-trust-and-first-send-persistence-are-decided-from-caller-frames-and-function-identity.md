@@ -1,7 +1,7 @@
 ---
 id: TASK-40719
 title: "Skill trust and first-send persistence are decided from caller frames and function identity, against ADR-356 rule 4"
-status: To Do
+status: In Progress
 created_date: 2026-11-13 06:28
 labels:
 - follow-up
@@ -54,3 +54,15 @@ If those functions are wrapped, reloaded or patched, skill trust is silently not
 - [ ] #2 The first-send setting is saved whether or not the config check function is wrapped, and no Send path is gated on function or code identity.
 - [ ] #3 An architecture ratchet covering all of `tldw_chatbook/`, not only Chat/, is pinned at the current count and fails on any increase in sites that read caller frames or function, code, default or closure identity.
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. ADR-356 rule 4 already decides that function/code identity and caller frames establish no authority; this applies it to three remaining sites.
+
+1. Behaviour tests first, shown failing on the unmodified tree:
+   - skill trust: a build reached through a wrapped trust getter or a wrapped first-use initializer is recorded for the active native publication; a setter-injected service, a build on another thread, a build outside a publication and a candidate that is not the published slot are not;
+   - first send: the setting reaches config.toml when the config writer is wrapped;
+   - Send: a wrapped `submit_draft` (and a wrapped `prepare_hooks_v2`) still shares the attempt's one hook read.
+2. Replace the checks with the runtime state already there: the active publication marker (same thread/task, same app) and the published slot for skill trust; the installed config module, config identity, app/runtime/controller/store, quiescence and the mutation CAS for first send (drop the now-unused config-function identity records); pass the attempt's hook read whenever it exists.
+3. Add a whole-package AST ratchet over `tldw_chatbook/` for caller-frame and function/code/default/closure identity reads, pinned at the post-change counts, with a negative control.
+
