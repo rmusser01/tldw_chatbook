@@ -1037,21 +1037,22 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   own address or model makes it yours as well, whether you edit
   `config.toml` by hand (`api_url`, or `api_base_url`, `api_base` or
   `base_url`, which a send uses first) or use Chat settings' **Save endpoint
-  & use model**. MLX-LM is the exception: a send to it goes to its `host`
-  and `port` (127.0.0.1 and 8080 unless you set them) and never reads
-  `api_url`, so point it at your server with `host` and `port`; an `api_url`
-  edit alone leaves it a sample. From then on it is listed like any provider you set up,
+  & use model**. From then on it is listed like any provider you set up,
   never here, whether its server answered, refused or (a keyed server, or
-  MLX-LM) was never checked. A provider section your `config.toml` already
-  had before this marker existed counts as a sample only while the address
-  a send would use and the model are still the ones the old template
-  shipped; once you changed either, it is yours. Nothing in your file is
-  rewritten. MLX-LM is a server too, but no model listing can check it, so
-  while it is still at its shipped settings, unused and listing no models,
-  it is named here as "MLX-LM (Apple silicon) (not checked)" rather than
-  under READY PROVIDERS: nothing knows whether it is running, and opening
-  the list again does not check it either. Typing in Find filters these
-  names as it filters every group: "tabby" keeps TabbyAPI only.
+  MLX-LM) was never checked. MLX-LM is the exception to the address keys: a
+  send to it goes to its `host` and `port` (127.0.0.1 and 8080 unless you
+  set them) and never reads `api_url`, so point it at your server with
+  `host` and `port`; an `api_url` edit alone leaves it a sample. A provider
+  section your `config.toml` already had before this marker existed counts
+  as a sample only while the address a send would use and the model are
+  still the ones the old template shipped; once you changed either, it is
+  yours. Nothing in your file is rewritten. MLX-LM is a server too, but no
+  model listing can check it, so while it is still at its shipped settings,
+  unused and listing no models, it is named here as
+  "MLX-LM (Apple silicon) (not checked)" rather than under READY PROVIDERS:
+  nothing knows whether it is running, and opening the list again does not
+  check it either. Typing in Find filters these names as it filters every
+  group: "tabby" keeps TabbyAPI only.
 
 Each row shows the model, the provider's name, its context size, readiness
 and last use. A size no catalog knows reads `?` (unknown), never a guess;
