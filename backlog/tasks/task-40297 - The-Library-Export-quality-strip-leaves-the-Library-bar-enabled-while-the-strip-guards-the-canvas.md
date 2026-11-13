@@ -4,7 +4,7 @@ title: "The Library Export quality strip leaves the ‹ Library bar enabled whil
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 05:40'
+updated_date: '2026-11-13 07:20'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -55,3 +55,5 @@ Premise held on base 26b2e677dd (the node failed with `LibraryEmergencyReturn.di
 - Files: `UI/Library_Modules/library_export_controller.py`, `Tests/Architecture/test_library_modules_size_ratchet.py` (row 1501 -> 1504), `scripts/library_shell_push_deselect.txt`, `Docs/User_Guide/library/import-and-export.md`.
 
 Covering run (shared by the stream's five tasks, final tree): 58 Library UI files that reference the changed seams (`test_library_shell.py` whole, side-by-side, canvas-sync defects, choice strips, multiselect, honesty, workbench focus, screen navigation and 50 more), `-n 4`, load 42-66: 2023 passed, 863 failed. Every failing function was re-run on the head tree and on the base source (26b2e677dd, same tests): of those 871 nodes 850 fail on head and 845 on base, almost all the local RecoveryRequired wall for plain Tests/UI files plus the deselected nodes owned by TASK-32503/34000.60/40296/40299. Head-only reds re-checked: `test_focus_library_list_entry_falls_back_to_first_row_outside_active_selection` (fake rows without `ancestors`; fixed in TASK-40293), `test_any_non_markdown_item_with_content_says_why_rendered_is_absent[video]` (3 of 3 green on head when re-run alone), `test_literal_history_restore_keeps_kind_definition_and_guards` (red 1-3 of 3 params on base too), and four nodes that passed on re-run. `Tests/Architecture` Library wiring files: 49 passed (serial).
+
+**Fix round 1 (review r14lf-rev1).** The pick close at `library_export_controller.py` had no test (`[cancel]` closes with Escape). The node now also has `[pick]` (picks a choice) and `[toggle]` (presses the opener a second time). Each closes the strip its own way, then asserts `bar.disabled is False` and `esc == "rail"`. With only the pick handler's sync removed, `[pick]` fails on `bar.disabled` still True while `[toggle]` and `[cancel]` pass. With the toggle handler's sync removed, all three open-strip parameters fail at the open step. All four parameters pass on the fixed tree.
