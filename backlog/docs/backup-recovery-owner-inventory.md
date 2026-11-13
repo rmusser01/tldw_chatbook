@@ -4109,7 +4109,7 @@ Manual (inert) extraction never offers or writes credential material.
 
 | Registry owner | Source module | Existing policy | Recovery cohort/status |
 | --- | --- | --- | --- |
-| sqlite:recovery.personal_context.repository | tldw_chatbook/Personal_Context/recovery | _PRIVATE_AND_READ_ONLY | sqlite/Personal Context backup owner (centralized backup and recovery capture allowed) |
+| sqlite:recovery.personal_context.repository | tldw_chatbook/Personal_Context/recovery | _PRIVATE_MEMORY_AND_READ_ONLY | sqlite/Personal Context backup owner (centralized backup and recovery capture allowed; memory: an in-memory image of an archived copy, TASK-40135) |
 
 | Module | Producer symbol | Call | Count | Classification | Resolver / adapter cohort |
 | --- | --- | --- | --- | --- | --- |
