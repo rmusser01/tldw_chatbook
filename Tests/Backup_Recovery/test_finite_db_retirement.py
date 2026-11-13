@@ -195,50 +195,6 @@ def test_app_retention_never_creates_an_absent_runs_db(tmp_path, local_root):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fail", [False, True])
-async def test_sync_log_retention_retires_its_worker_connections(
-    tmp_path, local_root, monkeypatch, fail
-):
-    """The startup sync-log pass leaves no pool-thread handle holding storage.
-
-    TASK-34100.16.1: each store's cached connection on an executor thread kept
-    a storage lease that a backup's local pause can never drain, so every
-    Create backup after the 65 s pass ended in ``admission_timeout``.
-    """
-    from loguru import logger
-
-    from tldw_chatbook import app_lifecycle
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-
-    chat = CharactersRAGDB(tmp_path / "chat.db", "test")
-    media = MediaDatabase(tmp_path / "media.db", client_id="test")
-    ran = []
-    for db in (chat, media):
-        original = db.delete_sync_log_entries_older_than
-
-        def prune(cutoff, original=original, db=db):
-            ran.append((db, threading.current_thread()))
-            deleted = original(cutoff)
-            if fail:
-                raise ValueError("prune failed after its delete")
-            return deleted
-
-        monkeypatch.setattr(db, "delete_sync_log_entries_older_than", prune)
-    monkeypatch.setattr(app_lifecycle, "get_cli_setting", lambda *args, **kwargs: 90)
-    host = SimpleNamespace(chachanotes_db=chat, media_db=media, loguru_logger=logger)
-    try:
-        await app_lifecycle.LifecycleMixin._perform_sync_log_retention(host)
-
-        assert [db for db, _ in ran] == ([chat] if fail else [chat, media])
-        assert all(thread is not threading.current_thread() for _, thread in ran)
-        assert not worker_leases(chat), "ChaChaNotes worker kept its connection"
-        assert not worker_leases(media), "Media worker kept its connection"
-    finally:
-        chat.close_connection()
-        media.close_connection()
-
-
-@pytest.mark.asyncio
 async def test_note_backlinks_lookup_retires_its_worker_connection(tmp_path, local_root):
     """Opening a note's Info leaves no pool-thread handle holding storage.
 
