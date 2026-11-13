@@ -45,8 +45,9 @@ and file extraction; they cannot replace existing installation data.
 folder: the plugin registry, installed package bytes, every plugin's saved data,
 and each repository fetch's checked snapshot and fetch record, which recovery
 needs to re-verify a plugin installed from a repository. Left out, and shown as
-excluded in the review: the plugin runtime lock file and everything else in each
-fetch folder, such as the copies of your git and SSH configuration the fetch used
+excluded in the review: the plugin runtime lock file, the `reset-…` folder a
+plugin authority reset after a restore sets aside (a later restore keeps it),
+and everything else in each fetch folder, such as the copies of your git and SSH configuration the fetch used
 (they can hold credential helpers), its git object store (`repository.git`) and
 its working copy (`content/`). Each is one excluded entry; Chatbook does not look
 inside it. Plugins in use are not copied: while a plugin process may still be

@@ -104,23 +104,29 @@ class PluginCoordinator:
             raise RuntimeError("plugin coordinator requires its persistent worker loop")
         self.owner.require_owner(self.registry.path.parent)
 
-    def bootstrap(self, passphrase: str) -> None:
+    def bootstrap(self, passphrase: str) -> Path | None:
         """Explicit owner-gated setup; never bootstrap over registry authority.
 
         The one exception is the reviewed post-restore reset (TASK-40308): while
         a restored generation awaits plugin review and authority was reset,
         setup sets the restored registry, download records and downloads aside
-        and keeps every saved-data folder for reviewed reattachment.
+        and keeps every saved-data folder for reviewed reattachment. Returns
+        the set-aside folder, if any. An unreadable restore witness refuses.
         """
         self._require_worker()
         prior = self.registry.authority_projection(operation_result=None)
         data_anchor = self.owner.root / "data"
         retained = bool(prior["installations"] or prior["data_roots"])
+        aside = None
         if retained or os.path.lexists(data_anchor):
-            from .backup import restore_review_required
+            from .backup import restore_pending
 
-            if restore_review_required(self.owner.root):
-                self._set_restored_plugins_aside()
+            try:
+                pending = restore_pending(self.owner.root)
+            except (OSError, ValueError, RuntimeError):
+                pending = False  # An unreadable witness is no restore: refuse.
+            if pending:
+                aside = self._set_restored_plugins_aside()
             elif retained:
                 raise ValueError(
                     "existing installation or root custody requires reviewed recovery"
@@ -130,30 +136,25 @@ class PluginCoordinator:
         self.authority.bootstrap(passphrase)
         self._published = self.authority.verify_current()
         self.root_usage.initialize(self._published, fresh=True)
+        return aside
 
     def _set_restored_plugins_aside(self) -> Path:
-        """Move restored plugin state under ``staging/.reset-<id>/``; delete nothing.
+        """Move restored plugin state into ``reset-<id>/``; delete nothing.
 
-        Inside ``staging/``, backups keep only a folder's ``snapshot/`` and never
-        walk the rest, so the downloads' host configuration copies stay out of
-        archives. Saved-data folders under ``data/`` stay where they are.
+        Backups exclude ``reset-<id>/`` whole, never walked (so the downloads'
+        host configuration copies stay out of archives), and replace restores
+        keep it (``Plugins/backup.kept_whole``). Saved-data folders under
+        ``data/`` stay where they are. Package bytes under ``packages/`` and
+        ``packages-revisions/`` stay too, unregistered, until removed by hand.
         """
         if self.authority.posture() != "needs_setup":
             raise ValueError("plugin authority reset required before setup")
         root = self.owner.root
-        staging = root / "staging"
-        staging.mkdir(mode=0o700, exist_ok=True)
-        aside = staging / f".reset-{secrets.token_hex(8)}"
-        (aside / "staging").mkdir(mode=0o700, parents=True)
-        with os.scandir(staging) as entries:
-            names = sorted(
-                entry.name for entry in entries if not entry.name.startswith(".reset-")
-            )
-        for name in names:
-            os.rename(staging / name, aside / "staging" / name)
-        custody = root / "acquisition-custody"
-        if os.path.lexists(custody):
-            os.rename(custody, aside / "acquisition-custody")
+        aside = root / f"reset-{secrets.token_hex(8)}"
+        aside.mkdir(mode=0o700)
+        for name in ("staging", "acquisition-custody"):
+            if os.path.lexists(root / name):
+                os.rename(root / name, aside / name)
         self.registry.set_aside(aside)
         self._published = None
         self._reviews.clear()
@@ -1526,11 +1527,14 @@ class PluginCoordinator:
         self._require_worker()
         return review_rebind(self, root)
 
-    def kept_data_folders(self) -> tuple[str, ...]:
-        from .data_cleanup import kept_folders
+    def kept_data_folders(self) -> tuple[tuple[str, str | None, str | None], ...]:
+        """Kept folders with their unproven former installation and alias."""
+        from .data_cleanup import kept_folder_hints, kept_folders
 
         self._require_worker()
-        return kept_folders(self)
+        names = kept_folders(self)
+        hints = kept_folder_hints(self, set(names))
+        return tuple((name, *hints.get(name, (None, None))) for name in names)
 
     def review_kept_attachment(
         self, installation_id: str, workspace_id: str | None, root_id: str

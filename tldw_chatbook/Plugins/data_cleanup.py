@@ -940,6 +940,32 @@ def kept_folders(coordinator, *, limit=256):
     return tuple(names[:limit])
 
 
+def kept_folder_hints(coordinator, names) -> dict:
+    """Former owners of kept folders, as the set-aside registries record them.
+
+    Unproven: a set-aside registry is no longer authenticated, so this only
+    helps the user recognize a folder; the attachment review still decides.
+    """
+    import sqlite3
+
+    from .registry import PluginRegistry
+
+    hints = {}
+    for path in sorted(coordinator.owner.root.glob("reset-*/registry.sqlite3")):
+        try:
+            with PluginRegistry(path, read_only=True) as registry:
+                rows = registry._connection.execute(
+                    "SELECT d.root_id, d.installation_id, i.alias FROM data_roots d "
+                    "LEFT JOIN installations i ON i.installation_id = d.installation_id"
+                ).fetchall()
+        except (OSError, ValueError, PermissionError, sqlite3.Error):
+            continue
+        for root_id, installation_id, alias in rows:
+            if root_id in names:
+                hints.setdefault(root_id, (installation_id, alias))
+    return hints
+
+
 def review_kept_attachment(coordinator, installation_id, workspace_id, root_id):
     """Review attaching one kept saved-data folder to an installed plugin."""
     baseline = coordinator.published_snapshot()

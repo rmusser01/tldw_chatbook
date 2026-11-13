@@ -294,9 +294,9 @@ class PluginService:
 
     async def bootstrap(self, passphrase: str) -> None:
         def operation():
-            self._coordinator.bootstrap(passphrase)
             # Setup after a post-restore reset completes that restore's review.
-            self._finish_restore_review(())
+            if self._coordinator.bootstrap(passphrase) is not None:
+                self._finish_restore_review(())
             self._refresh()
 
         await self._call(operation)
@@ -549,13 +549,18 @@ class PluginService:
             posture = authority.posture()
             if posture not in {"ready", "ready_reduced", "locked", "recovery_required"}:
                 raise ValueError("plugin_reset_unavailable")
-            from .backup import restore_review_required
+            from .backup import restore_pending
 
             projection = self._coordinator.registry.authority_projection(
                 operation_result=None
             )
             roots = projection["data_roots"]
             root = self._coordinator.owner.root
+            try:
+                restored = restore_pending(root)
+            except (OSError, ValueError, RuntimeError):
+                # An unreadable witness never promises the post-restore setup.
+                restored = False
             review = AuthorityResetReview(
                 uuid4().hex,
                 uuid4().hex,
@@ -569,7 +574,7 @@ class PluginService:
                     or roots
                     or os.path.lexists(root / "data")
                 ),
-                restored=restore_review_required(root),
+                restored=restored,
             )
             self._reset_review = review
             return review
@@ -605,8 +610,13 @@ class PluginService:
         return await self._call(operation)
 
     async def restore_review_pending(self) -> bool:
-        """Whether a restored generation still awaits plugin authority recovery."""
-        return await self._call(lambda: self._restore_review)
+        """Whether a restored generation still awaits plugin authority recovery.
+
+        Strict: an unreadable restore witness raises rather than answers yes.
+        """
+        from .backup import restore_pending
+
+        return await self._call(lambda: restore_pending(self._coordinator.owner.root))
 
     async def review_restored_authority(self, passphrase: str):
         """Authenticate a restored plugin authority for adoption (TASK-40308).
@@ -621,11 +631,11 @@ class PluginService:
             import secrets
             import time
 
-            from .backup import restore_review_required
+            from .backup import restore_pending
             from .review import RestoredAuthorityReview
 
             coordinator = self._coordinator
-            if not restore_review_required(coordinator.owner.root):
+            if not restore_pending(coordinator.owner.root):
                 raise ValueError("plugin_restore_adoption_unavailable")
             authority = coordinator.authority
             found = authority.restored_snapshots(passphrase)
@@ -642,9 +652,21 @@ class PluginService:
                 raise ValueError("plugin_restore_authority_unmatched")
             marker, snapshot = max(matching, key=lambda row: row[0].generation)
             current = authority.load_marker()
+            checkpoint = authority.load_runtime_checkpoint()
+            # A marker another authority namespace published (a reset, then new
+            # authority) shares no generations with this one: nothing to count.
+            foreign = (
+                checkpoint is not None
+                and checkpoint.marker == current
+                and checkpoint.namespace_id != authority.namespace_id()
+            )
             if current == marker:
                 undone = 0
-            elif current is not None and current.generation > marker.generation:
+            elif (
+                not foreign
+                and current is not None
+                and current.generation > marker.generation
+            ):
                 undone = current.generation - marker.generation
             else:
                 undone = None
@@ -714,7 +736,8 @@ class PluginService:
         """Review rebinding one replaced saved-data folder (TASK-40308)."""
         return await self._call(lambda: self._coordinator.review_data_rebind(root))
 
-    async def kept_data_folders(self) -> tuple[str, ...]:
+    async def kept_data_folders(self):
+        """Kept saved-data folders as (name, former installation, alias), unproven."""
         return await self._call(lambda: self._coordinator.kept_data_folders())
 
     async def review_kept_attachment(self, installation_id, root_id, *, workspace_id):

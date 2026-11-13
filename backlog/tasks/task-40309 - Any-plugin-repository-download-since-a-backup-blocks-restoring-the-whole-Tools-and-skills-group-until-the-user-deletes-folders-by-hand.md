@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 05:32
+updated_date: 2026-11-13 07:55
 labels:
 - follow-up
 - plugins
@@ -98,5 +98,14 @@ The restore engine forces the order. Publication re-checks each retired director
 - `Docs/Architecture/backup-recovery.md`, `backlog/docs/backup-recovery-owner-inventory.md`.
 
 **Files.** `tldw_chatbook/Plugins/backup.py`, `tldw_chatbook/Backup_Recovery/recovery_service.py`, `tldw_chatbook/UI/Screens/backup_restore_screen.py`, the tests and docs above.
+**Review r14plg-rev1 (2026-11-13), fixes.**
+- **M4, a `..` member deleted the data tree.** `remove_fetch_members` refuses a member path that is not normalized, holds an empty, `.` or `..` component, is `snapshot`, or is not `staging/<name>/<member>`. The unit test's refused cases add `root/staging/../data`, and the data tree survives; the reviewer's `probe.py` part 2 now prints "dotdot refused".
+- **M5, checks ran outside the lock and paths were re-resolved.** Validation is now done under the runtime lock. Each removal goes through no-follow directory descriptors, as `Plugins/retention.py` does:
+  - plugin root, then `registry.sqlite3` checked as a regular file through it;
+  - `staging/`, then the folder;
+  - `os.stat`/`os.unlink(dir_fd=…)` and `shutil.rmtree(dir_fd=…)` for the member.
+  No member path is re-resolved after its check.
+- **M9, Enter could delete before the copy was read.** The removal review no longer moves focus onto **Remove newer plugin downloads**; focus stays where it was. Pinned in `test_restore_review_lists_newer_plugin_downloads_and_removes_them`; negative control (focus restored): the assertion fails.
+- TASK-40308's set-aside folder moved out of `staging/` (review item I2), so a later restore never lists it as newer downloads.
 <!-- SECTION:NOTES:END -->
 

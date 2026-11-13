@@ -808,7 +808,7 @@ class SourceService:
             import secrets
             import time
 
-            from .acquisition import _inventory, identity_changed
+            from .acquisition import _inventory, folder_identities, identity_changed
             from .data_cleanup import folder_summary
 
             owner, authority = self._coordinator.owner, self._coordinator.authority
@@ -824,6 +824,7 @@ class SourceService:
             if reason is None:
                 raise ValueError("acquisition_rebind_unavailable")
             snapshot = owner.acquisition_destination(operation_id)
+            identities = folder_identities(owner, operation_id)
             files, size, complete = folder_summary(snapshot)
             installations = tuple(
                 (row[0], row[1])
@@ -844,6 +845,7 @@ class SourceService:
                 "bytes": size,
                 "complete": complete,
                 "installations": installations,
+                "identities": identities,
                 "expires_at": time.monotonic() + 900,
             }
             self._custody_rebind_review = review
@@ -870,6 +872,7 @@ class SourceService:
                 coordinator.authority,
                 review["operation_id"],
                 review["nonce"],
+                review["identities"],
             )
             self._custody_rebind_review = None
 
@@ -1094,9 +1097,7 @@ class SourceService:
         if anchor.exists():
             with _directory_fd(anchor) as fd, os.scandir(fd) as entries:
                 for index, entry in enumerate(entries):
-                    if index >= MAX_CUSTODY_RECORDS or (
-                        entry.name not in known and not entry.name.startswith(".reset-")
-                    ):
+                    if index >= MAX_CUSTODY_RECORDS or entry.name not in known:
                         raise ValueError("acquisition_dependencies_unknown")
         references = {}
         roots = set()

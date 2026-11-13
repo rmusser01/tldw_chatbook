@@ -147,8 +147,10 @@ in the `tools` group, shaped like `recovered.media` (`inventory.sqlite_tree_memb
 names each mixed tree's single SQLite member for sidecar declaration and capture
 dispatch). `registry.sqlite3` is captured through the `recovery.plugins.registry`
 SQLite owner (backup route, WAL folded) against the frozen v5 catalog
-`REGISTRY_SCHEMAS`; everything else is raw bytes. Excluded: `runtime.lock` and,
-inside each `staging/<name>/`, every member but `snapshot/` (an allow-list: only
+`REGISTRY_SCHEMAS`; everything else is raw bytes. Excluded: `runtime.lock`, a
+post-restore reset's set-aside folder `reset-<id>/` (whole, and kept whole by
+replace restores through `kept_whole`, TASK-40308) and, inside each
+`staging/<name>/`, every member but `snapshot/` (an allow-list: only
 `snapshot/` and the custody record serve recovery). The owner passes
 `_staging_excluded` to the tree walk as `prune`, so each excluded member is one
 row whose contents are never listed (a local-source `repository.git` can hold

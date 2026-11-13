@@ -115,13 +115,15 @@ made with:
   protected marker is missing.
 
 In both, the same passphrase opens the restored plugin authority, and Plugins
-shows **Recover plugins from this backup** before anything changes. It says
-which plugin authority the passphrase opened. It counts the plugin changes made
-after the backup that recovery undoes, when the keyring marker shows them; a
-restore keeps no record of what each change was, and with the marker missing
-the count is unknown. It also lists the backup's plugins and its saved-data
-folders. **Confirm recovery** makes that authority current on this computer.
-Saved data stays attached, and plugins run again once recovery completes.
+shows **Recover plugins from this backup** before anything changes. It names
+the generation of the restored authority the passphrase opened. It counts the
+plugin changes made after the backup that recovery undoes, when the keyring
+marker shows them; a restore keeps no record of what each change was, and with
+the marker missing, or set by a different plugin authority, the count is
+unknown. It lists the backup's plugins with their revisions and gives the
+number of its saved-data folders. **Confirm recovery** makes that authority
+current on this computer. Saved data stays attached, and plugins run again
+once recovery completes.
 
 A restore over recreated folders gives them new identities. If the plugin
 folder, `staging/` or a saved-data folder was deleted before the restore, each
@@ -141,13 +143,18 @@ If the backup's passphrase is lost, **Reset authority…** keeps everything:
 
 1. Its review says what setup will do next.
 2. Setting authority up again with a new passphrase moves the restored plugin
-   registry, download records and downloads into a `.reset-…` folder inside the
-   plugin folder's `staging/`. Nothing is deleted, and every saved-data folder
-   stays where it is.
+   registry, download records and downloads into a `reset-…` folder inside the
+   plugin folder. Nothing is deleted, and every saved-data folder stays where it
+   is. Backups leave the `reset-…` folder out (it holds the downloads' copies of
+   your git and SSH settings), and a later restore leaves it in place. The
+   set-aside plugins' package files also stay in the plugin folder, unused, and
+   keep their disk space until you remove them by hand.
 3. Reinstall each plugin from its source. A plugin whose source is gone cannot
    come back this way.
-4. Manage plugin ▸ **Attach kept saved-data folder** attaches a kept folder (its
-   name under the plugin data folder) after the same kind of per-folder review.
+4. Manage plugin ▸ **Attach kept saved-data folder** lists the kept folders.
+   Beside each it shows the plugin the set-aside registry says it belonged to,
+   marked "not proven": nothing authenticates that record any more. Choose one;
+   the review shows its contents before you attach it.
 
 Outside a restore, reset still refuses setup while plugins are installed or
 saved data remains, and its confirmation says so.

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 06:57
+updated_date: 2026-11-13 07:55
 labels:
 - follow-up
 - plugins
@@ -132,10 +132,9 @@ The owner decisions (2026-11-12) are recorded in the notes.
      - In **Candidates…** such a record reads "folder replaced since last bound; Review rebind". **Review rebind** shows the plugin(s) whose revisions name it, folder, file count and size, and the warning. **Confirm rebind** re-signs it and runs recovery.
 4. **Fallback** (lost passphrase).
    - Reset no longer fails when the marker is missing: there is no checkpoint to mark dirty, and every root is still kept.
-   - Setup while a restored generation is pending runs `_set_restored_plugins_aside`. It moves the restored registry (`PluginRegistry.set_aside`, which then starts empty in place), `acquisition-custody/` and every `staging/<name>` into `staging/.reset-<id>/`.
-     - Inside `staging/`, backups keep only `snapshot/`, so the downloads' git and SSH copies never reach an archive.
-     - Download counting (`_reserve`) and `_protected` skip `.reset-` entries.
-     - Nothing is deleted; `data/` stays.
+   - Setup while a restored generation is pending runs `_set_restored_plugins_aside`. It moves the restored registry (`PluginRegistry.set_aside`, which then starts empty in place), `acquisition-custody/` and `staging/` into `<root>/reset-<id>/`. (Review r14plg-rev1 moved this out of `staging/.reset-<id>/`.)
+     - Backups exclude `reset-<id>/` whole, so the downloads' git and SSH copies never reach an archive, and replace restores keep it whole.
+     - Nothing is deleted; `data/` stays. Package bytes stay unregistered in `packages/` and `packages-revisions/` until removed by hand.
      - The bootstrap refusal is unchanged outside a pending restore.
    - Setup then approves the restored generation.
    - Manage plugin ▸ **Attach kept saved-data folder** (`review_kept_attachment`/`attach_kept_data`) registers a kept `data/<id>` folder for a reinstalled plugin after the same per-folder review, through the authority commit (phase `attached`).
@@ -188,5 +187,36 @@ The owner decisions (2026-11-12) are recorded in the notes.
 - Plugins: `tldw_chatbook/Plugins/{authority_store,service,coordinator,data_cleanup,acquisition,source_service,registry,review}.py`.
 - UI: `tldw_chatbook/UI/Plugins_Modules/{review,operations}.py`, `tldw_chatbook/UI/Screens/plugins_screen.py`, `tldw_chatbook/Widgets/plugin_review_modal.py`.
 - The tests and docs above, the census and its checker.
+**Review r14plg-rev1 (2026-11-13), every item fixed.**
+- **I1, an unreadable restore witness unlocked restore-only paths.** `restore_review_required` fails closed to True, which is right for keeping plugins off but wrong for what only a restore allows. `Plugins/backup.restore_pending(root)` now returns `bool(_restored_generations(root))` and lets errors propagate. It is used in three places:
+  - adoption review (raises);
+  - the Reset review's post-restore copy flag (unreadable means not restored);
+  - setup over restored plugins (unreadable means not pending, so the existing refusals apply).
+  The Plugins screen's routing (`restore_review_pending`) uses it too. Setup approves the restored generation only when it actually set plugins aside.
+  - With the reviewer's `r14plg_witness_error` probe, `test_dirty_orphan_and_reset_never_mint_clean_over_retained_data` now passes; the reviewer showed it failing with DID NOT RAISE.
+  - New: `test_unreadable_restore_witness_never_unlocks_adoption_or_setup`. Negative control (`restore_pending` delegating to `restore_review_required`): DID NOT RAISE.
+- **I2, the set-aside folder was listed as newer downloads.** It moved out of `staging/` to `<root>/reset-<id>/`. The plugins owner excludes it whole, as one row never walked. `Plugins/backup.kept_whole` adds it to `restore_plan`'s kept directories, so a replace restore keeps it even from an archive made before it, and `refuse_added_fetch_folders` now only considers `staging/<name>/` members.
+  - The `.reset-` skips in `_reserve` and `_protected` were dropped (nothing set aside lives in `staging/` now).
+  - Tests: `test_reset_aside_is_excluded_whole_and_never_listed_as_newer_downloads`, and `test_replace_keeps_a_plugin_reset_aside_whole_even_when_the_archive_predates_it[archived|added]` (planner).
+  - Negative control (old predicate, no `kept_whole`): both fail with `FetchRemovalRequired`.
+  - The reviewer's `probe.py` part 1 still lists a `staging/.reset-…` folder, the old layout setup no longer writes.
+- **I3, kept folders had to be typed.** In attach mode, Manage plugin now offers the kept folders as a choice. Each is labelled with the installation id and alias the set-aside registry records (read with `PluginRegistry(read_only=True)`), marked "(not proven)". The review repeats the label. The reference field is not used, so another action's draft is kept.
+  - Pinned in `test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches`. User Guide step 4 updated.
+- **M6, a folder swapped after review was rebound.** The download-record review stores the root, `staging/` and folder identities; `rebind_custody` refuses `acquisition_rebind_review_stale` if any differs.
+  - Pinned with a swap between review and confirm. Negative control: DID NOT RAISE.
+- **M7, a foreign marker was counted.** When the runtime checkpoint's marker is the current marker and its namespace differs from the restored authority's, `undone` is `None` ("cannot count").
+  - `[foreign-marker]` case. Negative control: `assert 1 == None`.
+- **M8, the adoption status named one cause.** It is hedged: "recovery is not finished. If Candidates… marks a download record … rebind it …; otherwise the restored plugin files need attention".
+- **M10, the docs overclaimed.** Operations and User Guide now say the dialog names the generation, counts the undone changes when it can, lists the plugins and revisions, and gives the number of saved-data folders.
+- **M11, unregistered package bytes.** After the set-aside, `packages/<old-id>` and `packages-revisions/` stay unregistered and still count toward plugin storage capacity. The plan did not say so. The Reset copy and the docs now say this space is kept until removed by hand; reclaiming it is your follow-up.
+- **M12.** The adoption review text goes through `display_text(..., limit=16384)`.
+- **Also.** `Docs/Backup-and-Recovery.md`, `Docs/Architecture/backup-recovery.md` and the owner inventory now describe the `reset-<id>/` exclusion.
+
+**Checks after the review fixes** (`-n 4`, load 12–23):
+- `Tests/Plugins/{test_recovery,test_surviving_process_recovery,test_acquisition_limits,test_source_service}.py`, `Tests/Backup_Recovery/test_restore_plan_excluded_directories.py`, `Tests/UI/{test_backup_data_groups,test_plugins_browse,test_plugin_review}.py`, end to end deselected: 288 passed, 1 failed.
+- The one failure, `test_actual_native_fields_stable_in_separate_processes`, also fails on the base sources.
+- End to end with the committed limits, at load 19→41: 1 passed in 326 s, ADOPTED printed. Children: first 143 s, unchanged 4 s, again 168 s, changed 5 s.
+- `./scripts/preflight.sh` passes; `check_markup_interpolation.py` is OK.
+- Serial: the layer, module-size, screen-size and offload guards pass (221). The `Tests/CI` census, derived-artifacts and plugin-qualification pins pass (158).
 <!-- SECTION:NOTES:END -->
 

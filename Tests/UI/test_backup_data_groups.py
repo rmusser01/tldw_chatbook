@@ -553,6 +553,9 @@ async def test_restore_review_lists_newer_plugin_downloads_and_removes_them(
         monkeypatch.setattr(screen, "_review_restore", lambda: reviews.append(1))
         button = screen.query_one("#backup-remove-plugin-downloads", Button)
         assert not button.display
+        screen.query_one("#backup-review-restore", Button).focus()
+        await pilot.pause()
+        focused_before = screen.app.focused
         screen._fetch_removal_ready(screen._revision, members)
         await pilot.pause()
         review = str(screen.query_one("#backup-restore-preview", Static).render())
@@ -563,7 +566,9 @@ async def test_restore_review_lists_newer_plugin_downloads_and_removes_them(
         assert f"Folder: {folder}" in review
         assert "Delete: host-git-config" in review and "Delete: repository.git" in review
         assert "Delete: snapshot" not in review
-        assert button.display and screen.app.focused is button
+        # The review never moves focus onto the deleting button (r14plg-rev1).
+        assert button.display and screen.app.focused is not button
+        assert screen.app.focused is focused_before
         assert screen.query_one("#backup-start-restore", Button).disabled
         await press(pilot, "#backup-remove-plugin-downloads")
         for _ in range(100):

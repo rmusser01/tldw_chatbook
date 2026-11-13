@@ -19,6 +19,7 @@ complete in-app backup after plugin use needs a restart (accepted ceiling, owner
 decision 2026-11-10).
 """
 
+import re
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -74,10 +75,44 @@ REGISTRY_SCHEMAS = (
 )
 
 
-def _staging_excluded(relative: str) -> bool:
+RESET_ASIDE = re.compile(r"reset-[0-9a-f]{16}")
+
+
+def _fetch_excluded(relative: str) -> bool:
     """Whether a root-relative path is a fetch folder member other than snapshot/."""
     parts = Path(relative).parts
     return len(parts) > 2 and parts[0] == "staging" and parts[2] != "snapshot"
+
+
+def _reset_aside(relative: str) -> bool:
+    """Whether a root-relative path is a post-restore reset's set-aside folder.
+
+    TASK-40308: setup after a reset moves the restored registry, download
+    records and downloads to ``reset-<id>/``. Backups exclude it whole, never
+    walked, so its downloads' host configuration copies never enter an
+    archive, and restores keep it whole (``kept_whole``): it is the only record
+    of which kept saved-data folder belonged to which plugin.
+    """
+    parts = Path(relative).parts
+    return len(parts) == 1 and RESET_ASIDE.fullmatch(parts[0]) is not None
+
+
+def _staging_excluded(relative: str) -> bool:
+    """Whether the owner excludes a root-relative path whole, never walked."""
+    return _fetch_excluded(relative) or _reset_aside(relative)
+
+
+def kept_whole(items) -> set[Path]:
+    """Set-aside folders a replace restore keeps whole, archived or not."""
+    return {
+        item.path
+        for item in items
+        if item.owner == OWNER
+        and item.status == "intentionally_excluded"
+        and item.path is not None
+        and item.metadata is not None
+        and _reset_aside(item.metadata.relative_path)
+    }
 
 
 class FetchRemovalRequired(ValueError):
@@ -119,7 +154,7 @@ def refuse_added_fetch_folders(items, archived) -> None:
             if item.path is None or root not in item.path.parents:
                 continue
             parts = item.path.relative_to(root).parts
-            if not _staging_excluded("/".join(parts)):
+            if not _fetch_excluded("/".join(parts)):
                 continue
             folder = paths.get(root.joinpath(*parts[:2]))
             if folder is None or folder.logical_id not in archived:
@@ -131,9 +166,11 @@ def refuse_added_fetch_folders(items, archived) -> None:
 def remove_fetch_members(members: tuple[Path, ...]) -> None:
     """Delete exactly the reviewed fetch-folder members, with no safety copy.
 
-    Each must be a direct member of ``<plugins root>/staging/<name>/`` other
-    than ``snapshot``; links are removed, never followed. The runtime lock is
-    held so no plugin owner starts meanwhile. Nothing here enters an archive.
+    Each must be a normalized absolute ``<plugins root>/staging/<name>/<member>``
+    with a member other than ``snapshot``. Under the runtime lock, the plugin
+    root, ``staging/`` and the folder are opened without following links and
+    each member is removed through those descriptors, so no path is re-resolved
+    after its check. Nothing here enters an archive.
     """
     import os
     import shutil
@@ -144,29 +181,69 @@ def remove_fetch_members(members: tuple[Path, ...]) -> None:
     by_root = {}
     for member in members:
         member = Path(member)
-        folder = member.parent
-        root = folder.parent.parent
         if (
             not member.is_absolute()
-            or member.name in {"snapshot", "", ".", ".."}
-            or folder.parent.name != "staging"
-            or folder.parent.is_symlink()
-            or folder.is_symlink()
-            or not (root / REGISTRY).is_file()
+            or os.path.normpath(member) != str(member)
+            or any(part in {"", ".", ".."} for part in member.parts[1:])
+            or member.name == "snapshot"
+            or member.parent.parent.name != "staging"
         ):
             raise ValueError("plugin_fetch_removal_invalid")
-        by_root.setdefault(root, []).append(member)
+        by_root.setdefault(member.parent.parent.parent, []).append(member)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
     for root, paths in by_root.items():
         with _runtime_lock(root, create=True):
-            for member in paths:
+            root_fd = os.open(root, flags)
+            try:
+                registry = os.stat(REGISTRY, dir_fd=root_fd, follow_symlinks=False)
+                if not stat.S_ISREG(registry.st_mode):
+                    raise ValueError("plugin_fetch_removal_invalid")
+                staging_fd = os.open("staging", flags, dir_fd=root_fd)
                 try:
-                    mode = os.lstat(member).st_mode
-                except FileNotFoundError:
-                    continue
-                if stat.S_ISDIR(mode):
-                    shutil.rmtree(member)
-                else:
-                    os.unlink(member)
+                    for member in paths:
+                        try:
+                            folder_fd = os.open(
+                                member.parent.name, flags, dir_fd=staging_fd
+                            )
+                        except FileNotFoundError:
+                            continue
+                        except OSError:
+                            raise ValueError("plugin_fetch_removal_invalid") from None
+                        try:
+                            try:
+                                info = os.stat(
+                                    member.name, dir_fd=folder_fd, follow_symlinks=False
+                                )
+                            except FileNotFoundError:
+                                continue
+                            if stat.S_ISDIR(info.st_mode):
+                                shutil.rmtree(member.name, dir_fd=folder_fd)
+                            else:
+                                os.unlink(member.name, dir_fd=folder_fd)
+                        finally:
+                            os.close(folder_fd)
+                finally:
+                    os.close(staging_fd)
+            except FileNotFoundError:
+                raise ValueError("plugin_fetch_removal_invalid") from None
+            finally:
+                os.close(root_fd)
+
+
+def restore_pending(plugins_root: Path) -> bool:
+    """Whether a restored generation awaits plugin review; errors propagate.
+
+    TASK-40308 rev1: unlike ``restore_review_required``, which fails closed to
+    keep plugins off, this guards what only a restore allows (adopting the
+    restored authority, setup over restored plugins), so an unreadable witness
+    must refuse rather than answer yes.
+    """
+    return bool(_restored_generations(plugins_root))
 
 
 @contextmanager

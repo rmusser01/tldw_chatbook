@@ -2356,7 +2356,8 @@ class BackupRestoreScreen(Screen):
         button = self.query_one("#backup-remove-plugin-downloads", Button)
         button.display = True
         button.disabled = False
-        button.focus()
+        # Focus stays where it was: a second Enter must not delete before the
+        # copy above is read (TASK-40309 review r14plg-rev1).
 
     @on(Button.Pressed, "#backup-remove-plugin-downloads")
     def _remove_plugin_downloads(self):

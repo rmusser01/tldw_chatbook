@@ -702,9 +702,9 @@ async def test_restored_plugins_recover_from_the_plugins_screen(
             adoption.query_one("#plugin-adopt-confirm", Button).press()
             status = adoption.query_one("#plugin-adopt-status", Static)
             await _until(lambda: str(status.render()), "recovery confirmation")
-            assert "a download record no longer matches its folder" in str(
-                status.render()
-            )
+            # r14plg-rev1: hedged, since recovery_required has more than one cause.
+            assert "recovery is not finished" in str(status.render())
+            assert "folder replaced since last bound" in str(status.render())
             adoption.query_one("#plugin-adopt-close", Button).press()
             await _until(lambda: app.screen is screen, "recovery review closed")
             screen.query_one("#plugins-candidates", Button).press()
@@ -835,6 +835,7 @@ async def test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches(
             assert "sets the restored plugins aside" in consequence
             assert "keeps every saved-data folder where it is" in consequence
             assert "Nothing is deleted" in consequence
+            assert "keep using disk space until you remove them by hand" in consequence
             assert "unlock instead: that keeps every plugin" in consequence
             reset.query_one("#plugin-reset-confirm", Button).press()
             await _until(lambda: "reset." in str(status.render()), "reset")
@@ -858,7 +859,8 @@ async def test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches(
             setup.query_one("#submit-button", Button).press()
             await _until(lambda: app.screen is screen, "setup")
             assert approved and await plugins.authority_status() == "ready"
-            assert await plugins.kept_data_folders() == (root.root_id,)
+            ((kept, former, _alias),) = await plugins.kept_data_folders()
+            assert kept == root.root_id
             reinstalled = await install(plugins, "op-git-again")
             await app.push_screen(
                 PluginReviewModal(
@@ -872,7 +874,15 @@ async def test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches(
             await _until(lambda: not manage._loading, "manage dialog load")
             manage.query_one("#plugin-review-action", Select).value = "attach-data"
             await pilot.pause()
-            manage.query_one("#plugin-review-reference", Input).value = root.root_id
+            # r14plg-rev1: the kept folders are offered with their unproven
+            # former plugin, from the set-aside registry; nothing is typed.
+            chooser = manage.query_one("#plugin-review-kept", Select)
+            assert chooser.display
+            assert not manage.query_one("#plugin-review-reference", Input).display
+            ((label, value),) = chooser._options[1:]
+            assert value == root.root_id
+            assert former in str(label) and "(not proven)" in str(label)
+            chooser.value = root.root_id
             await pilot.pause()
             manage.query_one("#plugin-review-prepare", Button).press()
             await _until(
@@ -884,6 +894,8 @@ async def test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches(
             assert f"Folder: {root.path}" in body
             assert "Contents: 1 files, 18 bytes" in body
             assert "Kept from before plugin authority was reset" in body
+            assert f"Kept folder: {root.root_id} · was" in body
+            assert "(not proven)" in body
             manage.query_one("#plugin-review-confirm", Button).press()
 
             async def attached():

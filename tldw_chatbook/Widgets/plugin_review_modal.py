@@ -352,13 +352,22 @@ class PluginVariableDialog(ModalScreen):
             self._busy = False
 
 
-def folder_review_text(action, row, summary, plugin) -> str:
+def kept_folder_label(name, installation, alias) -> str:
+    """A kept folder and its unproven former plugin, as the set-aside registry has it."""
+    if installation is None:
+        return f"{name} · former plugin unknown"
+    return f"{name} · was {alias + ' · ' if alias else ''}{installation} (not proven)"
+
+
+def folder_review_text(action, row, summary, plugin, former=None) -> str:
     """The per-folder review a rebind or kept-folder attachment shows (TASK-40308)."""
     files, size, complete = summary or (0, 0, False)
     counted = f"{files} files, {size} bytes" + (
         "" if complete else " (count stopped early)"
     )
     lines = [f"Plugin: {plugin}", f"Folder: {row['path']}", f"Contents: {counted}"]
+    if former is not None:
+        lines.append(f"Kept folder: {former}")
     if action == "rebind-data":
         lines.append(
             "Replaced since last bound: this folder is not the one this plugin last "
@@ -447,7 +456,7 @@ class PluginRestoreAdoptionModal(ModalScreen):
         with VerticalScroll(id="plugin-review-shell"):
             yield Static("Recover plugins from this backup", classes="dialog-title")
             yield Static(
-                adoption_review_text(self.review),
+                display_text(adoption_review_text(self.review), limit=16384),
                 id="plugin-adopt-review",
                 markup=False,
             )
@@ -486,8 +495,10 @@ class PluginRestoreAdoptionModal(ModalScreen):
         if any(receipt.phase == "recovery_required" for receipt in receipts):
             status.update(
                 "This backup's plugin authority is current, but recovery is not "
-                "finished: a download record no longer matches its folder. Open "
-                "Candidates…, review each replaced record, then press Authority…."
+                'finished. If Candidates… marks a download record "folder replaced '
+                'since last bound", review and rebind it, then press Authority…; '
+                "otherwise the restored plugin files need attention before plugins "
+                "can run."
             )
         else:
             status.update(
@@ -589,12 +600,14 @@ def reset_consequence(review) -> str:
         return (
             "After this restore, setting authority up again with a new passphrase "
             "sets the restored plugins aside (their registry, download records and "
-            "downloads move to a .reset folder inside the plugin folder's staging "
-            "folder) and keeps every saved-data folder where it is. Nothing is "
-            "deleted. Reinstall the plugins from their sources, then attach their "
-            "kept saved data in Manage plugin; a plugin whose source is gone cannot "
-            "come back this way. If you still have the plugin passphrase this backup "
-            "was made with, close this and unlock instead: that keeps every plugin."
+            "downloads move to a reset-… folder inside the plugin folder) and keeps "
+            "every saved-data folder where it is. Nothing is deleted. Their package "
+            "files stay in the plugin folder and keep using disk space until you "
+            "remove them by hand. Reinstall the plugins from their sources, then "
+            "attach their kept saved data in Manage plugin; a plugin whose source is "
+            "gone cannot come back this way. If you still have the plugin passphrase "
+            "this backup was made with, close this and unlock instead: that keeps "
+            "every plugin."
         )
     if review.retained:
         return (
@@ -924,6 +937,8 @@ class PluginReviewModal(ModalScreen):
         self._job_id = None
         self._loading = True
         self._input_generation = 0
+        # (folder, former installation, alias) kept after a post-restore reset.
+        self._kept = ()
 
     def compose(self):
         with VerticalScroll(id="plugin-review-shell"):
@@ -999,6 +1014,14 @@ class PluginReviewModal(ModalScreen):
                 max_length=4096,
                 classes="form-input",
             )
+            kept = Select(
+                (),
+                prompt="Choose a kept saved-data folder",
+                allow_blank=True,
+                id="plugin-review-kept",
+            )
+            kept.display = False
+            yield kept
             yield Static(
                 "",
                 id="plugin-review-input-help",
@@ -1075,6 +1098,10 @@ class PluginReviewModal(ModalScreen):
                     if self.draft.selection is not None
                     else self.details["selection"]
                 )
+                try:
+                    self._kept = await self.service.kept_data_folders()
+                except (OSError, ValueError, RuntimeError):
+                    self._kept = ()
             else:
                 from ..Plugins.models import AcquiredSnapshot
 
@@ -1100,6 +1127,13 @@ class PluginReviewModal(ModalScreen):
             self.query_one("#plugin-review-dialect", Select).display = (
                 not self.installation_id
             )
+            kept = self.query_one("#plugin-review-kept", Select)
+            kept.set_options(
+                (display_text(kept_folder_label(*row), limit=256), row[0])
+                for row in self._kept
+            )
+            if self.draft.kept_folder in {row[0] for row in self._kept}:
+                kept.value = self.draft.kept_folder
             if self.draft.review is not None:
                 self._render_review()
             else:
@@ -1238,7 +1272,6 @@ class PluginReviewModal(ModalScreen):
             "resume-data": "Comma-separated exact root IDs; blank selects listed roots",
             "reconcile-data": "Comma-separated exact root IDs; blank selects listed roots",
             "rebind-data": "One exact root ID; blank selects the only listed root",
-            "attach-data": "Kept folder name under the plugin data folder",
         }
         test = action in {"test-hook", "test-connection"}
         reference = self.query_one("#plugin-review-reference", Input)
@@ -1252,18 +1285,29 @@ class PluginReviewModal(ModalScreen):
             "install",
             "install-enable",
         }
+        kept = self.query_one("#plugin-review-kept", Select)
+        kept.display = action == "attach-data"
         help_text = self.query_one("#plugin-review-input-help", Static)
-        help_text.display = test or reference.display
+        help_text.display = test or reference.display or kept.display
         help_text.update(
             "Select one hook/server and enter synthetic event data. Tests require an "
             "existing idle Console chat in this workspace and may initialize SessionStart hooks."
             if test
+            else (
+                "Choose a kept saved-data folder. Its former plugin comes from the "
+                "set-aside plugin registry and is not proven; check the folder in "
+                "the review before you confirm."
+                if self._kept
+                else "No kept saved-data folders."
+            )
+            if kept.display
             else references.get(action, "")
         )
         if self.focused is not None and not self.focused.display:
             self.query_one("#plugin-review-action", Select).focus()
 
     @on(Select.Changed, "#plugin-review-action")
+    @on(Select.Changed, "#plugin-review-kept")
     @on(SelectionList.SelectedChanged, "#plugin-review-selection")
     @on(Input.Changed, "#plugin-review-reference")
     @on(TextArea.Changed, "#plugin-review-test-data")
@@ -1279,6 +1323,12 @@ class PluginReviewModal(ModalScreen):
             == self.draft.configuration
             and self.query_one("#plugin-review-test-data", TextArea).text
             == self.draft.test_data
+            and (
+                None
+                if self.query_one("#plugin-review-kept", Select).value == Select.BLANK
+                else str(self.query_one("#plugin-review-kept", Select).value)
+            )
+            == self.draft.kept_folder
         ):
             return
         self._input_generation += 1
@@ -1299,6 +1349,8 @@ class PluginReviewModal(ModalScreen):
         self.draft.root_before_refs = ()
 
     def _capture(self):
+        kept = self.query_one("#plugin-review-kept", Select).value
+        self.draft.kept_folder = None if kept == Select.BLANK else str(kept)
         self.draft.selection = tuple(
             self.query_one("#plugin-review-selection", SelectionList).selected
         )
@@ -1352,11 +1404,20 @@ class PluginReviewModal(ModalScreen):
                 )
             )
             if self.draft.action in {"rebind-data", "attach-data"}:
+                former = next(
+                    (
+                        kept_folder_label(*row)
+                        for row in self._kept
+                        if row[0] == review.targets[0]["root_id"]
+                    ),
+                    None,
+                )
                 body += "\n" + folder_review_text(
                     self.draft.action,
                     review.targets[0],
                     self.draft.folder_summary,
                     self._plugin_label(),
+                    former if self.draft.action == "attach-data" else None,
                 )
             if self.draft.action in {"create-data", "attach-data"}:
                 if self.draft.action == "create-data":
@@ -1641,9 +1702,11 @@ class PluginReviewModal(ModalScreen):
                 self.installation_id, workspace_id=self.workspace_id
             )
         elif action == "attach-data":
+            if not self.draft.kept_folder:
+                raise ValueError("choose_a_kept_folder")
             review = await self.service.review_kept_attachment(
                 self.installation_id,
-                configuration.strip(),
+                self.draft.kept_folder,
                 workspace_id=self.workspace_id,
             )
         else:

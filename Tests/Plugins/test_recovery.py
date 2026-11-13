@@ -1233,9 +1233,16 @@ def test_replace_restore_lists_and_removes_a_fetch_folder_added_since_the_backup
     code = issue_code(refused.value)
     assert code == "plugin_fetch_removal_required" != "plugin_fetch_added_since_backup"
     assert "removes them when you confirm" in issue_message(code)
-    for wrong in (added / "snapshot", root / "registry.sqlite3", outside):
+    for wrong in (
+        added / "snapshot",
+        root / "registry.sqlite3",
+        outside,
+        # r14plg-rev1: a '..' member resolved to the data tree.
+        root / "staging" / ".." / "data",
+    ):
         with pytest.raises(ValueError, match="plugin_fetch_removal_invalid"):
             backup.remove_fetch_members((wrong,))
+    assert (root / "data").exists()
     backup.remove_fetch_members(refused.value.members)
     assert sorted(path.name for path in added.iterdir()) == ["snapshot"]
     assert (added / "snapshot/plugin.json").read_bytes() == b"{}"
@@ -1888,7 +1895,9 @@ class _FakeSecureKeyring:
         del self.values[service, account]
 
 
-async def _restored_after_change(tmp_path, monkeypatch, native_package, *, recreate=True):
+async def _restored_after_change(
+    tmp_path, monkeypatch, native_package, *, recreate=True
+):
     """A git-installed plugin with saved data, backed up by copying its folders,
     changed afterwards, then restored by copying the backup over recreated
     folders (new identities), or in place (``recreate=False``: only the registry
@@ -1968,20 +1977,33 @@ async def _restored_after_change(tmp_path, monkeypatch, native_package, *, recre
         shutil.rmtree(profile / "plugins")
         shutil.copytree(saved / "plugins", profile / "plugins", symlinks=True)
     else:
-        for name in ("registry.sqlite3", "registry.sqlite3-wal", "registry.sqlite3-shm"):
+        for name in (
+            "registry.sqlite3",
+            "registry.sqlite3-wal",
+            "registry.sqlite3-shm",
+        ):
             (profile / "plugins" / name).unlink(missing_ok=True)
             if (saved / "plugins" / name).exists():
                 shutil.copy2(saved / "plugins" / name, profile / "plugins" / name)
     approved = []
-    monkeypatch.setattr(backup, "approve_restore", approved.append)
-    monkeypatch.setattr(backup, "restore_review_required", lambda _: not approved)
+
+    def witnesses(root, *, approve=False):
+        # The restore's generation witness read, which every gate derives from.
+        if approve:
+            approved.append(root)
+            return ()
+        return () if approved else ("restored-generation",)
+
+    monkeypatch.setattr(backup, "_restored_generations", witnesses)
     return service, install, installation, root, approved
 
 
 @platform_support.managed_runtime
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-@pytest.mark.parametrize("keyring", ["same-computer", "new-keyring", "in-place"])
+@pytest.mark.parametrize(
+    "keyring", ["same-computer", "new-keyring", "in-place", "foreign-marker"]
+)
 async def test_backup_passphrase_adopts_restored_plugins_and_rebinds_replaced_folders(
     tmp_path, monkeypatch, native_package, keyring
 ):
@@ -2001,6 +2023,14 @@ async def test_backup_passphrase_adopts_restored_plugins_and_rebinds_replaced_fo
     plugins = service("elsewhere" if keyring == "new-keyring" else "computer")
     sources = SourceService(plugins)
     try:
+        if keyring == "foreign-marker":
+            # r14plg-rev1: the keyring marker was published by another authority
+            # namespace (a reset, then new authority): it shares no generations.
+            store = await plugins._call(
+                lambda: plugins._coordinator.authority.marker_store
+            )
+            checkpoint = store.load_runtime_checkpoint()
+            store.save_runtime_checkpoint(dict(checkpoint, namespace_id="f" * 64))
         if keyring != "new-keyring":
             assert await plugins.authority_status() == "locked"
             with pytest.raises(FileNotFoundError):
@@ -2011,7 +2041,9 @@ async def test_backup_passphrase_adopts_restored_plugins_and_rebinds_replaced_fo
         with pytest.raises(ValueError):
             await plugins.review_restored_authority("wrong passphrase")
         review = await plugins.review_restored_authority("test passphrase")
-        assert review.undone == (None if keyring == "new-keyring" else 1)
+        assert review.undone == (
+            None if keyring in {"new-keyring", "foreign-marker"} else 1
+        )
         assert [row[0] for row in review.installations] == [installation]
         assert review.data_roots == 1
         receipts = await plugins.adopt_restored_authority(review)
@@ -2036,6 +2068,14 @@ async def test_backup_passphrase_adopts_restored_plugins_and_rebinds_replaced_fo
         rebind = await sources.review_custody_rebind(row["operation_id"])
         assert [plugin[0] for plugin in rebind["installations"]] == [installation]
         assert rebind["files"] > 0 and rebind["complete"]
+        # r14plg-rev1: a folder swapped after the review is not what was reviewed.
+        folder = Path(rebind["path"]).parent
+        shutil.move(folder, folder.with_name("swapped"))
+        shutil.copytree(folder.with_name("swapped"), folder, symlinks=True)
+        with pytest.raises(ValueError, match="acquisition_rebind_review_stale"):
+            await sources.rebind_custody(rebind)
+        shutil.rmtree(folder.with_name("swapped"))
+        rebind = await sources.review_custody_rebind(row["operation_id"])
         await sources.rebind_custody(rebind)
         receipts = await plugins.recover()
         assert not any(receipt.phase == "recovery_required" for receipt in receipts)
@@ -2090,12 +2130,15 @@ async def test_lost_passphrase_reset_sets_restored_plugins_aside_and_keeps_data(
         await plugins.bootstrap("new passphrase")
         assert approved, "setup after the reset did not approve the restore"
         plugin_root = root.path.parent.parent
-        (aside,) = (plugin_root / "staging").glob(".reset-*")
+        (aside,) = plugin_root.glob("reset-*")
         assert (aside / "registry.sqlite3").is_file()
         assert (aside / "acquisition-custody").is_dir()
         assert [path.name for path in (aside / "staging").iterdir()]
+        assert not (plugin_root / "staging").exists()
         assert (root.path / "notes.txt").read_bytes() == b"made by the plugin"
-        assert await plugins.kept_data_folders() == (root.root_id,)
+        # r14plg-rev1: the set-aside registry names the folder's former plugin.
+        ((kept, former, _alias),) = await plugins.kept_data_folders()
+        assert (kept, former) == (root.root_id, installation)
         reinstalled = await install(plugins, "op-git-again")
         assert reinstalled != installation
         attach = await plugins.review_kept_attachment(
@@ -2112,3 +2155,74 @@ async def test_lost_passphrase_reset_sets_restored_plugins_aside_and_keeps_data(
         )
     finally:
         await plugins.aclose()
+
+
+@platform_support.package_capture
+def test_reset_aside_is_excluded_whole_and_never_listed_as_newer_downloads(tmp_path):
+    """TASK-40308 review r14plg-rev1 (the reviewer's probe, part 1): a reset's
+    set-aside folder ``reset-<id>/`` holds the restored registry, download
+    records and downloads. Backups exclude it as one row whose contents are
+    never listed, a restore from an archive made before it never lists it as
+    newer downloads to delete, and replace restores keep it whole."""
+    from tldw_chatbook.Plugins import backup
+
+    config, root = _plugin_root(tmp_path)
+    archived = {item.logical_id: item for item in _plugin_rows(config, root)[0].items}
+    aside = root / "reset-0123456789abcdef"
+    for relative in (
+        "registry.sqlite3",
+        "acquisition-custody/" + "0" * 64 + ".json",
+        "staging/old/snapshot/plugin.json",
+        "staging/old/repository.git/HEAD",
+        "staging/old/host-git-config",
+    ):
+        (aside / relative).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (aside / relative).write_bytes(b"x")
+        (aside / relative).chmod(0o600)
+    target, rows = _plugin_rows(config, root)
+    assert rows[aside].status == "intentionally_excluded"
+    assert not [path for path in rows if aside in path.parents]
+    backup.refuse_added_fetch_folders(target.items, archived)
+    assert backup.kept_whole(target.items) == {aside}
+
+
+@platform_support.managed_runtime
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_unreadable_restore_witness_never_unlocks_adoption_or_setup(
+    tmp_path, monkeypatch, native_package
+):
+    """TASK-40308 review r14plg-rev1 (the reviewer's witness-error probe): the
+    restore gate fails closed, so an unreadable witness keeps plugins off. What
+    only a restore allows must refuse instead: adopting the restored authority,
+    promising the post-restore setup in the reset review, and setup over the
+    restored plugins, which stay in place."""
+    from tldw_chatbook.Plugins import backup
+
+    service, _, _, root, approved = await _restored_after_change(
+        tmp_path, monkeypatch, native_package
+    )
+
+    def unreadable(root, *, approve=False):
+        raise OSError("simulated witness read failure")
+
+    monkeypatch.setattr(backup, "_restored_generations", unreadable)
+    assert backup.restore_review_required(root.path.parent.parent) is True
+    plugins = service("elsewhere")
+    try:
+        with pytest.raises(OSError, match="simulated witness read failure"):
+            await plugins.review_restored_authority("test passphrase")
+        reset = await plugins.review_authority_reset()
+        assert reset.retained and not reset.restored
+        await plugins.reset_authority(reset)
+        with pytest.raises(ValueError, match="requires reviewed recovery"):
+            await plugins.bootstrap("new passphrase")
+        plugin_root = root.path.parent.parent
+        assert not list(plugin_root.glob("reset-*"))
+        assert (plugin_root / "registry.sqlite3").is_file()
+        assert (root.path / "notes.txt").read_bytes() == b"made by the plugin"
+        assert not approved
+    finally:
+        # Saved data never re-authenticated here, so a clean close refuses.
+        with pytest.raises(PermissionError, match="root_authority_unavailable"):
+            await plugins.aclose()

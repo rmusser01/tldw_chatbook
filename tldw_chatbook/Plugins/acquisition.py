@@ -172,13 +172,26 @@ def identity_changed(owner, record) -> str | None:
     return None
 
 
-def rebind_custody(owner, authority, operation_id: str, nonce: str) -> None:
-    """Re-sign one reviewed download record with its folders' current identity.
+def folder_identities(owner, operation_id: str) -> tuple[dict, dict, dict]:
+    """The plugin root, ``staging/`` and download folder identities, as they are."""
+    destination = owner.acquisition_destination(operation_id)
+    return (
+        _physical(owner.root),
+        _physical(owner.root / "staging"),
+        _physical(destination.parent),
+    )
+
+
+def rebind_custody(
+    owner, authority, operation_id: str, nonce: str, reviewed: tuple
+) -> None:
+    """Re-sign one reviewed download record with its folders' reviewed identity.
 
     TASK-40308: a restored or recreated plugin folder, ``staging/`` or download
     folder has a new identity, so the record no longer qualifies. Only those
-    three identities change; the snapshot bytes still have to match the
-    reviewed package digest when the record is next used.
+    three identities change, and only to the ones the user reviewed: a folder
+    swapped after the review refuses. The snapshot bytes still have to match
+    the reviewed package digest when the record is next used.
     """
     owner.require_owner(owner.root)
     record = next(
@@ -204,12 +217,10 @@ def rebind_custody(owner, authority, operation_id: str, nonce: str) -> None:
         if previous["body"] != record:
             raise AcquisitionError("acquisition_custody_changed")
         condition = PrivateFileWritePrecondition.from_opened(opened)
-    record = dict(
-        record,
-        root=_physical(owner.root),
-        anchor=_physical(owner.root / "staging"),
-        leaf=_physical(destination.parent),
-    )
+    current = folder_identities(owner, operation_id)
+    if current != tuple(reviewed):
+        raise AcquisitionError("acquisition_rebind_review_stale")
+    record = dict(record, root=current[0], anchor=current[1], leaf=current[2])
     _write(
         path,
         {"body": record, "mac": authority.sign_acquisition_custody(record)},
@@ -284,7 +295,7 @@ def _reserve(owner, authority, operation_id, destination, *, purpose=None):
         for index, entry in enumerate(entries):
             if index >= MAX_CUSTODY_RECORDS:
                 raise AcquisitionError("acquisition_custody_limit")
-            if entry.name not in known and not entry.name.startswith(".reset-"):
+            if entry.name not in known:
                 unsettled += 1
     if unsettled >= MAX_ACQUISITIONS:
         raise AcquisitionError("acquisition_concurrency_limit")
