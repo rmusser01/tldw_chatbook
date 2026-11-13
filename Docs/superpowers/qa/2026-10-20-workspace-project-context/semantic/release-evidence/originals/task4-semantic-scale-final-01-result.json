@@ -1,0 +1,25 @@
+{
+  "child_started_utc": "2026-10-24T01:24:08.7696870Z",
+  "child_exit_code": 1,
+  "timeout_tree_before": [],
+  "stdout": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-final-01-stdout.log",
+  "timeout_tree_survivors": [],
+  "events": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-final-01-events.jsonl",
+  "stderr": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-final-01-stderr.log",
+  "wide": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-final-01-wide-report.json",
+  "child_pid": 77872,
+  "nested": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-final-01-nested-report.json",
+  "timeout_tree_rechecked": [],
+  "source_and_harness_unchanged": true,
+  "child_launch_identity": {
+    "executable_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\qualification-venv\\Scripts\\python.exe",
+    "command_sha256": "D5F9C55783DA66FDF438759B0300C483B70A89D26FCAAEF4E94C882631D83274",
+    "pid": 77872,
+    "created_utc": "2026-10-24T01:24:08.7696870Z"
+  },
+  "whole_process_timed_out": false,
+  "origins": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-final-01-origins.json",
+  "run": "task4-semantic-scale-final-01",
+  "launcher_failure_class": null,
+  "forced_exit": false
+}

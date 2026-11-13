@@ -43,6 +43,7 @@ from tldw_chatbook.Workspaces.project_index.models import (
     ProjectIndexPolicy,
     ScanEntry,
     relative_path,
+    stat_identity_digest as _identity,
 )
 
 PROCESSING_EXCLUSIONS = frozenset(
@@ -65,12 +66,6 @@ def _safe_stat(value, *, directory=False):
     if not (stat.S_ISDIR(value.st_mode) if directory else stat.S_ISREG(value.st_mode)):
         raise UnsafeCapture("unsafe_metadata")
     return value
-
-
-def _identity(value):
-    return hashlib.sha256(
-        f"{value.st_dev}:{value.st_ino}:{stat.S_IFMT(value.st_mode)}".encode()
-    ).hexdigest()
 
 
 def _state(value):

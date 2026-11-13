@@ -1,0 +1,10 @@
+{
+  "tldw_chatbook": {
+    "actual": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\__init__.py",
+    "expected": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\tldw_chatbook\\__init__.py"
+  },
+  "Tests": {
+    "actual": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\Tests\\__init__.py",
+    "expected": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\Tests\\__init__.py"
+  }
+}

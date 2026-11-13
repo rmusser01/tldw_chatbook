@@ -152,10 +152,11 @@ cron entry on `dev`.
   Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests, the Dreams and Guardian boundary contracts, the
   Architecture guard contracts, the architecture-review tests and the
-  recovered suites are jobs of their own (TASK-34916, TASK-34929,
-  TASK-34986, TASK-38989, PR #3399, owner decision 2026-11-06), so an
+  recovered suites and project-index contracts are jobs of their own (TASK-34916,
+  TASK-34929, TASK-34986, TASK-38989, PR #3399, owner decision 2026-11-06,
+  TASK-36423), so an
   ordinary unlabeled,
-  non-GGUF PR now requests 28 test runners in parallel, 29 with perf-guard
+  non-GGUF PR now requests 29 test runners in parallel, 30 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -403,12 +404,12 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 36 shards. The current total is 46 eligible test jobs per PR
+Current UI lane: 36 shards. The current total is 47 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
 35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and four more UI
-shards, below).
+shards, below; 2026-11-11: adds project-index contracts).
 As of this amendment, the `max-parallel: 17` ceiling (18 since 2026-11-07,
 below), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.
@@ -485,3 +486,19 @@ entries, on dev 3a6498ae14, 2026-11-09), with weights from the 22 latest PR
 runs whose UI shards all finished and 92 untimed entries at their local serial
 seconds: 430 worst-case pytest min, and `--rebalance 12.7` projects 13.1-14.4
 min a job across the 36 shards.
+
+## Amendment (2026-11-11, TASK-36423): qualified project-index contracts
+
+The project-index allocation positives require the actual SQLite 3.49.1
+source and compile options delivered by Windows CPython 3.12.10. Restore the
+draft's bounded 17-selector job on that pinned runtime with core and test
+dependencies. The runtime assertion precedes pytest, so an unqualified
+runner cannot skip all positives. Its 20-minute job and 180-second test caps
+remain in force. The mounted semantic consent control runs there with the
+other project-index checks. Ubuntu's UI census remains at 36 shards with
+18 concurrent UI jobs.
+
+The project-index job waits for preflight and the existing required
+aggregate checks its verdict. The change adds one eligible test job and one
+peak runner. Existing lane topology, checks, and historical counts are
+retained. Hosted qualification still applies to the actual integration head.

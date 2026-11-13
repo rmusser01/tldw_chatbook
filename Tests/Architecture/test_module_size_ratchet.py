@@ -213,7 +213,7 @@ _BUDGETS: dict[str, int] = {
     # governed there, so governed here.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 1121 -> 1126 (+5), TASK-38600 imports quoted annotation names under TYPE_CHECKING.
-    "tldw_chatbook/app_command_providers.py": 1100,
+    "tldw_chatbook/app_command_providers.py": 1098,
     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
     # (FeatureGlueMixin); governed there, so governed here.
     # 2026-11-04 (TASK-38462 regression fix): 742 -> 753 (+11) -- the

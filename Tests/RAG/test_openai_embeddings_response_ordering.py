@@ -35,8 +35,11 @@ def _install_session(monkeypatch: pytest.MonkeyPatch, payload: dict) -> None:
         def __init__(self) -> None:
             self.headers: dict = {}
 
-        def post(self, url, json=None, timeout=None):
+        def post(self, url, *, json=None, timeout=None, allow_redirects=True):
             return _StubResponse(payload)
+
+        def close(self) -> None:
+            pass
 
     monkeypatch.setattr(embeddings_lib.requests, "Session", _StubSession)
 
@@ -50,21 +53,30 @@ def _cfg() -> embeddings_lib.OpenAICfg:
     )
 
 
+@pytest.fixture
+def build_embedder(monkeypatch, request):
+    def build(payload):
+        _install_session(monkeypatch, payload)
+        embed, close = embeddings_lib._openai_embedder(_cfg())
+        request.addfinalizer(close)
+        return embed
+
+    return build
+
+
 def _vec(i: int) -> list[float]:
     """A vector that is unique and recognizable per request index."""
     return [float(i)] * 8
 
 
-def test_out_of_order_response_maps_vectors_by_index(monkeypatch):
+def test_out_of_order_response_maps_vectors_by_index(build_embedder):
     """A shuffled ``data`` list still yields vector ``i`` for text ``i``."""
     data = [
         {"index": 2, "embedding": _vec(2)},
         {"index": 0, "embedding": _vec(0)},
         {"index": 1, "embedding": _vec(1)},
     ]
-    _install_session(monkeypatch, {"data": data})
-
-    embed = embeddings_lib._openai_embedder(_cfg())
+    embed = build_embedder({"data": data})
     texts = ["alpha chunk", "beta chunk", "gamma chunk"]
 
     arr = embed(texts)
@@ -75,15 +87,13 @@ def test_out_of_order_response_maps_vectors_by_index(monkeypatch):
         assert arr[i].tolist() == pytest.approx(_vec(i), abs=1e-7)
 
 
-def test_out_of_order_response_maps_vectors_by_index_as_list(monkeypatch):
+def test_out_of_order_response_maps_vectors_by_index_as_list(build_embedder):
     """The ``as_list=True`` path keeps the same index-based mapping."""
     data = [
         {"index": 1, "embedding": _vec(1)},
         {"index": 0, "embedding": _vec(0)},
     ]
-    _install_session(monkeypatch, {"data": data})
-
-    embed = embeddings_lib._openai_embedder(_cfg())
+    embed = build_embedder({"data": data})
     result = embed(["first text", "second text"], as_list=True)
 
     assert len(result) == 2
@@ -91,30 +101,26 @@ def test_out_of_order_response_maps_vectors_by_index_as_list(monkeypatch):
         assert result[i] == pytest.approx(_vec(i), abs=1e-7)
 
 
-def test_missing_index_field_falls_back_to_list_order(monkeypatch):
+def test_missing_index_field_falls_back_to_list_order(build_embedder):
     """Lenient boundary: without an ``index`` field, list order is kept."""
     data = [
         {"embedding": _vec(0)},
         {"embedding": _vec(1)},
     ]
-    _install_session(monkeypatch, {"data": data})
-
-    embed = embeddings_lib._openai_embedder(_cfg())
+    embed = build_embedder({"data": data})
     arr = embed(["text zero", "text one"])
 
     for i in range(2):
         assert arr[i].tolist() == pytest.approx(_vec(i), abs=1e-7)
 
 
-def test_malformed_index_field_falls_back_to_list_order(monkeypatch):
+def test_malformed_index_field_falls_back_to_list_order(build_embedder):
     """A non-sortable ``index`` (mixed types) is tolerated via list order."""
     data = [
         {"index": None, "embedding": _vec(0)},
         {"index": "1", "embedding": _vec(1)},
     ]
-    _install_session(monkeypatch, {"data": data})
-
-    embed = embeddings_lib._openai_embedder(_cfg())
+    embed = build_embedder({"data": data})
     arr = embed(["text zero", "text one"])
 
     for i in range(2):

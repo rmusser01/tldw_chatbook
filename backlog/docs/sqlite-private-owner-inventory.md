@@ -394,3 +394,7 @@ copies the registry through its own recovery owner, which only the installed
 
 | C99 | tldw_chatbook/Plugins/backup | _Plugins._inspect | recovery.plugins.registry | private_file, read_only_uri | exact installed v5 registry catalog and live plugin-process check | Migrated via `connect_private_sqlite`. Frozen measured catalog; reads only the `processes` states to refuse capture while a plugin process may run. No runtime owner or registry construction. |
 | B41 | tldw_chatbook/Plugins/backup | _Plugins.capture | recovery.plugins.registry | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Holds the plugin runtime lock and the checked maintenance scope; committed WAL frames fold into the snapshot. Restored plugins stay inactive until plugin authority recovery approves them. |
+
+## Workspace project index peer preflight
+
+| C100 | tldw_chatbook/DB/Workspace_Project_Index_DB | WorkspaceProjectIndexDB._probe_peer | db.workspace_project_index | read_only_uri | existing-only peer catalog preflight | Migrated via `connect_private_sqlite`. Serial, must-exist mode=ro inspection of each validated namespace before a write-capable group unit opens its target; native close and inventory precede the next peer or target. The absent-gate legacy bootstrap uses the same read-only site to refuse existing v4 without creating control. |

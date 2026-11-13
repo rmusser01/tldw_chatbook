@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="45.963" timestamp="2026-10-23T16:39:16.327502-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_project_semantic_consent" name="test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]" time="44.763"><failure message="AssertionError: (None, Region(x=41, y=61, width=29, height=1))&#10;assert None is not None">tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_actual_settings_semantic_0/private-profile-process/pytest/test_actual_settings_semantic_0')
+request = &lt;FixtureRequest for &lt;Coroutine test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]&gt;&gt;
+theme = 'textual-dark', size = (80, 24)
+
+    @pytest.mark.parametrize(
+        "theme,size", [("textual-dark", (80, 24)), ("textual-light", (170, 48))]
+    )
+    @private_profile_test
+    async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
+        tmp_path, request, theme, size
+    ):
+        from pathlib import Path
+    
+        from Tests.UI.app_factory import _build_test_app
+        from Tests.UI.test_library_rag_result_focus import _assert_painted
+        from Tests.UI.test_settings_configuration_hub import _wait_for_selector
+        from Tests.UI.test_settings_workspaces_category import (
+            _settings_without_splash,
+            _wait_for_settings_screen,
+        )
+        from Tests.app_module_patches import patch_app_global
+        from textual.worker import WorkerState
+    
+        app = _build_test_app(configured_default="settings")
+        app.theme = theme
+        registry = app.workspace_registry_service
+        registry.create_workspace(workspace_id="semantic-ui", name="Semantic UI")
+        root = tmp_path / "project"
+        root.mkdir()
+        registry.add_folder_binding("semantic-ui", root)
+        with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+            async with app.run_test(size=size) as pilot:
+                boot_worker = None
+                for _ in range(900):
+                    boot_worker = app._boot_worker_handles.get("chachanotes_fts_backfill")
+                    if boot_worker is not None:
+                        break
+                    await pilot.pause(0.05)
+                assert boot_worker is not None, "chachanotes_backfill_worker_not_admitted"
+                await asyncio.wait_for(boot_worker.wait(), timeout=120)
+                assert boot_worker.state is WorkerState.SUCCESS
+                assert boot_worker._task is not None and boot_worker._task.done()
+                screen = await _wait_for_settings_screen(app, pilot)
+                app.theme = theme
+                await _wait_for_selector(screen, pilot, "#settings-category-workspaces")
+                screen.query_one("#settings-category-workspaces", Button).press()
+                for _ in range(300):
+                    rows = [
+                        b
+                        for b in screen.query(".settings-workspace-row")
+                        if "Semantic UI" in str(b.label)
+                    ]
+                    if rows:
+                        break
+                    await pilot.pause(0.02)
+                assert rows
+                rows[0].press()
+                for _ in range(300):
+                    await pilot.pause(0.02)
+                    cards = list(screen.query(card_module().ProjectIndexBindingCard))
+                    if cards and cards[0].semantic_status is not None:
+                        break
+                assert cards and cards[0].semantic_status is not None, (
+                    cards[0].status if cards else None,
+                    cards[0]._pending if cards else None,
+                    str(cards[0].query_one(".project-index-feedback", Static).render())
+                    if cards
+                    else "",
+                )
+                card = cards[0]
+                for name in ("semantic-stage",):
+                    button = next(b for b in card.query(Button) if b.name == name)
+                    button.focus()
+                    button.scroll_visible(animate=False)
+                    await pilot.pause()
+&gt;                   _assert_painted(screen, button)
+
+Tests\UI\test_project_semantic_consent.py:559: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+screen = SettingsScreen(classes='shell-header-compact')
+widget = Button(name='semantic-stage', classes='-textual-compact -style-default project-semantic-action')
+
+    def _assert_painted(screen, widget):
+        """Require the whole control inside its compositor clip, not just the DOM."""
+        geometry = screen._compositor.visible_widgets.get(widget)
+&gt;       assert geometry is not None, (widget.id, widget.region)
+E       AssertionError: (None, Region(x=41, y=61, width=29, height=1))
+E       assert None is not None
+
+Tests\UI\test_library_rag_result_focus.py:25: AssertionError</failure></testcase></testsuite></testsuites>

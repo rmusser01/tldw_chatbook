@@ -193,6 +193,7 @@ async def test_same_id_recreation_cannot_enable_during_detached_reclamation(
     task = None
     try:
         await build(service, key)
+        previous_scope = service.status(key).scope
         service._unsubscribe()
         registry.remove_runtime_binding(binding.binding_id)
         reclaim = service._reclaim_namespaces
@@ -206,10 +207,9 @@ async def test_same_id_recreation_cannot_enable_during_detached_reclamation(
         task = asyncio.create_task(asyncio.to_thread(service.retry_detached_cleanup))
         assert await asyncio.to_thread(entered.wait, 10)
         registry.save_runtime_binding(binding)
-        current = service.status(key)
         with pytest.raises(LifetimeBusy):
             service.enable(
-                key, ProjectIndexPolicy((), ()), expected_scope=current.scope
+                key, ProjectIndexPolicy((), ()), expected_scope=previous_scope
             )
         release.set()
         assert (await task)["completed"] == 1

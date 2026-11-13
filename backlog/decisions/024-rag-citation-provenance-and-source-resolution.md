@@ -7,6 +7,8 @@ Supersedes: N/A
 
 ## Decision
 
+The native Local Files view may use transient `workspace_file` references for an explicitly requested answer. Each reference cites the relative path and line range of live-validated evidence in the selected binding. The view resolves the citation through the project index and the original source receipt. This view-scoped bundle does not enter the persisted Library or Console citation paths.
+
 Chatbook will represent answer-level RAG provenance as one immutable, versioned
 `CitationTrace` sealed at the terminal generation boundary. The trace records
 retrieval runs, the exact evidence submitted to each provider request, bounded

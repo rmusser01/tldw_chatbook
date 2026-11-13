@@ -1004,6 +1004,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "architecture-guards",
         "pr-fast-lane-arch",
         "recovered-suites",
+        "project-index-contract",
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
@@ -1038,6 +1039,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("architecture-guards", "Require successful Architecture guard contracts"),
         ("pr-fast-lane-arch", "Require successful PR fast lane (architecture-review tests)"),
         ("recovered-suites", "Require successful PR lane (recovered suites)"),
+        ("project-index-contract", "Require successful project index contracts"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
@@ -1117,6 +1119,58 @@ EXACT_STEPS = {
         300,
     ),
 }
+
+PROJECT_INDEX_TARGETS = (
+    "Tests/DB/test_project_semantic_schema.py",
+    "Tests/Workspaces/test_project_semantic_settings.py",
+    "Tests/Workspaces/test_project_index_allocation.py::test_group_semantic_peer_qualifies_keyword_target_before_native_open",
+    "Tests/Workspaces/test_project_index_allocation.py::test_retained_generation_after_revoke_qualifies_peer_and_closes_probes",
+    "Tests/Workspaces/test_project_index_allocation.py::test_pure_keyword_group_uses_keyword_allowance",
+    "Tests/Workspaces/test_project_semantic_generations.py::test_unknown_registry_retirement_roots_model_and_native_owners",
+    "Tests/Workspaces/test_project_semantic_generations.py::test_model_free_local_batch128_tail_and_native32_commits[normal]",
+    "Tests/RAG/test_project_projection_scope.py::test_project_missing_local_package_is_setup_required",
+    "Tests/RAG/test_project_projection_scope.py::test_selected_keyless_compatible_endpoint_and_default_key_requirement",
+    "Tests/Workspaces/test_project_semantic_search.py::test_incompatible_ready_artifact_skips_query_model",
+    "Tests/Agents/test_project_index_tool.py::test_scan_to_public_search_casefolded_prefix",
+    "Tests/Workspaces/test_project_semantic_search.py::test_service_search_fuses_synonym_hit_then_live_validates[disable]",
+    "Tests/Workspaces/test_project_semantic_search.py::test_service_search_fuses_synonym_hit_then_live_validates[reconfigure]",
+    "Tests/RAG/test_project_projection_scope.py::test_peer_pending_close_does_not_poison_admitted_carrier_retirement",
+    "Tests/RAG/test_embeddings_lib_logging.py::test_openai_redirect_respects_project_destination_without_changing_library",
+    "Tests/RAG/test_project_projection_scope.py::test_nested_pending_close_keeps_actual_shared_operation_and_keyword",
+    "Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call",
+)
+
+
+def test_project_index_required_lane_has_real_pinned_sqlite_and_bounded_targets() -> None:
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["project-index-contract"]
+    assert job["needs"] == ["preflight"]
+    assert job["name"] == "Project index contracts"
+    assert job["runs-on"] == "windows-latest"
+    assert job["steps"][0]["run"] == "git config --global core.longpaths true"
+    assert job["steps"][1]["uses"] == "actions/checkout@v4"
+    assert job["timeout-minutes"] == 20
+    assert job["if"] == LANES
+    setup = next(step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5")
+    assert setup["with"]["python-version"] == "3.12.10"
+    install = _named_step(job, "Install project index contract dependencies")["run"]
+    assert shlex.split(install) == [
+        "python", "-m", "pip", "install", "-e", ".",
+        "pytest", "pytest-asyncio", "pytest-timeout", "packaging",
+    ]
+    runtime = _named_step(job, "Qualify actual SQLite runtime")["run"]
+    assert "sqlite_source_id()" in runtime and "PRAGMA compile_options" in runtime
+    assert "from tldw_chatbook.DB.project_index_allocation import _SOURCE_ID" in runtime
+    assert "3.49.1" in runtime
+    run = _named_step(job, "Run project index contracts")["run"]
+    assert shlex.split(run) == (
+        ["pytest", *PROJECT_INDEX_TARGETS, "--timeout=180", "--tb=short"]
+    )
+    census = (PROJECT_ROOT / "scripts/ui_pr_gate_census.txt").read_text(encoding="utf-8")
+    assert PROJECT_INDEX_TARGETS[-1] not in census.splitlines()
+    assert not job.get("continue-on-error", False)
+    assert all(not step.get("continue-on-error", False) for step in job["steps"])
+
 
 
 def _assert_exact_step(workflow: dict, which: str) -> None:

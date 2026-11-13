@@ -1,0 +1,34 @@
+2026-10-23 15:36:38.850 | DEBUG    | tldw_chatbook.config:<module>:150 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-10-23 15:36:39.127 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7087 - Attempting to load CLI config from: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-model-free-stage-captured-01\config\config.toml
+2026-10-23 15:36:39.134 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7116 - CLI Config file not found at C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-model-free-stage-captured-01\config\config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-10-23 15:36:39.146 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7125 - Created default CLI config file at C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-model-free-stage-captured-01\config\config.toml
+2026-10-23 15:36:39.146 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7192 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-10-23 15:36:39.146 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7196 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-23 15:36:39.302 | INFO     | tldw_chatbook.config:_load_settings_uncached:2321 - Determined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\tldw_chatbook
+2026-10-23 15:36:39.302 | INFO     | tldw_chatbook.config:_load_settings_uncached:2324 - Determined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\tldw_chatbook
+2026-10-23 15:36:39.308 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2347 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-23 15:36:39.777 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3910 - Ensured chat dictionaries folder exists: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-model-free-stage-captured-01\home\.local\share\tldw_cli\default_user\chat_dicts
+2026-10-23 15:36:39.777 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3941 - load_settings: Configuration cached for future use
+2026-10-23 15:36:39.777 | INFO     | tldw_chatbook.config:<module>:11956 - Default API Endpoint (from config.py global scope): openai
+2026-10-23 15:36:39.777 | DEBUG    | tldw_chatbook.config:<module>:11979 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-10-23 15:36:39.777 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1554 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+2026-10-23 15:36:41.723 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-23 15:36:41.852 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-10-23 15:36:41.853 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-10-23 15:36:41.854 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+.
+============================== warnings summary ===============================
+Tests/Workspaces/test_project_semantic_generations.py::test_model_free_four_page_semantic_stage_timing
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+23.37s call     Tests/Workspaces/test_project_semantic_generations.py::test_model_free_four_page_semantic_stage_timing
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+1 passed, 1 warning in 24.28s

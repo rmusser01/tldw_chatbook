@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="1" failures="0" skipped="0" tests="2" time="52.135" timestamp="2026-10-23T14:14:54.596447-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_project_semantic_consent" name="test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]" time="51.252"><error message="failed on teardown with &quot;ExceptionGroup: errors while tearing down &lt;Coroutine test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]&gt; (2 sub-exceptions)&quot;">+ Exception Group Traceback (most recent call last):
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 341, in from_call
+  |     result: TResult | None = func()
+  |                              ^^^^^^
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 242, in &lt;lambda&gt;
+  |     lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+  |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+  |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+  |     raise exception
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 53, in run_old_style_hookwrapper
+  |     return result.get_result()
+  |            ^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_result.py", line 103, in get_result
+  |     raise exc.with_traceback(tb)
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 38, in run_old_style_hookwrapper
+  |     res = yield
+  |           ^^^^^
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\threadexception.py", line 97, in pytest_runtest_teardown
+  |     yield from thread_exception_runtest_hook()
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\threadexception.py", line 68, in thread_exception_runtest_hook
+  |     yield
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 100, in pytest_runtest_teardown
+  |     yield from unraisable_exception_runtest_hook()
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 70, in unraisable_exception_runtest_hook
+  |     yield
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 853, in pytest_runtest_teardown
+  |     yield from self._runtest_for(item, "teardown")
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 829, in _runtest_for
+  |     yield
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+  |     teardown.throw(exception)
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\capture.py", line 903, in pytest_runtest_teardown
+  |     return (yield)
+  |             ^^^^^
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+  |     res = hook_impl.function(*args)
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 189, in pytest_runtest_teardown
+  |     item.session._setupstate.teardown_exact(nextitem)
+  |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 557, in teardown_exact
+  |     raise exceptions[0]
+  | ExceptionGroup: errors while tearing down &lt;Coroutine test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]&gt; (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+    |     fin()
+    |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+    |     raise exceptions[0]
+    |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+    |     fin()
+    |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 907, in _teardown_yield_fixture
+    |     next(it)
+    |   File "C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\Tests\conftest.py", line 1772, in isolate_test_environment
+    |     raise RuntimeError(
+    | RuntimeError: Native app workers remain uncertain; config retirement refused
+    +---------------- 2 ----------------
+    | Traceback (most recent call last):
+    |   File "C:\Python312\Lib\asyncio\base_events.py", line 605, in shutdown_default_executor
+    |     await future
+    | asyncio.exceptions.CancelledError
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | Traceback (most recent call last):
+    |   File "C:\Python312\Lib\asyncio\base_events.py", line 604, in shutdown_default_executor
+    |     async with timeouts.timeout(timeout):
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "C:\Python312\Lib\asyncio\timeouts.py", line 115, in __aexit__
+    |     raise TimeoutError from exc_val
+    | TimeoutError
+    | 
+    | During handling of the above exception, another exception occurred:
+    | 
+    | Traceback (most recent call last):
+    |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+    |     fin()
+    |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+    |     raise exceptions[0]
+    |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+    |     fin()
+    |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 339, in finalizer
+    |     event_loop.run_until_complete(task)
+    |   File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    |     return future.result()
+    |            ^^^^^^^^^^^^^^^
+    |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 330, in async_finalizer
+    |     await gen_obj.__anext__()  # type: ignore[union-attr]
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\Tests\conftest.py", line 487, in retire_test_app_owners
+    |     await asyncio.get_running_loop().shutdown_default_executor(
+    |   File "C:\Python312\Lib\asyncio\base_events.py", line 607, in shutdown_default_executor
+    |     warnings.warn("The executor did not finishing joining "
+    | RuntimeWarning: The executor did not finishing joining its threads within 3.0 seconds.
+    +------------------------------------</error></testcase></testsuite></testsuites>

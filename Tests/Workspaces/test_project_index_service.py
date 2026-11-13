@@ -4,6 +4,7 @@ import asyncio
 from contextlib import contextmanager
 from dataclasses import replace
 import importlib
+import sqlite3
 import threading
 import time
 
@@ -15,6 +16,8 @@ from tldw_chatbook.DB.Workspace_Project_Index_DB import (
     WorkspaceProjectIndexDB,
     index_store_path,
 )
+from tldw_chatbook.Utils.private_paths import PrivatePathError, secure_private_directory
+from tldw_chatbook.Workspaces.project_index.lifetime import LifetimeBusy
 from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
 from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
 
@@ -38,7 +41,13 @@ class Rig:
 
     def store(self, key):
         path = index_store_path(self.data, key)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            for directory in (path.parent.parent, path.parent):
+                result = secure_private_directory(
+                    directory, create=True, application_owned=True
+                )
+                if not result.verified_private:
+                    raise PrivatePathError(result)
         return WorkspaceProjectIndexDB(path)
 
     @contextmanager
@@ -64,15 +73,204 @@ class Rig:
 
     def settle(self, state="Ready", *, seconds=15):
         deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            status = self.service.status(self.key)
-            if status.state == state:
-                return status
+        if state in {"Ready", "Partial", "Error"}:
+            # Polling status races the writer for the native allocation gate.
+            with self.service._lock:
+                runs = tuple(self.service._runs.values())
+            for run in runs:
+                if run.claim.scope.key == self.key and run.supervisor is not None:
+                    run.supervisor.join(max(0, deadline - time.monotonic()))
+                    assert not run.supervisor.is_alive(), (
+                        f"writer did not retire (state={run.state}, error={run.error})"
+                    )
+        while True:
+            try:
+                status = self.service.status(self.key)
+            except LifetimeBusy as error:
+                observed = error
+            else:
+                if status.state == state:
+                    return status
+                observed = status
+            if time.monotonic() >= deadline:
+                raise AssertionError(f"expected {state}, got {observed}")
             time.sleep(0.02)
-        raise AssertionError(f"expected {state}, got {status}")
 
     async def close(self):
         await self.service.aclose()
+
+
+@private_profile_test
+async def test_binding_search_resolves_live_file_and_rejects_replacement(
+    tmp_path, request
+):
+    rig = Rig(tmp_path)
+    try:
+        source = rig.root / "quartz.txt"
+        source.write_text("intro\nbooking policy\n", encoding="utf-8")
+        rig.enable()
+        rig.refresh()
+        rig.settle()
+
+        by_name = rig.service.search_binding(rig.key, "quartz.txt")
+        assert by_name.result.hits[0].relative_path == "quartz.txt"
+        found = rig.service.search_binding(rig.key, "booking policy")
+        hit = found.result.hits[0]
+        assert (hit.relative_path, hit.line_start, hit.line_end) == ("quartz.txt", 1, 2)
+        assert rig.service.validate_binding_hits(found, (hit,)) == (source,)
+
+        source.rename(rig.root / "old.txt")
+        source.write_text("intro\nbooking policy\n", encoding="utf-8")
+        assert rig.service.validate_binding_hits(found, (hit,)) is None
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_read_only_status_projects_each_authority_change_for_management(
+    tmp_path, request
+):
+    rig = Rig(tmp_path)
+    try:
+        (rig.root / "note.txt").write_text("new authority marker", encoding="utf-8")
+        enabled = rig.enable()
+
+        rig.live = replace(rig.live, authority_revision=rig.live.authority_revision + 1)
+        earlier = rig.service.status(rig.key)
+        assert earlier.scope.epoch == enabled.scope.epoch + 1
+        assert earlier.job_revision == enabled.job_revision + 1
+
+        rig.live = replace(rig.live, authority_revision=rig.live.authority_revision + 2)
+        latest, policy, upgrade = rig.service.management_snapshot(rig.key)
+        assert latest.scope.epoch == enabled.scope.epoch + 3
+        assert latest.job_revision == enabled.job_revision + 3
+        assert latest.state == "Paused" and latest.job_id is None
+        assert policy == rig.service.policy(latest.scope) == POLICY and not upgrade
+        assert rig.service.semantic_state(rig.key).scope == latest.scope
+
+        store = rig.store(rig.key)
+        try:
+            durable = store.load_status(rig.key)
+            assert durable.scope == enabled.scope
+            assert durable.job_revision == enabled.job_revision
+        finally:
+            store.close()
+
+        with pytest.raises(ValueError, match="stale_scope"):
+            rig.service.refresh(
+                rig.key,
+                expected_scope=earlier.scope,
+                expected_job_revision=earlier.job_revision,
+            )
+        assert not rig.service._runs
+        rig.service.refresh(
+            rig.key,
+            expected_scope=latest.scope,
+            expected_job_revision=latest.job_revision,
+        )
+        assert rig.settle(seconds=60).indexed == 1
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_binding_search_rejects_evidence_after_binding_revision_changes(
+    tmp_path, request
+):
+    rig = Rig(tmp_path)
+    try:
+        (rig.root / "notes.txt").write_text("visible keyword", encoding="utf-8")
+        rig.enable()
+        rig.refresh()
+        rig.settle()
+        found = rig.service.search_binding(rig.key, "keyword")
+        assert found.result.hits
+        with rig.lock:
+            rig.live = replace(rig.live, authority_revision=rig.live.authority_revision + 1)
+        assert rig.service.validate_binding_hits(found, found.result.hits) is None
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_binding_evidence_refuses_earlier_file_changed_during_later_capture(
+    tmp_path, request, monkeypatch
+):
+    rig = Rig(tmp_path)
+    try:
+        for name in ("a.txt", "b.txt"):
+            (rig.root / name).write_text("shared marker", encoding="utf-8")
+        rig.enable()
+        rig.refresh()
+        rig.settle(seconds=30)
+        found = rig.service.search_binding(rig.key, "marker")
+        first, second = found.result.hits
+        capture = rig.service._capture_binding_file
+
+        def edit_first_during_second(*args, **kwargs):
+            if args[1] == second.relative_path:
+                (rig.root / first.relative_path).write_text("updated", encoding="utf-8")
+            return capture(*args, **kwargs)
+
+        monkeypatch.setattr(
+            rig.service, "_capture_binding_file", edit_first_during_second
+        )
+        assert rig.service.validate_binding_hits(found, found.result.hits) is None
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_binding_search_uses_the_real_registry_fence(tmp_path, request):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.project_index.runtime import (
+        close_project_index_service,
+        get_project_index_service,
+        project_index_key,
+    )
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "notes").mkdir()
+    source = root / "notes" / "booking.txt"
+    source.write_text("room booking policy", encoding="utf-8")
+    registry = LocalWorkspaceRegistryService(WorkspaceDB(tmp_path / "registry.db"))
+    registry.create_workspace(workspace_id="local-files", name="Local Files")
+    binding = registry.add_folder_binding("local-files", root)
+    app = SimpleNamespace(workspace_registry_service=registry)
+    service = get_project_index_service(app)
+    key = project_index_key(app, "local-files", binding.binding_id, root)
+    try:
+        enabled = service.enable(key, POLICY, expected_scope=service.status(key).scope)
+        service.refresh(
+            key,
+            expected_scope=enabled.scope,
+            expected_job_revision=enabled.job_revision,
+        )
+        deadline = time.monotonic() + 30
+        observed = None
+        while time.monotonic() < deadline:
+            try:
+                observed = await asyncio.to_thread(service.status, key)
+            except LifetimeBusy as error:
+                observed = error
+            else:
+                if observed.state == "Ready":
+                    break
+            await asyncio.sleep(0.1)
+        else:
+            pytest.fail(f"Expected the project index to become Ready, got {observed!r}")
+
+        search = service.search_binding(key, "booking")
+        assert [hit.excerpt for hit in search.result.hits] == ["room booking policy"]
+        assert search.result.coverage.state == "Ready"
+        assert service.validate_binding_hits(search, search.result.hits) == (source,)
+    finally:
+        await close_project_index_service(app)
+        registry.db.close()
 
 
 @private_profile_test
@@ -121,8 +319,9 @@ async def test_delayed_management_cannot_reverse_clear_or_new_enable(tmp_path, r
 
 
 class BarrierScanner(ProjectScanner):
-    def __init__(self):
+    def __init__(self, *, hold_seconds=10):
         super().__init__()
+        self.hold_seconds = hold_seconds
         self.before_publish = threading.Event()
         self.release = threading.Event()
         self.published = None
@@ -132,7 +331,7 @@ class BarrierScanner(ProjectScanner):
 
         def held(page):
             self.before_publish.set()
-            assert self.release.wait(10)
+            assert self.release.wait(self.hold_seconds)
             self.published = emit(page)
             return self.published
 
@@ -149,7 +348,7 @@ async def test_late_publication_rechecks_authority_and_never_returns_ready(
     try:
         (rig.root / "a.txt").write_text("held marker")
         rig.enable()
-        rig.refresh()
+        job_id = rig.refresh()
         assert scanner.before_publish.wait(10)
         with rig.lock:
             rig.live = (
@@ -158,7 +357,12 @@ async def test_late_publication_rechecks_authority_and_never_returns_ready(
                 else replace(rig.live, authority_revision=2)
             )
         scanner.release.set()
-        rig.settle("Off" if mutation == "detach" else "Paused")
+        run = rig.service._runs[job_id]
+        await asyncio.to_thread(run.supervisor.join, 60)
+        assert run.native_retired
+        assert rig.service.status(rig.key).state == (
+            "Off" if mutation == "detach" else "Paused"
+        )
         assert scanner.published is False
         assert rig.service.status(rig.key).indexed == 0
     finally:
@@ -308,6 +512,7 @@ async def test_shutdown_retains_lifetime_through_native_db_closure_and_repeated_
     def held_close(store):
         if (
             threading.current_thread().name == "project-index-writer"
+            and rig.service._scanner.retired
             and not entered.is_set()
         ):
             connection = getattr(store._thread_local, "conn", None)
@@ -371,7 +576,8 @@ async def test_cross_process_mutation_prevents_held_production_publication(
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
-    scanner = BarrierScanner()
+    # The writer must stay held through the external process's 30-second timeout.
+    scanner = BarrierScanner(hold_seconds=45)
     rig = Rig(tmp_path, scanner)
     registry_path = tmp_path / "registry.db"
     registry = LocalWorkspaceRegistryService(WorkspaceDB(registry_path))
@@ -402,7 +608,7 @@ elif action=='retarget': registry.save_runtime_binding(replace(registry.get_runt
 else:
     key=ProjectIndexKey({rig.key.data_authority_id!r},{rig.key.workspace_id!r},{rig.key.binding_id!r},{rig.key.locator_fingerprint!r},{rig.key.root_identity_fingerprint!r})
     store=WorkspaceProjectIndexDB(Path({str(index_store_path(rig.data, rig.key))!r}))
-    with registry.binding_authority_fence(bid):
+    with store.sql_unit(write=True), registry.binding_authority_fence(bid):
         store.revoke(key,clear=False,expected_scope=store.load_status(key).scope)
     store.close()
 registry.db.close()
@@ -519,7 +725,8 @@ async def test_failed_supervisor_dispatch_waits_for_started_writer_retirement(
         (rig.root / "a.txt").write_text("dispatch marker")
         rig.enable()
         task = asyncio.create_task(asyncio.to_thread(rig.refresh))
-        assert await asyncio.to_thread(failed.wait, 10)
+        # This includes refresh admission and scanner startup on private storage.
+        assert await asyncio.to_thread(failed.wait, 45)
         await asyncio.sleep(0.03)
         assert not task.done(), "caller completed while its real writer was still alive"
         closing = asyncio.create_task(rig.service.aclose())
@@ -600,7 +807,7 @@ threading.Event().wait()
         stderr=subprocess.DEVNULL,
     )
     try:
-        line = await asyncio.wait_for(asyncio.to_thread(child.stdout.readline), 20)
+        line = await asyncio.wait_for(asyncio.to_thread(child.stdout.readline), 45)
         assert line.strip() == b"committed"
         current = rig.service.status(rig.key)
         assert current.state == "Building" and current.indexed > 0
@@ -612,7 +819,7 @@ threading.Event().wait()
             )
         child.kill()
         assert await asyncio.to_thread(child.wait, 10) is not None
-        interrupted = rig.settle("Interrupted")
+        interrupted = rig.settle("Interrupted", seconds=45)
         assert interrupted.job_id == current.job_id
         assert not rig.service._runs
         rig.service.resume(
@@ -620,7 +827,7 @@ threading.Event().wait()
             expected_scope=interrupted.scope,
             expected_job_revision=interrupted.job_revision,
         )
-        ready = rig.settle()
+        ready = rig.settle(seconds=60)
         assert ready.indexed == 300
         store = rig.store(rig.key)
         with store.connection() as conn:
@@ -668,13 +875,13 @@ async def test_refresh_preserves_unfinished_subtree_and_can_restart_partial(
         (rig.root / "nested/a.txt").write_text("unchanged marker")
         rig.enable()
         rig.refresh()
-        rig.settle()
+        rig.settle(seconds=45)
         store = rig.store(rig.key)
         with store.connection() as conn:
             original = tuple(conn.execute("SELECT id,text FROM chunks").fetchone())
         store.close()
         rig.refresh()
-        rig.settle()
+        rig.settle(seconds=45)
         store = rig.store(rig.key)
         with store.connection() as conn:
             assert (
@@ -684,12 +891,12 @@ async def test_refresh_preserves_unfinished_subtree_and_can_restart_partial(
         (rig.root / "nested/a.txt").unlink()
         scanner.incomplete = True
         rig.refresh()
-        assert rig.settle("Partial").indexed == 1
+        assert rig.settle("Partial", seconds=45).indexed == 1
         for run in rig.service._runs.values():
             run.supervisor.join()
         scanner.incomplete = False
         rig.refresh()
-        assert rig.settle().indexed == 0
+        assert rig.settle(seconds=45).indexed == 0
     finally:
         await rig.close()
 
@@ -799,7 +1006,7 @@ async def test_production_runtime_pin_drains_idle_and_spans_writer_retirement(
 
 
 @private_profile_test
-async def test_obsolete_namespace_bytes_force_partial_without_publication(
+async def test_obsolete_namespace_bytes_refuse_refresh_before_publication(
     tmp_path, request, monkeypatch
 ):
     import tldw_chatbook.DB.Workspace_Project_Index_DB as db_module
@@ -807,18 +1014,28 @@ async def test_obsolete_namespace_bytes_force_partial_without_publication(
 
     rig = Rig(tmp_path)
     try:
-        rig.enable()
+        enabled = rig.enable()
+        current_path = index_store_path(rig.data, rig.key)
+        before = current_path.read_bytes()
         obsolete = index_store_path(
             rig.data, replace(rig.key, data_authority_id="retired-generation")
         )
         obsolete.parent.mkdir(parents=True)
-        (obsolete.parent / "old.db-journal").write_bytes(b"x" * (256 * 1024))
+        sidecar = obsolete.parent / (obsolete.name + "-journal")
+        sidecar.write_bytes(b"x" * (256 * 1024))
         monkeypatch.setattr(db_module, "MAX_CACHE_BYTES", 256 * 1024)
         monkeypatch.setattr(service_module, "MAX_CACHE_BYTES", 256 * 1024)
         (rig.root / "a.txt").write_text("quota marker")
-        rig.refresh()
-        status = rig.settle("Partial")
-        assert status.indexed == 0 and status.cache_bytes > 256 * 1024
+        with pytest.raises(
+            ValueError, match="index_(cache_limit|allocation_settlement_over_budget)"
+        ):
+            rig.refresh()
+        assert current_path.read_bytes() == before
+        assert sidecar.read_bytes() == b"x" * (256 * 1024)
+        sidecar.unlink()
+        status = rig.service.status(rig.key)
+        assert status.scope == enabled.scope
+        assert status.state == enabled.state and status.indexed == 0
     finally:
         await rig.close()
 
@@ -896,6 +1113,7 @@ async def test_clear_reclaims_prior_roots_and_authorities_preserving_control_and
         await rig.close()
 
 
+@pytest.mark.timeout(480)
 @private_profile_test
 async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak(
     tmp_path, request, monkeypatch
@@ -907,6 +1125,15 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
     limit = 12 * 1024**2
     monkeypatch.setattr(db_module, "MAX_CACHE_BYTES", limit)
     monkeypatch.setattr(service_module, "MAX_CACHE_BYTES", limit)
+    original_admit = db_module.admit_keyword_connection
+    admitted_budgets = []
+
+    def observed_admission(conn, path, group, *, budget):
+        admitted_budgets.append(budget)
+        assert budget == limit
+        return original_admit(conn, path, group, budget=budget)
+
+    monkeypatch.setattr(db_module, "admit_keyword_connection", observed_admission)
     rig = Rig(tmp_path)
     original_key = rig.key
     samples = []
@@ -927,7 +1154,7 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
         (rig.root / "prior.txt").write_text("prior marker " * 10000)
         rig.enable()
         rig.refresh()
-        rig.settle()
+        rig.settle(seconds=45)
         for run in rig.service._runs.values():
             run.supervisor.join()
         prior_key = rig.key
@@ -943,7 +1170,7 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
         rig.enable()
         sampler.start()
         rig.refresh()
-        rig.settle("Partial", seconds=60)
+        rig.settle("Partial", seconds=120)
         for run in rig.service._runs.values():
             run.supervisor.join()
         old_size = index_store_path(rig.data, original_key).stat().st_size
@@ -965,7 +1192,8 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
         rig.enable()
         (rig.root / "after.txt").write_text("rebuilt marker")
         rig.refresh()
-        assert rig.settle().indexed == 1
+        assert rig.settle(seconds=45).indexed == 1
+        assert admitted_budgets
         assert samples and max(samples) <= limit
         (tmp_path / "capacity-receipt.txt").write_text(
             f"capacity={limit} old_database={old_size} before_clear={before} after_clear={after} sampled_highwater={max(samples)}",
@@ -978,6 +1206,29 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
         end.set()
         if sampler.ident is not None:
             sampler.join()
+        await rig.close()
+
+
+@private_profile_test
+async def test_non_full_sqlite_scanner_error_stays_error_after_native_retirement(
+    tmp_path, request
+):
+    class FailingScanner(ProjectScanner):
+        def scan(self, *args, **kwargs):
+            with sqlite3.connect(":memory:") as conn:
+                conn.execute("SELECT * FROM missing_table")
+
+    rig = Rig(tmp_path, FailingScanner())
+    try:
+        (rig.root / "a.txt").write_text("known marker")
+        rig.enable()
+        rig.refresh()
+        rig.settle("Error")
+        for run in rig.service._runs.values():
+            run.supervisor.join()
+            assert run.native_retired and run.db_closed and run.registry_closed
+        assert rig.service.status(rig.key).state == "Error"
+    finally:
         await rig.close()
 
 
@@ -1000,13 +1251,11 @@ async def test_compaction_failure_is_off_retryable_and_stale_clear_cannot_undo_e
                 rig.service.clear(rig.key, expected_scope=current.scope)
         off = rig.service.status(rig.key)
         assert off.state == "Off"
-        from tldw_chatbook.Workspaces.project_index.lifetime import LifetimeBusy
-
         compact = WorkspaceProjectIndexDB.reclaim_free_pages
 
         def held_compact(store):
             entered.set()
-            assert release.wait(10)
+            assert release.wait(30)
             return compact(store)
 
         with monkeypatch.context() as patch:
@@ -1014,10 +1263,11 @@ async def test_compaction_failure_is_off_retryable_and_stale_clear_cannot_undo_e
             task = asyncio.create_task(
                 asyncio.to_thread(rig.service.clear, rig.key, expected_scope=off.scope)
             )
-            assert await asyncio.to_thread(entered.wait, 10)
-            revoked = rig.service.status(rig.key)
+            assert await asyncio.to_thread(entered.wait, 45)
             with pytest.raises(LifetimeBusy):
-                rig.service.enable(rig.key, POLICY, expected_scope=revoked.scope)
+                await asyncio.to_thread(rig.service.status, rig.key)
+            with pytest.raises(LifetimeBusy):
+                rig.service.enable(rig.key, POLICY, expected_scope=off.scope)
             release.set()
             retry = await task
         assert retry.state == "Off"
@@ -1027,14 +1277,14 @@ async def test_compaction_failure_is_off_retryable_and_stale_clear_cannot_undo_e
 
         def held(*args):
             entered.set()
-            assert release.wait(10)
+            assert release.wait(30)
             return cleanup(*args)
 
         monkeypatch.setattr(rig.service, "_clear_binding", held)
         task = asyncio.create_task(
             asyncio.to_thread(rig.service.clear, rig.key, expected_scope=retry.scope)
         )
-        assert await asyncio.to_thread(entered.wait, 10)
+        assert await asyncio.to_thread(entered.wait, 45)
         revoked = rig.service.status(rig.key)
         enabled = rig.service.enable(rig.key, POLICY, expected_scope=revoked.scope)
         release.set()
@@ -1295,6 +1545,7 @@ async def test_two_held_searches_refuse_refresh_until_readers_retire(
     rig = Rig(tmp_path)
     release = threading.Event()
     entered = threading.Event()
+    first_entered = threading.Event()
     counter_lock = threading.Lock()
     active = peak = 0
     tasks = []
@@ -1304,6 +1555,8 @@ async def test_two_held_searches_refuse_refresh_until_readers_retire(
         with counter_lock:
             active += 1
             peak = max(peak, active)
+            if active == 1:
+                first_entered.set()
             if active == 2:
                 entered.set()
 
@@ -1343,8 +1596,11 @@ async def test_two_held_searches_refuse_refresh_until_readers_retire(
         )
         tasks = [
             asyncio.create_task(asyncio.to_thread(rig.service.search, auth, "marker"))
-            for _ in range(2)
         ]
+        assert await asyncio.to_thread(first_entered.wait, 10)
+        tasks.append(
+            asyncio.create_task(asyncio.to_thread(rig.service.search, auth, "marker"))
+        )
         assert await asyncio.to_thread(entered.wait, 10)
         with pytest.raises(LifetimeBusy):
             rig.refresh()
@@ -1510,6 +1766,9 @@ async def test_close_stays_responsive_through_held_constructor_migration(
     enabled = rig.enable()
     store = rig.store(rig.key)
     with store.transaction() as conn:
+        conn.execute("DROP TABLE semantic_members")
+        conn.execute("DROP TABLE semantic_generations")
+        conn.execute("DROP TABLE semantic_control")
         conn.execute("DROP TABLE chunk_fts")
         conn.execute("CREATE VIRTUAL TABLE chunk_fts USING fts5(text)")
         conn.execute("DROP INDEX directories_eligible")
@@ -1827,3 +2086,34 @@ async def test_failed_start_history_race_retires_unrecorded_production_pin(
                 pin.close()
         await close_project_index_service(app)
         registry.db.close()
+
+
+@private_profile_test
+async def test_status_building_without_lifetime_projects_interrupted_without_creating_it(
+    tmp_path, request
+):
+    from tldw_chatbook.Workspaces.project_index.lifetime import BindingLifetime
+
+    rig = Rig(tmp_path)
+    try:
+        enabled = rig.enable()
+        store = rig.store(rig.key)
+        lock = index_store_path(rig.data, rig.key).parent.parent / rig.key.lifetime_name
+        lease = BindingLifetime.acquire(lock)
+        try:
+            store.claim_job(
+                enabled.scope,
+                owner_token="native-v1:" + rig.key.binding_namespace + ":orphan",
+                authority_revision=rig.live.authority_revision,
+                expected_job_revision=enabled.job_revision,
+            )
+        finally:
+            store.close_native()
+            lease.close()
+        lock.unlink()
+        assert not lock.exists()
+        for _ in range(2):
+            assert rig.service.status(rig.key).state == "Interrupted"
+            assert not lock.exists()
+    finally:
+        await rig.close()

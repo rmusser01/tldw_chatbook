@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="18.779" timestamp="2026-10-23T15:40:00.934352-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.Workspaces.test_project_semantic_search" name="test_incompatible_ready_artifact_skips_query_model" time="18.558" /></testsuite></testsuites>

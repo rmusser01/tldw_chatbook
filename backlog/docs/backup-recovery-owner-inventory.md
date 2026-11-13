@@ -3317,7 +3317,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | sqlite:chat.launch_wake | tldw_chatbook/Chat/console_launch_wake | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:chat.trace_maintenance | tldw_chatbook/Chat/console_trace_maintenance | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.chunking_lab | tldw_chatbook/DB/Chunking_Lab_DB | _PRIVATE_FILE | sqlite/unsupported |
-| sqlite:db.workspace_project_index | tldw_chatbook/DB/Workspace_Project_Index_DB | _PRIVATE_FILE | sqlite/installed exclusion (`ProjectIndexCacheDeclaration`) |
+| sqlite:db.workspace_project_index | tldw_chatbook/DB/Workspace_Project_Index_DB | _PRIVATE_AND_READ_ONLY | sqlite/installed exclusion (`ProjectIndexCacheDeclaration`) |
 | sqlite:library.legacy_recovery | tldw_chatbook/Library/collections_legacy_recovery | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:personal_context.interview_drafts | tldw_chatbook/Personal_Context/interview_draft_repository | _PRIVATE_FILE | sqlite/installed exclusion (`_LocalSQLite`) |
 | sqlite:personal_context.repository | tldw_chatbook/Personal_Context/repository | _PRIVATE_AND_READ_ONLY | sqlite/explicit unsupported declaration (`_LocalSQLite`, `excluded=False`) |
@@ -3974,8 +3974,10 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Workspaces/file_inspector.py | _open_root_descriptor | open | 1 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/file_inspector.py | _open_target_descriptor | open | 1 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/git_workspace.py | untracked_preview | open | 1 | unsupported | workspaces |
-| tldw_chatbook/Workspaces/project_index/lifetime.py | BindingLifetime.acquire | open | 1 | unsupported | workspaces |
-| tldw_chatbook/Workspaces/project_index/lifetime.py | BindingLifetime.write_cleanup_receipt | write | 1 | unsupported | workspaces |
+| tldw_chatbook/DB/Workspace_Project_Index_DB.py | WorkspaceProjectIndexDB._open_connection | connect_private_sqlite | 1 | derived | per-binding project index cache; excluded from backup |
+| tldw_chatbook/DB/Workspace_Project_Index_DB.py | WorkspaceProjectIndexDB._probe_peer | connect_private_sqlite | 1 | derived | existing-only read of the same derived project index cache |
+| tldw_chatbook/Utils/project_index_lifetime.py | BindingLifetime.acquire | open | 1 | unsupported | workspaces |
+| tldw_chatbook/Utils/project_index_lifetime.py | BindingLifetime.write_cleanup_receipt | write | 1 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/project_index/runtime.py | _AdmittedStoreFactory.__call__ | secure_private_directory | 2 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/project_index/service.py | ProjectIndexService._enroll_cleanup_owner | secure_private_directory | 1 | unsupported | workspaces |
 | tldw_chatbook/Workspaces/project_index/service.py | ProjectIndexService.retry_detached_cleanup | secure_private_directory | 2 | unsupported | workspaces |

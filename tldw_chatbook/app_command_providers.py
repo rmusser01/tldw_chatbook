@@ -65,6 +65,8 @@ from .UI.Navigation.main_navigation import NavigateToScreen
 from .UI.Navigation.shell_destinations import (
     SHELL_DESTINATION_ORDER,
     get_shell_destination,
+    iter_navigation_palette_commands,
+    resolve_shell_route,
 )
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 
@@ -368,10 +370,6 @@ class TabNavigationProvider(Provider):
 
     @classmethod
     def _shell_destination_for_tab(cls, tab_id: str):
-        from .UI.Navigation.shell_destinations import (
-            resolve_shell_route,
-        )
-
         resolved = resolve_shell_route(cls.route_for_tab(tab_id))
         try:
             return get_shell_destination(resolved.destination_id)
@@ -422,9 +420,9 @@ class TabNavigationProvider(Provider):
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
 
-        tab_commands = [
-            self._tab_command(tab_id) for tab_id in self.command_palette_tab_ids()
-        ]
+        tab_commands = iter_navigation_palette_commands(
+            self.command_palette_tab_ids(), self._tab_command, is_web=self.app.is_web
+        )
 
         for command_text, tab_id, help_text in tab_commands:
             destination = self._shell_destination_for_tab(tab_id)

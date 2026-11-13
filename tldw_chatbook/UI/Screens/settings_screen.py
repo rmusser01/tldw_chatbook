@@ -24339,11 +24339,11 @@ class SettingsScreen(BaseAppScreen):
             if (pane := self._tools_hub_pane()) is not None:
                 pane.set_initial_view_state(self._tools_hub_initial_view_state)
             return
-        registered = CATEGORY_PANELS.get(category_value)
-        if registered is not None and registered.navigate(self, context):
+        if (registered := CATEGORY_PANELS.get(category_value)) is not None and registered.navigate(self, context):
             return
-        self._clear_navigation_provider_context()
-        self._select_category(category_value, restore_focus=True)
+        from ..Settings_Modules.workspace_folder_bindings import navigate_settings_category
+
+        navigate_settings_category(self, category_value, context)
 
     def _route_to_provider_settings(self, context: Mapping[str, object]) -> None:
         """Providers & Models' share of ``apply_navigation_context``.

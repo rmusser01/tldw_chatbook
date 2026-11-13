@@ -146,6 +146,11 @@ _guard = RecoveryAdmissionGuard(
 
 def execution(service=None, *, config=None, sources=(), _transfer=None):
     """Reuse accepted exact leases; a transferred worker cannot outlive them."""
+    project = getattr(service, "_projection_execution_scope", None)
+    if project is not None:
+        from .projection_scope import ProjectionExecutionScope
+
+        return ProjectionExecutionScope.require(project).execution(transfer=_transfer)
     return _guard.execution(
         service,
         transfer=_transfer,
@@ -185,6 +190,11 @@ def _call_scope(arguments, *, transfer=None):
     attached = getattr(service, "_projection_service", None)
     if attached is not None:
         service = attached() or service
+    project = getattr(service, "_projection_execution_scope", None)
+    if project is not None:
+        from .projection_scope import ProjectionExecutionScope
+
+        return ProjectionExecutionScope.require(project).execution(transfer=transfer)
     sources = [("rag.projections", arguments.get("persist_directory"))]
     manager = arguments.get("profile_manager")
     if manager is not None:
@@ -232,6 +242,26 @@ def async_guarded(function):
     @wraps(function)
     async def call(*args, **kwargs):
         arguments = signature.bind_partial(*args, **kwargs).arguments
+        service = arguments.get("self")
+        project = getattr(service, "_projection_execution_scope", None)
+        if project is not None:
+            from .projection_scope import ProjectionExecutionScope
+
+            project = ProjectionExecutionScope.require(project)
+            active_project = project.accepted()
+            if active_project is not None:
+                with _call_scope(arguments):
+                    return await function(*args, **kwargs)
+            with project.execution():
+                parent = project.accepted()
+
+                async def retained_project():
+                    with _call_scope(arguments, transfer=parent):
+                        return await function(*args, **kwargs)
+
+                completion = asyncio.create_task(retained_project())
+                await join_retained_task(completion)
+                return completion.result()
         active = _guard.context.get()
         if active is not None and active.identity == execution_identity():
             with _call_scope(arguments):
@@ -250,6 +280,21 @@ def async_guarded(function):
 
 def native_worker(service, function):
     """Transfer an accepted scope to the installed awaited vector worker."""
+    project = getattr(service, "_projection_execution_scope", None)
+    if project is not None:
+        from .projection_scope import ProjectionExecutionScope, ProjectProjectionRequired
+
+        project = ProjectionExecutionScope.require(project)
+        active_project = project.accepted()
+        if active_project is None:
+            raise ProjectProjectionRequired()
+
+        @wraps(function)
+        def project_call(*args, **kwargs):
+            with project.execution(transfer=active_project):
+                return function(*args, **kwargs)
+
+        return project_call
     active = _guard.context.get()
     if active is not None:
         active.check(RAGActivationRequired)

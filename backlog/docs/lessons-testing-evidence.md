@@ -40,6 +40,12 @@ Two of those were real product waste, fixed in round 13: the credential TTL flip
 
 **What to do.** A branch that depends on the loop's task factory needs a test that installs `asyncio.eager_task_factory` first, the way `App.run_async` does. Mounted tests can use `Tests.UI.test_console_hook_review_send_freeze._task_factory("eager")`. Treat a guard that refuses the stock eager factory as a path that never runs in production.
 
+## A diagnostic wrapper can replace the failure it is meant to observe (TASK-36420, 2026-10-23)
+
+**Incident.** During the semantic-cache allocation foundation, the supervisor cleared the retired run's exception to release its traceback. Reading run.error after join therefore could not identify the first failure. A temporary scanner observer then read nonexistent ScanRunResult.directories, raising its own AttributeError; two diagnostic runs were contaminated. A passive first-exception capture identified the actual SQLite SQLITE_FULL13. The wrapper was removed before the final Partial/Clear/rebuild control passed with a sampled10,684,846B peak under the12MiB fixture limit.
+
+**What to do.** Capture the actual first exception before its owner retires it, validate observer fields against the return type, and return the original value unchanged. Label observer-induced failures separately and preserve their receipts. A missing retired exception is not success evidence; a sampled peak is not an analytical quota proof.
+
 ## A parent source pin does not bind a private pytest child's Core import (PR3036, 2026-11-07)
 
 **Incident.** The approval launcher verified selected Main, Core and Tests origins in its `-I` parent after inserting the selected paths into `sys.path`. `Tests.private_profile` then spawned a fresh interpreter: only Main survived through its working directory, and Core resolved through the primary checkout's editable installation. A real child-environment metadata probe reproduced that foreign origin even though all 14 Core Python files happened to have identical content. Earlier parent-origin receipts therefore did not prove complete child-source closure. Performance helper environments had the same omission, including one first-use environment whitelist that dropped `PYTHONPATH` entirely.
@@ -23665,6 +23671,14 @@ During TASK-36132, a repository-wide guard run overlapped an implementer tempora
 
 Serialize baseline reversals and shared scans. Private test profiles isolate storage, not the Python source checkout. Finish implementation handoff before repository-wide verification; record the reviewed source identity and verify it stays unchanged for the scan.
 
+During TASK-36422, task3-provider-registry-01 likewise overlapped a service source edit; it was retained as non-final evidence, then task3-final-exception-02 and exact final hash controls qualified the frozen paths.
+
+During TASK-36423, task4-ui-green-01 raised a Textual selector API error before the first child completed. The card source was corrected while another selected child was still running in the same runner; the resulting mixed-source output cannot qualify either snapshot even though the error seemed local. The run and its prehash/child logs were retained as adverse evidence. Subsequent cases were run singly with source hashes checked before launch and after the entire child process retired. An early failure line is not a safe edit boundary when the runner still owns other children.
+
+During the same task, the outer Settings dark-08/light-01 runs reported passing tests, but their child logs warned that the default executor had not joined within its three-second shutdown grace. A later owner-02 probe also exited with a passing test while its child stack receipt showed one real `chachanotes_fts_backfill` future still pending at shutdown exit. Parent exit status and warning counts did not establish physical worker retirement. The settled-startup Settings control waited for that exact real boot worker to succeed while the app remained mounted, then rechecked the card and inspected the child log for shutdown warnings. Preserve both the adverse and settled receipts, and inspect child warnings and live-future evidence before claiming native retirement from a passing outer result.
+
+Task4's first fix commit exposed a different evidence trap: all 271 copied receipt files matched a SHA-256/byte manifest in the working tree, but Git's text line-ending normalization changed 231 committed blobs. One parent log was 1,873 bytes in the original and working copy, but 1,856 bytes in the commit. The independent review could not verify the original-byte claim from a fresh checkout. Pin exact-byte receipt directories with a scoped `-text` attribute, restage the original files, and compare **Git index and committed blob bytes** against the manifest; a working-tree hash check alone is insufficient. Do not rewrite the manifest to bless normalized copies.
+
 ## A UI shard cancelled with no failing test ran out its own job cap; the gate only reports it (PR #3190, TASK-35660, 2026-10-22)
 
 **Incident.** PR #3190 was evicted from the merge queue after "required check failed twice". The Derived Artifacts gate's log says only "The required UI fast lane did not succeed", which reads like a red test in the PR. There was none. In both attempts, UI Fast Lane job 2 of 10 was cancelled at 97% with every test that ran passing. Its check-run annotation said "The job has exceeded the maximum execution time of 20m0s" (20m19s from start), and the gate job started only after that. The job held none of the PR's changed census entries, so the overrun was dev's own load, which TASK-35834's 13-shard deal later fixed. The day before, PR #3188's identical eviction had been filed as the gate cancelling in-flight shards (TASK-35920). That job's durations (20m01s-20m19s, all ending before the gate started) show the same cap.
@@ -25313,3 +25327,23 @@ minutes:
 **Incident.** TASK-36948.3 added one public method to ChatScreen and raised its `test_screen_size_ratchet.py` row by the measured +38 lines and +1 method, as a dated waiver. The brief called that a one-line fix. The serial `Tests/Architecture` run (26 min) then failed two tests that only that full run reaches: `test_console_review_selection_controller_boundary.py` (`LIVE_RATCHET_ROW`) and `test_console_wave6_closeout_inventory.py` (`LIVE_RATCHET_BUDGET`). TASK-38988 put both pins there on purpose, to catch any raise of the row.
 
 **What to do.** When you raise or lower ChatScreen's row, run `grep -rn "LIVE_RATCHET" Tests/Architecture` and re-pin every match to the new row in the same commit.
+
+## Retain parent and child runtime bootstrap for offline qualification
+
+**Incident (TASK-36421, 2026-10-23).** Cached MiniLM qualification repeatedly stopped before model assertions with missing `pywintypes`: adding shared packages to `PYTHONPATH` did not process their `.pth`, and parent-only `site.addsitedir` did not configure the private child. One attempt also selected the worktree venv instead of the main checkout shared site. The preserved fix1-offline-final-01/02/03 runs are setup failures; fix1-offline-final-04 and the reusable runner composition then passed with the same source/backend and offline cache.
+
+**What to do.** Preserve and reuse the exact qualified parent and child bootstrap, interpreter, shared-site provenance, selectors and before-launch hashes. Read-only shared-site `.pth` processing and inherited child paths are distinct requirements. Keep this model-capable runner separate from the normal missing-optional-dependency keyword control; neither setup failure nor presence of a cached model certifies product behavior.
+
+
+## A qualification preflight needs finite registry ownership and pre-assert payload retention
+
+**Incident (TASK-36423, 2026-10-24).** Continuation 01 reused a real 20k Ready generation but failed a compound semantic-query assertion without saving ToolResult or individual predicates. Its actual fallback/refusal is unknown. Source inspection found raw preflight `get_runtime_binding` outside finite service ownership; WorkspaceDB retains per-thread handles, and a later semantic operation correctly refuses a borrowed caller connection. Thread reuse was not recorded, so that defect cannot be declared the old run's proven cause. Separately reviewed continuation 02 used the existing service registry owner around preflight, saved actual query result/fresh metrics/booleans before assertions and recorded thread/issuer/retirement exceptions without changing production catch behavior; both corpus journeys passed. Keep the adverse receipt, use the actual finite owner before registry lookup, and save diagnostic facts before a compound assertion. Do not close borrowed connections or weaken model admission to make a qualification pass.
+
+
+## A required lane has exact consumers beyond its workflow
+
+**Incident (TASK-36423, 2026-10-24).** The approved project-index lane was added to the required aggregate, but the old-head hosted Fast Lane failed five tests: exact workflow job/verdict expectations omitted it, current ADR103 runner counts stayed at nineteen instead of twenty, and the statement test indexed past its word table at twenty-one with perf-guard. The original hosted log and targeted RED/GREEN are retained in semantic/integration-fix-evidence. Update every exact workflow consumer and current count statement when adding a lane; preserve dated historical counts and support numeric counts beyond a fixed word table. A green focused new-lane contract alone does not qualify those other consumers.
+
+## Use forward slashes in Windows PYTEST_ADDOPTS paths
+
+**Incident (TASK-36423, 2026-10-24).** The qualified endpoint-cache RED passed a Windows backslash path to --junitxml through PYTEST_ADDOPTS. Pytest's shlex parsing consumed the separators and wrote one filename in the worktree root. The exact original XML was moved to its private receipt directory after retirement without changing bytes or replaying the test. GREEN used an absolute forward-slash path and wrote directly to the intended location. Record literal environment options and actual output paths; use forward slashes for paths parsed through PYTEST_ADDOPTS on Windows.

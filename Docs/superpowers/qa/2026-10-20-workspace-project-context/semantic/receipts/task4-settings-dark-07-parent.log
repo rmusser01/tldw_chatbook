@@ -1,0 +1,286 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+_ test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0] _
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\pytest-of-GDesktop-1\pytest-0\test_actual_settings_semantic_0\private-profile-process\pytest.log
+E   --- child error: failed on teardown with "ExceptionGroup: errors while tearing down <Coroutine test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]> (2 sub-exceptions)"
+E   + Exception Group Traceback (most recent call last):
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 341, in from_call
+E     |     result: TResult | None = func()
+E     |                              ^^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 242, in <lambda>
+E     |     lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+E     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+E     |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+E     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+E     |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+E     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+E     |     raise exception
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E     |     teardown.throw(exception)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 53, in run_old_style_hookwrapper
+E     |     return result.get_result()
+E     |            ^^^^^^^^^^^^^^^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_result.py", line 103, in get_result
+E     |     raise exc.with_traceback(tb)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 38, in run_old_style_hookwrapper
+E     |     res = yield
+E     |           ^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E     |     teardown.throw(exception)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\threadexception.py", line 97, in pytest_runtest_teardown
+E     |     yield from thread_exception_runtest_hook()
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\threadexception.py", line 68, in thread_exception_runtest_hook
+E     |     yield
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E     |     teardown.throw(exception)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 100, in pytest_runtest_teardown
+E     |     yield from unraisable_exception_runtest_hook()
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 70, in unraisable_exception_runtest_hook
+E     |     yield
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E     |     teardown.throw(exception)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 853, in pytest_runtest_teardown
+E     |     yield from self._runtest_for(item, "teardown")
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 829, in _runtest_for
+E     |     yield
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E     |     teardown.throw(exception)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\capture.py", line 903, in pytest_runtest_teardown
+E     |     return (yield)
+E     |             ^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+E     |     res = hook_impl.function(*args)
+E     |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 189, in pytest_runtest_teardown
+E     |     item.session._setupstate.teardown_exact(nextitem)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 557, in teardown_exact
+E     |     raise exceptions[0]
+E     | ExceptionGroup: errors while tearing down <Coroutine test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]> (2 sub-exceptions)
+E     +-+---------------- 1 ----------------
+E       | Traceback (most recent call last):
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E       |     fin()
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E       |     raise exceptions[0]
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E       |     fin()
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 907, in _teardown_yield_fixture
+E       |     next(it)
+E       |   File "C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\Tests\conftest.py", line 1772, in isolate_test_environment
+E       |     raise RuntimeError(
+E       | RuntimeError: Native app workers remain uncertain; config retirement refused
+E       +---------------- 2 ----------------
+E       | Traceback (most recent call last):
+E       |   File "C:\Python312\Lib\asyncio\base_events.py", line 605, in shutdown_default_executor
+E       |     await future
+E       | asyncio.exceptions.CancelledError
+E       | 
+E       | The above exception was the direct cause of the following exception:
+E       | 
+E       | Traceback (most recent call last):
+E       |   File "C:\Python312\Lib\asyncio\base_events.py", line 604, in shutdown_default_executor
+E       |     async with timeouts.timeout(timeout):
+E       |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       |   File "C:\Python312\Lib\asyncio\timeouts.py", line 115, in __aexit__
+E       |     raise TimeoutError from exc_val
+E       | TimeoutError
+E       | 
+E       | During handling of the above exception, another exception occurred:
+E       | 
+E       | Traceback (most recent call last):
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E       |     fin()
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E       |     raise exceptions[0]
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E       |     fin()
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 339, in finalizer
+E       |     event_loop.run_until_complete(task)
+E       |   File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+E       |     return future.result()
+E       |            ^^^^^^^^^^^^^^^
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 330, in async_finalizer
+E       |     await gen_obj.__anext__()  # type: ignore[union-attr]
+E       |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       |   File "C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\Tests\conftest.py", line 487, in retire_test_app_owners
+E       |     await asyncio.get_running_loop().shutdown_default_executor(
+E       |   File "C:\Python312\Lib\asyncio\base_events.py", line 607, in shutdown_default_executor
+E       |     warnings.warn("The executor did not finishing joining "
+E       | RuntimeWarning: The executor did not finishing joining its threads within 3.0 seconds.
+E       +------------------------------------
+E   --- child log tail ---
+E   s\_pytest\unraisableexception.py", line 70, in unraisable_exception_runtest_hook
+E     |     yield
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E     |     teardown.throw(exception)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 853, in pytest_runtest_teardown
+E     |     yield from self._runtest_for(item, "teardown")
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 829, in _runtest_for
+E     |     yield
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E     |     teardown.throw(exception)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\capture.py", line 903, in pytest_runtest_teardown
+E     |     return (yield)
+E     |             ^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+E     |     res = hook_impl.function(*args)
+E     |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 189, in pytest_runtest_teardown
+E     |     item.session._setupstate.teardown_exact(nextitem)
+E     |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 557, in teardown_exact
+E     |     raise exceptions[0]
+E     | ExceptionGroup: errors while tearing down <Coroutine test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]> (2 sub-exceptions)
+E     +-+---------------- 1 ----------------
+E       | Traceback (most recent call last):
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E       |     fin()
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E       |     raise exceptions[0]
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E       |     fin()
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 907, in _teardown_yield_fixture
+E       |     next(it)
+E       |   File "C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\Tests\conftest.py", line 1772, in isolate_test_environment
+E       |     raise RuntimeError(
+E       | RuntimeError: Native app workers remain uncertain; config retirement refused
+E       +---------------- 2 ----------------
+E       | Traceback (most recent call last):
+E       |   File "C:\Python312\Lib\asyncio\base_events.py", line 605, in shutdown_default_executor
+E       |     await future
+E       | asyncio.exceptions.CancelledError
+E       | 
+E       | The above exception was the direct cause of the following exception:
+E       | 
+E       | Traceback (most recent call last):
+E       |   File "C:\Python312\Lib\asyncio\base_events.py", line 604, in shutdown_default_executor
+E       |     async with timeouts.timeout(timeout):
+E       |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       |   File "C:\Python312\Lib\asyncio\timeouts.py", line 115, in __aexit__
+E       |     raise TimeoutError from exc_val
+E       | TimeoutError
+E       | 
+E       | During handling of the above exception, another exception occurred:
+E       | 
+E       | Traceback (most recent call last):
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E       |     fin()
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E       |     raise exceptions[0]
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E       |     fin()
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 339, in finalizer
+E       |     event_loop.run_until_complete(task)
+E       |   File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+E       |     return future.result()
+E       |            ^^^^^^^^^^^^^^^
+E       |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 330, in async_finalizer
+E       |     await gen_obj.__anext__()  # type: ignore[union-attr]
+E       |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       |   File "C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\Tests\conftest.py", line 487, in retire_test_app_owners
+E       |     await asyncio.get_running_loop().shutdown_default_executor(
+E       |   File "C:\Python312\Lib\asyncio\base_events.py", line 607, in shutdown_default_executor
+E       |     warnings.warn("The executor did not finishing joining "
+E       | RuntimeWarning: The executor did not finishing joining its threads within 3.0 seconds.
+E       +------------------------------------
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-23 14:14:56.088 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-23 14:14:56.235 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+E   2026-10-23 14:14:56.236 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+E   2026-10-23 14:14:56.237 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   2026-10-23 14:14:57.281 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E   ---------------------------- Captured stderr call -----------------------------
+E   2026-10-23 14:14:58.971 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ pydub dependency found. Feature 'pydub' is enabled.
+E   2026-10-23 14:15:01.469 | INFO     | tldw_chatbook.app:__init__:1289 - Loaded app_config - strip_thinking_tags: True
+E   2026-10-23 14:15:02.214 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-10-23 14:15:02.214 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-10-23 14:15:02.214 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-10-23 14:15:02.215 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'media_db' completed in 0.000s
+E   2026-10-23 14:15:02.460 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - LibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\tldw-chatbook-test-ekc7_y0y\library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 14:15:03.586 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\tldw-chatbook-test-ekc7_y0y\workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 14:15:05.568 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SubscriptionsDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\tldw-chatbook-test-ekc7_y0y\subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 14:15:06.004 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 14:15:06.008 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\tldw-chatbook-test-ekc7_y0y\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 14:15:06.008 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\tldw-chatbook-test-ekc7_y0y\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-10-23 14:15:06.518 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-10-23 14:15:06.657 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-10-23 14:15:06.816 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-10-23 14:15:06.964 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-10-23 14:15:07.100 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-10-23 14:15:07.238 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-10-23 14:15:07.238 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\tldw-chatbook-test-ekc7_y0y\scheduled_tasks.sqlite [Client: default]
+E   2026-10-23 14:15:08.603 | DEBUG    | tldw_chatbook.app:__init__:1468 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-10-23 14:15:08.603 | DEBUG    | tldw_chatbook.app:__init__:1471 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-10-23 14:15:08.747 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\pytest-of-GDesktop-1\pytest-0\test_actual_settings_semantic_0\private-profile-process\profile\config\eval_overrides.yaml
+E   2026-10-23 14:15:09.258 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:614 - Created EvalsDB schema version 7
+E   2026-10-23 14:15:09.259 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\pytest-of-GDesktop-1\pytest-0\test_actual_settings_semantic_0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\evals.db
+E   2026-10-23 14:15:09.259 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-10-23 14:15:10.324 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:_init_worker_handlers:2219 - Worker handler registry initialized with all handlers
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1661 - === STARTUP TIMING SUMMARY ===
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1662 - Total initialization time: 9.656 seconds
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1668 -   basic_init: 1.537s (15.9%)
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1668 -   attribute_init: 0.000s (0.0%)
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1668 -   parallel_init: 0.001s (0.0%)
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1681 -     - notes_service: 0.000s (0.3% of parallel_init)
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1681 -     - providers_models: 0.000s (0.3% of parallel_init)
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1681 -     - media_db: 0.000s (0.2% of parallel_init)
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1681 -     - prompts_service: 0.000s (0.2% of parallel_init)
+E   2026-10-23 14:15:10.324 | INFO     | tldw_chatbook.app:__init__:1685 - ==============================
+E   2026-10-23 14:15:17.043 | DEBUG    | tldw_chatbook.app:on_mount:3348 - Notes-sync start gate: no configuration evidence; runtime not constructed this boot.
+E   ------------------------------ Captured log call ------------------------------
+E   INFO     root:app.py:1423 App __init__: Determined initial tab value: settings
+E   WARNING  root:app.py:1530 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1551 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     root:app.py:2328 Splash screen enabled: False
+E   INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:275 event=app_started component=app
+E   INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+E   INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+E   INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+E   ---------------------------- Captured log teardown ----------------------------
+E   INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+E   ============================== warnings summary ===============================
+E   Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+E       import audioop
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-settings-dark-07\pytest-of-GDesktop-1\pytest-0\test_actual_settings_semantic_0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   45.80s call     Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E   3.22s teardown Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E   2.23s setup    Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E   =========================== short test summary info ===========================
+E   ERROR Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+E   1 passed, 2 warnings, 1 error in 52.13s
+============================== warnings summary ===============================
+Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+59.20s call     Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_project_semantic_consent.py::test_actual_settings_semantic_controls_are_focusable_in_mounted_pane[textual-dark-size0]
+1 failed, 1 warning in 61.40s (0:01:01)
