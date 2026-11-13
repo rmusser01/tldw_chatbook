@@ -670,6 +670,52 @@ def test_a_refusal_the_loop_records_as_failed_does_not_count_as_agent_use(
         workspaces.close()
 
 
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [("find_tools", {"query": "hi"}), ("load_tools", {"ids": ["local:web_search"]})],
+    ids=["find-tools", "load-tools"],
+)
+def test_a_dispatched_discovery_call_does_not_count_as_agent_use(tmp_path, tool, args):
+    """TASK-34100.5.3.2 review v5r2 (G532-R2-3, LV2-1), on the real trace.
+
+    The loop dispatches ``find_tools``/``load_tools`` even on the light
+    surface, which never offers them, and small models call them for a plain
+    "hi" (live round (a) of review v5r1). Unlike a refused call the trace
+    shows them as run; they are still the runtime's own scaffolding, not an
+    agent feature the user used. A real call to a non-light tool still counts.
+    """
+    from tldw_chatbook.Agents.full_agent_tools_upgrade import (
+        SIGNAL_TOOL_CALL,
+        detect_agent_feature_use,
+    )
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [[_fence(tool, args)], ["hi"]]
+    )
+    outcome = _send(bridge, session, assistant_id, _test_resolution())
+    results = [
+        step.tool_outcome
+        for step in outcome.steps
+        if step.kind == "tool_result" and step.tool_name == tool
+    ]
+    assert results and "blocked" not in results, results
+    runs_path = tmp_path / "agent_runs.db"
+    workspaces = WorkspaceDB(tmp_path / "upgrade-workspaces.db", client_id="probe")
+    try:
+        assert detect_agent_feature_use(runs_path, workspaces) is None
+
+        # Control: a non-light tool that ran does count.
+        bridge._db.insert_steps_at_indices(
+            bridge._db.create_run(conversation_id="conv-full", agent_kind="primary"),
+            [(0, {"index": 0, "kind": "tool_call", "tool_name": "web_search",
+                  "call_id": "turn-1-call-0"})],
+        )
+        assert detect_agent_feature_use(runs_path, workspaces) == SIGNAL_TOOL_CALL
+    finally:
+        workspaces.close()
+
+
 class _LiveFleet:
     def live_count(self):
         return 1

@@ -754,6 +754,105 @@ def test_a_refused_call_in_a_pre_v13_json_blob_is_not_agent_use(profile) -> None
     assert _run(profile).outcome is UpgradeOutcome.LIGHT
 
 
+#: Review v5r2 (G532-R2-3, LV2-1): the agent runtime's own scaffolding --
+#: tool discovery, the run's own log and its inbox reader. The full surface
+#: offered these on every send before the light surface, and small models
+#: call them reflexively: live round (a) of review v5r1, a 0.5B model called
+#: find_tools and load_tools for "Reply with just: hi". Named literally here,
+#: so a rename in the runtime fails this file instead of passing it.
+_SCAFFOLDING_TOOLS = (
+    "find_tools",
+    "load_tools",
+    "read_agent_messages",
+    "search_run_log",
+    "run_log_stats",
+    "run_log_slice",
+)
+
+
+def _dispatched(name: str, call_id: str) -> tuple[dict, dict]:
+    return {**_tool_call(name), "call_id": call_id}, _succeeded(name, call_id)
+
+
+def _set_blob(profile, run_id: str, steps) -> None:
+    runs = _runs_db(profile)
+    try:
+        with runs.transaction() as connection:
+            connection.execute(
+                "UPDATE agent_runs SET steps = ? WHERE id = ?",
+                (
+                    json.dumps(
+                        [{"index": index, **step} for index, step in enumerate(steps)]
+                    ),
+                    run_id,
+                ),
+            )
+    finally:
+        runs.close()
+
+
+@pytest.mark.parametrize("name", _SCAFFOLDING_TOOLS)
+def test_a_profile_whose_only_calls_were_runtime_scaffolding_stays_light(
+    profile, name
+) -> None:
+    """Calling the runtime's own discovery, run-log or inbox tool is not
+    using an agent feature. Each call here ran (``success``), so only the
+    exclusion keeps the profile light."""
+    _record_run(profile, {"kind": "model", "summary": "hi"}, *_dispatched(name, "c-1"))
+    before = profile.config_path.read_bytes()
+
+    result = _run(profile)
+
+    assert (result.outcome, result.signal) == (UpgradeOutcome.LIGHT, None)
+    assert profile.config_path.read_bytes() == before
+    assert _marker_recorded(profile)
+    assert light_surface_configured() is True
+
+
+def test_reflexive_discovery_for_a_plain_hi_stays_light(profile) -> None:
+    """Live round (a)'s shape: find_tools, then load_tools, then the answer."""
+    _record_run(
+        profile,
+        {"kind": "model", "summary": ""},
+        *_dispatched("find_tools", "call_0"),
+        {"kind": "model", "summary": ""},
+        *_dispatched("load_tools", "call_0"),
+        {"kind": "model", "summary": "hi"},
+    )
+
+    assert _run(profile).outcome is UpgradeOutcome.LIGHT
+
+
+@pytest.mark.parametrize("storage", ["step-log", "pre-v13-blob"])
+def test_a_real_tool_call_after_discovery_still_counts(profile, storage) -> None:
+    """A tool that discovery loaded and the model then called records its own
+    call, so excluding the scaffolding never loses real use."""
+    steps = (
+        *_dispatched("find_tools", "c-1"),
+        *_dispatched("load_tools", "c-2"),
+        *_dispatched("web_search", "c-3"),
+    )
+    if storage == "step-log":
+        _record_run(profile, *steps)
+    else:
+        _set_blob(profile, _record_run(profile), steps)
+
+    result = _run(profile)
+
+    assert (result.outcome, result.signal) == (UpgradeOutcome.KEPT_ON, SIGNAL_TOOL_CALL)
+
+
+def test_scaffolding_in_a_pre_v13_json_blob_stays_light(profile) -> None:
+    run_id = _record_run(profile)
+    _set_blob(
+        profile,
+        run_id,
+        [step for name in _SCAFFOLDING_TOOLS for step in _dispatched(name, "c-1")],
+    )
+
+    assert _run(profile).outcome is UpgradeOutcome.LIGHT
+
+
 def test_the_served_companions_runs_database_counts_too(profile) -> None:
     """Review round 1 (F5-6): phone sends run on their own runs database,
     ``<user_data>/mobile/runs.db``, and got the full agent surface before
