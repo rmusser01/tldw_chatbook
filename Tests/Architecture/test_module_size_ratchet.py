@@ -1120,7 +1120,9 @@ _BUDGETS: dict[str, int] = {
     # 5167 -> 5189 (+22), TASK-38589 decodes legacy SSE streams as UTF-8 at four sites.
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 +26 (rebased
     # 2026-11-12 onto dev 4b90eb860b, measured 5,189 -> 5,215).
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5215,
+    # 2026-11-12, TASK-34100.2 pre-merge review I-1: lowered to the
+    # measurement, 5,215 -> 5,206 (OpenAI's non-streaming retry mount removed).
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5206,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040

@@ -614,7 +614,8 @@ def test_a_real_429_through_the_mounted_transport_is_a_rate_limit(
 @pytest.mark.parametrize(
     ("provider", "model"),
     [
-        ("openai", "gpt-5.6-terra"),
+        # OpenAI's non-streaming call mounts no transport retry (dev's
+        # TASK-38600; pre-merge review I-1); its 5xx is pinned below.
         ("anthropic", "claude-sonnet-5"),
         ("cohere", "command-a-03-2025"),
         ("huggingface", "meta-llama/Llama-3.1-8B-Instruct"),
@@ -664,6 +665,167 @@ def test_the_transport_retry_refuses_to_retry_a_429() -> None:
     assert 429 not in retry.status_forcelist
     assert retry.raise_on_status is False
     assert retry.respect_retry_after_header is False
+
+
+# --- OpenAI non-streaming: one POST per request (pre-merge review I-1) -------
+#
+# The rebase onto dev 4b90eb860b re-mounted ``chat_transport_retry`` on the
+# private session OpenAI's non-streaming call posts through, with its
+# ``read`` budget left to ``total``. A generation slower than ``api_timeout``
+# (Library analysis, the summarizer, evals, the Console's non-streaming
+# fallback, ``[chat_defaults] streaming = false``) was then POSTed again up
+# to ``api_retries`` more times -- each one billed -- and the exhausted retry
+# surfaced as ``requests.ConnectionError`` ("Max retries exceeded"), not as a
+# timeout. Dev mounts no retry there (TASK-38600 deleted the dead block).
+# These drive the real handler, its real session and the shipped retry count
+# against a loopback server that answers only after the client gave up; no
+# session, adapter or retry is patched -- only the timeout is shortened.
+
+_OPENAI_SHORT_TIMEOUT_SETTINGS = {
+    "openai_api": {"api_timeout": 0.3, "api_retries": 3, "api_retry_delay": 0.0},
+    "api_settings": {},
+}
+
+
+class _SlowStubServer:
+    """Hold every POST past the client's read timeout; count the POSTs."""
+
+    def __init__(self) -> None:
+        stub = self
+        self.hits = 0
+        self._lock = threading.Lock()
+        self._release = threading.Event()
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - http.server API
+                with stub._lock:
+                    stub.hits += 1
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                # Released when the test ends; the client timed out long before.
+                stub._release.wait(10.0)
+                payload = json.dumps({"choices": []}).encode()
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                except OSError:
+                    pass  # the client hung up first -- that is the point
+
+            def log_message(self, *args: object) -> None:
+                return None
+
+        class _QuietServer(ThreadingHTTPServer):
+            def handle_error(self, request: object, client_address: object) -> None:
+                return None
+
+        self._server = _QuietServer(("127.0.0.1", 0), _Handler)
+        self.base_url = f"http://127.0.0.1:{self._server.server_address[1]}/v1"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "_SlowStubServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._release.set()
+        self._server.shutdown()
+        self._server.server_close()
+
+
+def _openai_short_timeout():
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    return patch.object(
+        LLM_API_Calls, "load_settings", return_value=_OPENAI_SHORT_TIMEOUT_SETTINGS
+    )
+
+
+def _dispatch_openai(base_url: str) -> BaseException:
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    with _openai_short_timeout(), pytest.raises(Exception) as raised:
+        chat_api_call(
+            "openai",
+            messages_payload=[{"role": "user", "content": "Say OK"}],
+            api_key="sk-test-key-0123456789",
+            model="gpt-5.6-terra",
+            streaming=False,
+            api_base_url=base_url,
+        )
+    return raised.value
+
+
+@pytest.mark.loopback_network
+def test_an_openai_read_timeout_is_posted_once_and_raised_as_a_timeout() -> None:
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    with _SlowStubServer() as stub:
+        with _openai_short_timeout(), pytest.raises(Exception) as raised:
+            LLM_API_Calls.chat_with_openai(
+                [{"role": "user", "content": "Say OK"}],
+                api_key="sk-test-key-0123456789",
+                model="gpt-5.6-terra",
+                streaming=False,
+                api_base_url=stub.base_url,
+            )
+        hits = stub.hits
+
+    error = raised.value
+    assert hits == 1, f"one read timeout was POSTed {hits} times"
+    assert isinstance(error, requests.exceptions.ReadTimeout), (type(error), str(error))
+    assert not isinstance(error, requests.exceptions.ConnectionError)
+
+
+@pytest.mark.loopback_network
+def test_a_dispatched_openai_read_timeout_is_posted_once_and_reads_as_a_timeout() -> (
+    None
+):
+    with _SlowStubServer() as stub:
+        error = _dispatch_openai(stub.base_url)
+        hits = stub.hits
+
+    assert hits == 1, f"one read timeout was POSTed {hits} times"
+    assert isinstance(error, ChatProviderError), (type(error), str(error))
+    assert isinstance(error.__context__, requests.exceptions.ReadTimeout), repr(
+        error.__context__
+    )
+    assert "Read timed out" in str(error)
+    assert "Max retries exceeded" not in str(error)
+    # The Console row names a timeout (status 504's category).
+    assert safe_provider_error_copy("openai", error) == (
+        "Provider error from OpenAI: gateway timed out. Status: 504."
+    )
+
+
+@pytest.mark.loopback_network
+def test_an_openai_429_with_the_shipped_retry_count_is_one_post_and_a_rate_limit() -> (
+    None
+):
+    """Nothing in the transport is patched: the 429 reaches
+    ``raise_for_status`` and the dispatcher reads OpenAI's reason."""
+    with _StubServer(429, _OPENAI_429) as stub:
+        error = _dispatch_openai(stub.base_url)
+
+    assert isinstance(error, ChatRateLimitError), (type(error), str(error))
+    assert error.provider_reason.startswith("You exceeded your current quota")
+    assert "Network error" not in str(error)
+    assert stub.hits == 1
+
+
+@pytest.mark.loopback_network
+def test_an_openai_5xx_is_posted_once_and_keeps_its_status() -> None:
+    """Dev's behaviour: no transport retry on the owned session, so the 503
+    reaches ``raise_for_status`` with its own status after one POST."""
+    with _StubServer(503, _UNAVAILABLE_503) as stub:
+        error = _dispatch_openai(stub.base_url)
+
+    assert isinstance(error, ChatProviderError), (type(error), str(error))
+    assert error.status_code == 503
+    assert "Network error" not in str(error)
+    assert stub.hits == 1
 
 
 # --- The local OpenAI-compatible family and KoboldCpp (review round 2, R3-1) --

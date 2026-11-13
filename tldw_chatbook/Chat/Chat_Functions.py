@@ -1363,7 +1363,8 @@ def chat_api_call(
     except requests.exceptions.RequestException as e:
         # TASK-34100.2 AC#18: every shipped requests-based chat handler now
         # mounts chat_transport_retry (no 429 retry; the last 5xx is
-        # returned), so none raises RetryError for a status. A handler added
+        # returned) or, like OpenAI's non-streaming call, no retry at all,
+        # so none raises RetryError for a status. A handler added
         # later with its own urllib3 retry would, when the provider kept
         # answering one status -- that is the provider's answer, not a
         # network failure: a 429 is a rate limit, a 5xx keeps its status.

@@ -953,28 +953,19 @@ def chat_with_openai(
         else:  # Non-streaming
             logger.debug("OpenAI: Posting request (non-streaming)")
 
-            retry_count = int(openai_config.get("api_retries", 3))
-            retry_delay = float(openai_config.get("api_retry_delay", 1.0))
-            # TASK-34100.2 AC#18: a 429 (OpenAI's insufficient_quota on a new
-            # account) reaches raise_for_status with OpenAI's body instead of
-            # an exhausted-retry 'Network error' 504.
-            retry_strategy = chat_transport_retry(
-                llm_retry_count(retry_count), retry_delay
-            )
             # ADR-222 (TASK-34418): deliberately NOT registry-backed --
             # openai_post() owns and closes the session via the guarded
             # recovery _Operation; see ADR-222 §5.
             # task-34387 review C1: recovery transfers ownership (closes the
             # session, recovered mode sets trust_env=False) -- that must land
             # on a private session, never the shared pool entry.
+            # TASK-34100.2 pre-merge review I-1: no transport retry is mounted
+            # here (dev's TASK-38600 removed the dead one). A read timeout is
+            # a request OpenAI may still be generating -- and billing -- so it
+            # is never re-sent, and it raises ReadTimeout, not "Max retries
+            # exceeded". A 429 or 5xx reaches raise_for_status with OpenAI's
+            # body (AC#18).
             with create_owned_default_session() as session:
-                # The owned session is private (task-34387 C1), so mounting
-                # the retry here touches no shared pool entry. The C1 swap
-                # from the pooled session had dropped this mount, leaving
-                # ``retry_strategy`` unused and no transient-5xx retry.
-                adapter = HTTPAdapter(max_retries=retry_strategy)
-                session.mount("https://", adapter)
-                session.mount("http://", adapter)
                 response = _provider_recovery.openai_post(
                     session,
                     api_url,
