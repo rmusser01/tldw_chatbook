@@ -352,17 +352,150 @@ class PluginVariableDialog(ModalScreen):
             self._busy = False
 
 
+def folder_review_text(action, row, summary, plugin) -> str:
+    """The per-folder review a rebind or kept-folder attachment shows (TASK-40308)."""
+    files, size, complete = summary or (0, 0, False)
+    counted = f"{files} files, {size} bytes" + (
+        "" if complete else " (count stopped early)"
+    )
+    lines = [f"Plugin: {plugin}", f"Folder: {row['path']}", f"Contents: {counted}"]
+    if action == "rebind-data":
+        lines.append(
+            "Replaced since last bound: this folder is not the one this plugin last "
+            "used. It was restored from a backup, recreated, or replaced by "
+            "something else. Confirm only if it holds this plugin's saved data; the "
+            "plugin can then read and change it."
+        )
+    else:
+        lines.append(
+            "Kept from before plugin authority was reset: Chatbook cannot prove which "
+            "plugin made it. Confirm only if it holds this plugin's saved data; the "
+            "plugin can then read and change it."
+        )
+    return "\n".join(lines)
+
+
 def authority_failure_message(error: BaseException, mode: str) -> str:
     """Name the restore mismatch truthfully; other failures keep the retry advice."""
+    if mode == "unlock" and str(error) == "plugin_restore_authority_unmatched":
+        return (
+            "The restored plugin files do not match any restored plugin authority, "
+            "so Chatbook cannot recover them with this passphrase. Reset authority… "
+            "keeps their saved data for reinstalled plugins."
+        )
     if mode == "unlock" and isinstance(error, FileNotFoundError):
         # TASK-40132 (D2): the marker names authority files a restored backup lacks.
         return (
             "Plugin authority does not match the plugin files here: its protected "
             "marker names authority files that are missing, as when plugins changed "
-            "after a restored backup was made. Chatbook cannot recover these plugins "
-            "yet. They stay off, and their files and saved data stay on disk."
+            "after a restored backup was made. Unlock with the plugin passphrase the "
+            "backup was made with to recover them from the backup. Until then they "
+            "stay off, and their files and saved data stay on disk."
         )
     return "Authority unavailable or passphrase incorrect. Retry after checking the protected backend."
+
+
+def adoption_review_text(review) -> str:
+    """What adopting a restored plugin authority does, before it is confirmed."""
+    if review.undone is None:
+        undone = (
+            "This computer's protected plugin marker is missing or names other "
+            "plugin authority, so Chatbook cannot count the plugin changes made "
+            "after this backup; every one of them is undone."
+        )
+    elif review.undone:
+        undone = (
+            f"This undoes {review.undone} plugin change"
+            f"{'s' if review.undone != 1 else ''} made after this backup "
+            f"(authority generations {review.marker.generation + 1} to "
+            f"{review.marker.generation + review.undone}): installs, updates, "
+            "configuration, enable or disable changes and removals made since then. "
+            "A restore keeps no record of what each one was."
+        )
+    else:
+        undone = "No plugin change made after this backup is undone."
+    plugins = [
+        f"Plugin: {alias + ' · ' if alias else ''}{installation} · revision "
+        f"{revision or 'none'}"
+        for installation, alias, revision in review.installations
+    ] or ["No plugins were installed in this backup."]
+    return "\n".join(
+        [
+            "Your passphrase opened the restored plugin authority, generation "
+            f"{review.marker.generation}, and the restored plugin files match it.",
+            undone,
+            *plugins,
+            f"Saved-data folders kept attached: {review.data_roots}. A folder that "
+            "was replaced since it was last bound asks for its own review in "
+            "Manage plugin.",
+            "Confirm recovery makes this backup's plugin authority current on this "
+            "computer.",
+        ]
+    )
+
+
+class PluginRestoreAdoptionModal(ModalScreen):
+    """Review, then confirm, recovering plugins from a restored backup (TASK-40308)."""
+
+    BINDINGS = (Binding("escape", "close", "Close", show=False),)
+
+    def __init__(self, service, review):
+        super().__init__()
+        self.service, self.review = service, review
+
+    def compose(self):
+        with VerticalScroll(id="plugin-review-shell"):
+            yield Static("Recover plugins from this backup", classes="dialog-title")
+            yield Static(
+                adoption_review_text(self.review),
+                id="plugin-adopt-review",
+                markup=False,
+            )
+            yield Static("", id="plugin-adopt-status", markup=False)
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Confirm recovery", id="plugin-adopt-confirm")
+                yield Button("Close", id="plugin-adopt-close")
+
+    def on_mount(self):
+        self.query_one("#plugin-adopt-confirm", Button).focus()
+
+    def action_close(self):
+        self.dismiss(self.review is None)
+
+    @on(Button.Pressed)
+    async def _button(self, event):
+        event.stop()
+        if event.button.id == "plugin-adopt-close":
+            self.action_close()
+            return
+        if event.button.id != "plugin-adopt-confirm" or self.review is None:
+            return
+        button = self.query_one("#plugin-adopt-confirm", Button)
+        button.disabled = True
+        status = self.query_one("#plugin-adopt-status", Static)
+        close = self.query_one("#plugin-adopt-close", Button)
+        try:
+            receipts = await self.service.adopt_restored_authority(self.review)
+        except (OSError, ValueError, RuntimeError):
+            status.update(
+                "Recovery refused: the review is out of date or plugin authority "
+                "changed. Close, then unlock again to review it afresh."
+            )
+            return
+        self.review = None
+        if any(receipt.phase == "recovery_required" for receipt in receipts):
+            status.update(
+                "This backup's plugin authority is current, but recovery is not "
+                "finished: a download record no longer matches its folder. Open "
+                "Candidates…, review each replaced record, then press Authority…."
+            )
+        else:
+            status.update(
+                "Plugins recovered from the backup. A saved-data folder that was "
+                "replaced since it was last bound asks for its own review in "
+                "Manage plugin."
+            )
+        close.focus()
 
 
 class PluginAuthorityDialog(PasswordDialog):
@@ -417,8 +550,20 @@ class PluginAuthorityDialog(PasswordDialog):
             self._clear()
             self.dismiss(True)
         except (ValueError, OSError, RuntimeError) as error:
+            # TASK-40308: after a restore, the backup's passphrase opens the
+            # restored authority even though the protected marker does not match.
+            review, shown = None, error
+            if self.mode == "unlock":
+                try:
+                    review = await self.service.review_restored_authority(password)
+                except (ValueError, OSError, RuntimeError) as adoption:
+                    if str(adoption) == "plugin_restore_authority_unmatched":
+                        shown = adoption
             self._clear()
-            self.show_error(authority_failure_message(error, self.mode))
+            if review is not None:
+                self.dismiss(review)
+            else:
+                self.show_error(authority_failure_message(shown, self.mode))
         finally:
             password = ""
             self._submitting = False
@@ -436,6 +581,42 @@ class PluginAuthorityDialog(PasswordDialog):
     def on_cancel(self):
         self._clear()
         self.dismiss(None)
+
+
+def reset_consequence(review) -> str:
+    """What setting authority up again will do after this reset (TASK-40308)."""
+    if review.restored:
+        return (
+            "After this restore, setting authority up again with a new passphrase "
+            "sets the restored plugins aside (their registry, download records and "
+            "downloads move to a .reset folder inside the plugin folder's staging "
+            "folder) and keeps every saved-data folder where it is. Nothing is "
+            "deleted. Reinstall the plugins from their sources, then attach their "
+            "kept saved data in Manage plugin; a plugin whose source is gone cannot "
+            "come back this way. If you still have the plugin passphrase this backup "
+            "was made with, close this and unlock instead: that keeps every plugin."
+        )
+    if review.retained:
+        return (
+            "Setting authority up again is refused while plugins are installed or "
+            "plugin saved data remains here."
+        )
+    return "Afterwards, set authority up again with Authority…."
+
+
+def reset_next_step(review) -> str:
+    if review.restored:
+        return (
+            "Press Authority… to set it up again with a new passphrase; the restored "
+            "plugins are set aside and their saved data is kept. Then reinstall them "
+            "and attach their kept saved data in Manage plugin."
+        )
+    if review.retained:
+        return (
+            "Chatbook cannot set it up again while plugins are installed or plugin "
+            "saved data remains here; their files and saved data stay on disk."
+        )
+    return "Press Authority… to set it up again."
 
 
 class PluginAuthorityResetModal(ModalScreen):
@@ -484,23 +665,52 @@ class PluginAuthorityResetModal(ModalScreen):
                 self.query_one("#plugin-reset-status", Static).update(
                     display_text(
                         f"Namespace: {self.review.namespace_id}\nPosture: {self.review.posture}\n"
-                        f"Retained root consequences (metadata, not proof of safe cleanup): {self.review.roots_json}",
+                        f"Retained root consequences (metadata, not proof of safe cleanup): {self.review.roots_json}\n"
+                        + reset_consequence(self.review),
                         limit=16384,
                     )
                 )
                 self.query_one("#plugin-reset-confirm", Button).disabled = False
             elif identity == "plugin-reset-confirm" and self.review is not None:
                 self.query_one("#plugin-reset-confirm", Button).disabled = True
-                await self.service.reset_authority(self.review)
+                review = self.review
+                await self.service.reset_authority(review)
                 self.review = None
                 self.query_one("#plugin-reset-status", Static).update(
-                    "Plugin authority reset. Use Authority to set up again. Retained data still requires its own qualified recovery."
+                    "Plugin authority reset. " + reset_next_step(review)
                 )
         except (OSError, ValueError, RuntimeError):
             self.query_one("#plugin-reset-confirm", Button).disabled = True
             self.query_one("#plugin-reset-status", Static).update(
                 "Reset unavailable or consequences changed. Restore the protected backend, wait for existing work, then review again."
             )
+
+
+def custody_rebind_text(review) -> str:
+    """The per-record review for a download whose folders were replaced."""
+    plugins = (
+        ", ".join(
+            f"{alias} · {installation}" if alias else installation
+            for installation, alias in review["installations"]
+        )
+        or "no installed plugin names this download"
+    )
+    counted = f"{review['files']} files, {review['bytes']} bytes" + (
+        "" if review["complete"] else " (count stopped early)"
+    )
+    return "\n".join(
+        [
+            f"Download record: {review['operation_id']}",
+            f"Plugin: {plugins}",
+            f"Folder: {review['path']}",
+            f"Contents: {counted}",
+            "Replaced since last bound: this download folder is not the one "
+            "Chatbook recorded. It was restored from a backup, recreated, or "
+            "replaced by something else. Confirm rebind records the folder as it "
+            "is now; Chatbook still checks its files against the reviewed plugin "
+            "package before the plugin runs.",
+        ]
+    )
 
 
 class PluginStatusModal(ModalScreen):
@@ -513,6 +723,7 @@ class PluginStatusModal(ModalScreen):
         self.sources, self.candidates = sources, candidates
         self.rows = ()
         self.review = None
+        self.rebind = None
         self.page = 0
 
     def compose(self):
@@ -536,6 +747,14 @@ class PluginStatusModal(ModalScreen):
                 yield Button(
                     "Confirm discard", id="plugin-status-confirm", disabled=True
                 )
+            if self.candidates:
+                with Horizontal(classes="dialog-buttons"):
+                    yield Button("Review rebind", id="plugin-status-rebind")
+                    yield Button(
+                        "Confirm rebind",
+                        id="plugin-status-rebind-confirm",
+                        disabled=True,
+                    )
             with Horizontal(classes="dialog-buttons"):
                 yield Button(
                     "Manage saved data",
@@ -549,8 +768,10 @@ class PluginStatusModal(ModalScreen):
         await self._load()
 
     async def _load(self):
-        self.review = None
+        self.review = self.rebind = None
         self.query_one("#plugin-status-confirm", Button).disabled = True
+        for button in self.query("#plugin-status-rebind-confirm").results(Button):
+            button.disabled = True
         try:
             if self.candidates:
                 self.rows = await self.sources.list_persisted_candidates(
@@ -559,7 +780,13 @@ class PluginStatusModal(ModalScreen):
                 labels = [
                     (
                         row["operation_id"],
-                        f"{row['operation_id']} · {row['reason'] or 'eligible for reviewed reference discard'}",
+                        f"{row['operation_id']} · "
+                        + (
+                            "folder replaced since last bound; Review rebind"
+                            if row.get("rebind")
+                            else row["reason"]
+                            or "eligible for reviewed reference discard"
+                        ),
                     )
                     for row in self.rows
                 ]
@@ -635,10 +862,44 @@ class PluginStatusModal(ModalScreen):
                 self.review = None
                 self.query_one("#plugin-status-confirm", Button).disabled = True
                 await self._load()
+            elif identity == "plugin-status-rebind":
+                await self._review_rebind()
+            elif identity == "plugin-status-rebind-confirm" and self.rebind is not None:
+                await self._confirm_rebind()
         except (OSError, ValueError, RuntimeError):
             self.query_one("#plugin-review-status", Static).update(
                 "Reference changed or protected. Refresh and review again."
             )
+
+    async def _review_rebind(self):
+        """Show one replaced download record's review (TASK-40308)."""
+        listing = self.query_one(OptionList)
+        confirm = self.query_one("#plugin-status-rebind-confirm", Button)
+        status = self.query_one("#plugin-review-status", Static)
+        if listing.highlighted is None:
+            return
+        row = self.rows[listing.highlighted]
+        if not row.get("rebind"):
+            raise ValueError("candidate_rebind_not_needed")
+        self.rebind = await self.sources.review_custody_rebind(row["operation_id"])
+        confirm.disabled = False
+        status.update(display_text(custody_rebind_text(self.rebind), limit=16384))
+
+    async def _confirm_rebind(self):
+        status = self.query_one("#plugin-review-status", Static)
+        self.query_one("#plugin-status-rebind-confirm", Button).disabled = True
+        await self.sources.rebind_custody(self.rebind)
+        receipts = await self.sources.plugins.recover()
+        await self._load()
+        status.update(
+            "Download record rebound. "
+            + (
+                "Recovery still needs review: rebind any other replaced "
+                "record, then press Authority…."
+                if any(r.phase == "recovery_required" for r in receipts)
+                else "Plugin authority recovery completed."
+            )
+        )
 
 
 class PluginReviewModal(ModalScreen):
@@ -717,6 +978,8 @@ class PluginReviewModal(ModalScreen):
                     ("Delete exact saved roots", "delete-data"),
                     ("Resume pending saved-data cleanup", "resume-data"),
                     ("Review qualified reboot reconciliation", "reconcile-data"),
+                    ("Review replaced saved-data folder", "rebind-data"),
+                    ("Attach kept saved-data folder", "attach-data"),
                 ]
                 if self.installation_id
                 else [
@@ -925,6 +1188,7 @@ class PluginReviewModal(ModalScreen):
             ("Review saved-data deletion", "delete-data"),
             ("Resume saved-data cleanup", "resume-data"),
             ("Review reboot reconciliation", "reconcile-data"),
+            ("Review replaced saved-data folder", "rebind-data"),
         ]
         self.query_one("#plugin-review-action", Select).set_options(actions)
         if self.draft.action not in {value for _, value in actions}:
@@ -973,6 +1237,8 @@ class PluginReviewModal(ModalScreen):
             "delete-data": "Comma-separated exact root IDs; blank selects listed roots",
             "resume-data": "Comma-separated exact root IDs; blank selects listed roots",
             "reconcile-data": "Comma-separated exact root IDs; blank selects listed roots",
+            "rebind-data": "One exact root ID; blank selects the only listed root",
+            "attach-data": "Kept folder name under the plugin data folder",
         }
         test = action in {"test-hook", "test-connection"}
         reference = self.query_one("#plugin-review-reference", Input)
@@ -1072,7 +1338,9 @@ class PluginReviewModal(ModalScreen):
         elif hasattr(review, "targets"):
             heading = (
                 "Proposed saved-root bindings:"
-                if self.draft.action == "reconcile-data"
+                if self.draft.action in {"reconcile-data", "rebind-data"}
+                else "Kept folder to attach:"
+                if self.draft.action == "attach-data"
                 else "Exact saved roots:"
             )
             body = (
@@ -1083,11 +1351,19 @@ class PluginReviewModal(ModalScreen):
                     for row in review.targets
                 )
             )
-            if self.draft.action == "create-data":
-                body += "\nProposed new roots; no existing root users."
+            if self.draft.action in {"rebind-data", "attach-data"}:
+                body += "\n" + folder_review_text(
+                    self.draft.action,
+                    review.targets[0],
+                    self.draft.folder_summary,
+                    self._plugin_label(),
+                )
+            if self.draft.action in {"create-data", "attach-data"}:
+                if self.draft.action == "create-data":
+                    body += "\nProposed new roots; no existing root users."
             else:
                 for row in self.draft.root_impact:
-                    if self.draft.action == "reconcile-data":
+                    if self.draft.action in {"reconcile-data", "rebind-data"}:
                         proposed = next(
                             target
                             for target in review.targets
@@ -1139,6 +1415,15 @@ class PluginReviewModal(ModalScreen):
         self.refresh(layout=True)
         self.call_after_refresh(self._keep_focused_action_visible)
 
+    def _plugin_label(self) -> str:
+        inspection = (self.details or {}).get("inspection")
+        source = getattr(inspection, "source_identity", None)
+        return (
+            f"{self.installation_id} · source {source}"
+            if source
+            else str(self.installation_id)
+        )
+
     def _keep_focused_action_visible(self):
         button = self.focused
         if (
@@ -1151,11 +1436,15 @@ class PluginReviewModal(ModalScreen):
             button.scroll_visible(animate=False, immediate=True)
 
     def _impact_complete(self):
-        if self.draft.action == "create-data":
+        if self.draft.action in {"create-data", "attach-data"}:
             return True
         allowed = {"live_root_user", "root_user"}
         if self.draft.action == "reconcile-data":
             allowed.add("root_boot_identity_changed")
+        if self.draft.action == "rebind-data":
+            from ..Plugins.data_cleanup import REBINDABLE
+
+            allowed = set(REBINDABLE)
         return bool(self.draft.root_impact) and all(
             row.get("blockers_complete") is True
             and all(user.get("reason") in allowed for user in row["blockers"])
@@ -1180,7 +1469,10 @@ class PluginReviewModal(ModalScreen):
 
     async def _validate_root_impact(self):
         review = self.draft.review
-        if not hasattr(review, "targets") or self.draft.action == "create-data":
+        if not hasattr(review, "targets") or self.draft.action in {
+            "create-data",
+            "attach-data",
+        }:
             return
         try:
             current = await self._root_impact(review)
@@ -1348,6 +1640,12 @@ class PluginReviewModal(ModalScreen):
             review = await self.service.review_data_creation(
                 self.installation_id, workspace_id=self.workspace_id
             )
+        elif action == "attach-data":
+            review = await self.service.review_kept_attachment(
+                self.installation_id,
+                configuration.strip(),
+                workspace_id=self.workspace_id,
+            )
         else:
             roots = tuple(row["root"] for row in await self._data_rows())
             if configuration.strip():
@@ -1355,12 +1653,17 @@ class PluginReviewModal(ModalScreen):
                 roots = tuple(root for root in roots if root.root_id in wanted)
                 if {root.root_id for root in roots} != wanted:
                     raise ValueError("choose_exact_retained_root_ids")
-            method = {
-                "delete-data": self.service.review_data_deletion,
-                "resume-data": self.service.review_data_cleanup_resume,
-                "reconcile-data": self.service.review_data_boot_reconciliation,
-            }[action]
-            review = await method(roots)
+            if action == "rebind-data":
+                if len(roots) != 1:
+                    raise ValueError("choose_exactly_one_root")
+                review = await self.service.review_data_rebind(roots[0])
+            else:
+                method = {
+                    "delete-data": self.service.review_data_deletion,
+                    "resume-data": self.service.review_data_cleanup_resume,
+                    "reconcile-data": self.service.review_data_boot_reconciliation,
+                }[action]
+                review = await method(roots)
             root_before_refs = roots
         if generation != self._input_generation:
             if getattr(review, "kind", None) in {"select", "update"}:
@@ -1368,7 +1671,16 @@ class PluginReviewModal(ModalScreen):
             raise ValueError("review_inputs_changed")
         self.draft.review, self.draft.action = review, action
         self.draft.root_before_refs = root_before_refs
-        if hasattr(review, "targets") and action != "create-data":
+        self.draft.folder_summary = None
+        if action in {"rebind-data", "attach-data"}:
+            import asyncio
+
+            from ..Plugins.data_cleanup import folder_summary
+
+            self.draft.folder_summary = await asyncio.to_thread(
+                folder_summary, review.targets[0]["path"]
+            )
+        if hasattr(review, "targets") and action not in {"create-data", "attach-data"}:
             self.draft.root_impact = await self._root_impact(review)
         self._render_review()
         self._status(

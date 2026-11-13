@@ -150,6 +150,74 @@ def _qualify(owner, record, *, leaf=True, artifact_only=False):
     return destination
 
 
+IDENTITY_CHANGED = frozenset(
+    {
+        "acquisition_owner_changed",
+        "acquisition_anchor_changed",
+        "acquisition_staging_changed",
+    }
+)
+
+
+def identity_changed(owner, record) -> str | None:
+    """The reason a terminal download record's folders no longer match, if any."""
+    if record["phase"] != "terminal" or not record.get("result_reference"):
+        return None
+    try:
+        _qualify(owner, record, artifact_only=True)
+    except AcquisitionError as error:
+        if str(error) in IDENTITY_CHANGED:
+            return str(error)
+        raise
+    return None
+
+
+def rebind_custody(owner, authority, operation_id: str, nonce: str) -> None:
+    """Re-sign one reviewed download record with its folders' current identity.
+
+    TASK-40308: a restored or recreated plugin folder, ``staging/`` or download
+    folder has a new identity, so the record no longer qualifies. Only those
+    three identities change; the snapshot bytes still have to match the
+    reviewed package digest when the record is next used.
+    """
+    owner.require_owner(owner.root)
+    record = next(
+        (
+            row
+            for row in _inventory(owner, authority)
+            if row["operation_id"] == operation_id and row["nonce"] == nonce
+        ),
+        None,
+    )
+    if record is None or identity_changed(owner, record) is None:
+        raise AcquisitionError("acquisition_rebind_unavailable")
+    destination = owner.acquisition_destination(operation_id)
+    if destination.parent.name != record["name"] or record["output"] != "snapshot":
+        raise AcquisitionError("acquisition_destination_invalid")
+    path = _record_path(owner, operation_id)
+    with open_private_binary(path) as opened:
+        data = opened.stream.read(65537)
+        if not opened.result.verified_private or len(data) > 65536:
+            raise AcquisitionError("acquisition_custody_invalid")
+        previous = json.loads(data)
+        authority.verify_acquisition_custody(previous["body"], previous["mac"])
+        if previous["body"] != record:
+            raise AcquisitionError("acquisition_custody_changed")
+        condition = PrivateFileWritePrecondition.from_opened(opened)
+    record = dict(
+        record,
+        root=_physical(owner.root),
+        anchor=_physical(owner.root / "staging"),
+        leaf=_physical(destination.parent),
+    )
+    _write(
+        path,
+        {"body": record, "mac": authority.sign_acquisition_custody(record)},
+        precondition=condition,
+    )
+    _qualify(owner, record, artifact_only=True)
+
+
 def _retire_cleaned(owner, authority, records, now, *, make_room=False):
     """Drop only qualified absent cleaned history, preserving unknown custody."""
     retained = list(records)
@@ -216,7 +284,7 @@ def _reserve(owner, authority, operation_id, destination, *, purpose=None):
         for index, entry in enumerate(entries):
             if index >= MAX_CUSTODY_RECORDS:
                 raise AcquisitionError("acquisition_custody_limit")
-            if entry.name not in known:
+            if entry.name not in known and not entry.name.startswith(".reset-"):
                 unsettled += 1
     if unsettled >= MAX_ACQUISITIONS:
         raise AcquisitionError("acquisition_concurrency_limit")

@@ -2492,6 +2492,10 @@ async def test_unlock_mismatch_shows_restore_copy_not_passphrase_advice():
         async def unlock(self, password):
             raise FileNotFoundError("authority snapshot")
 
+        async def review_restored_authority(self, password):
+            # TASK-40308: no restored generation awaits review here.
+            raise ValueError("plugin_restore_adoption_unavailable")
+
     app = App()
     async with app.run_test(size=(80, 24)) as pilot:
         await app.push_screen(PluginAuthorityDialog(Service(), "unlock"))
@@ -2508,5 +2512,6 @@ async def test_unlock_mismatch_shows_restore_copy_not_passphrase_advice():
         error = str(dialog.query_one("#error-message", Static).render())
         assert app.screen is dialog and field.value == ""
         assert "does not match the plugin files here" in error
-        assert "cannot recover these plugins yet" in error
+        # TASK-40308: the way out is the backup's passphrase, not "yet".
+        assert "Unlock with the plugin passphrase the backup was made with" in error
         assert "passphrase incorrect" not in error

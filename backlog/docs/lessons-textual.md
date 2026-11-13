@@ -2613,3 +2613,12 @@ round that asked for a test of the new restore-mismatch copy found it.
 - A subclass handler that must replace the base's takes the event and calls
   `event.prevent_default()` first; that stops dispatch to base classes.
 - Pin dialog errors by their text, not their visibility.
+
+## The post-await lookup census counts source order, so a new `elif` branch inherits its siblings' awaits (TASK-40308, 2026-11-13)
+
+**Incident.** TASK-40308 added a "Review rebind" branch to `PluginStatusModal._button`. The branch looked up its widgets before its own first `await`. Preflight's worker contract still reported new post-await lookups for `plugin_review_modal.py::_button`: 20 in the census, 26, then 25 after the lookups moved above the branch's own await.
+- W002 (`scripts/check_textual_worker_contract.py`) treats a `query_one` as post-await when any `await` precedes it in the function's source, including one in an earlier sibling `elif` branch. It counts by module and function name, so every `_button` in the module shares one row.
+
+**What to do.**
+- Move a new branch's body into its own `async def` helper that looks up its widgets before its first `await`, and have the handler call it. The count went back to "none new" with no census re-pin.
+- Do not re-pin with `--write` for a lookup that only looks post-await because of where it sits in the source.

@@ -2942,3 +2942,8 @@ Tests/UI/test_plugin_review.py::test_confirmed_profile_save_survives_close_durin
 # the reason, and a review dialog whose load fails keeps the app running.
 Tests/UI/test_plugins_browse.py::test_import_preview_review_buttons_state_why_and_never_open
 Tests/UI/test_plugins_browse.py::test_review_dialog_load_failure_stays_in_the_dialog
+# TASK-40308 (2026-11-13): restored plugins recover from the Plugins screen with
+# the backup's passphrase and per-folder rebinds, and a lost passphrase falls
+# back to a reset that sets them aside and reattaches kept saved data.
+Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen
+Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches

@@ -716,6 +716,49 @@ class PluginAuthorityStore:
             self._keys = None
             raise
 
+    def restored_snapshots(
+        self, passphrase: str
+    ) -> tuple[tuple[PluginMarker, dict], ...]:
+        """Authenticate every retained snapshot with this passphrase's keys.
+
+        TASK-40308 adoption review after a restore: each snapshot's header names
+        its own marker, and only the passphrase's keys can open it. Nothing is
+        written; the keys stay loaded for the reviewed confirmation.
+        """
+        self._keys = None
+        self._require_posture()
+        self._require_completed_resets()
+        metadata = self.metadata()
+        self._keys = derive_plugin_authority_keys(
+            passphrase, salt=bytes.fromhex(metadata["salt"])
+        )
+        try:
+            if metadata["schema_version"] == 2:
+                self.verify_legacy_cutover()
+            names, _ = self._snapshot_inventory()
+            found = []
+            for name in names:
+                value = _read(self.store_dir / "snapshots" / name)
+                header = value.get("header") if isinstance(value, dict) else None
+                marker = PluginMarker.model_validate((header or {}).get("marker"))
+                if self._snapshot_path(marker).name != name:
+                    raise ValueError("invalid authority envelope")
+                found.append((marker, self._verify_snapshot_value(marker, value)))
+            if not found:
+                raise ValueError("plugin_restore_authority_missing")
+            return tuple(found)
+        except BaseException:
+            self._keys = None
+            raise
+
+    def adopt_marker(self, marker: PluginMarker) -> dict:
+        """Pin a reviewed restored marker: the one reviewed rollback acceptance."""
+        snapshot = self.verify_snapshot(marker)
+        self.marker_store.save_marker(marker.model_dump())
+        if self.load_marker() != marker:
+            raise ValueError("plugin marker adoption incomplete")
+        return snapshot
+
     def lock(self) -> None:
         """Drop session key references."""
         self._keys = None

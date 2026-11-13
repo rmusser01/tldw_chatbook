@@ -268,13 +268,15 @@ the restore, which moves them into the before-replacement safety copy with the
 rest of your current data. Installed plugins keep working. The review then runs
 again. (Uninstalling a plugin does not remove these folders. Restoring without
 **Tools and skills** leaves them alone.) After a restore, plugins stay off until plugin
-authority recovery completes. What works today: restoring onto the same profile,
-on the same computer, with plugins unchanged since the backup. Then
-**Plugins → Authority…** asks for the plugin passphrase, and unlocking recovers
-the plugins and lets them run again. What does not work yet: on another computer
-at the same paths, or after the OS keyring was reset (the protected marker lives
-in the OS keyring and is never in a backup), or after plugins changed since the
-backup, Chatbook cannot recover the restored plugins. They stay off, and their files and saved data stay on disk. See
+authority recovery completes: open **Plugins → Authority…** and unlock with the
+plugin passphrase the backup was made with. With plugins unchanged since the
+backup on the same computer, unlocking recovers them. On another computer at the
+same paths, after the OS keyring was reset (the protected marker lives in the OS
+keyring and is never in a backup), or after plugins changed since the backup,
+the same passphrase opens **Recover plugins from this backup**, which lists what
+recovery undoes before you confirm it. Restored folders with a new identity are
+each reviewed on their own, and a lost passphrase falls back to a reset that keeps
+saved data. See
 [Managed plugin operations](Plugins/operations.md#after-restoring-a-backup).
 
 Re-enter missing credentials, review external-folder bindings against their current

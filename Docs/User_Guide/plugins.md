@@ -135,6 +135,8 @@ action**.
 | Create saved-data root | Give the plugin a folder for its saved data. |
 | Uninstall; keep saved data | Remove the plugin. Its saved data stays on disk. |
 | Delete exact saved roots / Resume pending saved-data cleanup / Review qualified reboot reconciliation | Remove or recover the plugin's saved data (enter root IDs, or leave blank for the listed ones). |
+| Review replaced saved-data folder | After a restore over a recreated folder: review one folder (plugin, path, file count and size, "Replaced since last bound") and let the plugin use it again. |
+| Attach kept saved-data folder | After a reset and reinstall: review a kept saved-data folder (enter its folder name) and attach it to this plugin. |
 
 The other buttons: **Refresh status** reads the current state again.
 **Cancel operation** and **Cancel affected work** are available only while a
@@ -158,8 +160,8 @@ configuration, disabling, uninstalling and saved data are in
 |---|---|
 | **Authority…** | Opens "Set up plugin authority" the first time (choose a passphrase of at least 8 characters and type it twice), or "Unlock plugin authority" when it is locked. Plugin authority has its own passphrase, separate from config encryption and from skill trust. When it is already unlocked, pressing it runs authority recovery and reports "Authority recovered; saved-data recovery remains separately reviewed." |
 | **History…** | Opens "Plugin operations", the list of install, change and removal operations with their outcome. **Manage saved data** opens the selected operation's plugin, including one you already uninstalled, so you can delete or recover its saved data. Old entries may have expired from the list. |
-| **Candidates…** | Opens "Persisted candidates", the copies Plugins kept from earlier previews and downloads. **Review discard**, then **Confirm discard**, releases one of them; "Reference release does not delete bytes." |
-| **Reset authority…** | Opens "Reset plugin authority". **Review reset** shows what it affects; **Confirm plugin reset** archives plugin trust authority. Installed plugins and their saved data stay, and setting authority up again with **Authority…** is refused while any plugin is installed or plugin saved data remains. A wrong passphrase is not a reason to reset: retry instead. |
+| **Candidates…** | Opens "Persisted candidates", the copies Plugins kept from earlier previews and downloads. **Review discard**, then **Confirm discard**, releases one of them; "Reference release does not delete bytes." A download whose folder was replaced by a restore reads "folder replaced since last bound; Review rebind": **Review rebind**, then **Confirm rebind**, records it again. |
+| **Reset authority…** | Opens "Reset plugin authority". **Review reset** shows what it affects; **Confirm plugin reset** archives plugin trust authority. Installed plugins and their saved data stay. Setting authority up again with **Authority…** is refused while any plugin is installed or plugin saved data remains, except after a restore, when setup sets the restored plugins aside and keeps their saved data (see [After restoring a backup](#after-restoring-a-backup)). A wrong passphrase is not a reason to reset: retry instead. |
 
 ## After restoring a backup
 
@@ -173,19 +175,44 @@ your plugin passphrase; a successful unlock recovers the plugins and they can
 run again. If authority is already unlocked, **Authority…** runs the recovery
 directly.
 
-Today this works when you restore onto the same profile on the same computer
-and the plugins have not changed since the backup. In two other cases Plugins
-says it cannot recover them yet; the plugins stay off and their files and
-saved data stay on disk:
+That is all when you restore onto the same computer and the plugins have not
+changed since the backup. Recovering takes one more step if the plugins changed
+after the backup was made, or if you restored on another computer at the same
+paths or the OS keyring was reset:
 
-- The plugins changed after the backup was made. Unlocking reports "Plugin
-  authority does not match the plugin files here: …".
-- You restored on another computer at the same paths, or the OS keyring was
-  reset. **Authority…** reports "Plugin authority needs recovery: …".
+1. Press **Authority…** and unlock with the plugin passphrase **the backup was
+   made with**.
+2. "Recover plugins from this backup" opens. It says how many plugin changes
+   made after the backup it undoes, when Chatbook can tell, and lists the
+   backup's plugins and saved-data folders.
+3. Press **Confirm recovery**. Saved data stays attached.
 
-**Reset authority…** does not help in either case. Restoring after plugin
-folders were deleted has further limits; see
-[After restoring a backup](../Plugins/operations.md#after-restoring-a-backup).
+If the plugin folder or a saved-data folder was deleted before the restore, the
+restored folders count as replaced, and each one is reviewed on its own:
+
+- **"a download record no longer matches its folder"**: open **Candidates…**,
+  select the record marked "folder replaced since last bound; Review rebind",
+  press **Review rebind**, check the plugin, folder, file count and size, then
+  press **Confirm rebind**.
+- **A replaced saved-data folder**: in **Manage plugin**, choose **Review
+  replaced saved-data folder**, press **Review action**, check the folder, file
+  count and size against the "Replaced since last bound" warning, then press
+  **Confirm reviewed action**.
+
+**If you no longer have the backup's passphrase:**
+
+1. Press **Reset authority…**, **Review reset**, then **Confirm plugin reset**.
+2. Press **Authority…** and set up a new passphrase. This moves the restored
+   plugins aside (into a `.reset-…` folder in the plugin folder's `staging`)
+   and keeps all their saved data. Nothing is deleted.
+3. Reinstall each plugin from its source. A plugin whose source is gone cannot
+   come back this way.
+4. In **Manage plugin**, choose **Attach kept saved-data folder**, enter the
+   kept folder's name (a folder under the plugin data folder), press **Review
+   action**, check it, and confirm.
+
+See [After restoring a backup](../Plugins/operations.md#after-restoring-a-backup)
+for the details.
 
 If plugins were downloaded from a repository after the backup was made (a
 source refresh, an update check, an install or an update), the Backup screen's

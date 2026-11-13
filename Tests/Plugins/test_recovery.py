@@ -1448,8 +1448,14 @@ def test_unlock_mismatch_copy_is_truthful_and_has_no_dead_end_step():
     from tldw_chatbook.Widgets.plugin_review_modal import authority_failure_message
 
     mismatch = authority_failure_message(FileNotFoundError("snapshot"), "unlock")
-    assert "cannot recover these plugins yet" in mismatch
+    # TASK-40308: the backup's passphrase recovers them.
+    assert "Unlock with the plugin passphrase the backup was made with" in mismatch
     assert "stay on disk" in mismatch and "Reset" not in mismatch
+    unmatched = authority_failure_message(
+        ValueError("plugin_restore_authority_unmatched"), "unlock"
+    )
+    assert "do not match any restored plugin authority" in unmatched
+    assert "Reset authority… keeps their saved data" in unmatched
     assert "passphrase incorrect" in authority_failure_message(ValueError(), "unlock")
     assert "passphrase incorrect" in authority_failure_message(
         FileNotFoundError(), "setup"
@@ -1774,12 +1780,23 @@ async def main():
   assert posture=='locked',posture
   if not unchanged:
    # D2: plugins changed after the backup. Unlock cannot verify the marker's
-   # authority files, and the copy says so without a dead-end step.
+   # authority files, and the copy says what recovers them.
    try:await plugins.unlock('test passphrase')
    except FileNotFoundError as error:message=authority_failure_message(error,'unlock')
    else:raise AssertionError('mismatched restored authority unlocked')
-   assert 'cannot recover these plugins yet' in message and 'stay on disk' in message,message
+   assert 'Unlock with the plugin passphrase the backup was made with' in message,message
    await refused('plugin_restore_review_required')
+   # TASK-40308 AC#1: the backup's passphrase adopts the restored authority. The
+   # review counts the one change made after the backup (the disable) and lists
+   # the plugin; confirming recovers it in place, data attached.
+   review=await plugins.review_restored_authority('test passphrase')
+   assert review.undone==1 and [row[0] for row in review.installations]==[seed['installation']],review
+   receipts=await plugins.adopt_restored_authority(review)
+   assert not [receipt for receipt in receipts if receipt.phase=='recovery_required'],receipts
+   assert await plugins.authority_status()=='ready'
+   assert restore_review_required(root) is False
+   assert (await capture()).installation_id==seed['installation']
+   print('ADOPTED',flush=True)
    return
   # M5: the authority dialog's own call. Unlocking recovers and approves.
   await plugins.unlock('test passphrase')
@@ -1818,8 +1835,9 @@ print('PLUGIN_RESTORE_REVIEW_COMPLETE',flush=True)
 def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_path):
     """AC5/AC7/AC8/D1/D2 through the app's repository install path, actual
     capture, archive and same-profile replacement, twice: with plugins unchanged
-    since the backup (Unlock recovers) and after a later plugin change (truthful
-    refusal, plugins stay off, data kept)."""
+    since the backup (Unlock recovers) and after a later plugin change (Unlock
+    refuses truthfully; the backup's passphrase then adopts the restored
+    authority, TASK-40308)."""
     from Tests.Backup_Recovery.test_config_sibling_capture import _child
 
     home = tmp_path / "home"
@@ -1850,4 +1868,247 @@ def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_pa
     for name in ("repository.git", "content", "host-git-config", "host-ssh-input"):
         assert f"REMOVED {name}\n" in unchanged, name
     assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "again", timeout=300)
-    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in run(_PLUGIN_REOPEN, "changed", timeout=60)
+    changed = run(_PLUGIN_REOPEN, "changed", timeout=60)
+    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in changed and "ADOPTED\n" in changed
+
+
+class _FakeSecureKeyring:
+    """The OS keyring's role in-process: it outlives the profile; no backup holds it."""
+
+    def __init__(self):
+        self.values = {}
+
+    def get_password(self, service, account):
+        return self.values.get((service, account))
+
+    def set_password(self, service, account, value):
+        self.values[service, account] = value
+
+    def delete_password(self, service, account):
+        del self.values[service, account]
+
+
+async def _restored_after_change(tmp_path, monkeypatch, native_package, *, recreate=True):
+    """A git-installed plugin with saved data, backed up by copying its folders,
+    changed afterwards, then restored by copying the backup over recreated
+    folders (new identities), or in place (``recreate=False``: only the registry
+    and authority files change back, as a restore over existing folders does).
+    Only the restore gate is simulated."""
+    from Tests.Plugins.acquisition_process_support import repository
+    from tldw_chatbook.Plugins import authority_store, backup
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.service import PluginService
+    from tldw_chatbook.Plugins.source_service import SourceService
+    from tldw_chatbook.Skills_Interop.local_skills_service import (
+        default_local_skills_store_dir,
+    )
+
+    monkeypatch.setattr(
+        authority_store,
+        "is_secure_keyring_backend",
+        lambda candidate: isinstance(candidate, _FakeSecureKeyring),
+    )
+    profile = tmp_path / "profile"
+    trust = authority_store.default_plugin_authority_dir(
+        default_local_skills_store_dir(profile)
+    )
+    keyrings = {"computer": _FakeSecureKeyring()}
+
+    def service(keyring="computer"):
+        backend = keyrings.setdefault(keyring, _FakeSecureKeyring())
+        return PluginService(
+            profile,
+            workspace_lookup=lambda _: None,
+            marker_store_factory=lambda store: authority_store.KeyringPluginMarkerStore(
+                store, keyring_backend=backend
+            ),
+        )
+
+    source = select_local_source(repository(native_package(), tmp_path / "git-source"))
+
+    async def install(plugins, operation):
+        destination = await plugins.acquisition_destination(operation)
+        snapshot = await plugins.acquire_snapshot(source, operation, destination)
+        review = await SourceService(plugins).review_acquired(
+            snapshot, selection=("skill:review",), workspace_id=None
+        )
+        await plugins.commit(review, review.operation_id)
+        trust_review = await plugins.review_trust(review.installation_id)
+        await plugins.commit(trust_review, trust_review.operation_id)
+        enable = await plugins.review_activation(
+            review.installation_id, workspace_id=None, intent="enabled"
+        )
+        await plugins.commit(enable, enable.operation_id)
+        return review.installation_id
+
+    plugins = service()
+    try:
+        await plugins.bootstrap("test passphrase")
+        installation = await install(plugins, "op-git")
+        creation = await plugins.review_data_creation(installation)
+        root = await plugins.create_data(creation, creation.operation_id)
+        (root.path / "notes.txt").write_bytes(b"made by the plugin")
+    finally:
+        await plugins.aclose()
+    saved = tmp_path / "backup"
+    shutil.copytree(profile / "plugins", saved / "plugins", symlinks=True)
+    shutil.copytree(trust, saved / "trust", symlinks=True)
+    plugins = service()
+    try:
+        await plugins.unlock("test passphrase")
+        disable = await plugins.review_activation(
+            installation, workspace_id=None, intent="disabled"
+        )
+        await plugins.commit(disable, disable.operation_id)
+    finally:
+        await plugins.aclose()
+    shutil.rmtree(trust)
+    shutil.copytree(saved / "trust", trust, symlinks=True)
+    if recreate:
+        shutil.rmtree(profile / "plugins")
+        shutil.copytree(saved / "plugins", profile / "plugins", symlinks=True)
+    else:
+        for name in ("registry.sqlite3", "registry.sqlite3-wal", "registry.sqlite3-shm"):
+            (profile / "plugins" / name).unlink(missing_ok=True)
+            if (saved / "plugins" / name).exists():
+                shutil.copy2(saved / "plugins" / name, profile / "plugins" / name)
+    approved = []
+    monkeypatch.setattr(backup, "approve_restore", approved.append)
+    monkeypatch.setattr(backup, "restore_review_required", lambda _: not approved)
+    return service, install, installation, root, approved
+
+
+@platform_support.managed_runtime
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+@pytest.mark.parametrize("keyring", ["same-computer", "new-keyring", "in-place"])
+async def test_backup_passphrase_adopts_restored_plugins_and_rebinds_replaced_folders(
+    tmp_path, monkeypatch, native_package, keyring
+):
+    """TASK-40308 AC#1 and AC#2 (owner decisions 2026-11-12): after a restore,
+    the backup's passphrase adopts the restored authority. The review counts the
+    changes it undoes when the keyring marker shows them, and lists the plugins.
+    Confirming pins the marker and keeps saved data attached. A replaced download
+    record and a replaced saved-data folder are each rebound after their own
+    review, and the plugin runs again with its data."""
+    from tldw_chatbook.Plugins.acquisition import IDENTITY_CHANGED
+    from tldw_chatbook.Plugins.data_cleanup import REBINDABLE
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    service, _, installation, root, approved = await _restored_after_change(
+        tmp_path, monkeypatch, native_package, recreate=keyring != "in-place"
+    )
+    plugins = service("elsewhere" if keyring == "new-keyring" else "computer")
+    sources = SourceService(plugins)
+    try:
+        if keyring != "new-keyring":
+            assert await plugins.authority_status() == "locked"
+            with pytest.raises(FileNotFoundError):
+                await plugins.unlock("test passphrase")
+        else:
+            assert await plugins.authority_status() == "recovery_required"
+            assert await plugins.restore_review_pending()
+        with pytest.raises(ValueError):
+            await plugins.review_restored_authority("wrong passphrase")
+        review = await plugins.review_restored_authority("test passphrase")
+        assert review.undone == (None if keyring == "new-keyring" else 1)
+        assert [row[0] for row in review.installations] == [installation]
+        assert review.data_roots == 1
+        receipts = await plugins.adopt_restored_authority(review)
+        if keyring == "in-place":
+            # Folders kept their identities: nothing to rebind, and the clean
+            # checkpoint adoption records keeps the saved data attached.
+            assert not any(r.phase == "recovery_required" for r in receipts)
+            assert approved
+            (status,) = await plugins.data_status(installation_id=installation)
+            assert status["recovery_reason"] is None
+            assert (root.path / "notes.txt").read_bytes() == b"made by the plugin"
+            await plugins._call(
+                lambda: plugins._admission.capture(installation, None, "in-place")
+            )
+            return
+        # The download folder was recreated, so its record no longer qualifies.
+        assert any(receipt.phase == "recovery_required" for receipt in receipts)
+        assert not approved
+        rows = await sources.list_persisted_candidates()
+        (row,) = [row for row in rows if row["rebind"]]
+        assert row["rebind"] in IDENTITY_CHANGED
+        rebind = await sources.review_custody_rebind(row["operation_id"])
+        assert [plugin[0] for plugin in rebind["installations"]] == [installation]
+        assert rebind["files"] > 0 and rebind["complete"]
+        await sources.rebind_custody(rebind)
+        receipts = await plugins.recover()
+        assert not any(receipt.phase == "recovery_required" for receipt in receipts)
+        assert approved, "plugin recovery did not approve the restored generation"
+        assert await plugins.authority_status() == "ready"
+        (status,) = await plugins.data_status(installation_id=installation)
+        assert status["recovery_reason"] in REBINDABLE
+        rebind_root = await plugins.review_data_rebind(status["root"])
+        await plugins.reconcile_data(rebind_root, rebind_root.operation_id)
+        (status,) = await plugins.data_status(installation_id=installation)
+        assert status["recovery_reason"] is None
+        assert (status["root"].path / "notes.txt").read_bytes() == b"made by the plugin"
+        await plugins._call(
+            lambda: plugins._admission.capture(installation, None, "restored-run")
+        )
+        # A reboot alone leaves the same folder: that keeps boot reconciliation's
+        # clean-checkpoint rule, and the per-folder rebind refuses it.
+        recovery = plugins._coordinator.root_usage.recovery
+        await plugins._call(
+            lambda: recovery.__setitem__(
+                status["root"].root_id, "root_boot_identity_changed"
+            )
+        )
+        with pytest.raises(PermissionError, match="root_rebind_not_needed"):
+            await plugins.review_data_rebind(status["root"])
+        await plugins._call(lambda: recovery.pop(status["root"].root_id))
+    finally:
+        await plugins.aclose()
+
+
+@platform_support.managed_runtime
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_lost_passphrase_reset_sets_restored_plugins_aside_and_keeps_data(
+    tmp_path, monkeypatch, native_package
+):
+    """TASK-40308 AC#1 fallback (owner decision 2026-11-12): with the backup's
+    passphrase lost, Reset authority… then setup works after a restore. Setup
+    sets the restored registry, download records and downloads aside and
+    deletes nothing; the plugin is reinstalled from its source and its kept
+    saved-data folder is attached again after review."""
+    service, install, installation, root, approved = await _restored_after_change(
+        tmp_path, monkeypatch, native_package
+    )
+    plugins = service("elsewhere")
+    try:
+        assert await plugins.authority_status() == "recovery_required"
+        reset = await plugins.review_authority_reset()
+        assert reset.restored and reset.retained
+        await plugins.reset_authority(reset)
+        assert await plugins.authority_status() == "needs_setup"
+        await plugins.bootstrap("new passphrase")
+        assert approved, "setup after the reset did not approve the restore"
+        plugin_root = root.path.parent.parent
+        (aside,) = (plugin_root / "staging").glob(".reset-*")
+        assert (aside / "registry.sqlite3").is_file()
+        assert (aside / "acquisition-custody").is_dir()
+        assert [path.name for path in (aside / "staging").iterdir()]
+        assert (root.path / "notes.txt").read_bytes() == b"made by the plugin"
+        assert await plugins.kept_data_folders() == (root.root_id,)
+        reinstalled = await install(plugins, "op-git-again")
+        assert reinstalled != installation
+        attach = await plugins.review_kept_attachment(
+            reinstalled, root.root_id, workspace_id=None
+        )
+        await plugins.attach_kept_data(attach, attach.operation_id)
+        assert await plugins.kept_data_folders() == ()
+        (status,) = await plugins.data_status(installation_id=reinstalled)
+        assert status["root"].root_id == root.root_id
+        assert status["recovery_reason"] is None
+        assert (status["root"].path / "notes.txt").read_bytes() == b"made by the plugin"
+        await plugins._call(
+            lambda: plugins._admission.capture(reinstalled, None, "reinstalled-run")
+        )
+    finally:
+        await plugins.aclose()

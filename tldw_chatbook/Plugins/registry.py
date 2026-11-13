@@ -867,6 +867,23 @@ class PluginRegistry:
                     cursor, snapshot["operation_result"], phase="committed"
                 )
 
+    def set_aside(self, destination: Path) -> None:
+        """Move this registry's files into ``destination``; start empty in place.
+
+        TASK-40308: setup after a post-restore authority reset keeps the
+        restored registry as evidence and starts a new one at the same path.
+        """
+        import os
+
+        self._require_write()
+        self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.close()
+        for suffix in ("", "-wal", "-shm"):
+            source = self.path.with_name(self.path.name + suffix)
+            if os.path.lexists(source):
+                os.rename(source, destination / source.name)
+        self.__init__(self.path, owner=self._owner, read_only=False)
+
     def close(self) -> None:
         """Release the database handle without deleting recovery evidence."""
         if not self._closed:

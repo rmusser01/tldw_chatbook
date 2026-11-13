@@ -545,9 +545,10 @@ async def test_authority_recovery_copy_is_truthful_without_a_reset_step(
             if "needs recovery" in status:
                 break
         # D2: say what is true; no Reset authority step that bootstrap refuses.
-        assert "restoring a backup on another computer at the same paths" in status
+        # TASK-40308: after a restore Authority… unlocks into recovery instead;
+        # without one (this rig) nothing in-app recovers them.
         assert "OS keyring was reset" in status and "profile" not in status
-        assert "cannot recover these plugins yet" in status
+        assert "cannot recover these plugins without a restored backup" in status
         assert "saved data stay on disk" in status
         assert "Reset authority" not in status
 
@@ -627,3 +628,275 @@ async def test_review_dialog_load_failure_stays_in_the_dialog(
         assert app.is_running and app.screen is modal
         assert app.return_code is None
         assert modal.query_one("#plugin-review-prepare", Button).disabled
+
+
+async def _until(predicate, what, seconds=120):
+    from Tests.UI import pump_probe
+
+    assert await pump_probe.until(predicate, seconds), f"{what} did not happen"
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_restored_plugins_recover_from_the_plugins_screen(
+    request, tmp_path, monkeypatch, native_package
+):
+    """TASK-40308 AC#1 and AC#2 from the Plugins screen, on real services: after
+    a restore over recreated folders with plugins changed since the backup,
+    Authority… with the backup's passphrase opens the recovery review. Confirming
+    it, then rebinding the replaced download record (Candidates…) and the
+    replaced saved-data folder (Manage plugin), each after its own review, runs
+    the plugin again with its saved data."""
+    from types import SimpleNamespace
+
+    from Tests.Plugins.test_recovery import _restored_after_change
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Widgets.plugin_review_modal import (
+        PluginAuthorityDialog,
+        PluginRestoreAdoptionModal,
+        PluginReviewModal,
+        PluginStatusModal,
+    )
+    from tldw_chatbook.Workspaces.registry_service import (
+        LocalWorkspaceRegistryService,
+    )
+
+    service, _, installation, root, approved = await _restored_after_change(
+        tmp_path, monkeypatch, native_package
+    )
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="plugin-tests")
+    )
+    registry.ensure_default_workspace()
+    plugins = service()
+    app = BrowseApp(SimpleNamespace(service=plugins, registry=registry))
+    try:
+        async with app.run_test(size=(120, 35)) as pilot:
+            screen = app.screen
+            await settled(pilot, screen)
+            screen.query_one("#plugins-authority", Button).press()
+            await _until(
+                lambda: (
+                    isinstance(app.screen, PluginAuthorityDialog)
+                    and app.screen.query("#submit-button")
+                ),
+                "unlock dialog",
+            )
+            dialog = app.screen
+            dialog.query_one("#password-input", Input).value = "test passphrase"
+            dialog.query_one("#submit-button", Button).press()
+            await _until(
+                lambda: (
+                    isinstance(app.screen, PluginRestoreAdoptionModal)
+                    and app.screen.query("#plugin-adopt-close")
+                ),
+                "recovery review",
+            )
+            adoption = app.screen
+            review = str(adoption.query_one("#plugin-adopt-review", Static).render())
+            assert "This undoes 1 plugin change made after this backup" in review
+            assert "Plugin: " in review and installation in review
+            assert "Saved-data folders kept attached: 1" in review
+            assert not approved
+            adoption.query_one("#plugin-adopt-confirm", Button).press()
+            status = adoption.query_one("#plugin-adopt-status", Static)
+            await _until(lambda: str(status.render()), "recovery confirmation")
+            assert "a download record no longer matches its folder" in str(
+                status.render()
+            )
+            adoption.query_one("#plugin-adopt-close", Button).press()
+            await _until(lambda: app.screen is screen, "recovery review closed")
+            screen.query_one("#plugins-candidates", Button).press()
+            await _until(
+                lambda: (
+                    isinstance(app.screen, PluginStatusModal)
+                    and app.screen.rows
+                    and app.screen.query("#plugin-status-close")
+                ),
+                "candidates",
+            )
+            candidates = app.screen
+            listing = candidates.query_one(OptionList)
+            listing.highlighted = next(
+                index for index, row in enumerate(candidates.rows) if row["rebind"]
+            )
+            candidates.query_one("#plugin-status-rebind", Button).press()
+            text = candidates.query_one("#plugin-review-status", Static)
+            await _until(
+                lambda: "Replaced since last bound" in str(text.render()),
+                "rebind review",
+            )
+            shown = str(text.render())
+            assert "Plugin: " in shown and installation in shown
+            assert "Folder: " in shown and "Contents: " in shown
+            candidates.query_one("#plugin-status-rebind-confirm", Button).press()
+            await _until(
+                lambda: "Plugin authority recovery completed" in str(text.render()),
+                "rebind confirmation",
+            )
+            assert approved
+            candidates.query_one("#plugin-status-close", Button).press()
+            await _until(lambda: app.screen is screen, "candidates closed")
+            await app.push_screen(
+                PluginReviewModal(
+                    app.plugin_source_service,
+                    installation_id=installation,
+                    workspace_id=None,
+                )
+            )
+            manage = app.screen
+            await manage.workers.wait_for_complete()
+            await _until(lambda: not manage._loading, "manage dialog load")
+            manage.query_one("#plugin-review-action", Select).value = "rebind-data"
+            await pilot.pause()
+            manage.query_one("#plugin-review-prepare", Button).press()
+            await _until(
+                lambda: not manage._busy and manage.draft.review is not None,
+                "folder review",
+            )
+            body = str(manage.query_one("#plugin-review-body", Static).render())
+            assert f"Folder: {root.path}" in body
+            assert "Contents: 1 files, 18 bytes" in body
+            assert "Replaced since last bound" in body
+            confirm = manage.query_one("#plugin-review-confirm", Button)
+            assert not confirm.disabled
+            confirm.press()
+
+            async def rebound():
+                (row,) = await plugins.data_status(installation_id=installation)
+                return row["recovery_reason"] is None
+
+            for _ in range(600):
+                if await rebound():
+                    break
+                await asyncio.sleep(0.1)
+            assert await rebound(), "the saved-data folder was not rebound"
+        assert (root.path / "notes.txt").read_bytes() == b"made by the plugin"
+        await plugins._call(
+            lambda: plugins._admission.capture(installation, None, "restored-run")
+        )
+    finally:
+        await plugins.aclose()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches(
+    request, tmp_path, monkeypatch, native_package
+):
+    """TASK-40308 AC#1 fallback from the Plugins screen, on real services: with
+    the backup's passphrase lost, Reset authority… says before and after the reset
+    that setup sets the restored plugins aside and keeps their saved data;
+    Authority… then sets up a new passphrase, and Manage plugin attaches the kept
+    saved-data folder to the reinstalled plugin after its own review."""
+    from types import SimpleNamespace
+
+    from textual.widgets import Select
+
+    from Tests.Plugins.test_recovery import _restored_after_change
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Widgets.plugin_review_modal import (
+        PluginAuthorityDialog,
+        PluginAuthorityResetModal,
+        PluginReviewModal,
+    )
+    from tldw_chatbook.Workspaces.registry_service import (
+        LocalWorkspaceRegistryService,
+    )
+
+    service, install, _, root, approved = await _restored_after_change(
+        tmp_path, monkeypatch, native_package
+    )
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="plugin-tests")
+    )
+    registry.ensure_default_workspace()
+    plugins = service("elsewhere")
+    app = BrowseApp(SimpleNamespace(service=plugins, registry=registry))
+    try:
+        async with app.run_test(size=(120, 35)) as pilot:
+            screen = app.screen
+            await settled(pilot, screen)
+            screen.query_one("#plugins-reset-authority", Button).press()
+            await _until(
+                lambda: (
+                    isinstance(app.screen, PluginAuthorityResetModal)
+                    and app.screen.query("#plugin-reset-close")
+                ),
+                "reset dialog",
+            )
+            reset = app.screen
+            status = reset.query_one("#plugin-reset-status", Static)
+            reset.query_one("#plugin-reset-review", Button).press()
+            await _until(lambda: "Namespace" in str(status.render()), "reset review")
+            consequence = str(status.render())
+            assert "sets the restored plugins aside" in consequence
+            assert "keeps every saved-data folder where it is" in consequence
+            assert "Nothing is deleted" in consequence
+            assert "unlock instead: that keeps every plugin" in consequence
+            reset.query_one("#plugin-reset-confirm", Button).press()
+            await _until(lambda: "reset." in str(status.render()), "reset")
+            done = str(status.render())
+            assert "Press Authority… to set it up again with a new passphrase" in done
+            assert "Use Authority to set up again" not in done
+            reset.query_one("#plugin-reset-close", Button).press()
+            await _until(lambda: app.screen is screen, "reset closed")
+            screen.query_one("#plugins-authority", Button).press()
+            await _until(
+                lambda: (
+                    isinstance(app.screen, PluginAuthorityDialog)
+                    and app.screen.query("#confirm-input")
+                    and app.screen.query("#submit-button")
+                ),
+                "setup dialog",
+            )
+            setup = app.screen
+            setup.query_one("#password-input", Input).value = "new passphrase"
+            setup.query_one("#confirm-input", Input).value = "new passphrase"
+            setup.query_one("#submit-button", Button).press()
+            await _until(lambda: app.screen is screen, "setup")
+            assert approved and await plugins.authority_status() == "ready"
+            assert await plugins.kept_data_folders() == (root.root_id,)
+            reinstalled = await install(plugins, "op-git-again")
+            await app.push_screen(
+                PluginReviewModal(
+                    app.plugin_source_service,
+                    installation_id=reinstalled,
+                    workspace_id=None,
+                )
+            )
+            manage = app.screen
+            await manage.workers.wait_for_complete()
+            await _until(lambda: not manage._loading, "manage dialog load")
+            manage.query_one("#plugin-review-action", Select).value = "attach-data"
+            await pilot.pause()
+            manage.query_one("#plugin-review-reference", Input).value = root.root_id
+            await pilot.pause()
+            manage.query_one("#plugin-review-prepare", Button).press()
+            await _until(
+                lambda: not manage._busy and manage.draft.review is not None,
+                "kept folder review",
+            )
+            body = str(manage.query_one("#plugin-review-body", Static).render())
+            assert "Kept folder to attach:" in body
+            assert f"Folder: {root.path}" in body
+            assert "Contents: 1 files, 18 bytes" in body
+            assert "Kept from before plugin authority was reset" in body
+            manage.query_one("#plugin-review-confirm", Button).press()
+
+            async def attached():
+                return await plugins.kept_data_folders() == ()
+
+            for _ in range(600):
+                if await attached():
+                    break
+                await asyncio.sleep(0.1)
+            assert await attached(), "the kept folder was not attached"
+        (status_row,) = await plugins.data_status(installation_id=reinstalled)
+        assert status_row["root"].root_id == root.root_id
+        assert status_row["recovery_reason"] is None
+        assert (root.path / "notes.txt").read_bytes() == b"made by the plugin"
+    finally:
+        await plugins.aclose()

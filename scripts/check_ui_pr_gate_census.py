@@ -1007,6 +1007,10 @@ MINIMUM_FILES = 2031
 # buttons and the review dialog's load-failure test at the tail. The floor is
 # the measured entry count.
 MINIMUM_FILES = 2039
+MINIMUM_FILES = 2033
+# TASK-40308 (2026-11-13): append the Plugins screen's restore recovery and
+# reset-fallback tests at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2041
 
 
 def read_census(path: Path) -> list[str]:

@@ -626,21 +626,36 @@ class PluginsScreen(BaseAppScreen):
         from ...Widgets.plugin_review_modal import (
             PluginAuthorityDialog,
             PluginAuthorityResetModal,
+            PluginRestoreAdoptionModal,
             PluginStatusModal,
         )
+
+        def authority_closed(result):
+            # TASK-40308: an unlock after a restore may return the adoption review.
+            if result is True:
+                self._reload()
+            elif result is not None:
+                self.app.push_screen(
+                    PluginRestoreAdoptionModal(self.sources.plugins, result),
+                    lambda done: self._reload() if done else None,
+                )
 
         try:
             if action == "reset-authority":
                 self.app.push_screen(PluginAuthorityResetModal(self.sources.plugins))
             elif action == "authority":
                 posture = await self.sources.plugins.authority_status()
-                if posture in {"needs_setup", "locked"}:
+                restored = (
+                    posture == "recovery_required"
+                    and await self.sources.plugins.restore_review_pending()
+                )
+                if posture in {"needs_setup", "locked"} or restored:
                     self.app.push_screen(
                         PluginAuthorityDialog(
                             self.sources.plugins,
                             "setup" if posture == "needs_setup" else "unlock",
                         ),
-                        lambda ready: self._reload() if ready else None,
+                        authority_closed,
                     )
                 elif posture in {"ready", "ready_reduced"}:
                     await self.sources.plugins.recover()
@@ -649,10 +664,10 @@ class PluginsScreen(BaseAppScreen):
                     )
                     self._reload()
                 elif posture == "recovery_required":
-                    # TASK-40132 (D2): a backup never holds the keyring marker,
-                    # and no in-app path recovers restored plugins yet.
+                    # After a restore the unlock dialog above adopts the backup's
+                    # authority (TASK-40308); without one nothing in-app does.
                     self._status(
-                        "Plugin authority needs recovery: its protected marker is missing or does not match the plugin files here, as after restoring a backup on another computer at the same paths, or after the OS keyring was reset. Chatbook cannot recover these plugins yet. They stay off, and their files and saved data stay on disk."
+                        "Plugin authority needs recovery: its protected marker is missing or does not match the plugin files here, as after the OS keyring was reset. Chatbook cannot recover these plugins without a restored backup. They stay off, and their files and saved data stay on disk."
                     )
                 else:
                     self._status(
