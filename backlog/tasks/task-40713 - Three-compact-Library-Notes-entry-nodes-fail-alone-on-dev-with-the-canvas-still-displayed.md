@@ -52,7 +52,7 @@ None of them is in `scripts/library_shell_push_deselect.txt`. So if they are red
 - A probe (temporary, reverted) showed the gap: the canvas was still displayed (`styles.display` `block`) when `compact` flipped, was hidden 0.15 s later with no further input, and stayed hidden for the next 4 s.
 - Siblings that start at 60x20 never cross the boundary, which is why they pass.
 
-**Red first.** On base 26b2e677dd, each node alone through run.sh, one process per run, at load 59-70: 3 of 3 red each (`:32527`, `:33366`, `:33421`, `assert True is False`). At load ~29 the same command passed 3 of 3: it is load-dependent.
+**Red first.** On base 26b2e677dd, each node alone through run.sh, one process per run, at load 59-70: 3 of 3 red each (`:32527`, `:33366`, `:33421`, `assert True is False`). At load ~29 the same command passed each node once: it is load-dependent.
 - Forced red: a temporary edit made `sync_layout` hide `#library-canvas` late (1 s for the deep-link node; 3 s for the other two, whose hide was already armed before the compact flip). The old tests then failed at the same three lines.
 
 **Fix.** A new helper, `_wait_for_library_canvas_hidden_after_compact_resize`, waits on the real end state (the canvas hidden) after the compact wait, through `_wait_for_condition` (15 s deadline). The nodes' assertions are unchanged.
