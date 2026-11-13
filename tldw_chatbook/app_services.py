@@ -632,8 +632,8 @@ class ApplicationServices:
 def _optional(app: Any, name: str) -> Any:
     """Read a service that composition leaves ``None`` when it is unavailable.
 
-    The name is not a literal at the ``getattr`` call, so these reads stay out of
-    ``test_app_string_lookup_census`` (they are composition output, not consumers).
+    The name is not a literal, so the census pins this one call in
+    ``app_nonliteral_lookups.tsv`` (composition output, not consumers).
     """
     return getattr(app, name, None)
 
