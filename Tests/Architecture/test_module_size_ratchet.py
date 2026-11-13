@@ -373,7 +373,9 @@ _BUDGETS: dict[str, int] = {
     # follow-up burn-down PR 5, stacked on #3441), each line one commit:
     # TASK-33910.44, the lore and dictionary imports await one parse helper
     # in a thread: +3 (16,924 -> 16,927).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16927,
+    # TASK-33910.51, a landing that then toasts restores the search, box and
+    # sort it cleared: +79 (16,927 -> 17,006).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17006,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a

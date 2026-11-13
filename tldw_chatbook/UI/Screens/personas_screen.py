@@ -14223,6 +14223,7 @@ class PersonasScreen(BaseAppScreen):
             # _run_guarded bumped the intent once for this transition; only
             # a newer one may stop the select below.
             expected = self._import_intent_now()
+            cleared: tuple[tuple[str, str, str | None, str], str] | None = None
             if self.state.active_mode != mode:
                 # Clean, so no draft is asked about; the new kind's list
                 # starts unfiltered.
@@ -14230,16 +14231,10 @@ class PersonasScreen(BaseAppScreen):
                 # _apply_mode bumps it once more, at its head.
                 expected = (expected[0] + 1, expected[1])
             else:
-                # Clear an active search so the imported row is in the list.
-                self._cancel_search_debounce()
-                self.state.search_query = ""
-                try:
-                    self.query_one("#personas-library-search", Input).value = ""
-                except Exception:
-                    pass
+                # Clear an active search so the imported row is in the list,
+                # keeping what it was for a failed decision below.
+                cleared = self._clear_search_for_import_landing(kind)
                 if kind == "character":
-                    if self.state.sort_key == "relevance":
-                        self.state.sort_key = "name_asc"
                     await self.character_handler.refresh_character_list()
                 elif kind == "lore":
                     await self._render_lore_rows(query="")
@@ -14250,6 +14245,9 @@ class PersonasScreen(BaseAppScreen):
             # On dev the character landing re-checked only that Characters
             # still showed (a draft started during its refresh was replaced).
             if landing(expected) != "select":
+                if cleared is not None:
+                    # On dev the clear stayed applied (TASK-33910.51).
+                    self._restore_search_after_import_landing(*cleared, mode=mode)
                 return
             if kind == "character":
                 await self._select_character(item_id, name)
@@ -14261,6 +14259,87 @@ class PersonasScreen(BaseAppScreen):
 
         await self._run_guarded(select)
         return selected
+
+    def _clear_search_for_import_landing(
+        self, kind: str
+    ) -> tuple[tuple[str, str, str | None, str], str]:
+        """Clear the search (and a character search's relevance sort) to land.
+
+        Args:
+            kind: The imported item's kind.
+
+        Returns:
+            The search, sort, tag and box before the clear, and the sort the
+            clear left: ``_restore_search_after_import_landing``'s arguments.
+        """
+        try:
+            box: Input | None = self.query_one("#personas-library-search", Input)
+        except QueryError:
+            box = None
+        before = (
+            self.state.search_query,
+            self.state.sort_key,
+            self.state.tag_filter,
+            box.value if box is not None else "",
+        )
+        self._cancel_search_debounce()
+        self.state.search_query = ""
+        if kind == "character" and self.state.sort_key == "relevance":
+            self.state.sort_key = "name_asc"
+        if box is not None:
+            # No Input.Changed: its handler would arm a second, debounced
+            # read, and after a restore it would clear the search again (on
+            # dev this write posted it; as _apply_mode, TASK-33910.39).
+            with box.prevent(Input.Changed):
+                box.value = ""
+        return before, self.state.sort_key
+
+    def _restore_search_after_import_landing(
+        self,
+        before: tuple[str, str, str | None, str],
+        cleared_sort: str,
+        *,
+        mode: str,
+    ) -> None:
+        """Put back the search and sort a landing cleared when it then toasts.
+
+        TASK-33910.51: on dev a same-kind landing whose second decision failed
+        left the search cleared and a relevance sort reset to name. The import
+        intent cannot tell a draft started meanwhile (restore) from a search
+        typed meanwhile (keep it), so the list's own state decides: the
+        restore is skipped when the kind, search, box, sort or tag is no
+        longer what the clear left, because the user's change is newer.
+
+        Args:
+            before: The search, sort, tag and box before the clear.
+            cleared_sort: The sort the clear left.
+            mode: The landing's mode.
+        """
+        query, sort_key, tag, box_value = before
+        if (query, sort_key, box_value) == ("", cleared_sort, ""):
+            return  # nothing was cleared
+        if self._closed or self.state.active_mode != mode:
+            return
+        try:
+            box = self.query_one("#personas-library-search", Input)
+        except QueryError:
+            return
+        if (
+            self.state.search_query,
+            self.state.sort_key,
+            self.state.tag_filter,
+            box.value,
+        ) != ("", cleared_sort, tag, ""):
+            return
+        self._cancel_search_debounce()
+        self.state.search_query = query
+        self.state.sort_key = sort_key
+        self._count_cache_key = None  # the (search, tag) pair changed
+        with box.prevent(Input.Changed):  # a restore is no newer intent
+            box.value = box_value
+        # One read, in the search worker behind its currency check, so a
+        # search typed after this restore supersedes it.
+        self._start_debounced_search_render(query=query, mode=mode)
 
     def _active_character_import_worker(self) -> Worker[None] | None:
         """Return the active app-owned character import, if any."""
