@@ -54,7 +54,7 @@ class BusySampler:
     """
 
     def __init__(self, console) -> None:
-        self.samples: list[bool] = [console_transcript._console_heap_busy(console)]
+        self.samples: list[bool] = []
         self._selector = asyncio.get_running_loop()._selector
         poll = self._selector.select
 
@@ -182,8 +182,8 @@ async def test_the_busy_sampler_lets_an_idle_loop_sleep() -> None:
     in its selector, so the loop thread kept the GIL. On CI's Linux runners
     that starved the send's worker-thread hops (hook reads, imports, the
     durable commit): the mounted test above stalled until its 15 s wait gave
-    up and stopped the sampler, and the send then went on within
-    milliseconds (TASK-40334).
+    up and stopped the sampler, and the send then went on within about a
+    second (TASK-40334).
     """
     sampler = BusySampler(BusyScreen())
     try:
