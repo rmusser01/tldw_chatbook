@@ -730,6 +730,13 @@ def _bare_offloads(tree, allowed):
             (),
             6,
         ),
+        # The picker's opener reads, and Save/Clear write, the saved scope.
+        (
+            "tldw_chatbook.UI.Console_Modules.retrieval",
+            ("_read_console_retrieval_scope", "_write_console_retrieval_scope"),
+            (),
+            2,
+        ),
     ],
 )
 def test_console_store_offloads_retire_their_worker_handles(
@@ -739,7 +746,8 @@ def test_console_store_offloads_retire_their_worker_handles(
 
     TASK-34100.16.1 review v5r2 widened the notes-only guard above to the
     Console surfaces the review found: the retrieval-scope picker, the RAG FTS
-    legs it scopes, and the dictionary and world-book rail pickers.
+    legs it scopes, and the dictionary and world-book rail pickers; v5r3 added
+    the picker opener's saved-scope read and write, found live.
     """
     import ast
     import importlib
@@ -760,3 +768,40 @@ def test_console_store_offloads_retire_their_worker_handles(
 
     assert len(offloads) >= minimum
     assert bare == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["read", "write"])
+async def test_console_retrieval_scope_read_and_write_retire_their_worker_connection(
+    tmp_path, local_root, operation
+):
+    """Opening the scope picker on a saved chat leaves no pool-thread handle.
+
+    TASK-34100.16.1 review v5r3 (R2-1, found live): before listing anything,
+    the picker's opener reads the saved conversation's scope
+    (``rag_scope.read_conversation_scope``), and Save/Clear scope writes it,
+    each on a bare ``asyncio.to_thread``. On a profile that had chatted, one
+    picker open left that lease, and the next idle Create backup ended in
+    ``admission_timeout``; the probe's drain residue was exactly it, created
+    in ``read_conversation_scope`` on ``asyncio_12`` (g161v5-r3/g161r3-a2).
+    """
+    from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+
+    db = CharactersRAGDB(tmp_path / "notes.db", "test")
+    conversation = db.add_conversation({"title": "Scoped"})
+    db.close_connection()  # setup's own main-thread handle is not under test
+    try:
+        if operation == "read":
+            scope = await ConsoleRetrievalController._read_console_retrieval_scope(
+                db, conversation
+            )
+            assert scope is None
+        else:
+            await ConsoleRetrievalController._write_console_retrieval_scope(
+                db, conversation, None
+            )
+
+        assert not worker_leases(db), f"the scope {operation} kept its worker connection"
+        assert _local_pause_drains(), "a backup's local pause could not drain"
+    finally:
+        db.close_connection()
