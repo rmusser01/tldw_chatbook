@@ -25601,3 +25601,9 @@ An expiry-only assertion must establish the coordinator-free render precondition
 
 **What to do.** When a geometry test fails on a box that holds a path, measure the path before you call it a product regression. Rerun it with a CI-length path (a temporary edit pointing the folder at a short scratch directory), and say in the report that the local red is path length, not code.
 
+
+## `app.workers` on the factory app is not the running app's worker list -- a "workers finished" wait over it is always true (TASK-40328, 2026-11-13)
+
+**Incident.** The Collections rail-press test waited for `not any(w.group == "library_collections_capture_entry" and not w.is_finished for w in app.workers)`, where `app` came from `_build_test_app()`. That object is handed to `LibraryHarness(app)`, but the running Textual app is the harness, so `app.workers` was empty and the wait passed before the entry loader had finished. A probe that printed the same list next to a loader step that was plainly still running showed `[]`. With `screen.app.workers` the base count of whole-screen recomposes for one press read 4, not the 3 the vacuous wait had caught.
+
+**What to do.** In mounted Library tests, read workers, focus and timers through the screen (`screen.app.workers`, `screen.focused`), never through the factory app. Before trusting a settle predicate, check it is False at least once on the path it is meant to wait for.
