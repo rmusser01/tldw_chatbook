@@ -901,9 +901,9 @@ _BUDGETS: dict[str, int] = {
     # limits, don't contort code): 26171 -> 26181 (measured): +10 a purge
     # keeps a pending unlink only when it is the link's latest intent and,
     # with no predecessor, has a bound base; a copied one is kept (I-A, m-A).
-    # 2026-11-12, rebased onto dev 4b90eb860b: 23517 -> 23828 (polish-1b's
+    # 2026-11-12, rebased onto dev 26b2e677dd: 22552 -> 22863 (polish-1b's
     # own +311; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22863,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
