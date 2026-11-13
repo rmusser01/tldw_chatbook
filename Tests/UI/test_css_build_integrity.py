@@ -445,9 +445,13 @@ def test_library_notes_compact_source_module_is_exactly_bundled(request) -> None
     """
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
 
+    # TASK-40326: since a2fcbe61bc the build fills the module's
+    # `/* @console-approvals */` slot, so compare with the source as built.
     assert _css_tokens(
         _bundled_module(bundle, "components/_agentic_terminal.tcss")
-    ) == _css_tokens(_AGENTIC_SOURCE.read_text(encoding="utf-8"))
+    ) == _css_tokens(
+        css_builder.module_text_as_built(_CSS_ROOT, "components/_agentic_terminal.tcss")
+    )
 
     import tempfile
 

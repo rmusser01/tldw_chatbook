@@ -1,7 +1,10 @@
 ---
 id: TASK-40333
 title: "test_a_rail_reopened_after_a_discarded_build_shows_the_landed_tree fails with NoMatches '#wl-tree' in the Dreams job's admission-sensitive step"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
+updated_date: '2026-11-13 02:15'
 created_date: 2026-11-12 19:58
 labels:
 - follow-up
@@ -41,3 +44,10 @@ No open task names this test.
 - [ ] #2 Every other poll in the file that queries a widget the test has just caused to mount gets the same guard
 - [ ] #3 The file passes 20 of 20 runs of the admission-sensitive step's own command under load, with the load recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Force a late tree mount (temporary: the workbench mounts a rebuilt `#wl-tree` 3 s after removing the old one) and show the node red with CI's `NoMatches '#wl-tree'`.
+2. Guard the poll like 6ee80bd822 guarded its sibling: `bool(screen.query("#wl-tree")) and shown() == ...`; show it green under the same forced late mount, then revert the forcing.
+3. Audit every other poll in the file for an unguarded query of a widget the test just caused to mount.
+4. Run the admission-sensitive step's own command 20 times under load and record the load.

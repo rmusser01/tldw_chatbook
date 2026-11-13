@@ -4,7 +4,7 @@ title: "Six Library UI tests are red on dev and run on no lane: an entry canvas 
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-12 19:38'
+updated_date: '2026-11-13 03:11'
 created_date: 2026-11-07 02:03
 labels:
 - follow-up
@@ -75,3 +75,5 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 **Files.** `Tests/UI/test_library_canvas_sync_defects.py`, `Tests/UI/test_library_media_side_by_side.py`, `Tests/UI/test_library_notes_w5_kbd_focus.py`, `Tests/UI/test_library_media_reader_shell.py`, `tldw_chatbook/UI/Screens/library_screen.py`, `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`, `Tests/Architecture/test_screen_size_ratchet.py`, `Tests/Architecture/test_library_modules_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/library/notes.md` (Select all and Clear keep focus).
 
 **2026-11-12 (round-13 closeout).** The sixth node, `Tests/UI/test_library_media_side_by_side.py::test_compact_media_viewer_back_empty_page_focuses_recovery_control`, is still red at the round-13 stack top 8b633d0101 ("Empty viewer return did not focus the Import recovery action; focus is None."). TASK-40293 now owns its fix and its lane, together with the four Library shell entry-focus nodes that share the entry-focus arm.
+
+**2026-11-13 (round 14, base 26b2e677dd, after the architecture phase-3 merges).** The six nodes together (run.sh, `-n 4`, load 64-69): 5 passed; `test_library_media_side_by_side.py::test_compact_media_viewer_back_empty_page_focuses_recovery_control` failed as before: "Empty viewer return did not focus the Import recovery action; focus is None." No Library product file changed between ae9f9e8d21 and this base except this task's own commit 6e7eec930b, so the defect is unchanged. Its fix belongs to TASK-40293 (To Do, AC#2 and AC#4), which is not this stream's; AC#1 and AC#3 stay open until it lands. A note for that fix: `_library_media_empty_list_fallback_target` tries `#library-media-type-filter` before `#library-media-empty-import` (task-32213), so a fix that only arms the list entry focus would land on `type:`, not on Import; TASK-40293 AC#2 accepts "a visible recovery control or list control", so the test's Import pin may need to follow whichever control the fix picks.

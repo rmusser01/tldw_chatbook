@@ -1035,6 +1035,28 @@ def build_screen_owned_sheets(css_dir: Path, output_dir: Path) -> None:
 _without_source_comments = widget_css.without_source_comments
 
 
+def module_text_as_built(css_dir: Path, module: str) -> str:
+    """Return a module's source with its build-time inserts applied.
+
+    ``features/_console_approvals.tcss`` fills the ``/* @console-approvals */``
+    slot in the agentic terminal module, so its rules keep their cascade slot.
+
+    Args:
+        css_dir: Root directory containing the modular stylesheets.
+        module: Manifest path of the module, relative to ``css_dir``.
+
+    Returns:
+        The text the bundle builds from, before any screen-owned split.
+    """
+    content = (css_dir / module).read_text(encoding="utf-8")
+    if module == "components/_agentic_terminal.tcss":
+        content = content.replace(
+            "/* @console-approvals */",
+            (css_dir / "features/_console_approvals.tcss").read_text(encoding="utf-8"),
+        )
+    return content
+
+
 def build_css(css_dir: Path, output_file: Path) -> None:
     """Concatenate declared CSS modules, retaining prose in source files only.
 
@@ -1090,14 +1112,7 @@ def build_css(css_dir: Path, output_file: Path) -> None:
         if module == "features/_console_approvals.tcss":
             # Extracted rules retain their original intra-component cascade slot.
             continue
-        content = (css_dir / module).read_text(encoding="utf-8")
-        if module == "components/_agentic_terminal.tcss":
-            content = content.replace(
-                "/* @console-approvals */",
-                (css_dir / "features/_console_approvals.tcss").read_text(
-                    encoding="utf-8"
-                ),
-            )
+        content = module_text_as_built(css_dir, module)
         if module in split_remainders:
             # TASK-25812/TASK-24459: only the multi-screen remainder rides
             # the boot bundle; the single-owner rules ship as the per-screen
