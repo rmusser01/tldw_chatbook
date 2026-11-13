@@ -2996,9 +2996,18 @@ Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_
 Tests/UI/test_workspace_archive_review_regressions.py
 # TASK-40322 (2026-11-12): the Personas Start-chat readiness file (now
 # bootstrap_profile: its footer reads config in compose) and the Console
-# once-a-second Character-scope sync-tick file.
-Tests/UI/test_personas_subscription_readiness.py
-Tests/UI/test_console_sync_tick_storage.py
+# once-a-second Character-scope sync-tick file, by node (each file is over
+# the 30 s per-entry budget whole).
+Tests/UI/test_personas_subscription_readiness.py::test_handoff_readiness_keeps_ui_responsive_and_finishes_automatically[file-ready]
+Tests/UI/test_personas_subscription_readiness.py::test_handoff_readiness_keeps_ui_responsive_and_finishes_automatically[keychain-ready]
+Tests/UI/test_personas_subscription_readiness.py::test_handoff_readiness_keeps_ui_responsive_and_finishes_automatically[file-missing]
+Tests/UI/test_personas_subscription_readiness.py::test_handoff_readiness_keeps_ui_responsive_and_finishes_automatically[file-error]
+Tests/UI/test_personas_subscription_readiness.py::test_completion_between_header_and_inspector_reads_refreshes_both_surfaces
+Tests/UI/test_personas_subscription_readiness.py::test_handoff_readiness_refreshes_expiry_and_stale_snapshot_without_edits
+Tests/UI/test_personas_subscription_readiness.py::test_credential_completion_uses_current_provider_and_selection
+Tests/UI/test_personas_subscription_readiness.py::test_unmount_stops_handoff_refresh_before_credential_completion
+Tests/UI/test_console_sync_tick_storage.py::test_sync_ticks_during_a_run_check_the_character_scope_once_a_second
+Tests/UI/test_console_sync_tick_storage.py::test_a_scope_invalidated_during_a_run_check_is_checked_at_once
 # TASK-40324 (2026-11-12): a readiness refresh worker cancelled before its
 # first step still settles its read, so App exit cannot wait in warm().
 Tests/UI/test_console_readiness_config_projection.py::test_a_refresh_worker_cancelled_before_its_first_step_still_settles

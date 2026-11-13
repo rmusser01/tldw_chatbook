@@ -56,7 +56,7 @@ Neither path appears in `scripts/ui_pr_gate_census.txt`, `.github/` or `scripts/
   - Fix: `_sync_title_and_console_actions` clears `_console_handoff_readiness_gate`, so the next poll checks in full once, then goes back to the cheap path. The cost is one extra provider-readiness check after a direct sync.
   - Red 3 of 3 before, green after. The covering `test_personas_handoff_poll_gate.py` passes, and so do the 13 readiness and handoff nodes of `test_personas_workbench.py`. One of those failed once at `-n 4` (`OptionDoesNotExist 'character:1'`), then passed 3 of 3 serially and in a rerun at `-n 4`.
 - **Whole-file runs at `-n 4`:** Personas 8 of 8 passed, 3 of 3 runs (load 52-65). Sync-tick 2 of 2 passed, 3 of 3 runs (load 45-55).
-- **Lane.** Both files are whole-file entries at the census tail; `MINIMUM_FILES` is 2030. No re-deal.
-- **Serial lane times** (`-p no:xdist --timeout=180 --durations=0`): Personas 38.3 s at load 47; sync-tick 33.7 s at load 45.
+- **Lane.** Both files are at the census tail by node, 10 entries: the Personas file's 8 (its parametrized test per case) and the sync-tick file's 2. Each file is over the 30 s per-entry budget whole. `MINIMUM_FILES` is 2038 here; no re-deal.
+- **Serial lane times** (`-p no:xdist --timeout=180 --durations=0`): Personas file 38.3 s at load 47 (about 10-14 s a node at `-n 4`); sync-tick file 33.7 s at load 45, almost all of it `test_sync_ticks_during_a_run_check_the_character_scope_once_a_second` (one node, which cannot be split further).
 - **Size.** `personas_screen.py` is exactly at its 16,835-line row (the fix is one line). The module size ratchet passes.
 - **Files.** `tldw_chatbook/UI/Screens/personas_screen.py`, `Tests/UI/test_personas_subscription_readiness.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.

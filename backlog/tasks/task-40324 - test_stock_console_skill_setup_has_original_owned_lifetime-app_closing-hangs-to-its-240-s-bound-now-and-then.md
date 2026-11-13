@@ -57,7 +57,7 @@ How it gets there:
 **Fix (product).** `ConsoleReadinessConfigProjection.run` adds a done-callback to the refresh worker's task, following `raw_cli.py`'s `cancel_unstarted` precedent. A read that is still the projection's `_handoff_read` when its task ends never ran its own `finally`. `_settle_unstarted` clears `pending`, retires its identity handoff, and sets `_settled`. A read that ran is a no-op there.
 
 **Tests.**
-- New: `Tests/UI/test_console_readiness_config_projection.py::test_a_refresh_worker_cancelled_before_its_first_step_still_settles`. Red before the fix ("warm() waited on a read that never ran"); green after. It is at the census tail; `MINIMUM_FILES` is 2031. Serial lane time 7.8 s at load 48.
+- New: `Tests/UI/test_console_readiness_config_projection.py::test_a_refresh_worker_cancelled_before_its_first_step_still_settles`. Red before the fix ("warm() waited on a read that never ran"); green after. It is at the census tail (`MINIMUM_FILES` 2039 after TASK-40322's split). Serial lane time 7.8 s at load 48.
 - AC#3 (`test_console_skill_trust_stock_owned.py`): the script's two unbounded waits now get a 60 s watch: the discovery-producer wait, and `run_test`'s teardown (through a small `run_app()` wrapper). When the watch fires it writes the pending report straight to fd 1 (Textual redirects `sys.stdout` inside `run_test`) and exits 3. The parent's 240 s bound stays as the last resort.
 
 **Evidence (four- and six-wide runs, separate processes, since xdist runs a duplicated node id once).**
