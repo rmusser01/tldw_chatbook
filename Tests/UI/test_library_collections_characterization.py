@@ -122,7 +122,10 @@ import pytest
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.collections_capture_models import CaptureSaveRequest
-from Tests.UI.test_library_collections_capture_reader import _seed_legacy_records
+from Tests.UI.test_library_collections_capture_reader import (
+    _seed_legacy_records,
+    _wait_for_collections_entry,
+)
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -137,6 +140,7 @@ from Tests.UI.test_library_shell import (
 async def _open_collections(screen, pilot) -> None:
     screen.query_one("#library-row-browse-collections", Button).press()
     await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+    await _wait_for_collections_entry(screen, pilot)
 
 
 @pytest.mark.asyncio

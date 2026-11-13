@@ -1059,6 +1059,11 @@ MINIMUM_FILES = 2132
 # TASK-40327 (2026-11-13): append the Media Find-toggle node at the tail. The
 # floor is the measured entry count.
 MINIMUM_FILES = 2139
+MINIMUM_FILES = 2133
+MINIMUM_FILES = 2029
+# TASK-40328 (2026-11-13): append the Collections rail-press recompose node at
+# the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2140
 
 
 def read_census(path: Path) -> list[str]:

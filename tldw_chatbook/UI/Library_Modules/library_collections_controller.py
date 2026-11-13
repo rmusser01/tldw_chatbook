@@ -92,6 +92,9 @@ from ...Widgets.Library import (
     CollectionsCaptureReaderPresentation,
     LibraryAdaptiveReaderShell,
 )
+from ...Widgets.Library.library_collections_capture_reader import (
+    recompose_capture_panes,
+)
 from .library_collections_capture_controller import (
     CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
@@ -419,6 +422,16 @@ class LibraryCollectionsController:
                 lambda: self.call_after_refresh(reveal_current_focus)
             )
 
+    async def _sync_library_collections_capture_panes(self) -> None:
+        """TASK-40328: re-render the capture panes in place (whole screen without)."""
+        self._capture_reader_annotation_draft()
+        presentation = self._library_collections_capture_presentation()
+        if not await recompose_capture_panes(self._screen, presentation):
+            self._refresh_library_collections_capture_reader()
+        self.call_after_refresh(
+            self._sync_library_collections_reader_layout_from_shell
+        )
+
     def _capture_reader_annotation_draft(self) -> None:
         """Retain only live, editable fields under their painted capture identity."""
         try:
@@ -460,13 +473,10 @@ class LibraryCollectionsController:
     async def _load_library_collections_capture_entry(self) -> None:
         """Adopt app authority, load bounded rail data, page, and first detail."""
         controller = self._ensure_library_collections_capture_controller()
-        if controller is None:
-            self._refresh_library_collections_capture_reader()
-            return
-        controller.adopt_active_authority()
-        self._refresh_library_collections_capture_reader()
-
-        if controller.state.authority_key is None:
+        if controller is not None:
+            controller.adopt_active_authority()
+        await self._sync_library_collections_capture_panes()
+        if controller is None or controller.state.authority_key is None:
             return
         scope = controller.scope_service
         try:
@@ -492,7 +502,7 @@ class LibraryCollectionsController:
                 self._library_collections_legacy_recovery_rows = legacy.total
         request = self._library_collections_capture_request()
         if request is None:
-            self._refresh_library_collections_capture_reader()
+            await self._sync_library_collections_capture_panes()
             return
         await controller.load_page(request)
         self._library_collections_requested_page = (
@@ -500,10 +510,10 @@ class LibraryCollectionsController:
             if controller.state.applied_scope is not None
             else request.page
         )
-        self._refresh_library_collections_capture_reader()
+        await self._sync_library_collections_capture_panes()
         if controller.state.selected_identity is not None:
             await controller.load_selected_now()
-        self._refresh_library_collections_capture_reader()
+        await self._sync_library_collections_capture_panes()
 
     def _ensure_library_collections_capture_controller(
         self,

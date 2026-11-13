@@ -362,3 +362,55 @@ async def test_saved_highlight_survives_failed_refresh_without_resubmitting_draf
         finally:
             release.set()
             await pending
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
+    monkeypatch,
+):
+    """TASK-40328: the capture loads re-render the reader panes, not the screen.
+
+    The entry loader used to end each of its three steps in a whole-screen
+    recompose (rail, canvas and reader re-mounted three times, about
+    0.64-0.80 s of UI-loop CPU), on top of the route change's own one.
+    Counts ``compose_content`` passes instead of timing the press.
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app, _scope, _identities = await _seed()
+    host = LibraryProductionCSSHarness(app)
+    composes = []
+    compose_content = LibraryScreen.compose_content
+
+    def counting_compose_content(screen):
+        composes.append(screen)
+        return compose_content(screen)
+
+    monkeypatch.setattr(LibraryScreen, "compose_content", counting_compose_content)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        composes.clear()
+        screen.query_one("#library-row-browse-collections", Button).press()
+
+        def settled() -> bool:
+            work = screen.query("#library-collections-work")
+            return (
+                bool(work)
+                and work.first().presentation.state.loaded_detail is not None
+                and not screen._recompose_required
+                and not any(
+                    worker.group == "library_collections_capture_entry"
+                    and not worker.is_finished
+                    for worker in screen.app.workers
+                )
+            )
+
+        await _wait_for_condition(pilot, settled, message="Collections never settled")
+        await pilot.pause()
+        await pilot.pause()
+        assert len(composes) <= 1, f"{len(composes)} Library recomposes for one press"
+        title = screen.query_one("#library-collections-reader-title")
+        assert "Beta" in str(title.render()) or "Alpha" in str(title.render())
+        assert len(screen.query(".library-collections-item-row")) == 2

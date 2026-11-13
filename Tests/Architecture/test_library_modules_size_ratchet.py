@@ -158,7 +158,10 @@ _BUDGETS: dict[str, int] = {
     # file's own `_measure` expression), no headroom.
     "tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py": 518,
     "tldw_chatbook/UI/Library_Modules/library_collections_capture_controller.py": 699,
-    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
+    # 2026-11-13, TASK-40328: the entry load repaints the capture panes in
+    # place (``_sync_library_collections_capture_panes``): 1689 -> 1698
+    # (measured).
+    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1698,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to

@@ -196,6 +196,49 @@ class CollectionsCaptureReaderPresentation:
         return False, _reason_copy(capability.reason)
 
 
+async def recompose_capture_panes(
+    screen: Any, presentation: CollectionsCaptureReaderPresentation
+) -> bool:
+    """Re-render the mounted capture panes from ``presentation`` (TASK-40328).
+
+    Only the scope rows and the Items and Work panes recompose, never the
+    screen, and only when their presentation changed; a control the rebuild
+    removed is focused again by id.
+
+    Args:
+        screen: The Library screen (a ``BaseAppScreen``) hosting the panes.
+        presentation: The new render input for every pane.
+
+    Returns:
+        False, having done nothing, when the Items or Work pane is not mounted.
+    """
+    items = screen.query("#library-collections-items")
+    work = screen.query("#library-collections-work")
+    if not items or not work:
+        return False
+    scopes = screen.query("#library-collections-scopes")
+    panes = [
+        pane
+        for pane in (*scopes, items.first(), work.first())
+        if pane.presentation != presentation
+    ]
+    focused = screen.focused
+    owned = focused is not None and any(
+        pane is focused or pane in focused.ancestors for pane in panes
+    )
+    focus_id = focused.id if owned else None
+    for pane in panes:
+        screen.release_mouse_capture_for_teardown()
+        pane.presentation = presentation
+        await pane.recompose()
+    screen.sweep_stale_mouse_capture()
+    # Textual moved focus off the removed widget; put it back by id.
+    if focus_id and getattr(screen.focused, "id", None) != focus_id:
+        for target in screen.query(f"#{focus_id}"):
+            target.focus()
+    return True
+
+
 class LibraryCollectionsScopeRows(Vertical):
     """Contextual capture scopes mounted directly beneath Collections."""
 
