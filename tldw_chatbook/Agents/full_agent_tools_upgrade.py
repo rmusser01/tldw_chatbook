@@ -37,9 +37,16 @@ when it exists, the served mobile companion's ``<user_data>/mobile/runs.db``
 light surface too. When ChaChaNotes is unavailable the Console's runs
 database cannot be found, and that is a failure, not "no signal" (F3-4).
 
-How it runs (``run_for_profile``): once per launch, as the first staggered boot
-worker, on a worker thread after the UI is ready, so it never blocks startup
-or the UI loop. In order:
+How it runs: in the app (``run_for_profile``), once per launch, as the first
+staggered boot worker, on a worker thread after the UI is ready, so it never
+blocks startup or the UI loop; and in ``tldw-serve`` (``run_for_served_profile``),
+at every start, before the server accepts a connection, so it finishes or
+fails closed before the mobile companion can plan a phone send (review v5r2,
+G532-R2-1). In the app a Console send planned before the worker lands gets
+the light set, the safe default (``Utils/boot_worker_policy.py``); it cannot
+feed the check, whose reads start as the worker starts, at UI readiness,
+before any send could finish a model round trip and record a tool call.
+Both run the same steps, in order:
 
 1. A recorded marker means the upgrade already ran for this profile: done.
    The marker is a row in the workspaces database's one-time backfill table,
@@ -114,12 +121,20 @@ __all__ = [
     "UpgradeResult",
     "detect_agent_feature_use",
     "run_for_profile",
+    "run_for_served_profile",
     "run_full_agent_tools_upgrade",
 ]
 
 #: The key this upgrade records in the workspaces database's one-time
 #: backfill table (``WorkspaceDB.mark_agent_backfill_complete``).
 FULL_AGENT_TOOLS_UPGRADE_MARKER = "full_agent_tools_upgrade"
+
+#: The Console's runs database file, beside ChaChaNotes (``ConsoleRuntime``).
+_AGENT_RUNS_DB_NAME = "agent_runs.db"
+
+#: The client id ``tldw-serve``'s run opens the profile's workspaces database
+#: with (``run_for_served_profile``).
+_SERVED_CLIENT_ID = "full-agent-tools-upgrade"
 
 #: How long the signal reads may take before they give up (a failure: the
 #: profile stays light and the next launch retries). Every read is over a
@@ -568,7 +583,7 @@ def _agent_runs_path(chachanotes_db: Any) -> Path | None:
     db_path = getattr(chachanotes_db, "db_path", None)
     if not db_path or str(db_path) == ":memory:" or str(db_path).startswith("file:"):
         return None
-    return Path(db_path).parent / "agent_runs.db"
+    return Path(db_path).parent / _AGENT_RUNS_DB_NAME
 
 
 def _companion_runs_path() -> Path:
@@ -639,3 +654,52 @@ def run_for_profile(
         except Exception:  # noqa: BLE001 -- the app may be closing; config is saved
             pass
     return result
+
+
+def run_for_served_profile() -> UpgradeResult:
+    """``tldw-serve``'s run: the same check, before the server takes a request.
+
+    Review v5r2 (G532-R2-1). The served mobile companion plans phone sends in
+    the serve process, and its runs (``<user_data>/mobile/runs.db``) are one
+    of the check's sources. Run only by the app, the check could not tell a
+    serve-first profile's light-era phone use from use before the light
+    surface: a fresh profile first used from the phone, with one tool
+    switched on by itself, had Full agent tools turned on at its first app
+    launch. ``Web_Server.serve.run_web_server`` calls this before
+    ``serve()``, so it finishes, or fails closed, before the listener binds
+    and so before any phone send can be planned. A fresh profile is recorded
+    while it has no signal; a phone-only profile from before the light
+    surface is upgraded at serve start, and the companion's next send reads
+    the new value (the write republishes the in-process config).
+
+    It opens the profile's own workspaces database (the bindings and the
+    marker, the one the app opens; created if absent, as the app would),
+    finds the Console's runs database beside ChaChaNotes and the companion's
+    in ``<user_data>/mobile``, and closes what it opened.
+
+    Returns:
+        The outcome. Never raises.
+    """
+    try:
+        from tldw_chatbook.app_services import open_profile_storage
+        from tldw_chatbook.config import (
+            get_chachanotes_db_path,
+            get_workspaces_db_path,
+        )
+
+        agent_runs_path = Path(get_chachanotes_db_path()).parent / _AGENT_RUNS_DB_NAME
+        storage = open_profile_storage(
+            client_id=_SERVED_CLIENT_ID, workspaces=get_workspaces_db_path()
+        )
+    except Exception as exc:  # noqa: BLE001 -- any failure keeps the light set
+        return _logged(
+            UpgradeResult(UpgradeOutcome.FAILED, error_type=type(exc).__name__)
+        )
+    try:
+        return run_full_agent_tools_upgrade(
+            workspace_db=storage.workspaces,
+            agent_runs_path=agent_runs_path,
+            companion_runs_path=_companion_runs_path,
+        )
+    finally:
+        storage.close()  # this thread's connection; never raises (ADR-250 s5)

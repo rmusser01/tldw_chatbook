@@ -77,9 +77,9 @@ To turn more on:
   surface for that turn.
 
 **Upgrading a profile from before the light tool surface.** The first time
-the Chatbook app (the terminal UI) opens a profile that has no
-`full_agent_tools_enabled` setting on this version, it checks once, in the
-background, whether the profile already uses agent features:
+the Chatbook app or `tldw-serve` opens a profile that has no
+`full_agent_tools_enabled` setting on this version, it checks once whether
+the profile already uses agent features:
 
 - a sub-agent definition (**Settings ▸ Agents**);
 - a workspace folder or SSH remote binding (**Settings ▸ Workspaces**);
@@ -104,9 +104,12 @@ set yourself, so switching Full agent tools off afterwards keeps it off. If
 it cannot read the profile's data, it changes nothing and tries again at the
 next launch.
 
-`tldw-serve` on its own does not run this check. A profile you use only from
-the mobile companion keeps the light set until the Chatbook app opens it
-once, or until you turn **Full agent tools** on yourself.
+The Chatbook app runs the check in the background once it is open.
+`tldw-serve` runs it as it starts, before it accepts connections, so a
+profile you use only from the mobile companion is checked before its next
+phone send. A new profile first used from the phone is recorded before any
+phone use, so nothing it does later on the light set can turn Full agent
+tools on.
 
 Each send reads these switches fresh, so a change applies on the next send.
 The exception is a conversation whose sub-agents are still running, or have

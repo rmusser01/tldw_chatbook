@@ -14,9 +14,9 @@ and this project adheres to Some kind of Versioning
   gates, or `[tools] full_agent_tools_enabled`). Sub-agents, skills, web,
   Watchlists, workspace, character, Canvas and chat-fork tools come with it.
   Profiles that already use agent features keep them: the first time the
-  Chatbook app (the terminal UI) opens a profile with no
-  `full_agent_tools_enabled` setting on this version, it checks once, in the
-  background, for a sub-agent definition, a workspace folder or SSH binding,
+  Chatbook app or `tldw-serve` opens a profile with no
+  `full_agent_tools_enabled` setting on this version, it checks once for a
+  sub-agent definition, a workspace folder or SSH binding,
   or an earlier Console or mobile-companion reply that ran a tool outside the
   light set (a call that was refused does not count, and neither does the
   agent's own housekeeping: searching for or loading tools, or reading its
@@ -28,10 +28,11 @@ and this project adheres to Some kind of Versioning
   on the light set with config.toml unchanged. The check runs once per
   profile and never overrides a value you set, so switching Full agent tools
   off afterwards keeps it off. If it cannot read the profile's data, it
-  changes nothing and tries again at the next launch. `tldw-serve` on its
-  own does not run the check: a profile used only from the mobile companion
-  keeps the light set until the app opens it once, or until you turn Full
-  agent tools on.
+  changes nothing and tries again at the next launch. The app runs the
+  check in the background once it is open; `tldw-serve` runs it as it
+  starts, before it accepts connections, so a profile used only from the
+  mobile companion is checked before its next phone send, and a new profile
+  first used from the phone is recorded before any phone use can count.
 - Console replies now stream by default for every provider, including
   OpenAI, Anthropic and the Custom OpenAI-compatible slots: the shipped
   `[chat_defaults] streaming = true` outranks each `[api_settings.<provider>]
