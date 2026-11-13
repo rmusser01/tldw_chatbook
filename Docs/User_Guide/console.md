@@ -1265,20 +1265,16 @@ configured in **F4 ▸ Providers & Models**.
   saved as an ordinary assistant message, Send stays available, and the run's
   trace records **Reasoning not preserved for replay**; the reply is never
   held behind a response-recovery card.
-- Known limitation: with trace capture on (the default), the third and later
-  sends in a saved Kimi chat stop before the provider with **Trace capture
-  blocked** (the provider was not contacted). Choose **Send without capture**
-  for that turn; it reaches the provider and the reply is saved normally.
-  **Retry capture** meets the same refusal: the card stays, says trace capture
-  could not start (the provider was still not contacted), and **Send without
-  capture** still works.
+- With trace capture on (the default), every turn of a saved Kimi chat is
+  traced like any other: each request replays the earlier replies' saved
+  reasoning, and its trace records that request, so **Trace** shows each Kimi
+  call with its reply.
 - Private continuation data is assistant/variant-owned, bounded, and omitted
   from the visible transcript, logs, summaries, ordinary exports, and usage
   details. It still counts against the context window and is evicted atomically
   with its visible owner.
 - **Capture On** preserves the same eligible saved continuation and thinking
-  history as **Capture Off**, including subsequent sends (except for the
-  saved-Kimi limitation above). Provider compatibility
+  history as **Capture Off**, including subsequent sends. Provider compatibility
   and the conversation's thinking-history policy still determine what is
   replayed; trace masking does not change the provider's selected history.
 - Terminal usage reaches Console when the provider returns it. If a selected
