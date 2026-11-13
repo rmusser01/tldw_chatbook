@@ -512,3 +512,96 @@ def test_console_tokenizer_lookup_leaves_no_tokenizers_root_to_restore(
     } == {"unused"}
     manager.add_mapping("model", "tokenizer")  # the first write creates it
     assert tokenizers.is_dir() and tokenizers.stat().st_mode & 0o077 == 0
+
+
+@pytest.mark.parametrize("legacy_folder", [False, True], ids=["console_read", "legacy_folder"])
+def test_console_opened_profile_archive_passes_isolated_review_on_a_fresh_home(
+    tmp_path, monkeypatch, legacy_folder
+):
+    """AC#3's real failure, automated: isolated Review restore on a new machine.
+
+    TASK-34100.16.1 review v5r2 (R2-5). Live, every archive from a profile that
+    had opened Console carried ``tokenizers.custom``, and Review restore of it
+    as an isolated profile on a fresh HOME refused every folder with
+    ``isolated_destination_parent_overlaps_control`` (g161v5-rt/05-07). The
+    ``legacy_folder`` case is the negative control: an archive made while the
+    empty 0755 folder earlier builds created exists is still refused
+    (TASK-34100.16.1.2), which proves this check can see the failure.
+    """
+    from tldw_chatbook.Backup_Recovery import capture_service
+    from tldw_chatbook.Backup_Recovery.archive_writer import write_archive
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Utils.custom_tokenizers import CustomTokenizerManager
+
+    home = tmp_path / "old"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        bootstrap, "default_bootstrap_root", lambda: source.parent / "recovery-bootstrap"
+    )
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+    if legacy_folder:
+        (source.parent / "tokenizers").mkdir(mode=0o755)
+    CustomTokenizerManager().get_tokenizer_for_model("gpt-4o", "openai")  # Console
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+    _populate_required_dependencies(preview)
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+    archive = tmp_path / "console.tldw-backup.zip"
+    captured = capture(
+        (source,),
+        preview.scope_digest,
+        archive,
+        options=options,
+        cancel=Event(),
+        include_known_profiles=True,
+    )
+    sealed = write_archive(captured, archive, password=None, cancel=Event())
+
+    # The new machine: a fresh HOME where setup has made only its config folder.
+    config = tmp_path / "new" / ".config" / "tldw_cli"
+    config.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv("HOME", str(tmp_path / "new"))
+    monkeypatch.setattr(
+        bootstrap, "default_bootstrap_root", lambda: config / "recovery-bootstrap"
+    )
+    restores = tmp_path / "new" / "restores"
+    restores.mkdir(mode=0o700)
+    service = RecoveryService(config / "recovery" / "control")
+    try:
+        inspection = service.start_inspection(sealed.path, password=None)
+        assert service.wait(inspection, timeout=120)["state"] == "succeeded"
+        slots = [
+            slot["logical_id"]
+            for slot in service.summary(inspection)["destination_slots"]
+            if slot["kind"] == "profile_base"
+        ]
+        assert len(slots) == 1
+
+        def review():
+            return service.preview_restore(
+                inspection,
+                mode="isolated",
+                profile_bases={slots[0]: restores / "g161"},
+                external_destinations={},
+                target=None,
+                profile_names={slots[0]: "Restored"},
+            )
+
+        if legacy_folder:
+            with pytest.raises(
+                ValueError, match="isolated_destination_parent_overlaps_control"
+            ):
+                review()
+        else:
+            assert review().mode == "isolated"
+    finally:
+        service.close()
