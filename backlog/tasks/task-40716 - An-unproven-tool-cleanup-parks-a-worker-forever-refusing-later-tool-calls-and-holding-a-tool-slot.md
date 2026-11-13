@@ -1,7 +1,7 @@
 ---
 id: TASK-40716
 title: "An unproven tool cleanup parks a worker forever, refusing the run's later tool calls and holding an app-wide tool slot"
-status: To Do
+status: In Progress
 created_date: 2026-11-13 06:28
 labels:
 - follow-up
@@ -49,3 +49,11 @@ It happens with the workflow feature off. The `agent_service` park needs the ord
 - [ ] #3 No thread or task waits on an event or future that nothing can complete, and the app can still exit while a cleanup is unproven.
 - [ ] #4 A resource whose cleanup is unproven, including its held storage leases (the SSH test's `storage.live` and its `db.agent_runs` source), is still never reused while it may be live. The SSH, Raw CLI and native Git tests assert the new behaviour instead of a living parked worker.
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: yes. The parks implement ADR-285's and ADR-084's "no proof retains the original worker/scopes/operation; this can hold disposal indefinitely", and AC#3 contradicts that sentence. ADR-134 (what a retained operation counts toward) and ADR-155 (the drain outcome after an abandon) need amendments too. Design first: the owner rules before any production change.
+
+1. Reproduce (done): `Tests/Agents/test_unproven_tool_cleanup_run.py`, a strict xfail. An ordinary-tree source scope whose return fails parks the `tool-*` worker. The first call reports a timeout only after its whole deadline, the next call in the same run is refused `previous_tool_still_running`, and `tool_workers` stays 1 after the root finishes.
+2. Owner ruling on the design: keep the resource held and release the run. One shared retention helper replaces the six parks. It marks the owner `cleanup_unproven` and registers a runtime-visible record. The worker waits on that record's event, which something can complete, so its scope stack (leases, scratch, claim) stays held exactly as today. The call returns at once with a terminal reason that names the unproven cleanup, and the run ends. The slot stays counted until a later proof or an explicit user abandon. Abandon finishes only the operation, so the drain reports unproven (ADR-155). Disposal stops waiting on retained records. Two sites run on the loop's default executor, which joins its threads at exit: Raw CLI (a Textual worker) and change-revert (`to_thread`). Those two move their scopes into the record instead of blocking the thread.
+3. After the ruling: amend the ADRs, implement the helper, change the six sites, add the run-terminal reason and the abandon action, and convert the SSH, Raw CLI and native Git subprocess tests to assert the new behaviour. Remove the xfail from the reproduction test.
