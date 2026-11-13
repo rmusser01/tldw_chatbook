@@ -479,7 +479,11 @@ _BUDGETS: dict[str, int] = {
     # head (16,892 + 46 = 16,938).
     # 2026-11-23: rebased onto dev b31e3e9241 (plus the TASK-42478 row above);
     # row set to the measurement at this head (16,896 + 46 = 16,942).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16942,
+    # 2026-11-12 owner decision (expand limits, never contort code; B2b
+    # follow-up burn-down PR 5, stacked on #3441), each line one commit:
+    # TASK-33910.44, the lore and dictionary imports await one parse helper
+    # in a thread: +3 (16,938 -> 16,941).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16945,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
