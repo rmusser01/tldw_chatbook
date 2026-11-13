@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import json
 import os
 import threading
 from collections.abc import Iterator
@@ -33,6 +34,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Input
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
+import tldw_chatbook.UI.Persona_Modules.roleplay_import_parse as parse_module
 import tldw_chatbook.UI.Persona_Modules.roleplay_import_sniff as sniff_module
 from Tests.Actor_Packs.test_actor_pack_attribution import services
 from Tests.UI.roleplay_frame_harness import (
@@ -1276,3 +1278,128 @@ async def test_a_sort_cycle_and_a_tag_pick_are_newer_intents(
         await settle(pilot)
         assert after_sort != before
         assert screen._import_intent_now() != after_sort
+
+
+# ---- TASK-33910.44: lore and dictionary imports parse off the event loop ----
+
+
+class _ParseGate:
+    """Hold the import's parse (and a lore book's normalise) in its thread.
+
+    It patches the parse module's own ``json`` name, never the stdlib's
+    (TASK-38685), and its ``normalize_world_book_import``. On the event-loop
+    thread a step never waits: that would deadlock the loop the test runs
+    on, and the thread it ran on is the finding.
+    """
+
+    def __init__(self, monkeypatch, loop_thread: int) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.threads: dict[str, int] = {}
+        real_normalize = parse_module.normalize_world_book_import
+
+        def hold(step: str) -> None:
+            self.threads[step] = threading.get_ident()
+            self.entered.set()
+            if self.threads[step] != loop_thread:
+                assert self.release.wait(30), f"the {step} gate was never released"
+
+        def loads(text, *args, **kwargs):
+            hold("parse")
+            return json.loads(text, *args, **kwargs)
+
+        def normalize(data):
+            hold("normalize")
+            return real_normalize(data)
+
+        monkeypatch.setattr(
+            parse_module, "json", SimpleNamespace(**{**vars(json), "loads": loads})
+        )
+        monkeypatch.setattr(parse_module, "normalize_world_book_import", normalize)
+
+
+@pytest.mark.parametrize(
+    "fixture, kind",
+    [("lore_tldw_export.json", "lore"), ("dictionary_export.json", "dictionary")],
+)
+async def test_a_lore_or_dictionary_import_parses_off_the_event_loop(
+    fixture, kind, import_env, mock_app_instance, monkeypatch
+):
+    """The file's parse (and a lore book's normalise) runs in a worker
+    thread, and the screen answers while it is held there; the import then
+    lands and selects as before. On dev only the read ran in a thread: the
+    parse and the normalise held the event loop (exists on dev;
+    TASK-33910.44 AC#1 fixes it). Mutations M44-A (the lore read on the
+    loop), M44-B (the lore normalise on the loop) and M44-C (the dictionary
+    read on the loop) each turn a case red."""
+    fake_file_picker(monkeypatch, import_env.files[fixture])
+    loop_thread = threading.get_ident()
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_notices(monkeypatch, screen)
+        gate = _ParseGate(monkeypatch, loop_thread)
+        try:
+            await _press_import(pilot)
+            await wait_until(pilot, gate.entered.is_set, what="the parse")
+            assert gate.threads["parse"] != loop_thread, "parsed on the event loop"
+            answered = asyncio.Event()
+            screen.call_later(answered.set)
+            await asyncio.wait_for(answered.wait(), 3)
+        finally:
+            gate.release.set()
+        name = EXPECTED_NAMES[fixture]
+        await wait_until(
+            pilot,
+            lambda: screen.state.selected_entity_name == name,
+            what="the import selected",
+        )
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        assert import_env.names(kind) == [name]
+        if kind == "lore":
+            assert gate.threads["normalize"] != loop_thread, "normalised on the loop"
+        assert notices[-1:] == [f"{name} imported."]
+
+
+@pytest.mark.parametrize(
+    "kind, body, toast",
+    [
+        ("lore", b"{not json", "Import failed: not valid JSON (Expecting"),
+        ("lore", b'{"entries": 5}', "Import failed: 'entries' must be a list or"),
+        ("lore", b'{"name": "\xe9"}', "Import failed: 'utf-8' codec can't decode"),
+        ("dictionary", b"{not json", "Import failed: not valid JSON (Expecting"),
+        ("dictionary", b"[1, 2]", "Import failed: JSON must be a dictionary object."),
+        ("dictionary", b'{"name": "\xe9"}', "Import failed: 'utf-8' codec can't"),
+    ],
+    ids=[
+        "lore-not-json",
+        "lore-shape",
+        "lore-not-utf8",
+        "dictionary-not-json",
+        "dictionary-array",
+        "dictionary-not-utf8",
+    ],
+)
+async def test_a_file_the_import_thread_refuses_toasts_as_on_dev_and_adds_nothing(
+    kind, body, toast, import_env, mock_app_instance, tmp_path
+):
+    """The read, the parse and the shape check moved into one thread
+    (TASK-33910.44); their refusals still toast dev's copy and import
+    nothing. Mutation M44-D (no ``ImportNotJSON`` branch) turns the not-JSON
+    cases red."""
+    source = tmp_path / "refused.json"
+    source.write_bytes(body)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_app_notices(pilot.app)
+        if kind == "lore":
+            await screen._import_world_book_from_path(str(source))
+        else:
+            await screen._import_dictionary_from_path(str(source))
+        await settle(pilot)
+        failures = [message for message, _ in notices if "failed" in message]
+        assert len(failures) == 1 and failures[0].startswith(toast), notices
+        assert import_env.names(kind) == []
