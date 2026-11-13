@@ -1154,14 +1154,19 @@ class TestEngineHardening:
     def test_windows_job_reaps_descendant_after_hook_leader_exits(
         self, tmp_path, monkeypatch
     ):
+        import _winapi
+
         import psutil
+        import win32con
+        import win32job
 
         from tldw_chatbook.Notes.git_process_containment import ProcessTreeController
 
         child_marker = tmp_path / "hook-descendant"
         child = (
-            f"import os,pathlib,time;pathlib.Path({str(child_marker)!r})"
-            ".write_text(str(os.getpid()));time.sleep(30)"
+            f"import os,pathlib,time;marker=pathlib.Path({str(child_marker)!r});"
+            "pending=marker.with_suffix('.tmp');pending.write_text(str(os.getpid()));"
+            "pending.replace(marker);time.sleep(30)"
         )
         parent = (
             "import subprocess,sys,time,pathlib;"
@@ -1172,31 +1177,47 @@ class TestEngineHardening:
         )
         engine = _engine(HookSpec("PreToolUse", (sys.executable, "-c", parent), timeout_s=2))
         observed = []
+        descendant_handle = None
         original_kill = ProcessTreeController.kill
 
         def kill(controller, tree):
+            nonlocal descendant_handle
+            assert descendant_handle is None
+            descendant_handle = _winapi.OpenProcess(
+                _winapi.SYNCHRONIZE | win32con.PROCESS_QUERY_INFORMATION,
+                False,
+                int(child_marker.read_text()),
+            )
+            assert win32job.IsProcessInJob(descendant_handle, tree.native_identity.job_handle)
             observed.append((
                 tree.process.poll(),
-                child_marker.exists() and psutil.pid_exists(int(child_marker.read_text())),
+                _winapi.WaitForSingleObject(descendant_handle, 0),
             ))
             original_kill(controller, tree)
 
         monkeypatch.setattr(ProcessTreeController, "kill", kill)
         try:
-            assert not engine.fire("PreToolUse", session_id="s").blocked
-            assert observed == [(0, True)]
+            outcome = engine.fire("PreToolUse", session_id="s")
+            assert descendant_handle is not None
+            # A terminated process can retain its PID while its handle is open.
+            assert _winapi.WaitForSingleObject(descendant_handle, 0) == _winapi.WAIT_OBJECT_0
+            assert not outcome.blocked
+            assert observed == [(0, _winapi.WAIT_TIMEOUT)]
             assert child_marker.exists()
-            assert not psutil.pid_exists(int(child_marker.read_text()))
         finally:
-            engine.close()
-            if child_marker.exists():
-                pid = int(child_marker.read_text())
-                try:
-                    process = psutil.Process(pid)
-                    if process.create_time() <= child_marker.stat().st_mtime:
-                        process.kill()
-                except psutil.NoSuchProcess:
-                    pass
+            try:
+                engine.close()
+                if child_marker.exists():
+                    pid = int(child_marker.read_text())
+                    try:
+                        process = psutil.Process(pid)
+                        if process.create_time() <= child_marker.stat().st_mtime:
+                            process.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+            finally:
+                if descendant_handle is not None:
+                    _winapi.CloseHandle(descendant_handle)
 
     @pytest.mark.parametrize("leader_returncode", [0, None])
     def test_windows_hook_launch_owns_tree_and_uses_original_limits(
