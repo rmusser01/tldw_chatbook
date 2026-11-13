@@ -476,7 +476,7 @@ _LOG_SANITIZER_SHAPES = {
     "stripe-underscore": ("sk" + "_live_" + _FAKE + "a1B2c3D4e5", None),
     "webhook-secret": ("whsec" + "_" + _FAKE + "a1B2" * 4, None),
     "groq": ("gsk" + "_" + _FAKE + "a1B2" * 6, None),
-    "bearer-any-token": ("Bearer " + "tok!en$" + _FAKE, "tok!en$" + _FAKE),
+    "bearer-any-token": ("Bearer " + _FAKE + "!x$", _FAKE + "!x$"),
     "url-user-only": ("https://" + _FAKE + "@example.com/repo.git", _FAKE),
     "pem-unterminated": (
         "-----BEGIN PRIVATE KEY-----\n" + _FAKE + "-PEM-BODY",
@@ -520,6 +520,41 @@ def test_the_bundle_masks_with_the_log_sanitizers_own_patterns() -> None:
         *log_sanitizer._UNDERSCORE_KEY_CREDENTIALS,
     ):
         assert pattern in shared
+
+
+#: TASK-40301 review r14ep-rev1 I2: code and docs that only look like a
+#: credential (a template, a placeholder, a shell variable, the user-only
+#: ``git@`` form, prose naming a PEM header).
+_LOOK_ALIKE_TEXTS = (
+    'headers = {"Authorization": f"Bearer {api_key}"}',
+    "curl -H 'Authorization: Bearer <token>' https://api.example.com",
+    'export AUTH="Bearer $OPENAI_API_KEY"',
+    "git clone ssh://git@github.com/org/repo.git",
+    "A PEM file begins with -----BEGIN PRIVATE KEY----- then base64 lines.",
+)
+
+
+@pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])
+@pytest.mark.parametrize("text", _LOOK_ALIKE_TEXTS)
+def test_code_and_docs_that_only_look_like_credentials_survive_a_shared_bundle(
+    text: str, profile: str
+) -> None:
+    """TASK-40301 review I2: the log rules for Bearer, URL user info and an
+    unterminated private key also masked these in a new export and refused an
+    older bundle holding them. The bundle uses their credential-shaped forms,
+    so these survive and import, while real ones stay masked (the shapes
+    test above) and refused (the import test below)."""
+    assert trajectory_export._credential_text(text) == (text, False)
+
+    _serialized, payload = _export_bytes_with(text, profile)
+
+    assert not any(
+        item["reason"] in {"credential", "credential_key"}
+        for item in payload["manifest"]["redaction_provenance"]
+    )
+    older = _build(_snapshot())
+    older["events"][0]["payload"]["result"] = text
+    trajectory_import.load_imported_trace(_resign(older))
 
 
 def test_an_older_bundle_holding_a_newly_masked_shape_is_refused_on_import() -> None:

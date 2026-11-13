@@ -3,7 +3,7 @@ id: TASK-40301
 title: "A shared trace bundle leaves GitHub, Hugging Face, Google, Slack and webhook secrets unmasked that the log sanitizer masks"
 status: Done
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 03:33
+updated_date: 2026-11-13 19:16
 assignee:
 - '@claude'
 labels:
@@ -64,3 +64,8 @@ A shared Trace bundle now masks every credential value shape the log sanitizer m
 - **Lane**: the three export nodes join the recovered-suites step after TASK-39149's (`derived-artifacts.yml`), 89 cases in 21.5 s serial with that step's flags, load 47 on 18 CPUs. `Tests/Utils/test_log_sanitizer.py` already runs whole there. The step's target list is pinned in `Tests/CI/test_ci_queue_pressure_contract.py` (`RECOVERED_SUITES_TARGETS`), updated in 2949980b92; `Tests/CI` 1243 passed after.
 - **Runs** (run.sh, `-n 4`, load 50-70): the 40 non-Architecture test files that name `trajectory_export`, `trajectory_import` or the log sanitizer: 1502 passed, 8 failed, 1 error. With both changed sources at base, the same command over those nodes: 7 failed and the same collection error (`No module named tldw_chatbook.Chat.console_thinking`); the 8th, `test_installed_tiktoken_bundle_is_offline_and_immutable[direct-engine-first-sdist]`, passed at head on its own (190 s, a load flake). The 7 are `RecoveryRequired`, packaging and RAG-closure reds present at base.
 - Files: `tldw_chatbook/Utils/log_sanitizer.py`, `tldw_chatbook/Chat/trajectory_export.py`, `Tests/Chat/test_trace_v2_collaboration.py`, `Tests/Utils/test_log_sanitizer.py`, `.github/workflows/derived-artifacts.yml`.
+
+**Review r14ep-rev1 I2 (round 2).** The shared tuple masked code and docs that only look like credentials in new bundles, and an older bundle holding them was refused on import: `f"Bearer {api_key}"`, `Authorization: Bearer <token>`, `AUTH="Bearer $OPENAI_API_KEY"`, `ssh://git@github.com/...`, prose naming `-----BEGIN PRIVATE KEY-----`.
+- `CREDENTIAL_VALUE_PATTERNS` now carries credential-shaped forms of those three rules: `_BEARER_TOKEN` (the token starts with 8 token characters, so a leading `{ < $ % ' "` never matches), `_URL_CREDENTIAL_USERINFO` (user info with a password, or a user part of 8 characters or more; `git@` and `app@` pass), `_PRIVATE_KEY_CREDENTIAL` (a terminated block, or an unterminated one only when base64 follows the BEGIN line). The same tuple is the export's mask and the import's refusal, so both changed together.
+- `_BEARER`, `_DIAGNOSTIC_URL_USERINFO` and `_PRIVATE_KEY_BLOCK` are unchanged on purpose: logs keep masking the broader forms (real bearer tokens included), and `sanitize_trace_credentials_v1`/`_v2` read `_BEARER`, whose output must stay byte-identical for stored traces (TASK-39123); narrowing it there would make stored history read as modified.
+- Test `Tests/Chat/test_trace_v2_collaboration.py::test_code_and_docs_that_only_look_like_credentials_survive_a_shared_bundle` (5 texts x 3 profiles): no credential provenance, `_credential_text` leaves the text unchanged, and an older bundle holding the text imports. Red against round 1's sanitizer: 15/15. Real shapes stay masked (the shapes test; its Bearer case now uses a token-shaped body) and refused (the import test). Laned in recovered-suites and pinned in `RECOVERED_SUITES_TARGETS`.

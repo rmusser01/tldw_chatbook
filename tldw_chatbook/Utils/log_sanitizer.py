@@ -470,12 +470,33 @@ _TOKEN_CREDENTIALS = (
     *_UNDERSCORE_KEY_CREDENTIALS,
     *_LOG_ONLY_CREDENTIALS,
 )
-#: Every credential value shape logs mask. A shared Trace bundle masks with
-#: this same tuple (TASK-40301), so the export cannot drift from logs again.
+#: Credential-shaped forms of three log rules (TASK-40301 review I2). Logs
+#: and the stored trace projections keep the broader rules, which also match
+#: code and docs a shared bundle must keep: ``f"Bearer {api_key}"``,
+#: ``Bearer <token>``, ``ssh://git@github.com/...``, prose naming a PEM
+#: header. Here a Bearer token starts with 8 token characters, URL user info
+#: has a password or 8 characters, and an unterminated private key has a
+#: base64 body.
+_BEARER_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_-])(Bearer\s+)([A-Za-z0-9_.~+/=-]{8,}\S*)", re.IGNORECASE
+)
+_URL_CREDENTIAL_USERINFO = re.compile(
+    r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://"
+    r"(?:[^/?#\s@:]*:[^/?#\s@]*|[^/?#\s@:]{8,})@",
+    re.IGNORECASE,
+)
+_PRIVATE_KEY_CREDENTIAL = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----"
+    r"(?:[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----|\s*[A-Za-z0-9+/]{16,}[\s\S]*)"
+)
+#: Every credential value shape logs mask, in its credential-shaped form. A
+#: shared Trace bundle masks with this same tuple (TASK-40301), so the export
+#: cannot drift from logs again; logs apply the token rules as they are and
+#: broader forms of the other three.
 CREDENTIAL_VALUE_PATTERNS = (
-    _PRIVATE_KEY_BLOCK,
-    _DIAGNOSTIC_URL_USERINFO,
-    _BEARER,
+    _PRIVATE_KEY_CREDENTIAL,
+    _URL_CREDENTIAL_USERINFO,
+    _BEARER_TOKEN,
     *_TOKEN_CREDENTIALS,
 )
 
