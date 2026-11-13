@@ -46,6 +46,7 @@ from Tests.UI.roleplay_frame_harness import (
     select_roleplay_item,
     settle,
     start_new,
+    visible_item_ids,
     wait_for_chooser,
     wait_until,
 )
@@ -1403,3 +1404,92 @@ async def test_a_file_the_import_thread_refuses_toasts_as_on_dev_and_adds_nothin
         failures = [message for message, _ in notices if "failed" in message]
         assert len(failures) == 1 and failures[0].startswith(toast), notices
         assert import_env.names(kind) == []
+
+
+# ---- TASK-33910.45: the two landing paths B2b added, mounted ----
+
+
+async def test_an_import_that_lands_under_the_new_chooser_toasts_and_selects_nothing(
+    import_env, mock_app_instance, monkeypatch
+):
+    """The New chooser opened over Roleplay before a slow character import
+    lands: the landing toasts where the card went and selects nothing, so the
+    chooser and the row the user had are left alone. New with B2b, which
+    widened the landing; untested until TASK-33910.45. Mutation M45-A
+    (``_import_presentation_is_current`` without ``self.app.screen is self``)
+    selects the card under the modal and turns this red."""
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    with _slow_character_import(monkeypatch) as (entered, release):
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+        ) as pilot:
+            screen = pilot.app.screen
+            notices = _record_notices(monkeypatch, screen)
+            await settle(pilot)
+            loaded = screen.state.selected_entity_id
+            await _press_import(pilot)
+            await wait_until(pilot, entered.is_set, what="the import in its thread")
+            screen.query_one("#personas-library-new", Button).press()
+            options = await wait_for_chooser(pilot)
+            release.set()
+            await wait_until(
+                pilot, lambda: _import_idle(screen), what="the import done"
+            )
+            await wait_until(pilot, lambda: bool(notices), what="the landing toast")
+            assert "Wren Halloway" in import_env.characters()
+            assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+            assert pilot.app.focused is options, "the chooser lost its focus"
+            assert screen.state.selected_entity_id == loaded
+            await pilot.press("escape")
+            await wait_until(
+                pilot, lambda: not screen._new_chooser_open, what="the chooser closed"
+            )
+            await settle(pilot)
+            assert screen.state.selected_entity_id == loaded
+            assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+
+
+async def test_a_lore_import_clears_a_search_its_book_does_not_match_and_selects_it(
+    import_env, mock_app_instance, monkeypatch
+):
+    """A selecting landing clears an active Lore books search, so the imported
+    book is listed as well as selected. Dev cleared only Characters' search: a
+    lore landing re-read the list with the query, so a book it did not match
+    was selected out of the list. B2b clears every kind's search, so this is
+    green on dev since B2b; mutation M45-B (the characters-only clear, the
+    lore list re-read with the query) turns it red (TASK-33910.45 AC#2)."""
+    harbour = WorldBookManager(import_env.db).create_world_book("Harbour Lore")
+    fake_file_picker(monkeypatch, import_env.files["lore_tldw_export.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        assert await pilot.click("#personas-mode-lore")
+        await settle(pilot)
+        search = screen.query_one("#personas-library-search", Input)
+        search.focus()
+        await pilot.press(*"harb")
+        await wait_until(
+            pilot,
+            lambda: visible_item_ids(screen) == (f"lore:{harbour}",),
+            what="the search's one match",
+        )
+        notices = _record_notices(monkeypatch, screen)
+        await _press_import(pilot)
+        await wait_until(
+            pilot,
+            lambda: screen.state.selected_entity_name == "Kepler Atlas",
+            what="the imported book selected",
+        )
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        await settle(pilot)
+        kepler = next(
+            book["id"]
+            for book in WorldBookManager(import_env.db).list_world_books(True)
+            if book["name"] == "Kepler Atlas"
+        )
+        assert (search.value, screen.state.search_query) == ("", "")
+        assert f"lore:{kepler}" in visible_item_ids(screen)
+        assert f"lore:{harbour}" in visible_item_ids(screen)
+        assert screen.state.selected_entity_id == str(kepler)
+        assert notices[-1:] == ["Kepler Atlas imported."]
