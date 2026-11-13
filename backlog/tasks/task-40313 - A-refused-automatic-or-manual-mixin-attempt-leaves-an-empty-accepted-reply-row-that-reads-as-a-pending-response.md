@@ -3,7 +3,7 @@ id: TASK-40313
 title: "A refused automatic or manual mixin attempt leaves an empty accepted reply row that reads as a pending response"
 status: Done
 assignee: ['@claude']
-updated_date: 2026-11-13 03:20
+updated_date: 2026-11-13 03:40
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -56,4 +56,6 @@ The close case of the existing `test_a_wake_whose_owner_moves_during_its_reply_s
 - The three `Tests/Chat/test_fleet_wake_retry.py` nodes fail the same way with the base service (that file has no profile marker).
 - `Tests/UI/test_console_prompt_mixins.py::test_browse_mixins_read_does_not_hold_navigation[close]` timed out in `app.workers.wait_for_complete()` once, then passed twice on rerun with the change.
 
-Files: `tldw_chatbook/Chat/console_prompt_mixin_service.py`, `Tests/Chat/test_automatic_wake_recovery.py`.
+Diagnostic inventory: preflight reported `console_prompt_mixin_service.py` at 1 -> 2 diagnostic calls. `check_persistent_diagnostic_inventory.py --statements ... --since bf9182a4f6` shows one added statement, `logger.warning("Console refused reply row could not be discarded")`, a constant with no interpolation. The pin was regenerated with `--write`.
+
+Files: `tldw_chatbook/Chat/console_prompt_mixin_service.py`, `Tests/Chat/test_automatic_wake_recovery.py`, `Docs/security/production-diagnostic-inventory.json`.
