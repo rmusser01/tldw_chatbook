@@ -25398,3 +25398,14 @@ Nine architecture PRs advanced dev from4b90 to26b2 at01:32UTC. PR3496's GraphQL 
 ## A correct manifest hash does not reconcile an obsolete semantic oracle (PR3496, 2026-11-13)
 
 The canonical diagnostic inventory reproduced from source, but the original boundary fixture still referred to deleted Local_Summarization_Lib and pre-refreeze deletion totals. Repinning its normalized hash exposed a KeyError rather than qualifying the boundary. TASK35553 had already recorded this residual failure; TASK34895 documented the approved258-site ledger re-freeze. Retain that ledger and its historical projection, restrict owner exceptions to the actual live modules, reconcile live counts to retained sites, and run original drift/schema/digest mutants against a live owner. The corrected13 controls pass; none of the258 site records changed. Source-derived inventory success and boundary-fixture success are distinct evidence.
+
+
+## Allocation idle does not mean startup publication has settled (PR3496, 2026-11-13)
+
+The resize fixture counted six reconciles against its two/three-pass bound; clean dev counted five against two. Passive observation showed both pre-resize allocation-idle samples still had pending configuration reads and running sync/discovery workers. A settings publication took the first measured pass before the resize handler applied the new height; later context publications added more passes. No avatar replacement occurred. Even an instant with no workers was followed by an already requested FULL sync, so worker absence alone was insufficient.
+
+For this settled-startup geometry test, wait for real readiness publication, same-screen worker retirement and cleared sync/replay/scheduled flags using the original bounded refresh helper before installing counters. Keep every resize assertion and bound. The uninstrumented original then passed; the fixture does not qualify resize concurrent with arbitrary background publication. Receipt: pr3496-26b2-resize-passive-20261113-1 and pr3496-26b2-resize-ready-20261113-1.
+
+## Queued workflow status does not prove its jobs are inactive (PR3496, 2026-11-13)
+
+While the merge queue waited for runners, GitHub's repository API reported zero in-progress workflows and165 queued workflows. A rolling job-level census over those165 runs found40 allocated/in-progress test jobs across eight queued Derived runs, with new allocations and completions during the check. The count is not an atomic capacity-limit measurement, and no billing/quota cause was established. Inspect individual jobs and exact head/PR ownership before attributing a runner outage or cancelling an allegedly inactive workflow. Receipt: pr3496-capacity-census-jobs-full.json.
