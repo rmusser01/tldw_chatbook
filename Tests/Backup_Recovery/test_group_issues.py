@@ -26,3 +26,24 @@ def test_arbitrary_error_text_is_not_rendered_as_a_group_name():
     error = "required_target_group_unavailable:/private/profile-sensitive-name"
     result = issue_code(ValueError(error), kind="restore")
     assert "/private/profile-sensitive-name" not in result + issue_message(result)
+
+
+def test_capture_outside_scope_refusal_names_an_action_not_a_generic_failure():
+    """TASK-34100.16.1 AC#4: this refusal reaches the user with its cause.
+
+    ``capture_source_outside_scope`` is a ``RecoveryRequired`` (a
+    ``RuntimeError``), so it used to fall through to the generic
+    ``backup_operation_failed``. It means a selected file lies outside the
+    storage locations the running app registered when it started.
+    """
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    result = issue_code(RecoveryRequired("capture_source_outside_scope"), kind="capture")
+
+    assert result == "capture_source_outside_scope"
+    message = issue_message(result)
+    assert "quit" in message.lower() and "review" in message.lower()
+    # Any other bounded RecoveryRequired code keeps the generic fallback.
+    assert issue_code(RecoveryRequired("maintenance_roots_required")) == (
+        "backup_operation_failed"
+    )
