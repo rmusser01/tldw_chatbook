@@ -4,7 +4,7 @@ title: "test_library_notes_compact_source_module_is_exactly_bundled compares the
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 02:15'
+updated_date: '2026-11-13 04:25'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
