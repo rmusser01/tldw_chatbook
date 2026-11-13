@@ -232,6 +232,11 @@ def _recorded(name: str):
     ],
 )
 def test_a_recorded_real_stream_is_accepted(name: str, expected: str) -> None:
+    """AC#16. The two plain-stream params are REGRESSION PINS: they pass on
+    dev 4b90eb860b (ADR-179's call-owned terminal-repeat normalizer). The
+    reasoning param is RED there ('Hosted Chat stream delta is malformed');
+    AC#16's RED is in it and the non-streaming and reasoning tests above
+    (review v5r4, TE-R4-2)."""
     text = _send(_stream(*_recorded(name)), streaming=True)
 
     frames = [
@@ -259,6 +264,9 @@ def test_a_recorded_real_stream_is_accepted(name: str, expected: str) -> None:
 
 
 def test_a_recorded_real_streamed_tool_call_is_accepted() -> None:
+    """AC#16. REGRESSION PIN: passes on dev 4b90eb860b (ADR-179's
+    terminal-repeat normalizer); AC#16's RED is in the non-streaming and
+    reasoning tests (review v5r4, TE-R4-2)."""
     text = _send(_stream(*_recorded("stream_tool_gpt_4o_mini")), streaming=True)
 
     frames = [

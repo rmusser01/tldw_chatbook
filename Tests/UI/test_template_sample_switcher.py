@@ -102,7 +102,10 @@ async def test_a_marked_sample_whose_model_the_user_edited_is_theirs(servers):
     whose model the user edited by hand, with no Save, is the user's. Its
     shipped port answers without listing models (here a 404), which kept it
     under NOT RUNNING while only a refusal consulted the values; it is now
-    listed as the user's own row, in whichever group its readiness says."""
+    listed as the user's own row, in whichever group its readiness says.
+    CONTROL: passes on dev 4b90eb860b, which hides no sample at all; its
+    RED was against this branch's code from before the "Values decide"
+    ruling (review v5r4, TE-R4-3)."""
     servers.status[TABBY] = 404
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
@@ -229,6 +232,10 @@ async def test_a_marked_sample_at_its_shipped_values_stays_not_running(servers):
 
 @pytest.mark.asyncio
 async def test_a_sample_that_lists_models_is_ready(servers):
+    """A marked sample whose server answers with its models is a READY row,
+    as AC#9 allows ("until ... a probe succeeds"). CONTROL: passes on dev
+    4b90eb860b, which hides no sample at all; it keeps this branch's NOT
+    RUNNING rule from hiding a sample a probe found (review v5r4, TE-R4-3)."""
     servers.up.add(TABBY)  # a real TabbyAPI answers with its models
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
@@ -243,6 +250,10 @@ async def test_a_sample_that_lists_models_is_ready(servers):
 
 @pytest.mark.asyncio
 async def test_a_saved_sample_keeps_its_ready_row(servers):
+    """A sample the user saved (``template_sample = false``) is theirs, so
+    a port that answers without models never moves it under NOT RUNNING.
+    CONTROL: passes on dev 4b90eb860b, which hides no sample at all; it keeps
+    the rule from hiding a sample the user saved (review v5r4, TE-R4-3)."""
     servers.status[TABBY] = 404
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
@@ -287,7 +298,10 @@ async def test_a_refused_sample_whose_other_keys_drifted_is_not_running(servers)
 @pytest.mark.asyncio
 async def test_a_refused_marked_sample_with_its_own_endpoint_keeps_its_row(servers):
     """The counterpart: a marked table whose endpoint the user edited by hand
-    is theirs, so its refusal stays a NEEDS SETUP row (TASK-33005.6 AC#3)."""
+    is theirs, so its refusal stays a NEEDS SETUP row (TASK-33005.6 AC#3).
+    CONTROL: passes on dev 4b90eb860b, which hides no sample at all; it keeps
+    the rule from hiding a table the user pointed elsewhere (review v5r4,
+    TE-R4-3)."""
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = build(
@@ -310,7 +324,9 @@ async def test_a_refused_marked_sample_sent_to_its_own_api_base_url_keeps_its_ro
     ``api_base``, ``base_url``) before ``api_url``, so a marked table pointed
     at the user's own server through one of those keys -- the template's
     ``api_url`` left behind -- is the user's. Its refusal stays a NEEDS SETUP
-    row, as the counterpart above."""
+    row, as the counterpart above. CONTROL: passes on dev 4b90eb860b, which
+    hides no sample at all; its RED was against this branch's round-1 rule,
+    which read only ``api_url`` (review v5r4, TE-R4-3)."""
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = build(

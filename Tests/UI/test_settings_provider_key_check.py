@@ -308,7 +308,11 @@ async def test_settings_t_never_calls_a_public_listing_a_key_check(
 ):
     """AC#6: these catalogs answer without a key, and the provider has no
     authenticated key check (TASK-34100.2: NVIDIA NIM, Novita), so the
-    listing reads 'models listed; key not checked' and never 'accepted'."""
+    listing reads 'models listed; key not checked' and never 'accepted'.
+    The nvidia param is a REGRESSION PIN: it passes on dev 4b90eb860b, which
+    already counted NVIDIA's listing as public. The novita param is RED
+    there ('… not verified'), since this branch added Novita to the set
+    (review v5r4, TE-R4-3)."""
     provider = _Provider(httpx.Response(200, json={"data": [{"id": "meta/llama-x"}]}))
     _route_discovery_to(monkeypatch, provider)
     app = _cloud_app(provider_name, {"api_key": "nv-saved-test-key"}, "meta/llama-x")
