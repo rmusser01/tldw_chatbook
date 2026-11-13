@@ -485,11 +485,6 @@ class _RecordingAssociationScheduler:
         return None
 
 
-def _exit_ingest_worker_abruptly() -> None:
-    """Picklable spawn-pool target that simulates a hard worker crash."""
-    os._exit(17)
-
-
 async def _wait_for_job_state(
     app: _IngestRunnerHarness,
     pilot,
@@ -1807,7 +1802,8 @@ async def test_real_pool_worker_exit_is_reported_for_owning_generation(
             pool = app._ensure_ingest_parse_pool()
             generation = app._ingest_parse_pool_generation
             app._ingest_parse_jobs_by_generation[generation].add(job.job_id)
-            pool.apply_async(_exit_ingest_worker_abruptly)
+            # A test-module target imports the entire app before it can crash.
+            pool.apply_async(os._exit, (17,))
 
             failed = await _wait_for_job_state(
                 app,
