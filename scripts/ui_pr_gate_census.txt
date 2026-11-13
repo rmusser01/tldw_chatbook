@@ -4293,6 +4293,82 @@ Tests/UI/test_mcp_workbench.py::test_open_add_server_form_local_source_shows_pro
 
 # PR #3345: retain the complete Python style inventory.
 Tests/UI/test_python_style_inventory.py
+
+# TASK-40720 (2026-11-13): native sync admission, rewritten off the profiler;
+# its publication case had never passed and no lane ran the file.
+Tests/UI/test_console_sync_worker_admission.py
+
+# TASK-34601.1: natural Sending/Waiting/Streaming, Stop draft preservation and physical image-reader retirement.
+Tests/UI/test_console_received_intent_feedback.py::test_send_feedback_survives_preparation_and_provider_wait
+Tests/UI/test_console_received_intent_feedback.py::test_stopping_received_send_clears_feedback_and_keeps_draft
+Tests/UI/test_console_recovered_image_shutdown.py::test_empty_image_selection_needs_no_reader_and_preserves_owned_work
+Tests/UI/test_console_recovered_image_shutdown.py::test_app_shutdown_joins_recovered_image_native_read
+Tests/UI/test_console_configuration_worker_feedback.py::test_actual_send_composes_new_input_while_configuration_reader_is_held
+# TASK-34601.1: background and repeated skill reads cannot claim a spoken Send fixture.
+Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignores_background_and_repeated_fetches
+
+# TASK-40311 (2026-11-13): three Plugins review dialog tests that now wait for
+# the dialog's load and for each press's handler state instead of one pause.
+Tests/UI/test_plugin_review.py::test_refresh_growth_keeps_focused_action_and_cleaned_status_painted
+Tests/UI/test_plugin_review.py::test_action_inputs_hide_without_losing_drafts_or_keyboard_focus
+Tests/UI/test_plugin_review.py::test_confirmed_profile_save_survives_close_during_child_prune
+# TASK-40712 (2026-11-13): an Import… preview's review buttons are disabled with
+# the reason, and a review dialog whose load fails keeps the app running.
+Tests/UI/test_plugins_browse.py::test_import_preview_review_buttons_state_why_and_never_open
+Tests/UI/test_plugins_browse.py::test_review_dialog_load_failure_stays_in_the_dialog
+# TASK-40308 (2026-11-13): restored plugins recover from the Plugins screen with
+# the backup's passphrase and per-folder rebinds, and a lost passphrase falls
+# back to a reset that sets them aside and reattaches kept saved data.
+Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen
+Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches
+
+# TASK-40320 round 14 (2026-11-12): the Console and Settings archive
+# completion doubles, re-pinned to dev's archive revision, activation window
+# and callable worker (whole file, about 23 s serial locally).
+Tests/UI/test_workspace_archive_async_completion.py
+# TASK-40319 round 14 (2026-11-12): Settings ▸ Workspaces, one entry per test
+# (each 25-56 s serial locally at load 55-67): change review, folder bindings
+# and lifecycle steps wait for the pane swap and their state, not a fixed pause.
+Tests/UI/test_settings_workspaces_category.py::test_workspaces_category_registered_and_immediate
+Tests/UI/test_settings_workspaces_category.py::test_create_rename_archive_unarchive_flow
+Tests/UI/test_settings_workspaces_category.py::test_activation_failure_surfaces_inline_but_creates_workspace
+Tests/UI/test_settings_workspaces_category.py::test_compact_overview_keeps_a_painted_recovery_action
+Tests/UI/test_settings_workspaces_category.py::test_default_workspace_card_is_protected
+Tests/UI/test_settings_workspaces_category.py::test_archived_workspace_card_offers_only_unarchive
+Tests/UI/test_settings_workspaces_category.py::test_folder_bindings_add_toggle_remove_and_inline_errors
+Tests/UI/test_settings_workspaces_category.py::test_pane_refreshes_after_external_registry_change
+Tests/UI/test_settings_workspaces_category.py::test_resume_refreshes_workspaces_pane_only_when_active
+Tests/UI/test_settings_workspaces_category.py::test_scope_inspector_shows_immediate_actions_not_read_only
+Tests/UI/test_settings_workspaces_category.py::test_overview_pins_workspaces_recovery_copy
+Tests/UI/test_settings_workspaces_category.py::test_change_review_toggle_flips_and_persists
+Tests/UI/test_settings_workspaces_category.py::test_change_review_stale_toggle_reports_conflict_and_refreshes
+Tests/UI/test_settings_workspaces_category.py::test_change_review_unavailable_consent_has_no_toggle
+Tests/UI/test_settings_workspaces_category.py::test_change_review_failed_root_offers_one_retry_without_paths
+Tests/UI/test_settings_workspaces_category.py::test_change_review_preparing_is_explicitly_non_blocking
+Tests/UI/test_settings_workspaces_category.py::test_change_review_git_absent_shows_honest_copy
+Tests/UI/test_settings_workspaces_category.py::test_change_review_global_kill_disclosed_in_settings
+Tests/UI/test_settings_workspaces_category.py::test_settings_archived_label_and_restore_name_preserve_active_workspace
+Tests/UI/test_settings_workspaces_category.py::test_settings_archive_receipt_undo_without_switching
+# TASK-40318 round 14 (2026-11-12): Settings ▸ Workspaces lifecycle journeys at
+# 80x24, one entry per case (each 34-62 s serial locally at load 55-67);
+# a confirmed archive puts focus on Undo archive, painted in its pane.
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[rename_error]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[rename_success]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[restore_error]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[archive]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_feedback_is_visible[create_error]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[retry]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[keep]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_partial_create_keeps_the_committed_workspace_clear[escape]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[activate]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[restore]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_workspace_lifecycle_completion_keeps_context[literal_archive]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_the_current_theme_surface[textual-dark]
+Tests/UI/test_settings_workspace_lifecycle_journeys.py::test_create_dialog_uses_the_current_theme_surface[textual-light]
+# TASK-40320 review r14set-rev1 (2026-11-12): the archive review regressions,
+# whose Console restore doubles now take dev's callable sync worker (whole
+# file, about 17 s serial locally).
+Tests/UI/test_workspace_archive_review_regressions.py
 # TASK-33620.7, TASK-33620.15.25 (2026-11-21): the staged-evidence sessions
 # file, on no lane before (3 of 26 red on dev dc371f0842: its reply wait
 # counted footers a sourceless reply no longer mounts, and one revision
