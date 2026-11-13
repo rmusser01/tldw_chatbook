@@ -1,7 +1,7 @@
 ---
 id: TASK-40718
 title: "A failed native workflow phase wedges its chat until the app restarts"
-status: To Do
+status: In Progress
 created_date: 2026-11-13 06:28
 labels:
 - follow-up
@@ -38,3 +38,14 @@ The handler's comment says a physical failure cannot shed custody. A failure tha
 - [ ] #2 Reconcile on a failed execution phase whose workers have all returned succeeds and records the review.
 - [ ] #3 A failed phase whose workers may still be live is still refused with `workflow_resources_still_live`.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no. Reason: the failure path reuses the existing failed-phase settlement; no new contract or stored state.
+1. Reproduce through the native workflow rig: a phase whose remaining task depends on a task it will never run raises "workflow dependencies blocked"; show the run stays `recovery_required`, the chat refuses a new turn, and reconcile refuses.
+2. In `_execute`, catch an ordinary exception from the phase body. If the service still sees live workflow resources (`_has_live_workflow_resources`: waves, open preparations, admitted owners, live native threads), re-raise so custody is retained as today. Otherwise mark the phase failed and fall through to the existing retirement tail (cleanup accounting, close preparations, `settle_execution_phase(outcome="failed")`, publish, release). Settlement and close re-prove physical return; any refusal still retains custody.
+3. Pin AC #3: a failure while a worker is live stays retained and reconcile refuses with `workflow_resources_still_live`.
+4. AC #2 (reconcile after the retained phase's workers return) needs a decision about what reconcile records; probe and report.
+5. Mutation checks, covering files base vs head, preflight, Tests/Architecture.
+<!-- SECTION:PLAN:END -->
