@@ -1,7 +1,7 @@
 ---
 id: TASK-40717
 title: "Startup workflow recovery runs with workflow runs off, and its failure stops sub-agent result delivery to ordinary chats"
-status: To Do
+status: In Progress
 created_date: 2026-11-13 06:28
 labels:
 - follow-up
@@ -45,3 +45,14 @@ So for the rest of the session, finished sub-agent results are not delivered to 
 - [ ] #2 A failing workflow projection does not stop sub-agent result delivery to chats that have no workflow runs.
 - [ ] #3 A test with workflow runs off and a raising workflow projection shows a sub-agent result still delivered to an ordinary chat.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no. Reason: a no-op skip inside the existing recovery projection; no new contract, store or policy.
+1. Reproduce: with workflow runs off, no workflow rows, and a workflow projection that raises ("Native workflow stores are unavailable"), show a finished sub-agent result is never delivered to an ordinary chat.
+2. The startup audit records whether any saved (non-removed) workflow run exists, in the same transaction that already reads `workflow_runs`. This is the exact set `recovery_protections` and `project_recovery` read, so a legacy closed run with live evidence still counts.
+3. `_project_workflow_recovery` returns before building the workflow service when the audit saw no saved workflow run.
+4. Pin protections with the flag off (including the closed-but-active shape the audit's `workflows` tuple leaves out).
+5. Mutation check, covering files base vs head, preflight, Tests/Architecture.
+<!-- SECTION:PLAN:END -->
