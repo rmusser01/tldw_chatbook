@@ -24,7 +24,10 @@ The policy here:
 * hands the last response back (``raise_on_status=False``), so the handler's
   ``raise_for_status`` classifies it with the provider's body.
 
-Every requests-based chat handler mounts this retry now. ``exhausted_retry_
+Every requests-based chat handler mounts this retry now, except OpenAI's
+non-streaming call, which mounts none (dev's TASK-38600; TASK-34100.2
+pre-merge review I-1): its 429 and 5xx reach ``raise_for_status`` on the
+first answer, and a read timeout is never re-sent. ``exhausted_retry_
 status`` reads the status out of a ``RetryError`` that still reaches the
 dispatcher (a handler added later with its own ``Retry``), so it is
 classified by its status instead of being called a network error.
