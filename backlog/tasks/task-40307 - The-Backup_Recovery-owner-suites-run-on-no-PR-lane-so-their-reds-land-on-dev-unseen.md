@@ -1,8 +1,11 @@
 ---
 id: TASK-40307
 title: "The Backup_Recovery owner suites run on no PR lane, so their reds land on dev unseen"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-12 19:36
+updated_date: 2026-11-13 06:57
 labels:
 - follow-up
 - tests
@@ -37,3 +40,29 @@ Found in round 13 of the 2026-10-23 burn-down (census stream fix round). Checked
 - [ ] #1 The core owner suites named in the description run on a PR lane (never the fast PR contract), with the lane's job time recorded from three local runs and its first CI run
 - [ ] #2 That lane is green when it merges, and its targets are pinned in Tests/CI
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Measure each core owner suite named in the description at -n 4 locally after TASK-40306 (load recorded), and check them against the lane's install set (hypothesis, Pillow).
+2. Add one PR job to .github/workflows/derived-artifacts.yml for those suites (its own job, never pr-fast-lane), with a step time budget like the neighbouring steps; move test_detached_layout's single architecture-guards node into it as the whole file.
+3. Wire the job into the required aggregate (needs + verdict step) and pin its targets, job shape and exclusivity in Tests/CI.
+4. Time the lane's step three times locally with the lane's flags; record the first CI run when the coordinator pushes.
+
+## Implementation Notes
+
+- **Lane.** New job `backup-owner-suites` ("PR lane (Backup_Recovery owner suites)") in `.github/workflows/derived-artifacts.yml`, wired into the required aggregate (`needs` and a verdict step, both at the tail). It runs the 13 files the description names whole (`test_complete_roundtrip`, `test_inventory`, `test_inventory_unused_owners`, `test_restore_plan`, `test_created_persona_subtree_rollback`, `test_visual_identity_restore`, `test_builtin_later_snapshot`, `test_later_rollback_credential_ui`, `test_detached_layout`, `test_capture_service`, `test_config_sibling_capture`, `test_core_owners`, `test_operational_owners`) plus `test_publication_crashes.py`, which holds TASK-40310's journal pins. `test_detached_layout`'s single node left `architecture-guards`, since that job's contract allows no file in two steps.
+- **Not serial.** `-n 4` (pytest-xdist added to the fast-lane install line, with hypothesis for `test_restore_plan`). Every file here is sandboxed and does its heavy work in child processes with their own HOME. Serially the persona and builtin rollback files alone would take up to 84 minutes at load ~45 (1263 s wall at `-n 4` times four workers), past any cap a PR job should have. `--dist loadfile` was tried and dropped: it puts all of `test_builtin_later_snapshot` on one worker.
+- **Local job time** (the step's exact arguments, extracted from the workflow, through the wrapper; shared 18-core host): run 1, 2452 s (40.9 min) at load 26-57, 509 passed, 3 skipped; run 2, 2573 s (42.9 min) at load 29-51, 509 passed; run 3, 1836 s (30.6 min) at load 22-49, 508 passed and 1 failed: `test_operational_owners.py::test_run_log_real_bound_writer_is_excluded`, whose child failed a bare assert at its line 63, most likely `assert runtime.pause.drain(time.monotonic()+1)` in `test_runtime_startup_handoff._SCRIPT` (a 1 s drain deadline). It passed in runs 1 and 2 and in the nine-file run, so it stays laned; proposed follow-up. The persona rollback test is the longest node (574 s call).
+- **Budgets.** Step `timeout-minutes: 50`, job 55, from those runs. These are larger than the neighbouring 20-minute jobs; the first CI runs should set them. ADR-103 gets a dated amendment and its runner counts (29 concurrent test runners, 30 with perf-guard, 47 eligible jobs), which `Tests/CI/test_ui_lane_shard_count_statements.py` checks against the workflow.
+- **Not done here:** the first CI run's job time, and "green when it merges", need a push, which the coordinator does. Both criteria stay open until then.
+- **Deselected (11 nodes, pinned as `BACKUP_OWNER_SUITES_DESELECTED`):** red at 26b2e677dd outside TASK-40306's five files, first error each:
+  - `test_inventory.py::test_custom_db_and_disabled_features_are_not_external_or_unused`: `assert 'included' == 'unsupported'`.
+  - `test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing`: child `CalledProcessError`, then the same `'included' == 'unsupported'`.
+  - `test_inventory.py::test_normal_config_and_pure_resolvers_agree`: in-process `RecoveryRequired: raw_source_selection_changed` (may be the known local profile trap).
+  - `test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent`: the `-I` child's assertion at its line 15.
+  - `test_operational_owners.py::test_dormant_tamagotchi_path_constructors_have_no_installed_call_sites`: new pet path call site `Widgets/AppFooterStatus.py:245` without a recovery locator (a product question).
+  - `test_complete_roundtrip.py::test_two_known_profiles_complete_capture_preserves_native_state_and_resumes` and `::test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore`: child `RecoveryRequired: config_companion_parent_unsafe`.
+  - `test_complete_roundtrip.py::test_two_captured_profiles_restore_and_open_with_native_content` and `test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review`: setup `pip install --target` timed out at 60 s (load).
+  - `test_config_sibling_capture.py::test_complete_capture_keeps_installed_sibling_writable[sidebar]` and `::test_capture_waits_for_other_bound_selector_writer_without_extra_payload[custom]`: child timed out at 70 s / 80 s (load).
+- **Pins.** `Tests/CI/test_ci_queue_pressure_contract.py`: `BACKUP_OWNER_SUITE_TARGETS`, `BACKUP_OWNER_SUITES_DESELECTED`, `test_backup_owner_suites_lane_is_one_bounded_python_312_job` (exact command, install line, step budget inside the job cap, each file in no other PR step), plus the aggregate's needs, verdict and no-`continue-on-error` lists. `Tests/CI/test_derived_artifacts_workflow.py`: job order, `VERDICTS`, the disjoint-target step list. Both files: 197 passed; all of `Tests/CI`: 1247 passed, 1 skipped.
+- **Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`.

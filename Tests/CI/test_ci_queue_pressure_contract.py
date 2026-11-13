@@ -473,9 +473,6 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Persona_Buddy/test_controller_failure_logging.py",
     # TASK-39053: the backup owner inventory, red since it landed, now matches.
     "Tests/Architecture/test_backup_owner_inventory.py",
-    # TASK-39116 review r13b-rev2: the detached layout's persona.actor_packs
-    # validation (both cases, ~25 s serial); the rest of that file is unlaned.
-    "Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source",
     # TASK-39060: whole, now that its persona/workspace boundary is green.
     "Tests/test_persistent_diagnostic_boundary.py",
     # TASK-39061: the shared log sanitizer.
@@ -665,6 +662,38 @@ RECOVERED_SUITES_TARGETS = (
 #: ContextVar token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
 RECOVERED_SUITES_DESELECTED = (
     "Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_is_emergency_detachment",
+)
+#: TASK-40307: the Backup_Recovery owner suites, in their own job, whole.
+BACKUP_OWNER_SUITE_TARGETS = (
+    "Tests/Backup_Recovery/test_builtin_later_snapshot.py",
+    "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
+    "Tests/Backup_Recovery/test_complete_roundtrip.py",
+    "Tests/Backup_Recovery/test_later_rollback_credential_ui.py",
+    "Tests/Backup_Recovery/test_restore_plan.py",
+    "Tests/Backup_Recovery/test_detached_layout.py",
+    "Tests/Backup_Recovery/test_inventory.py",
+    "Tests/Backup_Recovery/test_inventory_unused_owners.py",
+    "Tests/Backup_Recovery/test_visual_identity_restore.py",
+    "Tests/Backup_Recovery/test_capture_service.py",
+    "Tests/Backup_Recovery/test_config_sibling_capture.py",
+    "Tests/Backup_Recovery/test_core_owners.py",
+    "Tests/Backup_Recovery/test_operational_owners.py",
+    "Tests/Backup_Recovery/test_publication_crashes.py",
+)
+#: Red at dev 26b2e677dd, outside TASK-40306's five files; TASK-40307's notes
+#: give each node's first error. Remove a node when it is fixed.
+BACKUP_OWNER_SUITES_DESELECTED = (
+    "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_known_profiles_complete_capture_preserves_native_state_and_resumes",
+    "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore",
+    "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_restore_and_open_with_native_content",
+    "Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review",
+    "Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree",
+    "Tests/Backup_Recovery/test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing",
+    "Tests/Backup_Recovery/test_inventory.py::test_custom_db_and_disabled_features_are_not_external_or_unused",
+    "Tests/Backup_Recovery/test_config_sibling_capture.py::test_complete_capture_keeps_installed_sibling_writable[sidebar]",
+    "Tests/Backup_Recovery/test_config_sibling_capture.py::test_capture_waits_for_other_bound_selector_writer_without_extra_payload[custom]",
+    "Tests/Backup_Recovery/test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent",
+    "Tests/Backup_Recovery/test_operational_owners.py::test_dormant_tamagotchi_path_constructors_have_no_installed_call_sites",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
@@ -1066,6 +1095,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "architecture-guards",
         "pr-fast-lane-arch",
         "recovered-suites",
+        "backup-owner-suites",
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
@@ -1100,6 +1130,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("architecture-guards", "Require successful Architecture guard contracts"),
         ("pr-fast-lane-arch", "Require successful PR fast lane (architecture-review tests)"),
         ("recovered-suites", "Require successful PR lane (recovered suites)"),
+        ("backup-owner-suites", "Require successful PR lane (Backup_Recovery owner suites)"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
@@ -1117,6 +1148,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "architecture-guards",
         "pr-fast-lane-arch",
         "recovered-suites",
+        "backup-owner-suites",
     ):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
@@ -1495,6 +1527,60 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     assert others == []
 
 
+def test_backup_owner_suites_lane_is_one_bounded_python_312_job() -> None:
+    """TASK-40307: the Backup_Recovery owner suites run whole on every PR.
+
+    Their own job; the fast-lane install plus hypothesis and pytest-xdist;
+    four workers, under a step budget inside the job's cap; and each file in
+    no other PR-lane step.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["backup-owner-suites"]
+
+    assert job["name"] == "PR lane (Backup_Recovery owner suites)"
+    assert job["needs"] == ["preflight"]
+    assert job["if"] == LANES
+    assert job["runs-on"] == "ubuntu-latest"
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    setup = next(
+        step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    install = _named_step(job, "Install fast-lane dependencies")["run"]
+    fast = _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")
+    assert shlex.split(install) == [*shlex.split(fast["run"]), "hypothesis", "pytest-xdist"]
+    step = _named_step(job, "Run the Backup_Recovery owner suites")
+    assert "if" not in step
+    assert 0 < step["timeout-minutes"] < job["timeout-minutes"]
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *BACKUP_OWNER_SUITE_TARGETS,
+        *(f"--deselect={node}" for node in BACKUP_OWNER_SUITES_DESELECTED),
+        "-n",
+        "4",
+        "--timeout=300",
+        "--tb=short",
+    )
+    assert len(set(BACKUP_OWNER_SUITE_TARGETS)) == len(BACKUP_OWNER_SUITE_TARGETS)
+    for target in BACKUP_OWNER_SUITE_TARGETS:
+        assert "::" not in target and (PROJECT_ROOT / target).is_file()
+    for node in BACKUP_OWNER_SUITES_DESELECTED:
+        assert node.split("::", 1)[0] in BACKUP_OWNER_SUITE_TARGETS
+    others = [
+        f"{key}: {candidate['name']}"
+        for key, other in workflow["jobs"].items()
+        if key != "backup-owner-suites"
+        for candidate in other.get("steps", ())
+        if set(BACKUP_OWNER_SUITE_TARGETS)
+        & {
+            target.split("::", 1)[0]
+            for target in _pytest_targets(str(candidate.get("run", "")))
+        }
+    ]
+    assert others == []
+
+
 def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     """TASK-34929: the Dreams tracking tests run, whole, on every pull request.
 
@@ -1798,7 +1884,10 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("derived-artifacts", "Require successful Architecture guard contracts"),
         ("recovered-suites", None),
         ("recovered-suites", "Run the recovered suites"),
+        ("backup-owner-suites", None),
+        ("backup-owner-suites", "Run the Backup_Recovery owner suites"),
         ("derived-artifacts", "Require successful PR lane (recovered suites)"),
+        ("derived-artifacts", "Require successful PR lane (Backup_Recovery owner suites)"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("dreams-boundary", None),

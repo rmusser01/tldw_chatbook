@@ -408,7 +408,7 @@ Current UI lane: 36 shards. The current total is 48 eligible test jobs per PR
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
 35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and four more UI
-shards, below).
+shards, below; 2026-11-12: and `backup-owner-suites`, TASK-40307).
 As of this amendment, the `max-parallel: 17` ceiling (18 since 2026-11-07,
 below), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.
@@ -506,3 +506,15 @@ response-rule restore selectors alone completed in 25m46s before Canvas tests.
 Those unchanged selectors now run as a third P0 profile with the same 180-second
 per-test deadline and 35-minute job limit. This adds one more eligible job;
 all existing selectors remain exactly once across the three required profiles.
+
+2026-11-12 (TASK-40307): a job of its own, `backup-owner-suites` ("PR lane
+(Backup_Recovery owner suites)"), runs the 13 Backup_Recovery owner suites
+that ran on no PR lane (27 of their nodes had gone red on dev unseen,
+TASK-40306) and the restore-journal file, whole, with 11 red nodes deselected
+by name. Unlike the other lanes it runs `-n 4` (the fast-lane install line
+plus hypothesis and pytest-xdist): serially its two rollback files alone would
+take over an hour. Three local runs took 31-43 min at load 22-57 on a shared
+18-core host, so its step cap is 50 min and its job cap 55; the first CI runs
+should set both. The required check `needs` it and fails when it is not
+`success`. One more runner per PR: 29 concurrent test runners, 30 with
+perf-guard, 47 eligible test jobs.
