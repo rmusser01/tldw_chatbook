@@ -62,8 +62,10 @@ from tldw_chatbook.Chat.console_library_destination import resolve_console_desti
 from tldw_chatbook.Chat.console_provider_endpoints import (
     CONFIG_READING_LOCAL_EXECUTION_KEYS,
     CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
+    INVALID_BASE_URL_COPY,
     URL_BASED_PROVIDER_KEYS,
     adapter_api_base_url,
+    contract_refuses_endpoint,
     effective_provider_endpoint,
     generic_endpoint_differs,
     meaningful_adapter_base_url,
@@ -192,7 +194,6 @@ from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
 from tldw_chatbook.config import ProviderSettingsError
 from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
 from tldw_chatbook.Utils.egress import capture_rate_limits_for
-from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
     sensitive_llm_request,
@@ -1876,6 +1877,10 @@ def normalize_llamacpp_base_url(api_url: str | None) -> str:
     if not raw_url:
         return DEFAULT_LLAMACPP_BASE_URL
 
+    # TASK-40300: a query or fragment is never dropped by rebuilding the URL;
+    # the contract refuses the value, so every check after this one must too.
+    if "?" in raw_url or "#" in raw_url:
+        return raw_url
     # TASK-39151: only a loopback spelling typed without a scheme is read as
     # http://, the contract's rule; any other stays schemeless and invalid.
     candidate = read_schemeless_loopback(raw_url)
@@ -3970,7 +3975,7 @@ class ConsoleProviderGateway:
         """
         model = config.explicit_model or config.configured_model
         base_url = normalize_llamacpp_base_url(config.base_url)
-        if not validate_url(base_url):
+        if contract_refuses_endpoint("llama_cpp", base_url):  # TASK-40300
             return ConsoleProviderResolution(
                 provider="llama_cpp",
                 base_url=config.base_url,
@@ -4707,6 +4712,21 @@ class ConsoleProviderGateway:
                 provider_settings,
             )
 
+        # TASK-40300: the endpoint contract decides, before the unsaved guard,
+        # as readiness does; a refused custom entry never falls back to its
+        # raw value.
+        if effective_base_url and contract_refuses_endpoint(
+            identity.readiness_key, effective_base_url
+        ):
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                model=model,
+                visible_copy=INVALID_BASE_URL_COPY,
+                readiness_key=identity.readiness_key,
+                execution_key=identity.execution_key,
+            )
+
         if identity.execution_key == "qwencloud":
             endpoint_differs = (
                 qwencloud_configured_base_url is None
@@ -4976,7 +4996,7 @@ class ConsoleProviderGateway:
             Assistant-visible content chunks.
         """
         normalized_base_url = normalize_llamacpp_base_url(base_url)
-        if not validate_url(normalized_base_url):
+        if contract_refuses_endpoint("llama_cpp", normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
         prepared = self._automatic_local_request(
@@ -5298,7 +5318,7 @@ class ConsoleProviderGateway:
             Assistant-visible completion text.
         """
         normalized_base_url = normalize_llamacpp_base_url(base_url)
-        if not validate_url(normalized_base_url):
+        if contract_refuses_endpoint("llama_cpp", normalized_base_url):
             raise ValueError("invalid llama.cpp base URL")
 
         prepared = self._automatic_local_request(

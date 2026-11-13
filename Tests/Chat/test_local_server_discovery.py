@@ -1027,9 +1027,6 @@ _NOTICE_KEYS_BEFORE_UNDERSCORES = {
     "http://127.0.0.1:5001/api/v1/generate": (
         "230a4eb202e98922dd8500ab912ba358797508c63878267e0edb3f8a0f2c7295"
     ),
-    "https://bücher.example/v1": (
-        "9c2eb1086a90887408a48e6c5e276b214e1e40d3f0fcd41d8f7b99ef551623a3"
-    ),
     "http://[::1]:8080/v1": (
         "904ad8976b81be75c1b119602a56909d35d01517b07eee0aaa2128ca7ffc98b6"
     ),
@@ -1206,27 +1203,6 @@ def test_zone_less_link_local_and_ula_literals_keep_their_project_identity(
     assert seen["notice_key"] == key
     assert seen["gateway_capture"] == seen["exchange_export"] == identity
     assert seen["trace_final_values"] == identity
-
-
-@pytest.mark.parametrize(
-    ("endpoint", "identity"),
-    [
-        ("http://127.1:5001", "http://127.1:5001"),
-        ("https://bücher.example/v1", "https://xn--bcher-kva.example/v1"),
-        ("http://localhost..:5001", "http://localhost:5001"),
-    ],
-)
-def test_hosts_the_contract_refuses_but_the_send_accepts_keep_their_identity(
-    endpoint, identity
-):
-    """TASK-39150 AC#4, deliberate: the save refuses these hosts, but Console's
-    send still resolves them from a hand-edited config, so refusing them here
-    would only turn such a send with project instructions into a cancelled run
-    and drop its stored consent."""
-    seen = _project_instruction_endpoint_callers(endpoint)
-
-    assert seen["identity"] == identity
-    assert len(seen["notice_key"]) == 64
 
 
 #: TASK-38963: single-label hosts, the Docker Compose service-name shape.
@@ -2586,4 +2562,315 @@ def test_chat_with_llama_refuses_a_non_http_scheme_without_echoing_it(
 
     assert calls == []
     for part in ("hunter2", "user:", "gpu-box", "ftp", "htp"):
+        assert part not in str(caught.value)
+
+
+#: TASK-40300: one value per rule the endpoint contract refuses that Console's
+#: send and readiness still accepted (``validate_url`` and the scheme rule).
+_CONTRACT_REFUSED_BASES = {
+    "zone-id": "http://[fe80::1%25en0]:8000",
+    "leading-hyphen": "http://-bad.corp:8000",
+    "digit-host": "http://127.1:8000",
+    "idn": "http://bücher.example:8000",
+    "double-dot": "http://localhost..:8000",
+    "query": "http://127.0.0.1:8000?mode=fast",
+    "fragment": "http://127.0.0.1:8000#part",
+}
+#: Values the contract accepts, which resolve as before (AC#3).
+_CONTRACT_ACCEPTED_BASES = (
+    "http://gpu-box.lan:8000",
+    "localhost:8000",
+    "http://kobold_cpp:8000",
+    "http://[fe80::1]:8000",
+    "http://[fd12:3456::9]:8000",
+)
+#: The providers TASK-40300 names; a custom entry exists for three families.
+_ENDPOINT_PROVIDERS = ("vllm", "ollama", "custom", "openai", "koboldcpp", "aphrodite", "llama_cpp")
+_ENTRY_FAMILIES = {"custom": "openai_compatible", "ollama": "ollama", "llama_cpp": "llama_cpp"}
+_SAFE_LOOPBACK = "http://127.0.0.1:9000"
+
+
+def _with_path(provider, base):
+    """``base`` with the provider's route, before any query or fragment."""
+    path = "/api/v1/generate" if provider == "koboldcpp" else "/v1"
+    if provider == "llama_cpp":
+        path = ""
+    cut = min((base.index(c) for c in "?#" if c in base), default=len(base))
+    return base[:cut] + path + base[cut:]
+
+
+def _endpoint_case(provider, source, endpoint):
+    """Settings, config and a send selection holding ``endpoint`` in one place."""
+    from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+
+    key = provider_endpoint_key(provider)
+    table = {key: _with_path(provider, _SAFE_LOOPBACK), "model": "m"}
+    if provider == "openai":
+        table["api_key"] = "test-key-not-real"
+    config = {"api_settings": {provider: table}}
+    settings = ConsoleSessionSettings(provider=provider, model="m")
+    pinned = False
+    if source == "session":
+        settings = ConsoleSessionSettings(provider=provider, model="m", base_url=endpoint)
+        pinned = provider != "llama_cpp"  # the live-only path past the unsaved guard
+    elif source == "config":
+        table[key] = endpoint
+    else:
+        config["custom_endpoints"] = {
+            "box": {
+                "display_name": "Box",
+                "family": _ENTRY_FAMILIES[provider],
+                "base_url": endpoint,
+            }
+        }
+        settings = ConsoleSessionSettings(provider="custom-ep:box", model="m")
+    return settings, config, pinned
+
+
+async def _resolve_endpoint_send(settings, config, pinned, seen):
+    """Resolve a send as Console does; every request lands in ``seen``."""
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_console_provider_selection_from_settings,
+    )
+
+    def handler(request):
+        seen.append(str(request.url))
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json=_openai_models_payload("m"))
+        return httpx.Response(200, json={"status": "ok"})
+
+    def adapter(**kwargs):
+        seen.append(f"adapter:{kwargs.get('api_base_url') or kwargs.get('api_url')}")
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={},
+        http_client=_client(handler),
+        chat_api_call_fn=adapter,
+    )
+    selection = build_console_provider_selection_from_settings(
+        settings, app_config=config, workspace_context=None
+    )
+    if pinned:
+        selection = ConsoleProviderSelection(
+            provider=selection.provider,
+            base_url=settings.base_url,
+            explicit_model="m",
+            streaming=False,
+            base_url_is_pinned=True,
+        )
+    resolution = await gateway.resolve_for_send(selection)
+    if resolution.ready and not resolution.execution_key.startswith("llama"):
+        [c async for c in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
+    return resolution
+
+
+def _endpoint_cases():
+    for provider in _ENDPOINT_PROVIDERS:
+        for source in ("session", "config", "custom_entry"):
+            if source == "custom_entry" and provider not in _ENTRY_FAMILIES:
+                continue
+            yield provider, source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+@pytest.mark.parametrize(("provider", "source"), list(_endpoint_cases()))
+async def test_an_endpoint_the_contract_refuses_is_never_ready_or_contacted(
+    provider, source, shape, monkeypatch
+):
+    """TASK-40300 AC#1/AC#2/AC#4: Console decided endpoints with
+    ``validate_url`` and the scheme rule only, so a zone id, a leading-hyphen
+    host, ``127.1``, an IDN, ``localhost..``, a query or a fragment from the
+    session, the config or a custom entry read Ready and was probed (llama.cpp)
+    or sent to (the rest), and a refused custom entry fell back to its raw
+    value. The save, Discover and the display already refused all of them."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    endpoint = _with_path(provider, _CONTRACT_REFUSED_BASES[shape])
+    assert resolve_provider_endpoint(provider, endpoint).errors, endpoint
+    settings, config, pinned = _endpoint_case(provider, source, endpoint)
+    seen: list[str] = []
+
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    resolution = await _resolve_endpoint_send(settings, config, pinned, seen)
+
+    assert seen == []
+    assert resolution.ready is False
+    assert readiness.native_send_supported is False
+    if source == "custom_entry":
+        assert resolution.base_url != endpoint  # AC#4: no raw fallback
+        assert readiness.detail == resolution.visible_copy == _NO_LONGER_CONFIGURED
+    else:
+        assert readiness.label == "Invalid URL", readiness
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "source", "base"),
+    [
+        (provider, source, base)
+        for provider, source in _endpoint_cases()
+        for base in _CONTRACT_ACCEPTED_BASES
+        # Unchanged: the registry refuses any value typed without a scheme
+        # for its openai_compatible and ollama families.
+        if not (source == "custom_entry" and provider != "llama_cpp" and "://" not in base)
+    ],
+)
+async def test_an_endpoint_the_contract_accepts_resolves_as_before(
+    provider, source, base, monkeypatch
+):
+    """TASK-40300 AC#3: schemed hosts, schemeless loopback spellings, compose
+    names and zone-less link-local or ULA literals still resolve and send."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    endpoint = _with_path(provider, base)
+    assert resolve_provider_endpoint(provider, endpoint).errors == ()
+    settings, config, pinned = _endpoint_case(provider, source, endpoint)
+    seen: list[str] = []
+
+    resolution = await _resolve_endpoint_send(settings, config, pinned, seen)
+
+    assert resolution.ready is True, resolution.visible_copy
+    assert seen, "the probe or the send was never made"
+    if not pinned:  # a pinned session endpoint is not the saved one
+        readiness = build_console_settings_readiness(
+            settings, app_config=config, environ={}
+        )
+        assert readiness.blocker is None, readiness
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "gpu-box.lan:8080",
+        "192.168.1.20:8080/v1",
+        "http://localhost..:5001",
+        "http://example.com..:5001/v1",
+        "http://127.1:5001",
+        "https://bücher.example/v1",
+    ],
+)
+def test_project_instructions_give_what_the_send_refuses_the_refused_identity(endpoint):
+    """TASK-40300 AC#5: ``_parse_endpoint`` added ``http://`` to any schemeless
+    endpoint and ``_canonical_hostname`` stripped every trailing dot, so a
+    remote schemeless endpoint and a ``..`` host took the clean host's
+    identity and consent key. Like the send, both are refused now, as are
+    ``127.1`` and an IDN (TASK-39150 AC#4 kept those only while the send
+    accepted them)."""
+    assert _project_instruction_endpoint_callers(endpoint) == (
+        _project_instruction_endpoint_callers("http://-bad.corp:5001/v1")
+    )
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "identity"),
+    [
+        ("http://localhost.:5001", "http://localhost:5001"),
+        ("https://example.com./v1", "https://example.com/v1"),
+        ("localhost:5001/v1", "http://localhost:5001/v1"),
+        ("[::1]:5001", "http://[::1]:5001"),
+    ],
+)
+def test_project_instructions_fold_one_trailing_dot_and_read_loopback_as_http(
+    endpoint, identity
+):
+    """TASK-40300 AC#5: exactly one trailing dot folds, as in the contract,
+    and the loopback spellings typed without a scheme read as ``http://``."""
+    seen = _project_instruction_endpoint_callers(endpoint)
+
+    assert seen["identity"] == identity
+    assert len(seen["notice_key"]) == 64
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://127.0.0.1:8080?token=endpoint-secret", "localhost:8080/v1#endpoint-secret"],
+)
+async def test_a_llamacpp_send_never_drops_a_query_to_reach_the_server(base_url):
+    """TASK-40300 AC#2: ``normalize_llamacpp_base_url`` rebuilt the URL with an
+    empty query, so a send for a base URL the contract refuses went to the
+    server anyway. The send refuses it before any request, naming no part of
+    it."""
+    from Tests.Chat.test_console_provider_gateway import _capture_on_prepared_request
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ConsoleRequestRoute,
+        ConsoleTraceCaptureMode,
+    )
+
+    seen: list[str] = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url=base_url,
+        model="m",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=False,
+    )
+    async with _client(handler) as client:
+        gateway = ConsoleProviderGateway(http_client=client, trace_shadow_sink=lambda _: None)
+        prepared = _capture_on_prepared_request(gateway, resolution)
+        with pytest.raises(ValueError) as caught:
+            [
+                chunk
+                async for chunk in gateway.stream_chat(
+                    resolution,
+                    prepared,
+                    route=ConsoleRequestRoute.FRESH,
+                    capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+                )
+            ]
+
+    assert seen == []
+    assert "endpoint-secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize("shape", sorted(_CONTRACT_REFUSED_BASES))
+def test_chat_with_llama_refuses_what_the_contract_refuses_without_echoing_it(
+    shape, monkeypatch
+):
+    """TASK-40300: ``chat_with_llama`` shares the llama.cpp normalizer, which
+    no longer drops a query or fragment, so it decides by the contract too;
+    nothing is sent and the message names no part of the value."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        local_calls,
+        "_chat_with_openai_compatible_local_server",
+        lambda **kwargs: calls.append(kwargs) or "ok",
+    )
+    monkeypatch.setattr(
+        local_calls,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={"api_settings": {}}),
+    )
+    endpoint = _CONTRACT_REFUSED_BASES[shape]
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        local_calls.chat_with_llama(
+            [{"role": "user", "content": "x"}],
+            api_url=endpoint,
+            model="m",
+            provider_name="llama_cpp",
+            api_key_resolved=True,
+        )
+
+    assert calls == []
+    for part in ("fe80", "bad.corp", "127.1", "cher", "localhost", "mode=fast", "part"):
         assert part not in str(caught.value)

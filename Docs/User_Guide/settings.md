@@ -1059,7 +1059,10 @@ A **custom endpoint** is a named endpoint entry you can template off any
 provider — a localhost llama.cpp, a GPU box on the LAN, a rented
 OpenAI-compatible server — saved in `config.toml` under
 `[custom_endpoints.<slug>]`. Each entry runs as one of three families and
-behaves exactly like that built-in provider pointed at another origin:
+behaves exactly like that built-in provider pointed at another origin. The
+editor refuses a base URL that **s** would refuse for that provider, such as
+`http://-bad.corp:8080`, `http://127.1:8080` or one with a query, and an
+entry holding one in `config.toml` is skipped when the config loads:
 
 | Family | Behavior |
 |---|---|

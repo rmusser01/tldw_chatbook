@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel, field_validator
 
+from tldw_chatbook.Chat.console_provider_endpoints import contract_refuses_endpoint
 from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
 from tldw_chatbook.Provider_Contract.sampling_params import (
@@ -448,7 +449,8 @@ def validate_entry(
 
     Checks a non-blank display name of at most 80 characters, a known
     family, and a base URL that passes ``validate_url`` after
-    family-appropriate normalization. URL checking is skipped for unknown
+    family-appropriate normalization and that the provider endpoint contract
+    accepts for the family's provider. URL checking is skipped for unknown
     families (there is no normalization rule to apply). When ``params`` is
     given, its ``validate_sampling_params`` errors are appended after the
     structural checks (likewise skipped for unknown families, which return
@@ -472,7 +474,11 @@ def validate_entry(
     if family not in ENDPOINT_FAMILIES:
         errors.append(f"Unknown endpoint family: {family}.")
         return errors
-    if not validate_url(_normalize_base_url(family, base_url)):
+    # TASK-40300: the endpoint contract refuses for the family's provider too
+    # (a zone id, ``-bad.corp``, ``127.1``, an IDN, ``host..``, a query).
+    if not validate_url(_normalize_base_url(family, base_url)) or (
+        contract_refuses_endpoint(family_execution_key(family), str(base_url or ""))
+    ):
         errors.append(_INVALID_BASE_URL_COPY)
     errors.extend(validate_sampling_params(params or {}))
     return errors

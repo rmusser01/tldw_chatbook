@@ -896,6 +896,22 @@ def chat_with_llama(
             ),
             status_code=None,
         )
+    from ..Provider_Contract.provider_endpoint_contract import (
+        resolve_provider_endpoint,
+    )
+
+    if resolve_provider_endpoint("llama_cpp", api_base_url).errors:
+        # TASK-40300: the normalizer no longer drops a query or fragment into
+        # an accepted URL, so the endpoint contract refuses such a value here
+        # (and a zone id, ``-bad.corp``, ``127.1`` or an IDN), unnamed.
+        raise ChatConfigurationError(
+            provider=llama_cpp_config_key_in_api_settings,
+            message=(
+                f"{provider_display_name} API URL is not a valid endpoint: no "
+                "query, fragment or user info, and a valid host."
+            ),
+            status_code=None,
+        )
     if api_key_resolved or api_key:
         current_api_key = api_key
     elif record and record.key in {"strata", "polystrata"}:

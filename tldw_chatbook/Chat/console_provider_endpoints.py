@@ -9,6 +9,7 @@ from urllib.parse import urlparse, urlunparse
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     normalize_generic_endpoint_for_compare as normalize_generic_endpoint_for_compare,
+    normalize_provider_key_for_contract,
     read_schemeless_loopback,
     resolve_provider_endpoint,
     safe_endpoint_display as safe_endpoint_display,
@@ -33,6 +34,9 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
     "Use an http(s) URL such as http://127.0.0.1:9099."
 )
+#: An endpoint the contract refuses, for every provider but llama.cpp's own
+#: copy above; readiness and the send both say it (TASK-40300).
+INVALID_BASE_URL_COPY = "Provider blocked: invalid base URL. Use an http(s) URL."
 #: A ``custom-ep:`` id with no configured entry (removed, or skipped at load);
 #: the send and readiness both say it (TASK-40302).
 CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY = (
@@ -344,6 +348,24 @@ def unsaved_endpoint_copy(
         or "not saved"
     )
     return f"{UNSAVED_ENDPOINT_COPY} Selected endpoint: {selected}. Saved endpoint: {configured}."
+
+
+def contract_refuses_endpoint(provider_key: str, endpoint: str) -> bool:
+    """Whether the provider endpoint contract refuses ``endpoint`` (TASK-40300).
+
+    Console's send, readiness and custom endpoint registry decide with this,
+    so none accepts a value the save refuses, or refuses one it accepts.
+
+    Args:
+        provider_key: Provider readiness key; a key the contract cannot name
+            (such as ``local-llm``) is read as the generic ``custom`` one.
+        endpoint: The endpoint as typed, stored or resolved.
+
+    Returns:
+        True when the contract reports any error for the value.
+    """
+    key = normalize_provider_key_for_contract(provider_key) or "custom"
+    return bool(resolve_provider_endpoint(key, endpoint).errors)
 
 
 def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:

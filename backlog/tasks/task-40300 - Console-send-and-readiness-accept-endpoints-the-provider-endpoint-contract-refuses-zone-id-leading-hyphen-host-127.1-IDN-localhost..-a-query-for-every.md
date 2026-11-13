@@ -1,8 +1,11 @@
 ---
 id: TASK-40300
 title: "Console send and readiness accept endpoints the provider endpoint contract refuses (zone id, leading-hyphen host, 127.1, IDN, localhost.., a query) for every provider"
-status: To Do
+status: Done
 created_date: 2026-11-12 19:36
+updated_date: 2026-11-13 07:28
+assignee:
+- '@claude'
 labels:
 - follow-up
 - security
@@ -40,9 +43,54 @@ Found in round 13 of the 2026-10-23 burn-down (security stream, TASK-39150 and T
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 For vLLM, Ollama, Custom, OpenAI, KoboldCpp, Aphrodite and llama.cpp, an endpoint the contract refuses (from the session, the config or a custom entry) reads not Ready and makes no request at send or probe; a mock-transport test is red before the fix
-- [ ] #2 A schemed endpoint with a query or fragment reads Invalid URL in readiness and is never probed
-- [ ] #3 Values the contract accepts resolve as before: schemed hosts, schemeless loopback spellings, compose names, and zone-less link-local or ULA literals
-- [ ] #4 A custom entry the contract refuses no longer falls back to its raw value
-- [ ] #5 Project instructions give a remote schemeless endpoint and a `..` host the refused identity, and fold exactly one trailing dot, in the same PR as the send change
+- [x] #1 For vLLM, Ollama, Custom, OpenAI, KoboldCpp, Aphrodite and llama.cpp, an endpoint the contract refuses (from the session, the config or a custom entry) reads not Ready and makes no request at send or probe; a mock-transport test is red before the fix
+- [x] #2 A schemed endpoint with a query or fragment reads Invalid URL in readiness and is never probed
+- [x] #3 Values the contract accepts resolve as before: schemed hosts, schemeless loopback spellings, compose names, and zone-less link-local or ULA literals
+- [x] #4 A custom entry the contract refuses no longer falls back to its raw value
+- [x] #5 Project instructions give a remote schemeless endpoint and a `..` host the refused identity, and fold exactly one trailing dot, in the same PR as the send change
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Re-check each cited line on base 26b2e677dd (generic send resolves raw, readiness checks only session/llama values, llama checks use `validate_url`, normalization drops a query, project-instruction identity prefixes `http://` and strips every trailing dot).
+2. One predicate over the contract (`resolve_provider_endpoint(...).errors`) in `console_provider_endpoints.py`; no new rules.
+3. Route through it: readiness `_valid_base_url` and the value it checks (session, config-held, entry); the gateway's generic send (block before the unsaved guard) and `resolve_llamacpp`; the custom endpoint registry's `validate_entry`.
+4. Both `normalize_llamacpp_base_url` copies return a value holding `?` or `#` unchanged instead of rebuilding it without its query.
+5. Project instructions: host via the contract's `canonical_endpoint_host`, schemeless only for the contract's loopback spellings; rewrite the TASK-39150 AC#4 pin on purpose.
+6. Mock-transport tests in `Tests/Chat/test_local_server_discovery.py` for vLLM, Ollama, Custom, OpenAI, KoboldCpp, Aphrodite and llama.cpp x session/config/custom entry x the six refused shapes; query/fragment readiness; accepted values unchanged; custom entry no raw fallback; project identity cases. Red first.
+7. Docs: `Docs/User_Guide/console.md` / `settings.md` where they describe which endpoints are refused.
+
+## Implementation Notes
+
+Console's send, readiness, custom endpoint registry and project-instruction identity now refuse exactly what the provider endpoint contract refuses, for every provider.
+- **Premise held on base 26b2e677dd** (cited lines checked): the generic send resolved through `effective_provider_endpoint` with no endpoint check; readiness checked a session value (or llama.cpp's fallback) with `validate_url` plus the contract's scheme rule only, and never a config-held value for the other providers; `resolve_llamacpp` and both `normalize_llamacpp_base_url` copies used `validate_url` and rebuilt the URL without its query; the registry used `validate_url`; project instructions prefixed `http://` to any schemeless value and stripped every trailing dot.
+- **One predicate, no new rules**: `contract_refuses_endpoint(provider_key, endpoint)` in `console_provider_endpoints.py` is `resolve_provider_endpoint(...).errors` (a key the contract cannot name, such as `local-llm`, reads as `custom`). Routed through it:
+  - readiness `_valid_base_url`; with no session endpoint it checks the endpoint the send uses for every provider (llama.cpp's fallback chain, otherwise `effective_provider_endpoint`, the configured or built-in one), no longer only for URL-based providers. `INVALID_BASE_URL_COPY` is one constant for readiness and the send.
+  - the gateway's generic send refuses an effective endpoint the contract refuses before the unsaved guard (the order readiness already had), so a session value with user info or a malformed one now reads "Provider blocked: invalid base URL. Use an http(s) URL." on send too, instead of the unsaved-endpoint copy.
+  - `resolve_llamacpp` and the llama.cpp stream and completion calls.
+  - the custom endpoint registry's `validate_entry` (for the family's provider), so a refused entry is skipped at load; `validate_url` stays there, so a schemeless loopback entry for the openai_compatible and ollama families is still refused, as before.
+  - both `normalize_llamacpp_base_url` copies return a value holding `?` or `#` unchanged instead of rebuilding it into one the contract accepts.
+  - `chat_with_llama` (`LLM_Calls`), which shares that normalizer, refuses such a value with a `ChatConfigurationError` that names no part of it; it calls the contract directly, as `Tests/Architecture/test_agents_chat_boundary.py` requires of `LLM_Calls`.
+  - project instructions: `_parse_endpoint` reads a schemeless value through `read_schemeless_loopback` (only the contract's loopback spellings) and hosts through `canonical_endpoint_host`; `_canonical_hostname` (and its httpx import) is gone.
+- **AC#4**: a custom entry the contract refuses is skipped at load, so its chat reads TASK-40302's "no longer configured" copy and the resolution carries no raw value; any effective endpoint the contract refuses (a pinned session value on an entry included) is refused before a send. `_effective_contract_endpoint` is unchanged: display and compare callers still get the value the chat holds.
+- **Tests** (`Tests/Chat/test_local_server_discovery.py`, run whole by the dreams-boundary step; every request goes to an `httpx.MockTransport` or a stub adapter; fake values only):
+  - `test_an_endpoint_the_contract_refuses_is_never_ready_or_contacted`: vLLM, Ollama, Custom, OpenAI, KoboldCpp, Aphrodite and llama.cpp x session (pinned past the unsaved guard), config and custom entry (custom, ollama, llama.cpp families) x zone id, `-bad.corp`, `127.1`, IDN, `localhost..`, a query, a fragment (119 cases): readiness not ready ("Invalid URL", or the no-longer-configured copy for an entry), resolution not ready, no request. Red at the 40302 commit's sources: 114 of 119 (e.g. `assert ['http://127.0.0.1:8000/v1?mode=fast/tokenizer_info'] == []`); the 5 `localhost..` cases for llama.cpp and the custom and ollama entries were already refused by `validate_url`.
+  - `test_an_endpoint_the_contract_accepts_resolves_as_before` (AC#3; schemed host, `localhost:8000`, `kobold_cpp`, `[fe80::1]`, `[fd12:3456::9]`; 83 cases): ready, probed or sent, readiness has no blocker. Green before and after.
+  - `test_a_llamacpp_send_never_drops_a_query_to_reach_the_server` (2): red before, `DID NOT RAISE`.
+  - `test_chat_with_llama_refuses_what_the_contract_refuses_without_echoing_it` (7): red with its guard reverted, `DID NOT RAISE`.
+  - `test_project_instructions_give_what_the_send_refuses_the_refused_identity` (AC#5: `gpu-box.lan:8080`, `192.168.1.20:8080/v1`, `localhost..`, `example.com..`, `127.1`, IDN; red 6 of 6) and `test_project_instructions_fold_one_trailing_dot_and_read_loopback_as_http` (green before and after).
+- **Pins rewritten on purpose** (each value is one the contract refuses, which the send now refuses too):
+  - `test_hosts_the_contract_refuses_but_the_send_accepts_keep_their_identity` (TASK-39150 AC#4) is replaced by the refused-identity test above; the IDN key leaves `_NOTICE_KEYS_BEFORE_UNDERSCORES`.
+  - `Tests/Chat/test_console_project_instructions.py`: `test_unicode_and_punycode_hosts_share_one_destination_identity` is now `test_a_unicode_host_is_refused_and_its_punycode_spelling_keeps_its_identity`.
+  - `Tests/Chat/test_console_provider_gateway.py`: the unsaved-guard test sends a differing endpoint without user info and asserts user info reads the invalid copy; the malformed `http://[::1` reads the invalid copy; the unknown-destination identity test uses an endpoint without user info, query or fragment, and `test_a_configured_endpoint_with_user_info_or_a_query_is_refused` covers that value; the two llama.cpp shadow tests drop the query and fragment from their base URL.
+  - `Tests/Chat/test_sensitive_llm_logging.py::test_sensitive_direct_llama_logs_no_request_response_or_endpoint_secrets`: the endpoint canaries ride the path (a query is refused before any request).
+- **Docs**: `Docs/User_Guide/console.md` (every address Settings refuses reads "Invalid URL" and is never sent to or checked, from the chat or the config; such a custom endpoint is skipped); `Docs/User_Guide/settings.md` (the custom endpoint editor refuses what **s** refuses, and such an entry is skipped).
+- **Lane and timing**: the new tests are in the discovery file, which the dreams-boundary step runs whole; no workflow change. With that step's flags (`-p no:xdist --storage-lease-guard --timeout=180`): this task's and TASK-40302's new tests, 217 cases, 15.3 s at load 19; the whole file, 637 passed in 86 s (before the 7 `chat_with_llama` cases, about 2 s more).
+- **Runs** (run.sh, `-n 4`, load 30-70 on 18 CPUs; every failing node rerun with this task's changed sources at the 40302 commit):
+  - the 11 non-UI files that most name the changed helpers (gateway, Chat session settings, controller, project instructions, chat start, …): 1572 passed, 81 failed; 74 fail at base too (`RecoveryRequired`, voice preflight, turn execution context, and TASK-39151's three gateway reds); the other 7 are the pins rewritten above, plus `test_settings_active_compaction_close_anyway_keeps_provider_work_running_and_reopens_fresh`, which passed at head on its own (it was recorded red at base in TASK-39151).
+  - 76 more non-UI files naming them: 2791 passed, 175 failed, 31 errors; all fail at base too except the logging pin rewritten above.
+  - the other 89 non-UI files naming the gateway or endpoint helpers, plus 7 more that use a refused endpoint shape (96 files): 3874 passed, 221 failed, 9 errors; all fail at base too except 2 workflow child-launch nodes, which passed at head on their own.
+  - the 31 files that reach `chat_with_llama`: 1202 passed; the 25 failing nodes fail at base too (`test_chat_functions.py`, TASK-39151's gateway reds, auxiliary logging) except the boundary test, fixed as above.
+  - 25 UI files (Chat settings, custom endpoints, discovery, switcher, project instructions, native chat flow, …): 1816 passed, 531 failed; 292 failure sections are the local `RecoveryRequired` trap; the other 42 nodes: 39 fail at base too, 3 passed at head on their own.
+  - final: the discovery, project-instructions and registry files plus the rewritten nodes, 726 passed; `Tests/CI` and `Tests/Docs` 1272 passed (the recovered-suites pin was then updated for TASK-40301/40303); serial `Tests/Architecture`: 1348 passed, 3 failed in files this task does not touch (`agent_service.py`'s diagnostic inventory, `project_index_binding_card.py`'s timer inventory); the module-size, screen-size and chat-code-identity ratchets and the Agents/Chat boundary: 233 passed (gateway 8,355 lines under its 8,364 pin). `./scripts/preflight.sh`: all checks passed (markup interpolation OK). ruff on the touched modules: 3 findings, 4 at base, none new.
+- Files: `tldw_chatbook/Chat/console_provider_endpoints.py`, `console_provider_gateway.py`, `console_session_settings.py`, `custom_endpoint_registry.py`, `console_project_instructions.py`, `tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py`, `Tests/Chat/test_local_server_discovery.py`, `test_console_provider_gateway.py`, `test_console_project_instructions.py`, `test_sensitive_llm_logging.py`, `Docs/User_Guide/console.md`, `Docs/User_Guide/settings.md`.

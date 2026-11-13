@@ -20,7 +20,10 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleEgressClass
-from tldw_chatbook.Chat.console_provider_endpoints import SAVE_ENDPOINT_ACTION_LABEL
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    INVALID_BASE_URL_COPY,
+    SAVE_ENDPOINT_ACTION_LABEL,
+)
 from tldw_chatbook.Chat.console_provider_gateway import (
     MAX_AUXILIARY_OUTPUT_TOKENS,
     AuxiliaryCompletionRequest,
@@ -1802,7 +1805,7 @@ async def test_capture_on_verifies_llamacpp_literal_payload_before_adapter(
 
     resolution = ConsoleProviderResolution(
         provider="llama_cpp",
-        base_url="http://127.0.0.1:8080?token=endpoint-secret",
+        base_url="http://127.0.0.1:8080",
         model="local-model",
         ready=True,
         execution_key="llama_cpp",
@@ -1854,7 +1857,7 @@ async def test_llamacpp_shadow_matches_actual_http_url_and_json() -> None:
 
     resolution = ConsoleProviderResolution(
         provider="llama_cpp",
-        base_url="localhost:8080/v1?token=endpoint-secret#fragment",
+        base_url="localhost:8080/v1",
         model="local-model",
         ready=True,
         execution_key="llama_cpp",
@@ -3459,7 +3462,7 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
         ConsoleProviderSelection(
             provider="ollama",
             explicit_model="llama3",
-            base_url="http://user:secret@127.0.0.1:9999/v1",
+            base_url="http://127.0.0.1:9999/v1",
         )
     )
 
@@ -3467,8 +3470,19 @@ async def test_resolve_for_send_blocks_generic_base_url_override_that_differs_fr
     assert SAVE_ENDPOINT_ACTION_LABEL in resolved.visible_copy
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in resolved.visible_copy
     assert "Saved endpoint: http://127.0.0.1:11434" in resolved.visible_copy
-    assert "user" not in resolved.visible_copy
-    assert "secret" not in resolved.visible_copy
+
+    # TASK-40300: user info is refused before the unsaved guard, as readiness
+    # already refused it, and the copy names no part of it.
+    with_user_info = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="ollama",
+            explicit_model="llama3",
+            base_url="http://user:secret@127.0.0.1:9999/v1",
+        )
+    )
+
+    assert with_user_info.ready is False
+    assert with_user_info.visible_copy == INVALID_BASE_URL_COPY
 
 
 @pytest.mark.asyncio
@@ -3642,10 +3656,9 @@ async def test_gateway_attaches_on_device_destination_after_llamacpp_normalizati
 
 @pytest.mark.asyncio
 async def test_gateway_unknown_custom_destination_identity_is_credential_free():
-    endpoint = (
-        "https://user:URL-SECRET@models.example.test:8443/private/v1"
-        "?api_key=URL-SECRET#fragment"
-    )
+    # TASK-40300: user info, a query or a fragment is refused at send now
+    # (``test_a_configured_endpoint_with_user_info_or_a_query_is_refused``).
+    endpoint = "https://models.example.test:8443/private/v1"
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
             "api_settings": {
@@ -3670,8 +3683,37 @@ async def test_gateway_unknown_custom_destination_identity_is_credential_free():
     )
     assert resolved.resolved_destination.egress_class is ConsoleEgressClass.UNKNOWN
     rendered = repr(resolved.resolved_destination)
-    for secret in ("user", "URL-SECRET", "CONFIG-SECRET", "private", "api_key"):
+    for secret in ("CONFIG-SECRET", "private"):
         assert secret not in rendered
+
+
+@pytest.mark.asyncio
+async def test_a_configured_endpoint_with_user_info_or_a_query_is_refused():
+    """TASK-40300: the endpoint contract refuses these on every path; the
+    send's copy names no part of the value."""
+    endpoint = (
+        "https://user:URL-SECRET@models.example.test:8443/private/v1"
+        "?api_key=URL-SECRET#fragment"
+    )
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "openai": {
+                    "api_key": "CONFIG-SECRET",
+                    "model": "gpt-test",
+                    "api_base_url": endpoint,
+                }
+            }
+        },
+        environ={},
+    )
+
+    resolved = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-test")
+    )
+
+    assert resolved.ready is False
+    assert resolved.visible_copy == INVALID_BASE_URL_COPY
 
 
 @pytest.mark.asyncio
@@ -3816,7 +3858,8 @@ async def test_resolve_for_send_blocks_malformed_generic_base_url_without_crashi
     )
 
     assert resolved.ready is False
-    assert SAVE_ENDPOINT_ACTION_LABEL in resolved.visible_copy
+    # TASK-40300: the endpoint contract refuses it first, as readiness does.
+    assert resolved.visible_copy == INVALID_BASE_URL_COPY
 
 
 @pytest.mark.asyncio

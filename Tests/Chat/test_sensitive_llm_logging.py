@@ -974,10 +974,11 @@ async def test_sensitive_direct_llama_logs_no_request_response_or_endpoint_secre
     request = AuxiliaryCompletionRequest(
         resolution=ConsoleProviderResolution(
             provider="llama_cpp",
+            # TASK-40300: a query is refused before any request now, so the
+            # endpoint canaries ride the path.
             base_url=(
                 "http://127.0.0.1:9099/ENDPOINT-PATH-CANARY/"
                 "userinfo-ENDPOINT-USER-CANARY/credential-ENDPOINT-PASSWORD-CANARY"
-                "?token=ENDPOINT-QUERY-CANARY"
             ),
             model="llama-test",
             ready=True,

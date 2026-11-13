@@ -36,8 +36,10 @@ from tldw_chatbook.Chat.console_provider_support import (
 from tldw_chatbook.Chat.console_provider_endpoints import (
     CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
+    INVALID_BASE_URL_COPY,
     INVALID_LLAMACPP_BASE_URL_COPY,
     URL_BASED_PROVIDER_KEYS,  # also re-exported; console_settings_modal imports it from here
+    contract_refuses_endpoint,
     effective_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
@@ -115,10 +117,7 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
-from tldw_chatbook.Utils.input_validation import (
-    validate_env_var_reference,
-    validate_url,
-)
+from tldw_chatbook.Utils.input_validation import validate_env_var_reference
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
@@ -347,6 +346,10 @@ def normalize_llamacpp_base_url(api_url: str | None) -> str:
     if not raw_url:
         return DEFAULT_LLAMACPP_BASE_URL
 
+    # TASK-40300: a query or fragment is never dropped by rebuilding the URL;
+    # the contract refuses the value, so every check after this one must too.
+    if "?" in raw_url or "#" in raw_url:
+        return raw_url
     # TASK-39151: only a loopback spelling typed without a scheme is read as
     # http://, the contract's rule; any other stays schemeless and invalid.
     candidate = read_schemeless_loopback(raw_url)
@@ -1989,19 +1992,20 @@ def build_console_settings_readiness(
 
     provider_supported = provider_key in supported_keys
     execution_supported = provider_key in send_capable_keys
-    # TASK-39151: with no session endpoint, llama.cpp sends to its fallback
-    # chain's endpoint (environment, Console override, config), so check it.
-    checked_url = base_url or (
-        _console_endpoint_restart_fallback(
-            provider_key, provider_settings, app_config, environ
+    # TASK-39151/TASK-40300: with no session endpoint, check the one the send
+    # uses: llama.cpp's fallback chain (environment, Console override,
+    # config), any other provider's configured (or built-in) endpoint.
+    checked_url = base_url
+    if not checked_url and entry is None:
+        checked_url = (
+            _console_endpoint_restart_fallback(
+                provider_key, provider_settings, app_config, environ
+            )
+            if provider_key in {"llama_cpp", "local_llamacpp"}
+            else effective_provider_endpoint(provider_key, None, provider_settings)
         )
-        if entry is None and provider_key in {"llama_cpp", "local_llamacpp"}
-        else None
-    )
     endpoint_invalid = bool(
-        checked_url
-        and _is_url_based_provider(provider_key, provider_settings)
-        and not _valid_base_url(provider_key, checked_url)
+        checked_url and not _valid_base_url(provider_key, checked_url)
     )
     invalid_endpoint = (
         _invalid_endpoint_kind(provider_key, checked_url) if endpoint_invalid else None
@@ -2070,7 +2074,7 @@ def build_console_settings_readiness(
             detail = (
                 INVALID_LLAMACPP_BASE_URL_COPY
                 if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
-                else "Provider blocked: invalid base URL. Use an http(s) URL."
+                else INVALID_BASE_URL_COPY
             )
         label = "Invalid URL"
     elif blocker == "endpoint_not_saved":
@@ -3255,30 +3259,10 @@ def unsaved_console_endpoint_warning(
 
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:
-    # TASK-39042: the endpoint contract's scheme rule, the one the send reads
-    # (``effective_provider_endpoint``). Only a loopback spelling may omit
-    # the scheme; llama.cpp's normalizer had added http:// to a remote host.
-    base_url = read_schemeless_loopback(base_url)
-    if "://" not in base_url:
-        return False
-    try:
-        candidate = (
-            normalize_llamacpp_base_url(base_url)
-            if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
-            else base_url
-        )
-    except ValueError:
-        return False
-    return validate_url(candidate) and _has_valid_url_port(candidate)
-
-
-def _has_valid_url_port(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-        parsed.port
-    except ValueError:
-        return False
-    return parsed.port is None or 0 < parsed.port <= 65535
+    # TASK-40300: the endpoint contract decides, as the save and the send do
+    # (TASK-39042 took only its scheme rule; ``validate_url`` let a zone id,
+    # ``-bad.corp``, ``127.1``, an IDN and a query through).
+    return not contract_refuses_endpoint(provider_key, base_url)
 
 
 def _float_in_range(value: object, minimum: float, maximum: float) -> bool:

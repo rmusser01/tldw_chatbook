@@ -803,6 +803,14 @@ URL is such an address is skipped when the config loads, so a chat on it reads
 "Provider blocked: this custom endpoint is no longer configured. Restore its
 entry or choose another provider before sending." A chat whose custom endpoint
 was removed reads the same, in Chat settings and when you send.
+Every other address **s** refuses is refused the same way, for every
+provider: a host such as `-bad.corp`, `127.1`, `localhost..` or a non-ASCII
+one such as `bücher.example`, an IPv6 address with a zone ID, and an address
+with a query or a fragment read "Invalid URL" ("Provider blocked: invalid base
+URL. Use an http(s) URL."), whether it is the chat's endpoint or the
+provider's configured one, and Console neither sends to it nor checks it. A
+custom endpoint whose base URL is one of these is skipped when the config
+loads, like the llama.cpp one above.
 A value typed without a scheme and without a port is shown as "invalid
 endpoint" unless it is on this computer (`localhost`, any `127.x.x.x` address
 or `[::1]`), because it could be a key pasted into the field.
