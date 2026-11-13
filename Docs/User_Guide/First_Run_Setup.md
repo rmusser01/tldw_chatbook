@@ -675,14 +675,22 @@ marked `unsupported` (on some profiles that includes the config and the main
 databases) is not in the archive. Until the Review shows what you need as
 included, carry config.toml and the data folder as described above.
 
-**Known problem:** Create backup writes a verified archive on a fresh
-profile and on one that has chatted, but restoring an archive from a profile
-that has chatted as an isolated profile on a new machine can stop at
-**Review restore** with
-"Choose a folder beneath a separate private restore directory, outside
-recovery control storage." (`isolated_destination_parent_overlaps_control`),
-whichever folder you choose. If that happens, carry config.toml and the data
-folder as described above instead.
+**Known problems:**
+
+- Restoring as an isolated profile stops at **Review restore** with
+  "Choose a folder beneath a separate private restore directory, outside
+  recovery control storage." (`isolated_destination_parent_overlaps_control`),
+  whichever folder you choose, when the backup carries custom tokenizers.
+  That happens when the old profile has a `~/.config/tldw_cli/tokenizers`
+  folder; earlier versions created it, empty, the first time Console opened.
+  If it is empty, remove it on the old machine
+  (`rmdir ~/.config/tldw_cli/tokenizers`) and create the backup again.
+  Otherwise carry config.toml and the data folder as described above.
+- **Replace selected stored data** has stopped at `recovery_required`
+  (`credential_unreadable`) after a Review that listed no credential
+  problems, and the next launch opened only recovery mode. **Abort untouched
+  replacement** under **Recovery copies** leaves the profile as it was;
+  restore as an isolated profile instead.
 
 In the Create backup form, the line just above the buttons says why
 **Create backup** is disabled: "Create backup unlocks after a successful
