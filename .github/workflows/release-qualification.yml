@@ -1,0 +1,22 @@
+name: Release qualification
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+  package:
+    uses: ./.github/workflows/package-check.yml
+  verdict:
+    name: Full release qualification
+    needs: [tests, package]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require tests and installable distributions at the candidate SHA
+        env:
+          TESTS: ${{ needs.tests.result }}
+          PACKAGE: ${{ needs.package.result }}
+        run: test "$TESTS" = success && test "$PACKAGE" = success
