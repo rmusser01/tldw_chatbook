@@ -622,11 +622,6 @@ def test_unstored_reasoning_checkpoint_keeps_the_delivered_reply(
             "local_intent_stale",
         ),
         ("Dispatch recovery owner changed during settlement.", "settlement_owner_changed"),
-        # Raised after the managed finalizer ran (TASK-37653's pre-seal).
-        (
-            "Continuation owner changed while sealing; reload and retry.",
-            "seal_owner_changed",
-        ),
         # Unknown text: fail closed, as before.
         ("PRIVATE-CANARY", UNRECOGNIZED_STORE_FAILURE),
     ],
@@ -728,6 +723,42 @@ def test_destination_binding_refusals_still_fail_closed(store_text, store_code) 
     outcome, traced = _run_with_trace([_first_final_turn()], persist=persist)
 
     assert outcome.status == RUN_ERROR
+    assert _error_states(outcome) == {
+        "continuation_error": "final_persist_failed",
+        "continuation_store_failure": store_code,
+    }
+    assert not [
+        step for step in traced if step.summary == "Reasoning not preserved for replay"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("store_text", "store_code"),
+    [
+        ("Managed continuation seal is unavailable.", "managed_seal_unavailable"),
+        (
+            "Continuation owner changed while sealing; reload and retry.",
+            "seal_owner_changed",
+        ),
+    ],
+)
+def test_managed_seal_refusals_still_fail_closed(store_text, store_code) -> None:
+    """TASK-37653's managed-seal refusals are custody refusals, not unwritten ones.
+
+    Both are raised before any write: the pre-seal signs the checkpoint before
+    the locked write, and the signature has no effects. They still fail
+    closed, like the binding refusals, because each says a plugin-managed
+    checkpoint could not be sealed for the owner the run was accepted for
+    (pre-merge review M7 corrected the reason; the behaviour is unchanged).
+    """
+
+    def persist(event) -> None:
+        raise RuntimeError(store_text)
+
+    outcome, traced = _run_with_trace([_first_final_turn()], persist=persist)
+
+    assert outcome.status == RUN_ERROR
+    assert store_code not in UNWRITTEN_STORE_FAILURES
     assert _error_states(outcome) == {
         "continuation_error": "final_persist_failed",
         "continuation_store_failure": store_code,

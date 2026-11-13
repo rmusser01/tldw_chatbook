@@ -111,13 +111,21 @@ ACKNOWLEDGE_FAILED = "acknowledge_failed"
 #: for which keeping the delivered reply loses only reasoning replay. The
 #: durability-barrier codes, ``settlement_owner_changed`` and
 #: ``persistence_owner_changed`` are absent on purpose: they can follow a
-#: commit. So are ``managed_seal_unavailable`` and ``seal_owner_changed``:
-#: both are raised after the managed finalizer ran, whose own effects this
-#: module cannot vouch for. TASK-35582's host-target, destination and binding
-#: refusals are absent too: they also run before any write, but each says the
-#: checkpoint names another provider, origin or binding than the dispatch the
-#: user accepted, and dev built them to fail closed (review v5r1 F9).
-#: ``UNRECOGNIZED_STORE_FAILURE`` is absent too, so anything unknown keeps
+#: commit. Two kinds of refusal are absent although they, too, are raised
+#: before any write, because each is a custody refusal dev built to fail
+#: closed. ``managed_seal_unavailable`` and ``seal_owner_changed``
+#: (TASK-37653) say a plugin-managed checkpoint could not be sealed, or no
+#: longer belongs to the owner it was sealed for. The seal leaves nothing to
+#: undo: the pre-seal (``_presealed_continuation_finalizer``) runs it before
+#: the owner scope and the locked write, ``seal_resume_checkpoint`` only
+#: signs the checkpoint (``Plugins/continuation.seal_checkpoint``), and the
+#: locked write compares its inputs with the pre-seal's before writing
+#: (pre-merge review M7 corrected an earlier claim that these follow
+#: finalizer effects this module cannot vouch for). TASK-35582's host-target,
+#: destination and binding refusals each say the checkpoint names another
+#: provider, origin or binding than the dispatch the user accepted (review
+#: v5r1 F9). ``UNRECOGNIZED_STORE_FAILURE`` and ``ACKNOWLEDGE_FAILED`` are
+#: absent too, so anything unknown, or anything after a commit, keeps
 #: failing closed.
 UNWRITTEN_STORE_FAILURES = frozenset(
     {
