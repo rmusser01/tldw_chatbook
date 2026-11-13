@@ -269,7 +269,7 @@ async def test_unchanged_send_reason_resync_requests_no_layout(monkeypatch) -> N
         # Positive control: a changed reason is new copy for the strip.
         with requests.counting() as calls:
             composer.sync_action_state(**{**running, "queue_blocked_reason": "Full"})
-        assert "Static#console-send-disabled-reason" in _names(calls)
+        assert "ConsoleSendReasonStrip#console-send-disabled-reason" in _names(calls)
         assert str(composer.query_one("#console-send-disabled-reason").render()) == (
             "Full"
         )
@@ -304,7 +304,7 @@ async def test_send_reason_resync_still_clears_stale_inline_sizes(
         with requests.counting() as calls:
             composer.sync_action_state(**running)
         assert not [n for n in ("width", "height") if strip.styles.inline.has_rule(n)]
-        assert "Static#console-send-disabled-reason" in _names(calls)
+        assert "ConsoleSendReasonStrip#console-send-disabled-reason" in _names(calls)
         await pilot.pause()
         assert strip.size.height == 1
 

@@ -118,9 +118,11 @@ Top to bottom:
   streaming — and the reason shows inline next to it (e.g. "Send blocked —
   choose a model to continue ›"), so you never have to hover to find out
   why. When setup is the blocker, that reason is clickable and opens the
-  setup wizard directly. A staged image the model can't read is not setup:
-  the reason reads "Send blocked — this model can't accept images" and is not
-  a link. Pressing Enter while Send is blocked keeps the draft and writes
+  setup wizard directly. A full context window is not setup: "Send blocked —
+  fix model limits to continue ›" opens Chat settings with the cursor in
+  **Max tokens**, as **Fix model limits** does, and never the setup wizard.
+  A staged image the model can't read is not setup either: the reason reads
+  "Send blocked — this model can't accept images" and is not a link. Pressing Enter while Send is blocked keeps the draft and writes
   the reason as a System row. That row names the first thing that blocks the
   send: when none of the staged Library evidence is available, it says so,
   even if provider setup is also unfinished.
@@ -396,7 +398,8 @@ stay "Ready · not tested".
 tokens) leaves no room for your message in the model's context window; its
 fix action is **Fix model limits**, which opens Chat settings with the
 cursor in **Max tokens**, and the composer reads "Send blocked — fix model
-limits to continue". The composer still takes your message: a new
+limits to continue ›"; clicking that line opens the same place, never the
+setup wizard. The composer still takes your message: a new
 profile's empty chat shows the word, its reason ("Replies reserve 200,000 of
 gpt-4o's 128,000-token context window…") and **Fix model limits** on one
 line instead of the Get started card, and your draft is kept while you lower

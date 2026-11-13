@@ -1028,7 +1028,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-39156, 2026-11-10 (same waiver): 7202 -> 7213 (+11), exact
     # measurement. The focus watcher drops the other descendants' cached
     # visual style when the bar's background moves.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7213,
+    # TASK-34100.2 review v5r4 (G2C-R4-3), 2026-11-12, owner decision
+    # 2026-10-04 (expand limits): 7213 -> 7248 (+35), exact measurement. The
+    # capacity Send strip opens Chat settings on Max tokens (TASK-21145).
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7248,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
