@@ -712,9 +712,9 @@ def test_propagation_follows_imports_not_names():
 # Custom 2 (AC#10). Review IV-1 (2026-11-05): the four OpenAI ids the live
 # smoke found retired replaced in the [providers] OpenAI list, re-pinned on
 # purpose. Review v5r2 G2C-R3-1 (2026-11-12): Google's default is now
-# gemini-flash-lite-latest, and the two ids that stopped answering
-# (gemini-flash-latest, gemini-3.8-flash) left the [providers] Google list;
-# re-pinned on purpose.
+# gemini-flash-lite-latest, and the two ids whose every answered call came
+# back 503 'high demand' with the repo key that day (gemini-flash-latest,
+# gemini-3.8-flash) left the [providers] Google list; re-pinned on purpose.
 _TEMPLATE_SHA256 = "d0736a68d915f8008c4a51524b2345853829eab317b6c769dfc8dd8c06cb7bcf"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 

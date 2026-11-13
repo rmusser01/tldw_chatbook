@@ -3806,9 +3806,9 @@ def _load_settings_uncached(
 #: TASK-34100.2 AC#6 (gap-03): a Google rolling alias. Every pinned id this
 #: app shipped (gemini-2.5-flash and older) was retired upstream and 404s on
 #: generateContent; the alias moves with Google instead of rotting. Review
-#: v5r2 (G2C-R3-1): the Flash-Lite alias, because gemini-flash-latest stopped
-#: answering (503 'high demand' or a timeout on every call since 2026-10-06)
-#: while this one answered every run.
+#: v5r2 (G2C-R3-1): the Flash-Lite alias. On 2026-11-12, with the repo key,
+#: it answered all 7 calls; every gemini-flash-latest call that got an HTTP
+#: answer was 503 'high demand' (the rest timed out), with no 429.
 #: ``Helper_Scripts/smoke_shipped_model_ids.py`` re-checks the catalog live.
 DEFAULT_GOOGLE_CHAT_MODEL = "gemini-flash-lite-latest"
 

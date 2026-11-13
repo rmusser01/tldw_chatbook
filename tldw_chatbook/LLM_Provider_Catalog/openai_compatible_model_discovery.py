@@ -206,11 +206,11 @@ RETIRED_GEMINI_IDS = frozenset(
     }
 )
 #: Gemini ids Google lists that did not serve the repo's key (TASK-34100.2
-#: review v5r2, G2C-R3-1). On 2026-11-12, of 8 one-output-token calls each,
+#: review v5r2, G2C-R3-1). On 2026-11-12, of 7 one-output-token calls each,
 #: every one that got an HTTP answer was 503 UNAVAILABLE "This model is
-#: currently experiencing high demand" (gemini-flash-latest 7, gemini-3.8-flash,
-#: the model it resolves to, 6; the rest timed out at 60 s), with no 429,
-#: while gemini-flash-lite-latest answered all 8 in about a second. Earlier
+#: currently experiencing high demand" (gemini-flash-latest 6, gemini-3.8-flash,
+#: the model it resolves to, 5; the rest timed out at 60 s), with no 429,
+#: while gemini-flash-lite-latest answered all 7 in about a second. Earlier
 #: smoke runs from 2026-10-03 mixed answers, 503s and timeouts. Sorted last
 #: like the retired ids, never hidden: another key may be served. Evidence:
 #: .worktrees/setup-wizard-ux-qa/evidence/g2cv5-r3-catalog/, g2cv5-v3-catalog/.

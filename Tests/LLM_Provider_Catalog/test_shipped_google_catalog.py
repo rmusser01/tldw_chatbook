@@ -33,8 +33,9 @@ from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import
 
 
 def test_the_default_gemini_model_is_googles_rolling_alias() -> None:
-    # Review v5r2 G2C-R3-1: the Flash-Lite alias, the rolling alias that
-    # answered every run (gemini-flash-latest stopped answering).
+    # Review v5r2 G2C-R3-1: the Flash-Lite alias answered all 7 calls with
+    # the repo key on 2026-11-12, while every answered call to
+    # gemini-flash-latest came back 503 'high demand'.
     assert DEFAULT_GOOGLE_CHAT_MODEL == "gemini-flash-lite-latest"
     assert (
         DEFAULT_CONFIG_FROM_TOML["api_settings"]["google"]["model"]

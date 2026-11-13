@@ -29,20 +29,21 @@ all: a network error or a timeout, with the error type -- never counted as
 retired; retry later).
 
 A provider's shipped default is held to more: it is what a first chat sends
-to, so a default that gives no answer (``unavailable``, ``unreachable``) is
-tried ``DEFAULT_ATTEMPTS`` times and, if it never answers, fails the run.
-TASK-34100.2 review v5r2 (G2C-R3-1): Google's default ``gemini-flash-latest``
-timed out or answered 503 on every run for five weeks while this script
-exited 0. A catalog id that gives no answer is named in the summary and does
-not fail the run.
+to, so a default that is ``unavailable`` or ``unreachable`` is tried
+``DEFAULT_ATTEMPTS`` times and, if every try is, fails the run.
+TASK-34100.2 review v5r2 (G2C-R3-1): every run from 2026-10-29 to 2026-11-05
+recorded a 503 "high demand" or a timeout for Google's then default
+``gemini-flash-latest`` while this script exited 0. A catalog id that is
+unavailable or unreachable is named in the summary, with its verdict, and
+does not fail the run.
 
 Usage::
 
     python Helper_Scripts/smoke_shipped_model_ids.py [--providers google,openai]
 
 Exit status: 0 when no shipped id is retired and every default answered, 1
-when an id is retired or a default never answered, 2 on a usage or
-template-parse error.
+when an id is retired or a default was unavailable or unreachable on every
+try, 2 on a usage or template-parse error.
 """
 
 from __future__ import annotations
@@ -66,10 +67,11 @@ _TEMPLATE_TOML = (
     / "default_config.toml"
 )
 _TIMEOUT_SECONDS = 30
-#: Tries for a provider's shipped default before its silence fails the run.
+#: Tries for a provider's shipped default before an outage fails the run.
 DEFAULT_ATTEMPTS = 3
-#: Verdicts that are no answer at all (an id that may still be served).
-_SILENT = frozenset({"unavailable", "unreachable"})
+#: Verdicts that say nothing about the id itself: a 5xx, or no HTTP answer
+#: (the id may still be served; retry later).
+_RETRY_LATER = frozenset({"unavailable", "unreachable"})
 #: Template section name -> ([providers] list key, env vars holding a key).
 _PROVIDERS = {
     "google": ("Google", ("GEMINI_API_KEY", "GOOGLE_API_KEY")),
@@ -198,8 +200,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     retired: list[str] = []
-    silent_defaults: list[str] = []
-    silent: list[str] = []
+    down_defaults: list[str] = []
+    down: list[str] = []
     for section in sections:
         _list_key, env_vars = _PROVIDERS[section]
         key = next((os.environ[name].strip() for name in env_vars if os.environ.get(name, "").strip()), "")
@@ -213,30 +215,30 @@ def main(argv: list[str] | None = None) -> int:
             attempts = DEFAULT_ATTEMPTS if model == default else 1
             for _attempt in range(attempts):
                 outcome = probe(section, model, key)
-                if outcome.verdict not in _SILENT:
+                if outcome.verdict not in _RETRY_LATER:
                     break
             print(f"  {outcome.verdict:<11} {model}  {outcome.detail}".rstrip())
             if outcome.verdict == "retired":
                 retired.append(f"{section}/{model}")
-            elif outcome.verdict in _SILENT:
-                (silent_defaults if model == default else silent).append(
-                    f"{section}/{model}"
+            elif outcome.verdict in _RETRY_LATER:
+                (down_defaults if model == default else down).append(
+                    f"{section}/{model} ({outcome.verdict})"
                 )
             if outcome.verdict == "key":
                 print(f"  {section}: the key was refused; remaining ids not checked")
                 break
-    if silent:
-        print("Did not answer (retry later): " + ", ".join(silent))
-    if silent_defaults:
+    if down:
+        print("Unavailable or unreachable (retry later): " + ", ".join(down))
+    if down_defaults:
         print(
-            f"Shipped default did not answer ({DEFAULT_ATTEMPTS} tries): "
-            + ", ".join(silent_defaults)
+            "Shipped default unavailable or unreachable on all "
+            f"{DEFAULT_ATTEMPTS} tries: " + ", ".join(down_defaults)
         )
     if retired:
         print("RETIRED shipped ids: " + ", ".join(retired))
         return 1
     print("No shipped id is retired.")
-    return 1 if silent_defaults else 0
+    return 1 if down_defaults else 0
 
 
 if __name__ == "__main__":
