@@ -168,7 +168,8 @@ class AgentsSettingsPanel(Vertical):
         yield Static(
             "Named sub-agents the Console supervisor can spawn. Plain chat "
             "spawns them only with Full agent tools on (Settings ▸ Tools & "
-            "MCP ▸ Servers ▸ built-in row ▸ Tool gates). Changes "
+            "MCP ▸ Servers ▸ built-in row ▸ Tool gates), or for one turn "
+            "that names a skill. Changes "
             "apply immediately (stored in agent_runs.db, not config.toml) "
             "and take effect on the next reply.",
             classes="settings-detail-row",

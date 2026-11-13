@@ -13,18 +13,23 @@ and this project adheres to Some kind of Versioning
   agent tools** (Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool
   gates, or `[tools] full_agent_tools_enabled`). Sub-agents, skills, web,
   Watchlists, workspace, character, Canvas and chat-fork tools come with it.
-  Profiles that already use agent features keep them: the first time this
-  version opens a profile with no `full_agent_tools_enabled` setting, it
-  checks once, in the background, for a sub-agent definition, a workspace
-  folder or SSH binding, or an earlier Console or mobile-companion reply that
-  ran a tool outside the light set (a call that was refused does not count).
-  If it finds one, it adds the one line `full_agent_tools_enabled = true`
-  under `[tools]` in config.toml and keeps the rest of the file byte for
-  byte, comments and layout included. New profiles and profiles that use
-  none of these stay on the light set with config.toml unchanged. The check
-  runs once per profile and never overrides a value you set, so switching
-  Full agent tools off afterwards keeps it off. If it cannot read the
-  profile's data, it changes nothing and tries again at the next launch.
+  Profiles that already use agent features keep them: the first time the
+  Chatbook app (the terminal UI) opens a profile with no
+  `full_agent_tools_enabled` setting on this version, it checks once, in the
+  background, for a sub-agent definition, a workspace folder or SSH binding,
+  or an earlier Console or mobile-companion reply that ran a tool outside the
+  light set (a call that was refused does not count). If it finds one, it
+  adds the one line `full_agent_tools_enabled = true` under `[tools]` in
+  config.toml and keeps the rest of the file byte for byte, comments and
+  layout included (a later settings save rewrites the file, as every
+  settings save does). New profiles and profiles that use none of these stay
+  on the light set with config.toml unchanged. The check runs once per
+  profile and never overrides a value you set, so switching Full agent tools
+  off afterwards keeps it off. If it cannot read the profile's data, it
+  changes nothing and tries again at the next launch. `tldw-serve` on its
+  own does not run the check: a profile used only from the mobile companion
+  keeps the light set until the app opens it once, or until you turn Full
+  agent tools on.
 - Console replies now stream by default for every provider, including
   OpenAI, Anthropic and the Custom OpenAI-compatible slots: the shipped
   `[chat_defaults] streaming = true` outranks each `[api_settings.<provider>]
