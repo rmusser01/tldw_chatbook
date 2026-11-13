@@ -25426,3 +25426,10 @@ While the merge queue waited for runners, GitHub's repository API reported zero 
 **Incident.** The first local-runner qualification passed two sequential GitHub jobs, but source review found that the pinned QEMU controller waited indefinitely for guest poweroff. A root-capable job could disable that command and consume a slot forever. The systemd default also signaled all QEMU children during service stop, bypassing the controller's intended drain.
 
 **Evidence and correction.** Added host-side reclamation for deleted/offline runner records and a busy-job deadline, and used `KillMode=mixed` for orderly service shutdown. In GitHub run 43480488554, the first guest deliberately replaced poweroff with a no-op; the host logged reclamation and a fresh control runner began the next job 23 seconds later with the previous marker absent. Happy-path replacement alone did not prove the disposal boundary.
+
+
+## An idle single-shard benchmark does not qualify all lane budgets (TASK-40724, 2026-11-13)
+
+**Incident.** The disposable runner passed a standalone UI shard in 11m54s, but the first sustained eight-worker run 43487945840 timed out Console P0 during its first invocation and Dreams/Guardian near the end of its last group. Both retained 20-minute hosted job caps. The runner toolchain and actual project-chat UAT had already passed; those results did not establish sustained-load completion or whole-gate timing.
+
+**What to do.** Preserve individual attempt timings and distinguish per-test deadlines from whole-job caps. Qualify all required lanes under the deployed concurrency before reporting full CI success. Keep test coverage and isolation intact when splitting long invocations; measure the resulting full gate before claiming the new budget suffices.

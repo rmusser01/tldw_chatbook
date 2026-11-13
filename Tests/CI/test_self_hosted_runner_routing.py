@@ -91,3 +91,32 @@ def test_runner_routing(
     elif pool == "control":
         expected = control_label or hosted
     assert selected == expected
+
+
+def test_p0_profiles_each_run_once_without_fail_fast(workflows):
+    jobs = workflows["derived-artifacts.yml"]["jobs"]
+    p0 = jobs["console-p0-gate"]
+    assert p0["strategy"] == {
+        "fail-fast": False,
+        "matrix": {"profile": ["sandboxed", "admission-sensitive"]},
+    }
+    tests = [
+        step
+        for step in p0["steps"]
+        if step.get("run", "").lstrip().startswith("pytest")
+    ]
+    for profile in p0["strategy"]["matrix"]["profile"]:
+        selected = [
+            step
+            for step in tests
+            if step.get("if")
+            == "${{ !cancelled() && matrix.profile == '" + profile + "' }}"
+        ]
+        assert len(selected) == 1
+        assert selected[0]["name"] == f"Run the {profile} Console P0 regression tests"
+    assert len(tests) == 2
+    assert p0["timeout-minutes"] == 35
+    assert jobs["dreams-boundary"]["timeout-minutes"] == 35
+    assert {"console-p0-gate", "dreams-boundary"} <= set(
+        jobs["derived-artifacts"]["needs"]
+    )

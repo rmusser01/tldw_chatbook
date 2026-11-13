@@ -49,22 +49,23 @@ def _counts() -> dict[str, int]:
 
     Eligible application jobs exclude the serialized preflight. Peak runners
     apply the UI matrix's max-parallel ceiling after preflight succeeds.
-    The PR Fast Lane's three jobs, the Console P0 gate, the Dreams
-    tracking tests, the Dreams and Guardian boundary contracts, the
-    Architecture guard contracts, the architecture-review tests and the
-    recovered suites since TASK-34916, TASK-35575, TASK-34929, TASK-34986,
-    TASK-38989, PR #3399 and the 2026-11-06 owner decision each use one
-    runner: a second matrix job among them fails here instead of miscounting.
+    Console P0 has two profile jobs since TASK-40724; other non-UI lanes
+    remain single jobs. Count both matrices and reject unknown matrices.
     """
     jobs = _jobs(WORKFLOW)
     needs = [name for name in jobs["derived-artifacts"]["needs"] if name != "preflight"]
     if "preflight" in jobs:
         assert all(jobs[name].get("needs") == ["preflight"] for name in needs)
-    assert [job for job in needs if "strategy" in jobs[job]] == ["ui-fast-lane"]
+    assert {job for job in needs if "strategy" in jobs[job]} <= {
+        "ui-fast-lane",
+        "console-p0-gate",
+    }
+    p0 = jobs.get("console-p0-gate", {}).get("strategy", {})
+    extra_p0 = len(p0.get("matrix", {}).get("profile", ["both"])) - 1
     shards = len(jobs["ui-fast-lane"]["strategy"]["matrix"]["shard"])
-    eligible = shards + len(needs) - 1
+    eligible = shards + len(needs) - 1 + extra_p0
     limit = jobs["ui-fast-lane"]["strategy"].get("max-parallel", shards)
-    runners = min(shards, limit) + len(needs) - 1
+    runners = min(shards, limit) + len(needs) - 1 + extra_p0
     perf = _jobs(".github/workflows/perf-guard.yml")
     assert not [job for job in perf.values() if "strategy" in job]
     return {
@@ -88,11 +89,22 @@ def _jobs(workflow: str) -> dict:
     ],
 )
 @pytest.mark.parametrize("preflight", [False, True])
+@pytest.mark.parametrize("p0_profiles", [1, 2])
 def test_counts_distinguish_eligible_jobs_from_parallel_runners(
-    monkeypatch, shards, limit, eligible, parallel, preflight
+    monkeypatch, shards, limit, eligible, parallel, preflight, p0_profiles
 ):
-    needs = ["ui-fast-lane", *[f"lane-{index}" for index in range(6)]]
+    needs = [
+        "ui-fast-lane",
+        "console-p0-gate",
+        *[f"lane-{index}" for index in range(5)],
+    ]
     jobs = {name: {} for name in needs}
+    if p0_profiles == 2:
+        jobs["console-p0-gate"]["strategy"] = {
+            "matrix": {"profile": ["sandboxed", "admission-sensitive"]}
+        }
+    eligible += p0_profiles - 1
+    parallel += p0_profiles - 1
     strategy = {"matrix": {"shard": list(range(1, shards + 1))}}
     if limit is not None:
         strategy["max-parallel"] = limit
