@@ -206,32 +206,61 @@ def test_domains_out_of_provider_order_are_refused() -> None:
     assert _plan([(M, "u1"), (C, "c-a1"), (M, "a1")], _turn_three()) is None
 
 
-@pytest.mark.parametrize(
-    ("case", "incoming"),
-    [
-        # The new reply carries the same descriptor as a recorded one, so a
-        # checkpoint "attached to a new message" could equally be attached to
-        # the recorded reply.
-        (
-            "new owner equals a recorded message",
-            _turn_three(
-                a2=(M, "a2", _message("a1")),
-                **{"c-a2": (C, "c-a2", _attached("a1"))},
-            ),
+def _reply_artifact() -> ProviderArtifactTraceProvenance:
+    """How the Console carries every assistant reply: one equal descriptor."""
+    return ProviderArtifactTraceProvenance(TraceProvenanceSource.ACTIVE_REQUEST, POLICY)
+
+
+def _attached_to_a_reply() -> DerivedTraceProvenance:
+    return DerivedTraceProvenance(
+        TraceTransformKind.CONTINUATION_ATTACHMENT,
+        (_reply_artifact(),),
+        artifact=ProviderArtifactTraceProvenance(
+            TraceProvenanceSource.CONTINUATION, POLICY
         ),
-        # Two new messages carry the same descriptor as the new checkpoint's
-        # owner: membership no longer names one message.
-        (
-            "two new messages share the owner",
-            _turn_three(
-                u3=(M, "u3", _message("a2")),
-            ),
-        ),
-    ],
-)
-def test_a_checkpoint_owner_must_name_exactly_one_message(case, incoming) -> None:
-    """Pre-merge review M2: ownership is a proof only when the owner is unique."""
-    assert _plan(RECORDED, incoming) is None, case
+    )
+
+
+def _console_turn_three(order=None):
+    """Turn 3 as the mounted Console sends it: replies are equal artifacts."""
+    rows = {
+        "u1": (M, "u1", _message("u1")),
+        "a1": (M, "a1", _reply_artifact()),
+        "u2": (M, "u2", _message("u2")),
+        "a2": (M, "a2", _reply_artifact()),
+        "u3": (M, "u3", _message("u3")),
+        "c-a1": (C, "c-a1", _attached_to_a_reply()),
+        "c-a2": (C, "c-a2", _attached_to_a_reply()),
+        "c-a1-again": (C, "c-a1-again", _attached_to_a_reply()),
+    }
+    order = order or ["u1", "a1", "u2", "a2", "u3", "c-a1", "c-a2"]
+    return [rows[key] for key in order]
+
+
+def test_console_reply_artifacts_are_owners_by_side_not_by_identity() -> None:
+    """The real Console shape: every reply is the same ACTIVE_REQUEST artifact.
+
+    Pre-merge review M2 asked that a checkpoint's owner occur exactly once
+    among the incoming messages, so that "attached to a recorded / new
+    message" would be a proof. In the mounted Console (TASK-34100.3 pilots,
+    2026-11-13) every assistant reply is ``ProviderArtifactTraceProvenance(
+    ACTIVE_REQUEST, policy)``, equal for every reply, so a uniqueness rule
+    refused every Kimi turn 3+ again. The owner check can only say which side
+    a checkpoint belongs to; the no-swap guarantee is the recorded slots'
+    byte equality.
+    """
+    assert _plan(RECORDED, _console_turn_three()) == (3, 4, 6)
+    # The limitation, pinned: with equal reply artifacts, a new checkpoint
+    # that really belongs to reply 1 cannot be told from reply 2's. It is
+    # appended (and recorded exactly as sent); only a saved-revision owner
+    # lets the rule refuse it (``new checkpoint on a recorded reply`` above).
+    again = _console_turn_three(
+        order=["u1", "a1", "u2", "a2", "u3", "c-a1", "c-a1-again"]
+    )
+    assert _plan(RECORDED, again) == (3, 4, 6)
+    # A recorded slot whose bytes changed is still refused: content decides.
+    changed = _console_turn_three(order=["u1", "a1", "u2", "a2", "u3", "c-a2", "c-a1"])
+    assert _plan(RECORDED, changed) is None
 
 
 #: Turn 3's recorded surface: [u1, a1, u2, a2, u3] + [c(a1), c(a2)].
