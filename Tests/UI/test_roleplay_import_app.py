@@ -1105,13 +1105,21 @@ async def test_an_import_while_a_save_is_in_flight_does_not_auto_select(
 
 
 def _hold_the_landing_refresh(
-    monkeypatch, screen
+    monkeypatch, screen, *, lore: bool = False
 ) -> tuple[asyncio.Event, asyncio.Event]:
-    """Hold the landing's own character-list refresh until ``gate`` is set."""
+    """Hold the landing's own list refresh until ``gate`` is set.
+
+    The character-list refresh by default; ``lore`` holds a lore landing's
+    ``_render_lore_rows`` instead.
+    """
     entered, gate = asyncio.Event(), asyncio.Event()
     landing = False
     real_land = screen._land_import
-    real_refresh = screen.character_handler.refresh_character_list
+    real_refresh = (
+        screen._render_lore_rows
+        if lore
+        else screen.character_handler.refresh_character_list
+    )
 
     async def land(*args, **kwargs):
         nonlocal landing
@@ -1128,7 +1136,10 @@ def _hold_the_landing_refresh(
         return await real_refresh(*args, **kwargs)
 
     monkeypatch.setattr(screen, "_land_import", land)
-    monkeypatch.setattr(screen.character_handler, "refresh_character_list", refresh)
+    if lore:
+        monkeypatch.setattr(screen, "_render_lore_rows", refresh)
+    else:
+        monkeypatch.setattr(screen.character_handler, "refresh_character_list", refresh)
     return entered, gate
 
 
@@ -1512,6 +1523,7 @@ async def test_a_lore_import_clears_a_search_its_book_does_not_match_and_selects
         "kind-round-trip",
         "sort-round-trip",
         "tag-round-trip",
+        "escape-clears-a-tag",
     ],
 )
 async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleared(
@@ -1525,12 +1537,15 @@ async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleare
     user made to the list during the refresh is newer and stays, even one
     that ends on the cleared values: a typed search, a key typed and erased,
     a switch to Lore and back (whose own clear leaves Characters
-    unfiltered), the sort cycled back to Name, or a tag picked and cleared.
+    unfiltered), the sort cycled back to Name, a tag picked and cleared, or
+    Escape on the list clearing a tag set before the import (the landing
+    clears only the search, so Escape's clear can be the only change).
     Mutations: M51-A (no restore) and M51-C (the box restored without
     ``prevent``, a second read) turn the draft case red; M51-B (no check for
     a newer change) turns every other case red; M51-D (the check compares
     the list's values instead of counting the user's changes, fix round 1's
-    finding) turns the four round-trip cases red."""
+    finding) turns the four round-trip cases red; M51-E5 (Escape's clear
+    not counted, fix round 2) turns the Escape case red."""
     fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
     async with open_styled_roleplay(
         "mock", mock_app_instance, size=SIZE, character_db=import_env.db
@@ -1546,6 +1561,9 @@ async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleare
             what="the search's one match",
         )
         assert screen.state.sort_key == "relevance"
+        if meanwhile == "escape-clears-a-tag":
+            await screen._apply_tag_filter("hero")
+            await settle(pilot)
         entered, gate = _hold_the_landing_refresh(monkeypatch, screen)
         await _press_import(pilot)
         await wait_until(pilot, entered.is_set, what="the landing's refresh")
@@ -1583,6 +1601,14 @@ async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleare
                     lambda key=expected_sort: screen.state.sort_key == key,
                     what=f"the sort {expected_sort}",
                 )
+            await settle(pilot)
+        elif meanwhile == "escape-clears-a-tag":
+            assert screen.state.tag_filter == "hero"
+            screen.query_one("#personas-library-rows").focus()
+            await pilot.press("escape")
+            await wait_until(
+                pilot, lambda: screen.state.tag_filter is None, what="the tag cleared"
+            )
             await settle(pilot)
         elif meanwhile == "tag-round-trip":
             await screen._apply_tag_filter("hero")
@@ -1635,6 +1661,49 @@ async def test_a_landing_that_then_toasts_restores_the_search_and_sort_it_cleare
                 "name_asc",
             )
             assert "Abel" not in reads, reads
+
+
+async def test_a_lore_landing_restores_nothing_once_the_kind_changed_under_it(
+    import_env, mock_app_instance, monkeypatch
+):
+    """A kind change that is not a user's list change still stops the restore.
+    A Roleplay conversation deep link (``_apply_pending_character_conversation_link``)
+    sets ``state.active_mode`` to Characters directly and loads a character
+    without counting a list change; here that is done the same way while a
+    lore landing's refresh is held. Without the mode check the restore wrote
+    the lore query into the Characters box (new with this PR's first cut;
+    fix round 2). Mutation M51-F (no mode check) turns it red."""
+    harbour = WorldBookManager(import_env.db).create_world_book("Harbour Lore")
+    fake_file_picker(monkeypatch, import_env.files["lore_tldw_export.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        assert await pilot.click("#personas-mode-lore")
+        await settle(pilot)
+        search = screen.query_one("#personas-library-search", Input)
+        search.focus()
+        await pilot.press(*"harb")
+        await wait_until(
+            pilot,
+            lambda: visible_item_ids(screen) == (f"lore:{harbour}",),
+            what="the search's one match",
+        )
+        notices = _record_notices(monkeypatch, screen)
+        entered, gate = _hold_the_landing_refresh(monkeypatch, screen, lore=True)
+        await _press_import(pilot)
+        await wait_until(pilot, entered.is_set, what="the lore landing's refresh")
+        # As the deep link does: the kind set directly, then a load (a newer
+        # import intent), with no list change counted.
+        screen.state.active_mode = "characters"
+        screen._bump_import_intent()
+        gate.set()
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        await asyncio.sleep(personas_screen_module.PERSONAS_SEARCH_DEBOUNCE_SECONDS * 2)
+        await settle(pilot)
+        assert "Kepler Atlas" in import_env.lore_books()
+        assert notices[-1:] == ["Imported Kepler Atlas · in Lore books"]
+        assert (search.value, screen.state.search_query) == ("", "")
 
 
 # ---- TASK-33910.48 (interim): a lore Settings draft holds the landing ----
