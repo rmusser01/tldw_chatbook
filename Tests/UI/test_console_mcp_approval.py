@@ -401,7 +401,7 @@ async def test_raw_shell_row_shows_complete_command_and_danger_context():
 
 
 @pytest.mark.asyncio
-async def test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does():
+async def test_raw_shell_row_has_one_scope_line_beside_its_session_statement():
     """Final-review fix: `.approval-row-raw-scope` ("Session scope: ...") is the
     raw-shell row's own, WIDER statement of what "All shell · session"
     covers. An ordinary MCP row carries no `.approval-row-raw-scope` and
@@ -413,6 +413,8 @@ async def test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does():
     session scope for the shell (`approval_presentation.scope_copy`'s
     `console_chat` branch). So the raw-shell row now carries exactly one
     scope line, stating its Deny default, beside its own session statement.
+    This harness passes no view, so the line is the uncaptured fallback; the
+    captured shell wording is pinned by the next test (TASK-40314).
     """
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
@@ -430,6 +432,80 @@ async def test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does():
         assert len(raw_scopes) == 1
         assert _text(raw_scopes[0]) == DECISION_SCOPE_COPY["deny"]
         assert list(raw_row.query(".approval-row-raw-scope"))
+
+
+#: `approval_presentation.scope_copy` for a raw-shell row (`console_chat`).
+_CAPTURED_SHELL_SESSION_SCOPE = (
+    "Until Chatbook exits: future shell commands in this Console chat. "
+    "Clears on Disarm or when Chatbook exits."
+)
+
+
+def _raw_shell_pending(tmp_path: Path, session_id: str) -> MCPPendingCall:
+    """The production raw-shell approval row, its captured authority included."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
+
+    provider = RawShellToolProvider(
+        runtime=SimpleNamespace(
+            permitted=True, armed=True, model_session_granted=lambda _sid: False
+        ),
+        console_session_id=session_id,
+        initial_directory=lambda: tmp_path,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+        local_tools_enabled=lambda: True,
+        kill_switch=lambda: False,
+    )
+    row = provider.pending_gate_for(
+        ToolCall("shell_exec", {"command": "printf ok"}, "raw-1")
+    )
+    assert row is not None
+    return row
+
+
+async def _session_scope_line(pilot, row) -> str:
+    """Choose "Until Chatbook exits" on one row; return its scope line."""
+    select = row.query_one(".approval-row-decision", Select)
+    # A found Select may not have mounted yet (its value is still NULL), and a
+    # choice made then never reached the scope line (TASK-40315).
+    deadline = time.monotonic() + 5
+    while select.value is Select.NULL:
+        assert time.monotonic() < deadline, "the decision Select never mounted"
+        await pilot.pause(0.05)
+    select.value = "approve_session"
+    await pilot.pause()
+    return _text(row.query_one(".approval-row-scope", Static))
+
+
+@pytest.mark.asyncio
+async def test_captured_raw_shell_session_scope_names_this_console_chat(tmp_path):
+    """TASK-40314: with the production payload's captured view, a raw-shell
+    row's session scope is this chat's shell scope, never the per-tool
+    fallback ("Every call to this tool until Chatbook exits.")."""
+    from tldw_chatbook.Chat.console_chat_controller import _build_approval_payload
+
+    payload = _build_approval_payload(
+        "raw-round", "chat", "run", [_raw_shell_pending(tmp_path, "chat")], 45.0, None
+    )
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        app.query_one(ChatApprovalCard).set_batch(
+            payload["calls"],
+            timeout_seconds=45.0,
+            round_id="raw-round",
+            view=payload["view"],
+            presentation_revision=payload["presentation_revision"],
+        )
+        await pilot.pause()
+        row = app.query_one(".approval-row")
+        assert _text(row.query_one(".approval-row-scope", Static)) == (
+            "Deny this call; the model is told not to retry."
+        )
+        assert await _session_scope_line(pilot, row) == _CAPTURED_SHELL_SESSION_SCOPE
 
 
 @pytest.mark.asyncio
@@ -1766,61 +1842,75 @@ async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
             run_id=run_id,
         )
 
+        worker_errors: list[BaseException] = []
+
         def run_tool() -> None:
-            with use_run_id(run_id):
-                verdicts = review([call], run_id)
-                assert verdicts.get(call.name) == "proceed"
-                result_box["result"] = invoke(call)
+            try:
+                with use_run_id(run_id):
+                    verdicts = review([call], run_id)
+                    assert verdicts.get(call.name) == "proceed", verdicts
+                    result_box["result"] = invoke(call)
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the test thread
+                worker_errors.append(exc)
 
-        worker = threading.Thread(target=run_tool)
+        # TASK-40314: an unanswered round's clock runs only while its card is
+        # shown, so a red that left the worker in review never timed out and
+        # the serial lane hung at interpreter exit. The finally ends it.
+        worker = threading.Thread(target=run_tool, daemon=True)
         worker.start()
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            card = cards.query_one(ChatApprovalCard)
-            fast = list(card.query(".approval-row-fast-approve"))
-            # TASK-39154: a41da77591 (#3036) keeps the fast button disabled
-            # until the round's facts lay out; a click before that is refused.
-            if card.display and fast and not fast[0].disabled:
-                break
-            await pilot.pause(0.05)
-        else:
-            controller.begin_shutdown()
-            worker.join(2)
-            raise AssertionError("approval card did not mount")
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                card = cards.query_one(ChatApprovalCard)
+                fast = list(card.query(".approval-row-fast-approve"))
+                # TASK-39154: a41da77591 (#3036) keeps the fast button disabled
+                # until the round's facts lay out; a click before that is refused.
+                if card.display and fast and not fast[0].disabled:
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("approval card did not mount")
 
-        await pilot.click(f"#{fast[0].id}")
-        assert entered.wait(2), "approved handler never started"
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            if _text(card.query_one("#approval-title", Static)).startswith("Finishing"):
-                break
-            await pilot.pause(0.05)
-        else:
+            await pilot.click(f"#{fast[0].id}")
+            assert entered.wait(2), "approved handler never started"
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if _text(card.query_one("#approval-title", Static)).startswith(
+                    "Finishing"
+                ):
+                    break
+                await pilot.pause(0.05)
+            else:
+                raise AssertionError("approval card never entered finishing state")
+
+            assert _text(card.query_one("#approval-title", Static)) == (
+                "Finishing — Stop will not cancel"
+            )
+            assert card.display is True
+            assert all(select.disabled for select in card.query(Select))
+            # TASK-39154: a2fcbe61bc (#3036) composes the Details panel's
+            # navigation buttons once; a finishing card keeps that panel closed
+            # with those buttons hidden, and every displayed control disabled.
+            assert card.query_one("#approval-details-panel").display is False
+            assert all(
+                button.disabled or not button.display for button in card.query(Button)
+            )
+            assert worker.is_alive(), "runtime returned before the real tool terminal"
+
             release.set()
-            await asyncio.to_thread(worker.join, 2)
-            raise AssertionError("approval card never entered finishing state")
-
-        assert _text(card.query_one("#approval-title", Static)) == (
-            "Finishing — Stop will not cancel"
-        )
-        assert card.display is True
-        assert all(select.disabled for select in card.query(Select))
-        # TASK-39154: a2fcbe61bc (#3036) composes the Details panel's
-        # navigation buttons once; a finishing card keeps that panel closed
-        # with those buttons hidden, and every displayed control disabled.
-        assert card.query_one("#approval-details-panel").display is False
-        assert all(
-            button.disabled or not button.display for button in card.query(Button)
-        )
-        assert worker.is_alive(), "runtime returned before the real tool terminal"
-
-        release.set()
-        await asyncio.to_thread(worker.join, 3)
-        assert not worker.is_alive()
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and card.display:
-            await pilot.pause(0.05)
-        assert card.display is False
+            await asyncio.to_thread(worker.join, 3)
+            assert not worker.is_alive()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and card.display:
+                await pilot.pause(0.05)
+            assert card.display is False
+        finally:
+            release.set()
+            controller.begin_shutdown()
+            await asyncio.to_thread(worker.join, 5)
+            assert not worker.is_alive(), "the definitive worker outlived the test"
+            if worker_errors:
+                raise worker_errors[0]
 
     result = result_box["result"]
     if crash_after_release:
