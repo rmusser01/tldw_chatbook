@@ -4091,9 +4091,18 @@ archive partial (`credential_policies.MANUAL_CREDENTIAL_ISSUES`). The owner is
 activation-required: every restore binds it. Personal Context sync (`app._load_personal_context_sync_runtime`)
 loads only when `execution_allowed` passes for `personal_context.repository` and
 `runtime.sync_state` (`recovery.require_sync_allowed`), and so do the link service's `resume` and `resume_after_local_activation` and the Settings link flow for a stored link, before any state or keyring read. Settings' review approves
-only `personal_context.repository`, and only for a generation whose restore plan
-published neither owner; otherwise it shows `personal_context_restored_link_state`, and `personal_context_restore_review_unavailable` when the review cannot be read while the gate is closed.
+only `personal_context.repository`; for a generation whose restore plan published
+either owner (or cannot be read) it shows `personal_context_restored_link_state`
+and, when confirmed, first deletes every restored `personal_context_link_state`
+row, so the next link is a fresh first link (TASK-40139). It shows
+`personal_context_restore_review_unavailable` when the review cannot be read while the gate is closed.
 It never approves `config` or `runtime.sync_state` (TASK-40137), so sync stays off.
+Those two are approved together only by the sync-identity review
+(`Sync_Interop.recovery.approve_sync_identity`, TASK-40139, owner ruling
+2026-11-12): it recounts what it will clear, refuses if the counts the user saw
+changed, clears device ids, dataset bindings and cursors, pull cursors, remote
+heads, Personal Context link state and the unsent outbox (with their projection
+receipts) for every server profile, then approves both owners.
 Detached import refuses the repository by name
 (`detached_owner_unavailable:personal_context.repository`): it carries no key.
 Manual (inert) extraction never offers or writes credential material.

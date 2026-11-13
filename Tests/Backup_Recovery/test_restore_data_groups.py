@@ -533,6 +533,14 @@ original = repository(live)
 PersonalContextService(original).create_profile()
 original.commit_record_version(_device_only_record(original), expected_version_id=None)
 original_account = account(live)
+# TASK-40139 AC#7: this device's link keys (device wrapping key, a staged
+# integrity key, a dataset staging key) must never reach an archive.
+LINK = 'tldw_chatbook.personal_context.link'
+CANARIES = {('device-wrapping-rsa-v1', 'rsa-private-pkcs8-v1:LINKCANARYWRAP'),
+            ('staged-binding', 'staged-integrity-v1:LINKCANARYSTAGED'),
+            ('storage-binding', 'dataset-staging-v1:LINKCANARYSTORAGE')}
+for name, value in CANARIES:
+    current['device'].values[(LINK, name)] = value
 service = RecoveryService(Path.home() / 'recovery-control')
 try:
     destination = Path.home() / 'pc.tldw-backup.zip.age'
@@ -549,6 +557,15 @@ try:
     archived = tables(live)
     inspection = service.start_inspection(destination, password=password)
     succeeded(inspection)
+    import zipfile
+    with zipfile.ZipFile(service.inspection(inspection).path) as sealed:
+        members = b''.join(sealed.read(name) for name in sealed.namelist())
+    assert b'personal_context' in members  # the repository and its record are there
+    # Positive control: the scan sees captured keyring values (the profile key).
+    assert (current['device'].values[(SERVICE, original_account)].encode()
+            in members) is (MODE == 'include')
+    assert not [value for _, value in CANARIES if value.encode() in members]
+    assert LINK.encode() not in members
     profile = service.summary(inspection)['profile_ids'][0]
     assert 'personal_context' in {
         row['group_id'] for row in service.summary(inspection)['data_groups']}

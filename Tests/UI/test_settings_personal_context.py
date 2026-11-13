@@ -2289,9 +2289,10 @@ class _RestoredProfileService(_ProfileServiceStub):
 async def test_restored_profile_review_never_claims_sync_resumes(
     monkeypatch, review
 ) -> None:
-    """TASK-40134 AC#10: Settings offers the Personal Context review only when it
-    can approve it, its copy keeps sync off, and a restore that brought back link
-    state shows a named reason instead."""
+    """TASK-40134 AC#10, TASK-40139 AC#8: Settings offers the Personal Context
+    review whenever it can approve it, its copy keeps sync off, and a restore that
+    brought back link state says to link again and to remove a lost old device
+    on the server."""
     import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
     from tldw_chatbook.Personal_Context import recovery
 
@@ -2317,8 +2318,12 @@ async def test_restored_profile_review_never_claims_sync_resumes(
         assert "sync" in copy.lower() and "off" in copy
         assert "resume" not in copy.replace("resume the old device", "")
         buttons = panel.query("#personal-context-restore-review")
-        if review != "available":
-            assert ("saved sync state" if review == "link_state" else "could not be read") in copy
+        if review == "link_state":
+            assert "because this profile was restored" in copy
+            assert "Link to home server again" in copy
+            assert "If the old device is lost, remove it on your server" in copy
+        if review == "unavailable":
+            assert "could not be read" in copy
             assert not buttons
             return
         await pilot.click("#personal-context-restore-review")

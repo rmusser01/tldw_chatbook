@@ -127,10 +127,11 @@ _RESTORE_REVIEW_COPY = {
         "to confirm Personal Context on this device. Sync with your home server "
         "stays off after a restore."
     ),
+    # TASK-40139 AC#8: the old link never resumes; the next one is a fresh link.
     RESTORED_LINK_STATE: (
-        "Personal Context sync is off because this profile was restored together "
-        "with saved sync state, which could resume the old device's link. Sync "
-        "stays off; the profile stays usable on this device."
+        "Personal Context sync is off because this profile was restored. Choose "
+        "Review restored profile, then Link to home server again. If the old "
+        "device is lost, remove it on your server."
     ),
     REVIEW_UNAVAILABLE: (
         "Personal Context sync is off: the restore review for this profile could "
@@ -621,7 +622,7 @@ class PersonalContextSettingsPanel(Vertical):
                 id="personal-context-restore-review-copy",
                 classes="settings-inline-guidance",
             )
-            if self._restore_review == REVIEW_AVAILABLE:
+            if self._restore_review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
                 yield Button(
                     "Review restored profile", id="personal-context-restore-review"
                 )

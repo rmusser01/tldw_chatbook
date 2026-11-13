@@ -1022,6 +1022,63 @@ class SyncStateRepository(BaseDB):
             )
             conn.commit()
 
+    # TASK-40139 (owner ruling on TASK-40137): after a restore, the reviewed
+    # sync-identity step clears the restored server identity for every server
+    # profile, so the next sync registers a new device instead of acting as
+    # the old one. Counted first, cleared in one transaction.
+    _RESTORED_IDENTITY_COUNTS = (
+        ("device_ids", "SELECT COUNT(*) FROM sync_profile_state WHERE device_id IS NOT NULL"),
+        ("datasets", "SELECT COUNT(*) FROM sync_profile_state "
+         "WHERE dataset_id IS NOT NULL OR dataset_cursors != '{}'"),
+        ("pull_cursors", "SELECT COUNT(*) FROM remote_pull_cursors"),
+        ("remote_heads", "SELECT COUNT(*) FROM sync_v2_remote_heads"),
+        ("personal_context_links", "SELECT COUNT(*) FROM personal_context_link_state"),
+        ("pending_outbox", "SELECT COUNT(*) FROM sync_v2_local_outbox "
+         "WHERE status IN ('pending', 'dispatched')"),
+    )
+
+    def restored_identity_counts(self) -> dict[str, int]:
+        """What ``clear_restored_identity`` removes, for the user to see first."""
+        with self.transaction() as conn:
+            return {
+                name: int(conn.execute(sql).fetchone()[0])
+                for name, sql in self._RESTORED_IDENTITY_COUNTS
+            }
+
+    def clear_restored_identity(self) -> None:
+        """Clear device ids, dataset bindings and cursors, pull cursors, remote
+        heads, Personal Context link state and the unsent outbox; Notes and
+        Chat share these rows when no workspace is active."""
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE sync_profile_state SET device_id = NULL, dataset_id = NULL, "
+                "dataset_cursors = '{}', updated_at = ?",
+                (_utc_now(),),
+            )
+            for table in (
+                "remote_pull_cursors",
+                "sync_v2_remote_heads",
+                "personal_context_link_state",
+            ):
+                conn.execute(f"DELETE FROM {table}")  # nosec B608 - fixed names
+            # Receipts of unsent envelopes go too, so those changes queue again.
+            conn.execute(
+                "DELETE FROM sync_v2_source_projection_receipts WHERE EXISTS ("
+                "SELECT 1 FROM sync_v2_local_outbox o "
+                "WHERE o.source_scope_key = sync_v2_source_projection_receipts.source_scope_key "
+                "AND o.dataset_id = sync_v2_source_projection_receipts.dataset_id "
+                "AND o.client_envelope_id = sync_v2_source_projection_receipts.client_envelope_id "
+                "AND o.status IN ('pending', 'dispatched'))"
+            )
+            conn.execute(
+                "DELETE FROM sync_v2_local_outbox WHERE status IN ('pending', 'dispatched')"
+            )
+
+    def clear_personal_context_link_state(self) -> int:
+        """Forget every restored Personal Context link (TASK-40139 AC#2)."""
+        with self.transaction() as conn:
+            return conn.execute("DELETE FROM personal_context_link_state").rowcount
+
     def enqueue_sync_v2_outbox_envelope(
         self,
         *,

@@ -192,9 +192,11 @@ class _Repository(_SQLiteDeclaration):
 
 
 # Personal Context sync needs both owners approved for every restored
-# generation. This review approves only the repository, and only where the
-# restore published neither (TASK-40134 AC#9-10); `runtime.sync_state` and
-# `config` keep their own review (TASK-40137), so sync does not resume here.
+# generation. This review approves only the repository (TASK-40134 AC#9-10);
+# after a restore that published either owner it first clears the restored
+# Personal Context link state, so the next link is a fresh first link
+# (TASK-40139). `config` and `runtime.sync_state` keep their own sync-identity
+# review (Sync_Interop.recovery), so sync does not resume here.
 SYNC_OWNERS = (OWNER, "runtime.sync_state")
 REVIEW_AVAILABLE = "personal_context_restore_review_available"
 RESTORED_LINK_STATE = "personal_context_restored_link_state"
@@ -254,13 +256,30 @@ def _restore_reviews(db_path: Path, *, approve: bool) -> tuple[str, ...]:
             ):
                 continue
             published = _published_owners(witness)
-            if published is None or published & set(SYNC_OWNERS):
-                states.append(RESTORED_LINK_STATE)  # Unknown counts as published.
-            elif approve:
-                store.approve(witness["generation"], OWNER)
-            else:
-                states.append(REVIEW_AVAILABLE)
+            # Unknown counts as published.
+            relink = published is None or bool(published & set(SYNC_OWNERS))
+            if not approve:
+                states.append(RESTORED_LINK_STATE if relink else REVIEW_AVAILABLE)
+                continue
+            if relink:
+                _clear_link_state(db_path)
+            store.approve(witness["generation"], OWNER)
     return tuple(states)
+
+
+def _clear_link_state(db_path: Path) -> None:
+    """Forget the restored link before the review approves (TASK-40139 AC#2)."""
+    from tldw_chatbook.runtime_policy.server_parity_state import SYNC_STATE_DB_FILENAME
+    from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+
+    path = Path(db_path).parent / SYNC_STATE_DB_FILENAME
+    if not path.exists():
+        return
+    repository = SyncStateRepository(path)
+    try:
+        repository.clear_personal_context_link_state()
+    finally:
+        repository.close()
 
 
 def restore_review(db_path: Path) -> str | None:
@@ -279,9 +298,8 @@ def restore_review(db_path: Path) -> str | None:
 
 
 def approve_restore_review(db_path: Path) -> None:
-    """Approve only ``personal_context.repository`` for reviewable generations."""
-    if RESTORED_LINK_STATE in _restore_reviews(Path(db_path), approve=True):
-        raise ValueError(RESTORED_LINK_STATE)
+    """Approve only ``personal_context.repository``; a restored link is cleared first."""
+    _restore_reviews(Path(db_path), approve=True)
 
 
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:

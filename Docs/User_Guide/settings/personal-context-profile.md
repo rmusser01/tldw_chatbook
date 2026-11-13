@@ -373,13 +373,15 @@ Personal Context merge or resolution action in Settings.
   make an encrypted backup with credentials on the original device, then restore
   it there with Replace. A separately restored copy (an isolated restore) always
   keeps Personal Context locked. Settings > Personal Context says why it is
-  locked (see Troubleshooting). After any restore,
-  Personal Context sync
-  stays off. Settings > Personal Context shows **Review restored profile** when
-  the restore did not bring back saved sync state; reviewing confirms the profile
-  on this device but does not turn sync back on. When the restore did bring back
-  sync state, or when the review cannot be read, Settings says sync stays off
-  and why.
+  locked (see Troubleshooting). After any restore, Personal Context sync stays
+  off, and a restored profile never resumes its old link. Settings > Personal
+  Context says sync is off because the profile was restored and shows **Review
+  restored profile**; reviewing confirms the profile on this device and, when the
+  restore brought back the old link, forgets it, so **Link to home server** starts
+  a fresh first link. If the old device is lost, remove it on your server:
+  Chatbook cannot. Sync with your server, for Notes and Chat too, stays off after
+  a restore and never resumes as the old device. When the review cannot be read,
+  Settings says sync stays off and why.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that
