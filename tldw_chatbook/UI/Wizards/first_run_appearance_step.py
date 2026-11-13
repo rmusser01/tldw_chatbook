@@ -4,13 +4,22 @@ Moved whole out of ``FirstRunSetupWizard.py`` (TASK-34100.1), so its ``@on``
 handlers and workers stay registered on the class and fixes to this step have
 room under the size ratchet. ``FirstRunSetupWizard`` still exports the class.
 Patch this module, not the wizard, to replace what the step calls.
+
+TASK-34100.13 (coverage-15, fulltrack-09, fulltrack-13): the splash-card
+gallery is gone. The step offers the theme (display names with a tone tag),
+"Startup animation: Off / Short / Full", "Reduce motion" and "Plain ASCII
+status marks", and names the current splash card read-only. Facts and
+commits live in ``first_run_appearance_state``.
 """
 
 from __future__ import annotations
 
+import os
 from typing import (
     Any,
+    Callable,
     Dict,
+    Mapping,
     Optional,
 )
 
@@ -20,13 +29,17 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import (
     Button,
+    Checkbox,
     Label,
+    RadioButton,
     RadioSet,
     Static,
 )
 
+from tldw_chatbook.UI.Wizards import first_run_appearance_state as look
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
+    SetupCheckbox,
     SetupRadioButton,
     SetupRadioSet,
     SetupStep,
@@ -34,68 +47,136 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
 
 
 class AppearanceStep(SetupStep):
-    """Theme and splash card. Applies the theme live on commit (best effort)."""
+    """Theme, startup animation and motion comfort. Theme applies live on commit."""
 
     selected_theme: str = ""
-    selected_splash_card: str = ""
-    # Bug-2 fix: True only when the user EXPLICITLY re-picked "Surprise me"
-    # this run (see _on_card) -- distinct from selected_splash_card=="",
-    # which is ALSO true on a fresh mount where nothing was ever chosen
-    # (RadioSet does not fire Changed for its own initial pre-selection).
-    _picked_surprise_me: bool = False
+
+    def __init__(
+        self,
+        wizard=None,
+        config=None,
+        *,
+        environ: Optional[Mapping[str, str]] = None,
+        **kwargs: Any,
+    ):
+        super().__init__(wizard=wizard, config=config, **kwargs)
+        self._environ = os.environ if environ is None else environ
+        self._comfort_touched = False
+        self._read_current()
+
+    def _app_config(self) -> Mapping[str, Any]:
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        return app_config if isinstance(app_config, Mapping) else {}
+
+    def _read_current(self) -> None:
+        """What is saved now, from the full TOML (load_settings has no splash table)."""
+        sections = wizard_state.wizard_config_sections(
+            self.wizard, "splash_screen", "appearance"
+        )
+        self._current_startup = look.startup_choice(sections["splash_screen"])
+        self._saved_splash = dict(sections["splash_screen"])
+        self._current_reduce, self._current_ascii = look.read_comfort(
+            sections["appearance"]
+        )
+        self._ascii_start = look.ascii_checkbox_value(
+            sections["appearance"],
+            self._environ,
+            rerun=bool(getattr(self.wizard, "rerun", False)),
+        )
+        self._card_selection = str(
+            sections["splash_screen"].get("card_selection") or ""
+        )
 
     def compose_step(self) -> ComposeResult:
-        # Re-run prefill: pre-select the theme RadioButton matching the
-        # persisted default_theme, when it's in the rendered list. First-run
-        # has no general.default_theme, so prefill.default_theme is "" and
-        # nothing matches -- identical to the old always-unselected render.
-        prefill = wizard_state.read_wizard_prefill(
-            getattr(self.wizard.app_instance, "app_config", {}) or {}
-        )
-        # Bug-2a fix: initialize selected_theme from the persisted value.
-        # RadioSet does not emit Changed for its own initial pre-selection
-        # (only _on_theme below updates selected_theme), so without this a
-        # rerun that never touches the theme radio left selected_theme=="",
-        # and commit()'s old "fall back to textual-dark" default would
-        # clobber the persisted theme just because some OTHER field (e.g.
-        # only the splash card) changed on this step.
+        # Re-run prefill: pre-select the persisted theme (Bug-2a: a re-run
+        # that never touches the theme radio must not clobber it on commit).
+        prefill = wizard_state.read_wizard_prefill(self._app_config())
         self.selected_theme = prefill.default_theme
         with Vertical(classes="setup-appearance"):
             yield Static("Appearance", classes="setup-title")
             yield Label("Theme", classes="setup-field-label")
-            with SetupRadioSet(id="setup-theme-choice", classes="setup-choice-list"):
+            with SetupRadioSet(
+                id="setup-theme-choice", classes="setup-choice-list setup-choice-fit"
+            ):
                 yield from self._theme_buttons(self._theme_shortlist())
             yield Button(
                 "Show all themes…",
                 id="setup-theme-show-all",
                 classes="setup-tertiary-button",
             )
-            yield Label("Splash screen card", classes="setup-field-label")
-            with SetupRadioSet(id="setup-splash-choice", classes="setup-choice-list"):
-                yield SetupRadioButton("Surprise me (random)", value=True)
-                # TASK-21149 (UAT G-5): human names in the list; the raw
-                # card id rides on the button (same pattern as _theme_name)
-                # so commits never see display text.
-                yield from self._card_buttons(self._card_names()[:10])
-            yield Button(
-                "Show all cards…",
-                id="setup-splash-show-all",
-                classes="setup-tertiary-button",
+            yield Label("Startup animation", classes="setup-field-label")
+            with SetupRadioSet(
+                id="setup-startup-choice", classes="setup-choice-list setup-choice-fit"
+            ):
+                for choice in look.STARTUP_CHOICES:
+                    yield SetupRadioButton(
+                        look.startup_label(choice, self._saved_splash),
+                        value=choice == self._current_startup,
+                        id=f"setup-startup-{choice}",
+                    )
+            yield SetupCheckbox(
+                "Reduce motion — still frames instead of animation",
+                self._current_reduce,
+                id="setup-appearance-reduce-motion",
             )
+            yield SetupCheckbox(
+                "Plain ASCII status marks — for fonts without symbols (+ - ! x)",
+                self._ascii_start,
+                id="setup-appearance-ascii",
+            )
+            yield Static(
+                look.splash_card_line(self._card_selection),
+                id="setup-appearance-splash-card",
+                classes="setup-step-note",
+                markup=False,
+            )
+
+    def on_show(self) -> None:
+        super().on_show()
+        # Welcome's "Reduce motion" applies live to app_config; mirror it
+        # here until the user touches this step's own checkbox.
+        if self._comfort_touched:
+            return
+        appearance = self._app_config().get("appearance")
+        if not isinstance(appearance, Mapping):
+            return
+        live, _ = look.read_comfort(appearance)
+        try:
+            box = self.query_one("#setup-appearance-reduce-motion", Checkbox)
+        except Exception:
+            return
+        with box.prevent(Checkbox.Changed):
+            box.value = live
+        # Welcome saved it on its Next: the shown value is the saved one.
+        self._current_reduce = live
+
+    @on(Checkbox.Changed, "#setup-appearance-reduce-motion")
+    def _on_reduce_motion(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        self._comfort_touched = True
+
+    # -- themes ------------------------------------------------------------
+
+    def _theme_label(self, theme_name: str) -> str:
+        """fulltrack-13: a display name with a tone tag, never the raw id."""
+        try:
+            themes = self.app.available_themes
+        except Exception:
+            themes = None
+        return look.theme_display_label(
+            theme_name, dark=look.theme_tone(theme_name, themes)
+        )
 
     def _theme_buttons(self, names: list[str]):
         """Radio rows for theme names, marking the persisted one "(current)".
 
-        TASK-1500: like the model rows, the label may carry decoration; the
-        clean theme name rides on the button as ``_theme_name`` so previews
-        and commits never see display text.
+        TASK-1500: the clean theme name rides on the button as
+        ``_theme_name`` so previews and commits never see display text.
         """
         for theme_name in names:
-            label = (
-                f"{theme_name}   (current)"
-                if theme_name == self.selected_theme and theme_name
-                else theme_name
-            )
+            label = self._theme_label(theme_name)
+            if theme_name == self.selected_theme and theme_name:
+                label = f"{label}   (current)"
             button = SetupRadioButton(label, value=(theme_name == self.selected_theme))
             button._theme_name = theme_name
             yield button
@@ -112,11 +193,7 @@ class AppearanceStep(SetupStep):
             return ["textual-dark", "textual-light"]
 
     def _theme_shortlist(self) -> list[str]:
-        """Curated first screen: current + stock defaults + a few flagships.
-
-        The full alphabetical wall (novelty themes first) buried the sane
-        choices; "Show all themes…" swaps in the complete list on demand.
-        """
+        """Curated first screen: current + stock defaults + a few flagships."""
         available = self._theme_names()
         shortlist: list[str] = []
         for name in (
@@ -133,20 +210,11 @@ class AppearanceStep(SetupStep):
     async def _on_show_all_themes(self, event: Button.Pressed) -> None:
         event.stop()
         radio_set = self.query_one("#setup-theme-choice", RadioSet)
+        # The full list is a catalog again: back to the capped, scrolling box.
+        radio_set.remove_class("setup-choice-fit")
         await radio_set.remove_children()
         await radio_set.mount_all(self._theme_buttons(self._theme_names()))
         self.query_one("#setup-theme-show-all", Button).display = False
-
-    @staticmethod
-    def _card_names() -> list[str]:
-        try:
-            from tldw_chatbook.UI.Splash_Screens.card_definitions import (
-                get_all_card_definitions,
-            )
-
-            return sorted(get_all_card_definitions())
-        except Exception:
-            return []
 
     #: Theme active before the first preview; None = nothing to revert.
     _preview_original: Optional[str] = None
@@ -162,13 +230,7 @@ class AppearanceStep(SetupStep):
         self._preview_theme(self.selected_theme)
 
     def _preview_theme(self, theme_name: str) -> None:
-        """TASK-1500: selecting a theme applies it immediately as a preview.
-
-        The pre-preview theme is remembered once so `revert_preview` can
-        restore it if the user backs out (finish-later) without committing.
-        A successful commit clears the revert obligation — the new theme is
-        then the persisted one.
-        """
+        """TASK-1500: selecting a theme applies it immediately as a preview."""
         if not theme_name:
             return
         try:
@@ -187,104 +249,107 @@ class AppearanceStep(SetupStep):
                 logger.debug("Theme preview revert failed", exc_info=True)
             self._preview_original = None
 
-    @staticmethod
-    def _card_display_name(card_name: str) -> str:
-        """Human name for a snake_case splash card id (UAT G-5)."""
-        return card_name.replace("_", " ").strip().title()
+    # -- state -------------------------------------------------------------
 
-    def _card_buttons(self, names: list[str]):
-        """Radio rows for splash cards, pressing the retained selection.
+    def _pressed_startup(self) -> str:
+        try:
+            choice = self.query_one("#setup-startup-choice", RadioSet)
+        except Exception:
+            return self._current_startup
+        pressed = choice.pressed_button
+        if pressed is None or pressed not in choice.query(RadioButton):
+            return self._current_startup
+        return (pressed.id or "").removeprefix("setup-startup-")
 
-        Args:
-            names: Raw snake_case card ids in display order.
+    def _checked(self, selector: str, default: bool) -> bool:
+        try:
+            return bool(self.query_one(selector, Checkbox).value)
+        except Exception:
+            return default
 
-        Yields:
-            SetupRadioButton rows with the human name as label and the raw
-            id riding as ``_card_name`` (Qodo review: without value= here,
-            show-all rebuilds and draft restoration rendered every card
-            unpressed even when one was selected).
-        """
-        for card_name in names:
-            button = SetupRadioButton(
-                self._card_display_name(card_name),
-                value=bool(card_name) and card_name == self.selected_splash_card,
+    def restore_draft(
+        self,
+        values: Mapping[str, Any],
+        restore_radio: Callable[[RadioSet, Callable[[RadioButton], bool]], None],
+    ) -> None:
+        """Put a resumed draft's Appearance choices back on the controls."""
+        if "theme" in values:
+            theme = str(values["theme"])
+            self.selected_theme = theme
+            restore_radio(
+                self.query_one("#setup-theme-choice", RadioSet),
+                lambda button: getattr(button, "_theme_name", "") == theme,
             )
-            button._card_name = card_name
-            yield button
-
-    @on(Button.Pressed, "#setup-splash-show-all")
-    async def _on_show_all_cards(self, event: Button.Pressed) -> None:
-        """UAT G-5: parity with themes — the first ten cards are a teaser."""
-        event.stop()
-        radio_set = self.query_one("#setup-splash-choice", RadioSet)
-        keep_surprise = SetupRadioButton(
-            "Surprise me (random)", value=not self.selected_splash_card
-        )
-        await radio_set.remove_children()
-        await radio_set.mount(keep_surprise)
-        await radio_set.mount_all(self._card_buttons(self._card_names()))
-        self.query_one("#setup-splash-show-all", Button).display = False
-
-    @on(RadioSet.Changed, "#setup-splash-choice")
-    def _on_card(self, event: RadioSet.Changed) -> None:
-        card_name = getattr(event.pressed, "_card_name", "")
-        if not card_name:
-            self.selected_splash_card = ""
-            self._picked_surprise_me = True
-        else:
-            self.selected_splash_card = card_name
-            self._picked_surprise_me = False
+        if values.get("startup") in look.STARTUP_CHOICES:
+            startup = str(values["startup"])
+            restore_radio(
+                self.query_one("#setup-startup-choice", RadioSet),
+                lambda button: button.id == f"setup-startup-{startup}",
+            )
+        for key, selector in (
+            ("reduce_motion", "#setup-appearance-reduce-motion"),
+            ("ascii_glyphs", "#setup-appearance-ascii"),
+        ):
+            if isinstance(values.get(key), bool):
+                box = self.query_one(selector, Checkbox)
+                with box.prevent(Checkbox.Changed):
+                    box.value = values[key]
+                self._comfort_touched = True
 
     async def commit(self) -> tuple[bool, str]:
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-            build_appearance_commit,
-            read_wizard_prefill,
+        # Review V2: the delta is against what the controls were built from
+        # (``_current_*``), never a fresh read -- a config that moved since
+        # then would make an untouched step write its shown values back.
+        prefill = wizard_state.read_wizard_prefill(self._app_config())
+        commit: dict[str, dict[str, Any]] = {}
+        # Bug-2b: write the theme only when it differs from what is saved.
+        if self.selected_theme and self.selected_theme != prefill.default_theme:
+            commit["general"] = {"default_theme": self.selected_theme}
+        startup = self._pressed_startup()
+        commit.update(
+            look.build_startup_commit(choice=startup, current=self._current_startup)
         )
-
-        prefill = read_wizard_prefill(
-            getattr(self.wizard.app_instance, "app_config", {}) or {}
+        reduce_motion = self._checked(
+            "#setup-appearance-reduce-motion", self._current_reduce
         )
-        # Bug-2c fix: only reset to "random" when the user EXPLICITLY
-        # re-picked Surprise-me this run over a config that currently names
-        # a specific card -- a fresh/no-op run (nothing pressed, or already
-        # "random") must not write anything.
-        reset_to_random = (
-            self._picked_surprise_me
-            and bool(prefill.card_selection)
-            and prefill.card_selection != "random"
-        )
-        if (
-            not self.selected_theme
-            and not self.selected_splash_card
-            and not reset_to_random
-        ):
-            return True, ""
-        # Bug-2b fix: delta-aware theme write -- only persist default_theme
-        # when the chosen theme actually differs from what's already on
-        # disk, so a rerun that only changes the splash card (theme radio
-        # left at its prefilled, already-persisted position) leaves the
-        # persisted theme untouched instead of rewriting it (or a stale
-        # "textual-dark" fallback) back over itself.
-        chosen_theme = self.selected_theme or "textual-dark"
-        theme_to_persist = (
-            chosen_theme if chosen_theme != prefill.default_theme else None
-        )
-        ok = await self.wizard.commit_config(
-            build_appearance_commit(
-                default_theme=theme_to_persist,
-                splash_card=self.selected_splash_card or None,
-                reset_splash_to_random=reset_to_random,
+        ascii_glyphs = self._checked("#setup-appearance-ascii", self._current_ascii)
+        commit.update(
+            look.build_comfort_commit(
+                reduce_motion=reduce_motion,
+                ascii_glyphs=ascii_glyphs,
+                current_reduce_motion=self._current_reduce,
+                current_ascii_glyphs=self._current_ascii,
             )
         )
-        if ok and self.selected_theme:
+        if not commit:
+            return True, ""
+        ok = await self.wizard.commit_config(commit)
+        if not ok:
+            return False, "Saving appearance settings failed."
+        if "general" in commit:
             try:
                 self.app.theme = self.selected_theme
             except Exception:
                 logger.debug("Live theme apply failed; persisted value still wins")
-            # TASK-1500: the commit made the previewed theme real — nothing
-            # to revert on cancel any more.
+            # TASK-1500: the commit made the previewed theme real.
             self._preview_original = None
-        return (True, "") if ok else (False, "Saving appearance settings failed.")
+        if "ascii_glyphs" in commit.get("appearance", {}):
+            from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+            set_ascii_glyph_mode(ascii_glyphs)
+        # What is saved now is what the controls show.
+        self._current_startup = startup
+        self._current_reduce, self._current_ascii = reduce_motion, ascii_glyphs
+        return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
-        return {"theme": self.selected_theme, "splash_card": self.selected_splash_card}
+        return {
+            "theme": self.selected_theme,
+            "startup": self._pressed_startup(),
+            "reduce_motion": self._checked(
+                "#setup-appearance-reduce-motion", self._current_reduce
+            ),
+            "ascii_glyphs": self._checked(
+                "#setup-appearance-ascii", self._current_ascii
+            ),
+        }

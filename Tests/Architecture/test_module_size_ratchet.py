@@ -806,7 +806,12 @@ _BUDGETS: dict[str, int] = {
     # first_run_speech_step_state.external_vad_install_status -> 1,766;
     # then +2 (review F5), a progress tick handled after the install's
     # result no longer rewrites the status line -> 1,768.
-    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1768,
+    # 2026-11-05, TASK-34100.13 rebase onto dev 29592ecc9b: 1,768 -> 1,713
+    # (-55). The step's widget tree moved to first_run_speech_layout.py and
+    # its engine choice to first_run_speech_engine.py; the keyboard-retention
+    # and engine-chosen additions (+15 under the 2026-10-04 expand-limits
+    # ruling on the branch) are inside this figure.
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1713,
     # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
     # first_run_voice_omnivoice.py and its Advanced fields to
     # first_run_voice_pickers.compose_voice_advanced while the step gained
@@ -893,7 +898,11 @@ _BUDGETS: dict[str, int] = {
     # DB/ChaChaNotes_DB, and config.py loads it lazily from there (types stay
     # under TYPE_CHECKING, per #3470); dev 4a9c4c1132 (#3480) shrank the file,
     # so this branch measures 8,837 (dev 8,835, +2); exact measurement.
-    "tldw_chatbook/config.py": 8837,
+    # 2026-11-12, TASK-34100.13 (owner decision 2026-10-04, expand limits):
+    # dev's 8,837 plus the three-line comment saying TLDW_REDUCE_MOTION /
+    # NO_MOTION apply where motion is read, never in the saved table (review
+    # F5); exact measurement.
+    "tldw_chatbook/config.py": 8840,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
@@ -1132,7 +1141,13 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4605,
     # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
     # Whisper never sends an enc: key).
-    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.13 +42 -- remote
+    # Whisper reuses the OpenAI provider key for api.openai.com over https,
+    # resolved by provider_readiness (measured on the rebase onto 29592ecc9b).
+    # owner decision 2026-10-04 (expand limits): TASK-34100.13 +3 -- pre-merge
+    # review 2026-11-12: the OpenAI provider's key is withheld when its own
+    # endpoint is another host (a gateway key never reaches api.openai.com).
+    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4541,
     # 2026-10-29 (TASK-33620.3, owner decision: a fix over a size ratchet
     # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
     # a legacy/imported chat's missing Library-policy row (the safe

@@ -968,6 +968,34 @@ def _api_settings_entry_for_provider(
     return {}
 
 
+def _summary_key_counts(
+    settings: Mapping[str, object], environ: Mapping[str, str]
+) -> bool:
+    """``any_provider_configured``'s per-provider test, under ``credential_source``.
+
+    ``"none"`` counts nothing, ``"stored"`` only the table's key,
+    ``"environment"`` only the variable it names; unset, either (the offer
+    gate's rule, with no default variable added).
+    """
+    from tldw_chatbook.Chat.provider_readiness import (
+        configured_provider_credential_source,
+    )
+
+    source = configured_provider_credential_source(settings)
+    if source == "none":
+        return False
+    if source != "environment" and _is_real_provider_api_key(settings.get("api_key")):
+        return True
+    if source == "stored":
+        return False
+    env_var = settings.get("api_key_env_var")
+    return (
+        isinstance(env_var, str)
+        and bool(env_var.strip())
+        and _is_real_provider_api_key(environ.get(env_var.strip()))
+    )
+
+
 def provider_summary_configured(
     app_config: Mapping[str, object], environ: Mapping[str, str]
 ) -> bool:
@@ -1028,8 +1056,18 @@ def provider_summary_configured(
     Provider without touching it this time, will still see this row read
     off whatever endpoint survives from that earlier run for whatever
     provider is currently named in ``chat_defaults.provider``.
+
+    Review RR1-01 (TASK-34100.13): unlike the offer gate, a key counts here
+    only where the provider's own ``credential_source`` allows it, as
+    readiness and the Speech row resolve it. ``credential_source = "stored"``
+    with nothing stored read "✓ Provider" off an environment key the send
+    never uses, directly above the Speech row's "no OpenAI key is available".
     """
-    if any_provider_configured(app_config, environ):
+    api_settings = app_config.get("api_settings")
+    if isinstance(api_settings, Mapping) and any(
+        isinstance(settings, Mapping) and _summary_key_counts(settings, environ)
+        for settings in api_settings.values()
+    ):
         return True
     if not (
         _wizard_flag(app_config, SETUP_STARTED_KEY)
@@ -1119,6 +1157,8 @@ STEP_VOICE = "voice"
 STEP_RAG = "rag"
 STEP_SPEECH = "speech"
 STEP_TOOLS = "tools"
+#: Retired by TASK-34100.13 (fulltrack-05): the Notes step configured nothing.
+#: Kept only so drafts saved at it still resume (see ``_RETIRED_DRAFT_STEPS``).
 STEP_NOTES = "notes"
 STEP_APPEARANCE = "appearance"
 STEP_PROTECT = "protect-keys"
@@ -1132,7 +1172,6 @@ STEP_TITLES: Mapping[str, str] = {
     STEP_RAG: "RAG",
     STEP_SPEECH: "Speech",
     STEP_TOOLS: "Tools",
-    STEP_NOTES: "Notes",
     STEP_APPEARANCE: "Style",
     STEP_PROTECT: "Protect",
     STEP_SUMMARY: "Summary",
@@ -1188,7 +1227,6 @@ _FULL_TRACK = (
     STEP_RAG,
     STEP_SPEECH,
     STEP_TOOLS,
-    STEP_NOTES,
     STEP_APPEARANCE,
     STEP_PROTECT,
     STEP_SUMMARY,
@@ -1217,14 +1255,52 @@ _SETUP_DRAFT_FIELD_TYPES: Mapping[str, Mapping[str, type]] = {
         "use_as_default": bool,
         "preset": str,
     },
-    STEP_RAG: {"embedding_model": str},
+    STEP_RAG: {"auto_retrieve": bool},
     STEP_SPEECH: {},
     STEP_TOOLS: {},
-    STEP_NOTES: {},
-    STEP_APPEARANCE: {"theme": str, "splash_card": str},
+    STEP_APPEARANCE: {
+        "theme": str,
+        "startup": str,
+        "reduce_motion": bool,
+        "ascii_glyphs": bool,
+    },
     STEP_PROTECT: {"encryption_enabled": bool},
     STEP_SUMMARY: {},
 }
+
+
+#: TASK-34100.13: steps that left the tracks, mapped to the step a draft
+#: saved at them resumes on. Their values are dropped, not rejected, so an
+#: upgrade mid-setup keeps every other choice.
+_RETIRED_DRAFT_STEPS: Mapping[str, str] = {STEP_NOTES: STEP_APPEARANCE}
+
+#: TASK-34100.13: draft fields whose control left a step (the RAG step's
+#: embedding-model picker, the Appearance step's splash-card gallery).
+_RETIRED_DRAFT_FIELDS: Mapping[str, frozenset[str]] = {
+    STEP_RAG: frozenset({"embedding_model"}),
+    STEP_APPEARANCE: frozenset({"splash_card"}),
+}
+
+
+def _without_retired_draft_parts(
+    active_step_id: object, values: object
+) -> tuple[object, object]:
+    """Map a retired active step forward and drop retired steps and fields."""
+    if isinstance(active_step_id, str):
+        active_step_id = _RETIRED_DRAFT_STEPS.get(active_step_id, active_step_id)
+    if not isinstance(values, Mapping):
+        return active_step_id, values
+    cleaned: dict[object, object] = {}
+    for step_id, step_values in values.items():
+        if step_id in _RETIRED_DRAFT_STEPS:
+            continue
+        retired = _RETIRED_DRAFT_FIELDS.get(step_id) if isinstance(step_id, str) else None
+        if retired and isinstance(step_values, Mapping):
+            step_values = {
+                name: value for name, value in step_values.items() if name not in retired
+            }
+        cleaned[step_id] = step_values
+    return active_step_id, cleaned
 
 
 @dataclass(frozen=True, slots=True)
@@ -1295,6 +1371,7 @@ def _validated_setup_draft(
         return None
     if track not in (TRACK_QUICK, TRACK_FULL):
         return None
+    active_step_id, values = _without_retired_draft_parts(active_step_id, values)
     if not isinstance(active_step_id, str):
         return None
     allowed_steps = active_step_ids(str(track), key_entered=True)
@@ -1464,10 +1541,15 @@ def setup_recovery_action(
 
 WIZARD_OWNED_SECTIONS = frozenset(
     {
+        # TASK-34100.13: no "embedding_config" -- the Search step writes
+        # [chat_defaults] rag_auto_retrieve_on_send, the key RAG and Console
+        # actually read, and nothing writes the legacy embedding table.
         "chat_defaults",
-        "embedding_config",
         "tools",
-        "notes",
+        # TASK-34100.13: "appearance" for the Appearance step's comfort
+        # settings (reduce_motion, ascii_glyphs); no "notes" -- nothing in
+        # setup writes it since the Notes step left the Full track.
+        "appearance",
         "general",
         # TASK-21146 (UAT H-1): the Summary step records the online
         # model-list consent answer through the exact [model_catalog]
@@ -1475,6 +1557,9 @@ WIZARD_OWNED_SECTIONS = frozenset(
         "model_catalog",
         "splash_screen",
         "transcription",
+        # TASK-34100.13 (voice-speech-15): the Speech step's cloud choice
+        # points remote Whisper at OpenAI (the key stays the provider's).
+        "transcription.remote_whisper",
         "provider_setup.confirmed",
         WIZARD_STATE_SECTION,
     }
@@ -1792,18 +1877,6 @@ def _real_model_ids(models: Any) -> list[str]:
     ]
 
 
-def build_rag_commit(*, default_model_id: str) -> dict[str, dict[str, Any]]:
-    """Mutation for the RAG step.
-
-    Args:
-        default_model_id: The chosen default embedding model id.
-
-    Returns:
-        The section/value mapping to persist under ``embedding_config``.
-    """
-    return {"embedding_config": {"default_model_id": default_model_id}}
-
-
 def build_tools_commit(*, gate_values: Mapping[str, bool]) -> dict[str, dict[str, Any]]:
     """Mutation for the tools step.
 
@@ -1836,48 +1909,6 @@ def tools_commit_delta(
         for key, value in gate_values.items()
         if bool(value) != bool(current_gates.get(key, False))
     }
-
-
-def build_appearance_commit(
-    *,
-    default_theme: str | None,
-    splash_card: str | None = None,
-    reset_splash_to_random: bool = False,
-) -> dict[str, dict[str, Any]]:
-    """Mutation for the appearance step.
-
-    Bug-2 fix: both ``default_theme`` and the splash-card write are now
-    each individually optional, so the caller (``AppearanceStep.commit()``)
-    can build a delta-aware commit -- e.g. a rerun that only changes the
-    splash card omits ``general.default_theme`` entirely instead of
-    rewriting it back to a (possibly stale) fallback value.
-
-    Args:
-        default_theme: Theme name to persist under
-            ``general.default_theme``, or falsy (``None``/``""``) to omit
-            that key entirely -- e.g. the chosen theme matches what is
-            already persisted, so nothing needs to change.
-        splash_card: A specific card name to persist under
-            ``splash_screen.card_selection``, or falsy to leave that key
-            out (e.g. nothing was chosen, or "Surprise me" was picked --
-            see ``reset_splash_to_random``).
-        reset_splash_to_random: When True and ``splash_card`` is falsy,
-            write ``splash_screen.card_selection = "random"``. This is the
-            explicit "Surprise me" choice over a previously persisted
-            specific card, which otherwise has no truthy value of its own
-            to signal that a write is even needed.
-
-    Returns:
-        The section/value mapping to persist; empty where nothing changed.
-    """
-    commit: dict[str, dict[str, Any]] = {}
-    if default_theme:
-        commit["general"] = {"default_theme": default_theme}
-    if splash_card:
-        commit["splash_screen"] = {"card_selection": splash_card}
-    elif reset_splash_to_random:
-        commit["splash_screen"] = {"card_selection": "random"}
-    return commit
 
 
 def build_wizard_state_commit(
@@ -1998,8 +2029,7 @@ _TEMPLATE_DEFAULT_THEME = "textual-dark"
 #: Shipped template defaults that get merged into app_config at load time.
 #: Like `_TEMPLATE_DEFAULT_THEME`, their mere presence is not a user choice
 #: (task-2724: a Ctrl+N-only walk rendered "✓ Default model — gpt-5.6-terra"
-#: and "✓ RAG — embedding model: e5-small-v2" beneath "✗ Provider").
-_TEMPLATE_DEFAULT_RAG_MODEL = "e5-small-v2"
+#: beneath "✗ Provider").
 _TEMPLATE_DEFAULT_MODEL = "gpt-5.6-terra"
 
 
@@ -2090,6 +2120,80 @@ def read_provider_secret_presence(
     )
 
 
+def theme_is_custom(theme: str) -> bool:
+    """Whether a saved theme is a choice rather than the template default (or unset)."""
+    return bool(theme and theme != _TEMPLATE_DEFAULT_THEME)
+
+
+def full_config_sections(
+    app_config: Mapping[str, object], *names: str
+) -> dict[str, dict[str, object]]:
+    """Sections a step must read from the full TOML, with mirrored saves on top.
+
+    TASK-34100.13: ``app.app_config`` is ``load_settings()``'s projection. It
+    carries no ``[tools]`` or ``[splash_screen]`` table of its own (so a
+    re-run after a restart showed every tool switch off and "Surprise me" as
+    the card); the full TOML rides along as ``COMPREHENSIVE_CONFIG_RAW``.
+    Values the wizard saved this run are mirrored into ``app_config`` and win.
+
+    Args:
+        app_config: The app's in-memory config.
+        *names: Section names to read.
+
+    Returns:
+        ``{name: merged_section}`` for every requested name.
+    """
+    raw = app_config.get("COMPREHENSIVE_CONFIG_RAW") if isinstance(app_config, Mapping) else None
+    raw = raw if isinstance(raw, Mapping) else {}
+    view: dict[str, dict[str, object]] = {}
+    for name in names:
+        merged: dict[str, object] = {}
+        for source in (raw.get(name), app_config.get(name)):
+            if isinstance(source, Mapping):
+                merged.update(source)
+        view[name] = merged
+    return view
+
+
+def wizard_config_sections(
+    wizard: object, *names: str
+) -> dict[str, dict[str, object]]:
+    """Sections a step reads: the config file as it is now, under the app's wizard.
+
+    Review F8 (TASK-34100.13): ``COMPREHENSIVE_CONFIG_RAW`` is the TOML as it
+    was at launch, and ``app_config``'s own tables are launch-time copies too
+    (the MCP hub's gate switches write only the file). A same-session re-run
+    after changing a gate in MCP ▸ Tool gates or a setting in Settings ▸
+    Splash Screen showed the launch state. Under the app's own wizard
+    (``reads_live_config``) a step reads ``load_cli_config_and_ensure_
+    existence()``: a warm cache every in-app save refreshes and an external
+    edit invalidates. This run's saves are already in it -- the wizard writes
+    before it mirrors into ``app_config``. Any other host (a step mounted on
+    its own, a test double) reads ``full_config_sections``.
+
+    Args:
+        wizard: The step's wizard.
+        *names: Section names to read.
+
+    Returns:
+        ``{name: section}`` for every requested name.
+    """
+    app_config = getattr(getattr(wizard, "app_instance", None), "app_config", None)
+    app_config = app_config if isinstance(app_config, Mapping) else {}
+    if getattr(type(wizard), "reads_live_config", False) is not True:
+        return full_config_sections(app_config, *names)
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
+    try:
+        live = load_cli_config_and_ensure_existence()
+    except Exception:  # noqa: BLE001 -- a step must still render
+        return full_config_sections(app_config, *names)
+    return {
+        name: dict(live[name]) if isinstance(live.get(name), Mapping) else {}
+        for name in names
+    }
+
+
 def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
     chat_defaults = _section(app_config, "chat_defaults")
     general = _section(app_config, "general")
@@ -2146,6 +2250,9 @@ def build_summary_rows(
     rag_deps_installed: bool,
     speech_installed: bool = False,
     speech_runtime_installed: bool = False,
+    rag_model: Any = None,
+    themes: Mapping[str, Any] | None = None,
+    installed_stt: tuple[str, ...] = (),
 ) -> tuple[SummaryRow, ...]:
     """Build the summary matrix strictly from persisted config.
 
@@ -2173,6 +2280,15 @@ def build_summary_rows(
             itself now says "runtime not installed" -- the two must agree.
             Defaults to False (conservative: unknown runtime state reads as
             not-ready, matching ``speech_installed``'s own default bias).
+        rag_model: TASK-34100.13 -- the ``EmbeddingModelFacts`` RAG resolves
+            from its active profile (``first_run_rag_state``), resolved off
+            the loop by the caller like ``speech_installed``; ``None`` when
+            unknown, and the Search row then names only the flag.
+        themes: TASK-34100.13 -- the app's registered themes, for the Theme
+            row's tone tag ("Nord · dark"); Textual's built-ins otherwise.
+        installed_stt: TASK-34100.13 -- the local speech engines whose
+            runtime imports (``installed_local_providers()``, resolved by the
+            caller), so the Speech row can name one already in use.
 
     Returns:
         Ordered tuple of SummaryRow for the Summary step to render.
@@ -2183,27 +2299,36 @@ def build_summary_rows(
     # docstring for why the two deliberately disagree on a bare, wizard-
     # committed endpoint (the one-click "Use this server" path).
     provider_ok = provider_summary_configured(app_config, environ)
+    from tldw_chatbook.Agents.plain_chat_tool_surface import (
+        summarize_tool_surface,
+        tool_surface_detail,
+    )
+
+    # TASK-34100.5.3: the row names exactly the tools plain Console chat is
+    # offered -- the light set, each tool switched on, or the full agent
+    # surface -- read from the same config the send reads. TASK-34100.13's
+    # fulltrack-02 derivation from all_tool_gates() was folded into this one
+    # reading in the rebase onto it (one posture, never two).
+    tool_surface = summarize_tool_surface(app_config)
     encryption_on = coerce_wizard_flag(
         _section(app_config, "encryption").get("enabled")
     )
-    rag_model = str(
-        _section(app_config, "embedding_config").get("default_model_id") or ""
-    )
+    # TASK-34100.13 (fulltrack-01): built from what RAG and Console read --
+    # the auto-retrieve flag and the active profile's embedding model --
+    # never from the legacy [embedding_config] default_model_id.
+    from tldw_chatbook.UI.Wizards import first_run_rag_state as rag_state
 
-    if not rag_deps_installed:
-        rag_row = SummaryRow(
-            "RAG", ROW_DEFAULT, "optional — embeddings deps not installed"
-        )
-    elif rag_model and rag_model != _TEMPLATE_DEFAULT_RAG_MODEL:
-        rag_row = SummaryRow("RAG", ROW_CONFIGURED, f"embedding model: {rag_model}")
-    elif rag_model:
-        # The untouched template value — matches the header's "RAG off"
-        # sentence instead of contradicting it (task-2724).
-        rag_row = SummaryRow(
-            "RAG", ROW_DEFAULT, f"off by default — embedding model {rag_model}"
-        )
-    else:
-        rag_row = SummaryRow("RAG", ROW_DEFAULT, "no embedding model selected")
+    auto_retrieve = rag_state.read_auto_retrieve(app_config)
+    search_detail = rag_state.search_summary_detail(
+        auto_retrieve=auto_retrieve,
+        facts=rag_model,
+        extras_installed=rag_deps_installed,
+    )
+    # AC#5: a saved "automatic" that cannot run without the extras is no tick.
+    automatic_state = ROW_CONFIGURED if rag_deps_installed else ROW_ATTENTION
+    rag_row = SummaryRow(
+        "Search", automatic_state if auto_retrieve else ROW_DEFAULT, search_detail
+    )
 
     if prefill.model_id and provider_ok:
         model_row = SummaryRow("Default model", ROW_CONFIGURED, prefill.model_id)
@@ -2223,8 +2348,11 @@ def build_summary_rows(
         # merged template default, not a choice (task-2724).
         model_row = SummaryRow("Default model", ROW_DEFAULT, "not selected")
 
-    theme_is_custom = bool(
-        prefill.default_theme and prefill.default_theme != _TEMPLATE_DEFAULT_THEME
+    custom_theme = theme_is_custom(prefill.default_theme)
+    from tldw_chatbook.UI.Wizards import first_run_appearance_state as look
+
+    startup_changed, startup_detail = look.startup_summary(
+        _section(app_config, "splash_screen"), _section(app_config, "appearance")
     )
 
     # TASK-34100.4 AC #5: a line about changing this later names the
@@ -2281,7 +2409,33 @@ def build_summary_rows(
     speech_configured = (
         speech_prefill.provider_id == routing_policy().parakeet_provider_id
     )
-    if not speech_configured:
+    from tldw_chatbook.UI.Wizards import first_run_speech_engine as engines
+
+    remote = _section(_section(app_config, "transcription"), "remote_whisper")
+    if (
+        speech_prefill.provider_id == engines.REMOTE_WHISPER_PROVIDER
+        and coerce_wizard_flag(remote.get("enabled"))
+    ):
+        # TASK-34100.13 (voice-speech-15): the Speech step's cloud choice,
+        # or a Whisper server of the user's own (named by host, review R1).
+        # Review LV1-F1: OpenAI's endpoint with no key to send is no tick.
+        keyless = engines.saved_openai_whisper_lacks_key(
+            _section(app_config, "transcription"), app_config, environ
+        )
+        speech_row = SummaryRow(
+            "Speech transcription",
+            ROW_ATTENTION if keyless else ROW_CONFIGURED,
+            engines.CLOUD_NO_KEY_SUMMARY if keyless else engines.remote_whisper_summary(remote),
+        )
+    elif not speech_configured and speech_prefill.provider_id in installed_stt:
+        # An engine already installed here (the template's platform pick, or
+        # the step's "Already available" choice): name it, claim nothing.
+        speech_row = SummaryRow(
+            "Speech transcription",
+            ROW_DEFAULT,
+            f"{engines.engine_display_name(speech_prefill.provider_id)} on this computer",
+        )
+    elif not speech_configured:
         speech_row = SummaryRow(
             "Speech transcription", ROW_DEFAULT, "not set up (optional)"
         )
@@ -2320,15 +2474,6 @@ def build_summary_rows(
         raw_name = chat_defaults.get("provider")
         if isinstance(raw_name, str):
             provider_name = raw_name.strip()
-    from tldw_chatbook.Agents.plain_chat_tool_surface import (
-        summarize_tool_surface,
-        tool_surface_detail,
-    )
-
-    # TASK-34100.5.3: the row names exactly the tools plain Console chat is
-    # offered -- the light set, each tool switched on, or the full agent
-    # surface -- read from the same config the send reads.
-    tool_surface = summarize_tool_surface(app_config)
     return (
         SummaryRow(
             "Provider",
@@ -2339,20 +2484,42 @@ def build_summary_rows(
         rag_row,
         speech_row,
         _voice_summary_row(app_config),
+        # TASK-34100.13 (fulltrack-02): never a count of truthy [tools] keys
+        # and never "all off" -- the same reading as the Tools step's posture
+        # and the Quick note. task-32289/32284: the detail still names
+        # TOOL_GATES_PANE_PATH, the one place every gate lives.
         SummaryRow(
             "Tools",
             ROW_CONFIGURED if tool_surface.user_turned_on else ROW_DEFAULT,
             tool_surface_detail(tool_surface),
         ),
+        # TASK-34100.13 (fulltrack-05): text only -- Library has no deep
+        # link to Add from files; "Write your first note" lands in Notes.
+        # Review G13-R1-01: an action pointer, never "not set up" -- sync
+        # roots live in the Library database, which this config never shows.
         SummaryRow(
             "Notes folder sync",
             ROW_DEFAULT,
-            "set up later in Library",
+            "set up in Library ▸ Notes ▸ Add from files…",
         ),
+        # TASK-34100.13 (fulltrack-13): the display name with a tone tag,
+        # the same label the Appearance step's theme rows carry.
         SummaryRow(
             "Theme",
-            ROW_CONFIGURED if theme_is_custom else ROW_DEFAULT,
-            prefill.default_theme or "default",
+            ROW_CONFIGURED if custom_theme else ROW_DEFAULT,
+            look.theme_display_label(
+                prefill.default_theme,
+                dark=look.theme_tone(prefill.default_theme, themes),
+            )
+            if prefill.default_theme
+            else "default",
+        ),
+        # TASK-34100.13 (coverage-15): what the Appearance step's startup and
+        # comfort controls saved.
+        SummaryRow(
+            "Startup and motion",
+            ROW_CONFIGURED if startup_changed else ROW_DEFAULT,
+            startup_detail,
         ),
         encryption_row,
     )
@@ -2364,20 +2531,49 @@ def quick_track_defaults_note(app_config: Mapping[str, object]) -> str:
     TASK-34100.5.3 (TASK-34100.5 owner question 2): it said "tools off" while
     plain chat offered the agent surface. The tools part now comes from the
     same reading as the Tools row.
+
+    TASK-34100.13: the rest is derived too. Search names what Console does
+    with the Library (``[chat_defaults] rag_auto_retrieve_on_send``, the
+    Search row's flag) instead of "RAG off"; the theme is named only while it
+    is the default one (review R6, ``theme_is_custom``); and nothing is said
+    about notes folder sync, whose roots live in the Library's database where
+    config cannot see them (the Summary's own row points there).
+
+    Review G13-R2-01: R6's rule holds for every part. A setting is listed
+    under "Left at recommended defaults" only while it is the default; a
+    saved automatic search is stated on its own, with where to change it.
     """
     from tldw_chatbook.Agents.plain_chat_tool_surface import (
         summarize_tool_surface,
         tool_surface_phrase,
     )
+    from tldw_chatbook.UI.Wizards.first_run_rag_state import (
+        SEARCH_SETTINGS_PATH,
+        read_auto_retrieve,
+    )
 
     summary = summarize_tool_surface(app_config)
-    rest = "RAG off, default theme, notes sync off — each lives in Settings when you want it."
+    stated: list[str] = []
+    defaults: list[str] = []
     if summary.user_turned_on:
-        return (
-            f"Tools as you set them ({tool_surface_phrase(summary)}). "
-            f"Left at recommended defaults: {rest}"
+        stated.append(f"Tools as you set them ({tool_surface_phrase(summary)}).")
+    else:
+        defaults.append(tool_surface_phrase(summary))
+    if read_auto_retrieve(app_config):
+        stated.append(
+            "Library searched on every message "
+            f"(change it in {SEARCH_SETTINGS_PATH})."
         )
-    return f"Left at recommended defaults: {tool_surface_phrase(summary)}, {rest}"
+    else:
+        defaults.append("Library searched only when you ask")
+    if not theme_is_custom(read_wizard_prefill(app_config).default_theme):
+        defaults.append("default theme")
+    if defaults:
+        stated.append(
+            f"Left at recommended defaults: {', '.join(defaults)} — "
+            "each lives in Settings when you want it."
+        )
+    return " ".join(stated)
 
 
 def rerun_model_prefill(

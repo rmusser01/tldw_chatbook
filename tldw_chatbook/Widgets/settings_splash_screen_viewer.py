@@ -65,14 +65,13 @@ class SettingsSplashScreenViewer(Vertical):
 
     def _load_config(self) -> dict[str, Any]:
         try:
-            # TASK-32804.8: one section read, then index it (same shape as
-            # splash_screen.py's loader) instead of a call per key.
-            section = get_cli_setting("splash_screen", default={})
-            section = section if isinstance(section, dict) else {}
-            effects = section.get("effects", {})
-            effects = effects if isinstance(effects, dict) else {}
+            # One read per key (task-740's shape): get_cli_setting has no
+            # whole-section form -- get_cli_setting("splash_screen",
+            # default={}) returns the default -- so TASK-32804.8's one-read
+            # version showed defaults over what was saved (Qodo review
+            # 2026-11-05, TASK-34100.13: setup's Startup animation Off read On).
             config = {
-                key: (effects if key in _EFFECTS_KEYS else section).get(key, value)
+                key: get_cli_setting(_config_section(key), key, value)
                 for key, value in DEFAULT_SPLASH_CONFIG.items()
             }
         except Exception as exc:

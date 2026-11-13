@@ -120,8 +120,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 10,
-      "diagnostic_digest": "7d804c0e968c5781800b",
+      "call_count": 11,
+      "diagnostic_digest": "4ac7e9a46bba4f07a325",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Agents/mcp_tool_provider.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -4362,6 +4362,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "d21dd0584a3d694eaa99",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Utils/startup_logging.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 3,
       "diagnostic_digest": "9c9369e980e8d91cdb1e",
       "owner": "TASK-494",
@@ -5027,8 +5034,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 115,
-      "diagnostic_digest": "50d713d7b0a86e8d0cb9",
+      "call_count": 114,
+      "diagnostic_digest": "211dd0a9b1f4642865a2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -12099,6 +12106,23 @@
           "kind": "open_private_text_append_stream",
           "method": "open_private_text_append_stream",
           "scope": "open_private_text_append"
+        }
+      ]
+    },
+    {
+      "path": "tldw_chatbook/Utils/startup_logging.py",
+      "sinks": [
+        {
+          "digest": "31404ab104100335",
+          "kind": "addHandler",
+          "method": "addHandler",
+          "scope": "quiet_startup_stderr"
+        },
+        {
+          "digest": "365db6511f428167",
+          "kind": "loguru_sink",
+          "method": "add",
+          "scope": "quiet_startup_stderr"
         }
       ]
     },

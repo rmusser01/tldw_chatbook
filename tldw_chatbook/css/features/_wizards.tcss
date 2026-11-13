@@ -1097,7 +1097,6 @@ SmartContentTree Tree > .selected-node {
 .setup-rag,
 .setup-speech,
 .setup-tools,
-.setup-notes,
 .setup-appearance,
 .setup-protect,
 .setup-summary {
@@ -1124,6 +1123,13 @@ SmartContentTree Tree > .selected-node {
  * height, so Advanced fields scrolled out of reach. */
 #setup-voice-body,
 #setup-voice-key-row {
+    height: auto;
+}
+
+/* TASK-34100.13 review V1: the Speech step's Parakeet block, the same bug
+ * class. At 1fr it took the leftover viewport, so Advanced's controls (and at
+ * 80x24 "Review and install…") sat out of the step's scroll reach. */
+#setup-speech-parakeet {
     height: auto;
 }
 
@@ -1245,6 +1251,50 @@ SmartContentTree Tree > .selected-node {
 .setup-provider-filter { width: $ds-width-fill; }
 .setup-provider-count { width: auto; margin-left: $ds-space-2; }
 .setup-no-server { height: auto; }
+
+/* TASK-34100.13: a short, curated choice list grows to its content instead of
+ * the catalog cap -- no blank rows under two or three choices, and no entry
+ * hidden behind the scroll (fulltrack-13: the theme shortlist's sixth row).
+ * Seven entries plus the border is the ceiling. */
+.setup-choice-list.setup-choice-fit {
+    min-height: $ds-size-0;
+    height: auto;
+    max-height: $ds-size-9;
+}
+
+/* TASK-34100.13 (entry-exit-handoff-18): Welcome's quiet rows sit BELOW the
+ * nav bar -- Textual's focus order is visual order, so Tab reaches Next first. */
+.setup-welcome-footer {
+    height: auto;
+    padding: $ds-space-0 $ds-space-2;
+    background: $panel;
+}
+.setup-welcome-restore-row {
+    height: auto;
+}
+.setup-welcome-restore-label {
+    width: auto;
+    color: $text-muted;
+    margin-right: $ds-space-1;
+}
+.setup-welcome-restore-row #setup-welcome-reduce-motion {
+    margin-right: $ds-space-2;
+}
+.setup-welcome-restore-row .setup-tertiary-button {
+    margin-top: $ds-space-0;
+}
+
+/* TASK-34100.13 (fulltrack-11): the extras package name, then its copy action. */
+.setup-rag-extras-row {
+    height: auto;
+    margin-top: $ds-space-1;
+}
+/* Keyed on a class, not `.setup-rag-extras-row Static`: an ancestor-scoped
+ * bare-type rule is what MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES ratchets. */
+.setup-extras-package {
+    width: auto;
+    margin-right: $ds-space-2;
+}
 
 /* TASK-1495 AC #3: the Summary's exit actions are docked to the step
  * viewport's bottom edge (the row is a direct child of the .setup-step

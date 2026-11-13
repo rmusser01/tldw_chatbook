@@ -447,7 +447,6 @@ class TestSetupRecoveryAction:
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_APPEARANCE,
     STEP_MODEL,
-    STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
     STEP_RAG,
@@ -459,10 +458,8 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     TRACK_FULL,
     TRACK_QUICK,
     active_step_ids,
-    build_appearance_commit,
     build_model_commit,
     build_provider_commit,
-    build_rag_commit,
     build_tools_commit,
     build_wizard_state_commit,
     commit_sections_allowed,
@@ -475,7 +472,8 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
 class TestActiveStepIds:
     def test_full_track_without_key(self):
         """Voice follows Model; Speech remains after RAG; Protect is always
-        present (TASK-21148, UAT N-6 — stable step totals)."""
+        present (TASK-21148, UAT N-6 — stable step totals). TASK-34100.13
+        removed the Notes step, which configured nothing (fulltrack-05)."""
         assert active_step_ids(TRACK_FULL, key_entered=False) == (
             STEP_WELCOME,
             STEP_PROVIDER,
@@ -484,7 +482,6 @@ class TestActiveStepIds:
             STEP_RAG,
             STEP_SPEECH,
             STEP_TOOLS,
-            STEP_NOTES,
             STEP_APPEARANCE,
             STEP_PROTECT,
             STEP_SUMMARY,
@@ -499,7 +496,6 @@ class TestActiveStepIds:
             STEP_RAG,
             STEP_SPEECH,
             STEP_TOOLS,
-            STEP_NOTES,
             STEP_APPEARANCE,
             STEP_PROTECT,
             STEP_SUMMARY,
@@ -563,46 +559,21 @@ class TestCommitBuilders:
             "tools": {"read_file_enabled": True, "write_file_enabled": False}
         }
 
-    def test_appearance_commit_with_splash(self):
-        commit = build_appearance_commit(
-            default_theme="textual-dark", splash_card="matrix"
-        )
-        assert commit == {
-            "general": {"default_theme": "textual-dark"},
-            "splash_screen": {"card_selection": "matrix"},
+    def test_appearance_commits_are_deltas(self):
+        """TASK-34100.13: the splash-card gallery left setup; startup and
+        comfort controls write only what changed (first_run_appearance_state)."""
+        from tldw_chatbook.UI.Wizards import first_run_appearance_state as look
+
+        assert look.build_startup_commit(choice="full", current="full") == {}
+        assert look.build_startup_commit(choice="off", current="full") == {
+            "splash_screen": {"enabled": False}
         }
-
-    def test_appearance_commit_without_splash(self):
-        commit = build_appearance_commit(default_theme="textual-dark", splash_card=None)
-        assert commit == {"general": {"default_theme": "textual-dark"}}
-
-    def test_appearance_commit_omits_theme_when_falsy(self):
-        """Bug-2b: a falsy default_theme (delta-aware "unchanged") must omit
-        the general section entirely, not write an empty/None theme."""
-        commit = build_appearance_commit(default_theme=None, splash_card="matrix")
-        assert commit == {"splash_screen": {"card_selection": "matrix"}}
-
-    def test_appearance_commit_reset_splash_to_random(self):
-        """Bug-2c: explicit reset-to-random writes card_selection="random"
-        even though splash_card itself has no truthy value to signal it."""
-        commit = build_appearance_commit(
-            default_theme=None, splash_card=None, reset_splash_to_random=True
-        )
-        assert commit == {"splash_screen": {"card_selection": "random"}}
-
-    def test_appearance_commit_specific_card_wins_over_reset_flag(self):
-        commit = build_appearance_commit(
-            default_theme=None, splash_card="matrix", reset_splash_to_random=True
-        )
-        assert commit == {"splash_screen": {"card_selection": "matrix"}}
-
-    def test_appearance_commit_nothing_changed_is_empty(self):
-        commit = build_appearance_commit(default_theme=None, splash_card=None)
-        assert commit == {}
-
-    def test_rag_commit(self):
-        commit = build_rag_commit(default_model_id="e5-small-v2")
-        assert commit == {"embedding_config": {"default_model_id": "e5-small-v2"}}
+        assert look.build_comfort_commit(
+            reduce_motion=False,
+            ascii_glyphs=True,
+            current_reduce_motion=False,
+            current_ascii_glyphs=False,
+        ) == {"appearance": {"ascii_glyphs": True}}
 
     def test_state_commit(self):
         assert build_wizard_state_commit(started=True) == {
@@ -1516,6 +1487,8 @@ class TestDependencyInvalidation:
 
 class TestSectionAllowlist:
     def test_all_builders_stay_in_allowlist(self):
+        from tldw_chatbook.UI.Wizards import first_run_appearance_state as look
+        from tldw_chatbook.UI.Wizards.first_run_rag_state import build_search_commit
         from tldw_chatbook.UI.Wizards.first_run_speech_step_state import (
             build_speech_transcription_commit,
         )
@@ -1523,9 +1496,15 @@ class TestSectionAllowlist:
         commits = [
             build_provider_commit(provider_key="openai", api_key="sk", api_url=None),
             build_model_commit(provider_value="OpenAI", model_id="m"),
-            build_rag_commit(default_model_id="e5-small-v2"),
+            build_search_commit(auto_retrieve=True, current=False),
             build_tools_commit(gate_values={"read_file_enabled": True}),
-            build_appearance_commit(default_theme="t", splash_card="c"),
+            look.build_startup_commit(choice="short", current="full"),
+            look.build_comfort_commit(
+                reduce_motion=True,
+                ascii_glyphs=True,
+                current_reduce_motion=False,
+                current_ascii_glyphs=False,
+            ),
             build_wizard_state_commit(started=True),
             build_speech_transcription_commit(
                 provider_id="parakeet-onnx",
@@ -1779,8 +1758,9 @@ class TestSummaryRows:
         }
         assert rows["Provider"].ok is True
         assert rows["Default model"].ok is True
-        assert rows["RAG"].ok is False
-        assert "not installed" in rows["RAG"].detail
+        # TASK-34100.13: the row is "Search", built from the auto-retrieve flag.
+        assert rows["Search"].ok is False
+        assert "extras aren't installed" in rows["Search"].detail
         assert rows["Key encryption"].ok is True
 
     def test_empty_config_all_missing(self):
@@ -2226,7 +2206,7 @@ class TestSummaryThreeState:
         assert rows["Theme"].state == ROW_DEFAULT
         assert rows["Theme"].glyph == "–"
         assert rows["Tools"].state == ROW_DEFAULT
-        assert rows["RAG"].state == ROW_DEFAULT  # optional, not an error
+        assert rows["Search"].state == ROW_DEFAULT  # optional, not an error
 
     def test_tools_row_off_detail_names_where_to_enable(self):
         """task-32289 AC#1: the Summary's tools line names the destination
@@ -2254,7 +2234,8 @@ class TestSummaryThreeState:
         # TASK-34100.5.3: plain chat now offers exactly the light set until
         # the user turns more on, so the row names it instead of hedging.
         # Review round 1 (F4): and says plainly that a small or unread window
-        # gets no tools.
+        # gets no tools. (TASK-34100.13's own derivation was folded into this
+        # one reading when it was rebased onto TASK-34100.5.3.)
         assert rows["Tools"].detail == (
             "on: date and time, calculator and ask you a question, plus tools "
             "from MCP servers you add and Library tools in chats you allow. "
@@ -2392,7 +2373,8 @@ class TestSummaryTemplateHonesty:
         assert rows["Default model"].state == ROW_DEFAULT
         assert rows["Default model"].detail == "not selected"
 
-    def test_template_rag_model_reads_as_off_by_default(self):
+    def test_template_rag_model_is_not_the_search_row(self):
+        """TASK-34100.13: the legacy key is not what RAG uses, so it is not shown."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_DEFAULT
 
         rows = {
@@ -2401,8 +2383,8 @@ class TestSummaryTemplateHonesty:
                 self._WALKED_TEMPLATE_CFG, {}, rag_deps_installed=True
             )
         }
-        assert rows["RAG"].state == ROW_DEFAULT
-        assert "off by default" in rows["RAG"].detail
+        assert rows["Search"].state == ROW_DEFAULT
+        assert rows["Search"].detail == "only when you ask"
 
     def test_typed_model_without_provider_is_named_but_not_checked(self):
         cfg = dict(self._WALKED_TEMPLATE_CFG)
@@ -2415,14 +2397,16 @@ class TestSummaryTemplateHonesty:
         assert "my-local-model" in row.detail
         assert "provider" in row.detail
 
-    def test_user_selected_rag_model_still_earns_configured(self):
+    def test_legacy_embedding_pick_no_longer_earns_a_tick(self):
+        """TASK-34100.13 (fulltrack-01): this pinned the defect -- a
+        default_model_id the RAG pipeline never reads earned "✓ RAG"."""
         cfg = dict(self._WALKED_TEMPLATE_CFG)
         cfg["embedding_config"] = {"default_model_id": "bge-large-en"}
         rows = {
             r.label: r for r in build_summary_rows(cfg, {}, rag_deps_installed=True)
         }
-        assert rows["RAG"].ok is True
-        assert "bge-large-en" in rows["RAG"].detail
+        assert rows["Search"].ok is False
+        assert "bge-large-en" not in rows["Search"].detail
 
 
 class TestProviderTrustChain:

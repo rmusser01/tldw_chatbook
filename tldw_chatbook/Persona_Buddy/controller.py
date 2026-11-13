@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from loguru import logger
 
+from tldw_chatbook.Utils.startup_logging import motion_reduced_by_environment
+
 from tldw_chatbook.Persona_Visual.repository import (
     PersonaVisualGraph,
     PersonaVisualIdentity,
@@ -1114,6 +1116,10 @@ class PersonaBuddyController:
             )
 
     def _current_reduced_motion(self) -> bool:
+        # TASK-34100.13: TLDW_REDUCE_MOTION / NO_MOTION hold Buddy still too;
+        # they are applied where motion is read, never saved (review F5).
+        if motion_reduced_by_environment():
+            return True
         try:
             value = (
                 self._reduced_motion()

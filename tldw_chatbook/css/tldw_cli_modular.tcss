@@ -15052,6 +15052,16 @@ SplashScreen, .splash-screen {
 }
 
 
+#splash-skip-hint, .splash-skip-hint {
+    dock: bottom;
+    width: $ds-width-full;
+    height: $ds-size-1;
+    text-align: center;
+    color: $text-muted;
+    text-style: dim;
+}
+
+
 #splash-progress-bar, .splash-progress-bar {
     width: $ds-percent-80;
     max-width: $ds-splash-progress-cap;
@@ -16183,7 +16193,6 @@ SmartContentTree Tree > .selected-node {
 .setup-rag,
 .setup-speech,
 .setup-tools,
-.setup-notes,
 .setup-appearance,
 .setup-protect,
 .setup-summary {
@@ -16204,6 +16213,11 @@ SmartContentTree Tree > .selected-node {
 
 #setup-voice-body,
 #setup-voice-key-row {
+    height: auto;
+}
+
+
+#setup-speech-parakeet {
     height: auto;
 }
 
@@ -16311,6 +16325,45 @@ SmartContentTree Tree > .selected-node {
 .setup-provider-filter { width: $ds-width-fill; }
 .setup-provider-count { width: auto; margin-left: $ds-space-2; }
 .setup-no-server { height: auto; }
+
+
+.setup-choice-list.setup-choice-fit {
+    min-height: $ds-size-0;
+    height: auto;
+    max-height: $ds-size-9;
+}
+
+
+.setup-welcome-footer {
+    height: auto;
+    padding: $ds-space-0 $ds-space-2;
+    background: $panel;
+}
+.setup-welcome-restore-row {
+    height: auto;
+}
+.setup-welcome-restore-label {
+    width: auto;
+    color: $text-muted;
+    margin-right: $ds-space-1;
+}
+.setup-welcome-restore-row #setup-welcome-reduce-motion {
+    margin-right: $ds-space-2;
+}
+.setup-welcome-restore-row .setup-tertiary-button {
+    margin-top: $ds-space-0;
+}
+
+
+.setup-rag-extras-row {
+    height: auto;
+    margin-top: $ds-space-1;
+}
+
+.setup-extras-package {
+    width: auto;
+    margin-right: $ds-space-2;
+}
 
 
 .setup-summary-actions {
