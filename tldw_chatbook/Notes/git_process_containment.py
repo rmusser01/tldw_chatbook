@@ -160,6 +160,16 @@ class ProcessTreeController:
             stdin=stdin,
         )
 
+    async def spawn_windows_hook(
+        self, *argv: str, cwd: str,
+    ) -> OwnedProcessTree:
+        """Keep the ordinary hook's CreateProcess executable lookup and argv."""
+        if not isinstance(self._backend, _WindowsJobObjectController):
+            raise OSError("Windows hook jobs require Windows")
+        if not argv or not argv[0] or any("\0" in argument for argument in argv):
+            raise ValueError("Invalid Windows hook command")
+        return self._backend.spawn_hook(argv, cwd=cwd)
+
     def terminate(self, tree: OwnedProcessTree) -> None:
         """Request native graceful tree termination."""
         self._backend.terminate(tree)
@@ -292,6 +302,14 @@ class _WindowsJobObjectController:
             stdin=stdin,
         )
 
+    def spawn_hook(
+        self, argv: tuple[str, ...], *, cwd: str,
+    ) -> OwnedProcessTree:
+        return self._api.spawn_suspended_assigned(
+            argv, cwd=cwd, environment=None, stdin=True,
+            ordinary_executable_lookup=True,
+        )
+
     def terminate(self, tree: OwnedProcessTree) -> None:
         identity = self._identity(tree)
         if identity.assigned:
@@ -372,6 +390,7 @@ class _WindowsPipeReader:
         self._condition = threading.Condition()
         self._chunks: deque[bytes] = deque()
         self._buffered = 0
+        self.buffer_limit = self._MAX_BUFFERED_BYTES
         self._eof = False
         self._closed = False
         self._error: BaseException | None = None
@@ -428,13 +447,14 @@ class _WindowsPipeReader:
             while True:
                 with self._condition:
                     while (
-                        not self._closed and self._buffered >= self._MAX_BUFFERED_BYTES
+                        not self._closed and self._buffered >= self.buffer_limit
                     ):
                         self._condition.wait()
                     if self._closed:
                         return
                     handle = self._handle
-                chunk = self._kernel.read_file(handle, 64 * 1024)
+                    capacity = min(64 * 1024, self.buffer_limit - self._buffered)
+                chunk = self._kernel.read_file(handle, capacity)
                 if not chunk:
                     return
                 with self._condition:
@@ -485,7 +505,16 @@ class _WindowsPipeWriter:
                 name="git-process-tree-pipe-writer",
                 daemon=True,
             ).start()
-        await asyncio.shield(self._future)
+        try:
+            await asyncio.shield(self._future)
+        except asyncio.CancelledError:
+            self._future.add_done_callback(self._observe_drain_completion)
+            raise
+
+    @staticmethod
+    def _observe_drain_completion(future: asyncio.Future[None]) -> None:
+        if not future.cancelled():
+            future.exception()
 
     def close(self) -> None:
         if self._future is None:
@@ -869,8 +898,9 @@ class _WindowsKernel:
         argv: tuple[str, ...],
         *,
         cwd: str,
-        environment: Mapping[str, str],
+        environment: Mapping[str, str] | None,
         stdin: bool,
+        ordinary_executable_lookup: bool = False,
     ) -> OwnedProcessTree:
         job_handle = self._create_job()
         parent_stdin = parent_stdout = parent_stderr = 0
@@ -887,6 +917,7 @@ class _WindowsKernel:
             parent_stdin, child_stdin = self._pipe(parent_reads=False)
             parent_stdout, child_stdout = self._pipe(parent_reads=True)
             parent_stderr, child_stderr = self._pipe(parent_reads=True)
+            launch = {"ordinary_executable_lookup": True} if ordinary_executable_lookup else {}
             self._create_process(
                 argv,
                 cwd=cwd,
@@ -894,6 +925,7 @@ class _WindowsKernel:
                 child_handles=(child_stdin, child_stdout, child_stderr),
                 fallback=fallback,
                 identity=identity,
+                **launch,
             )
             fallback.adopt_pipes(
                 parent_stdin,
@@ -931,6 +963,8 @@ class _WindowsKernel:
             )
             fallback.transfer_to_wrapper()
             tree.process = process
+            if ordinary_executable_lookup:
+                process.stdout.buffer_limit = process.stderr.buffer_limit = 64 * 1024
             process.start_io()
             resumed = self.kernel32.ResumeThread(identity.thread_handle)
             self.close_handle(identity.thread_handle)
@@ -1109,10 +1143,11 @@ class _WindowsKernel:
         argv: tuple[str, ...],
         *,
         cwd: str,
-        environment: Mapping[str, str],
+        environment: Mapping[str, str] | None,
         child_handles: tuple[int, int, int],
         fallback: _WindowsFailedAdmissionProcess,
         identity: _WindowsJobIdentity,
+        ordinary_executable_lookup: bool = False,
     ) -> None:
         attribute_size = self.ctypes.c_size_t()
         self.kernel32.InitializeProcThreadAttributeList(
@@ -1156,16 +1191,15 @@ class _WindowsKernel:
             command_line = self.ctypes.create_unicode_buffer(
                 subprocess.list2cmdline(argv)
             )
-            environment_block = self._environment_block(environment)
-            flags = (
-                self._CREATE_SUSPENDED
-                | self._CREATE_NEW_PROCESS_GROUP
-                | self._CREATE_UNICODE_ENVIRONMENT
-                | self._EXTENDED_STARTUPINFO_PRESENT
+            environment_block = (
+                None if environment is None else self._environment_block(environment)
             )
+            flags = self._CREATE_SUSPENDED | self._EXTENDED_STARTUPINFO_PRESENT
+            if not ordinary_executable_lookup:
+                flags |= self._CREATE_NEW_PROCESS_GROUP | self._CREATE_UNICODE_ENVIRONMENT
             fallback.attach_process_info(process_info)
             if not self.kernel32.CreateProcessW(
-                argv[0],
+                None if ordinary_executable_lookup else argv[0],
                 command_line,
                 None,
                 None,

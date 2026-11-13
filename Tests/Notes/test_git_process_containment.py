@@ -916,7 +916,7 @@ class _FakeCreateProcessCalls:
             command_line=command_line.value,
             inherit_handles=inherit_handles,
             creation_flags=creation_flags,
-            environment_block="".join(environment_block),
+            environment_block=None if environment_block is None else "".join(environment_block),
             cwd=cwd,
             std_handles=(
                 int(startup.hStdInput or 0),
@@ -982,7 +982,10 @@ def _ctypes_windows_kernel_for_create_process(
     return kernel, calls
 
 
-def test_windows_containment_createprocess_uses_exact_abi_contract() -> None:
+@pytest.mark.parametrize("ordinary_lookup", [False, True])
+def test_windows_containment_createprocess_uses_exact_abi_contract(
+    ordinary_lookup: bool,
+) -> None:
     kernel, calls = _ctypes_windows_kernel_for_create_process()
     executable = "C:/Git/bin/git.exe"
     fallback = containment._WindowsFailedAdmissionProcess(
@@ -993,29 +996,30 @@ def test_windows_containment_createprocess_uses_exact_abi_contract() -> None:
     kernel._create_process(
         (executable, "push", "arg with space"),
         cwd="C:/repo",
-        environment={"TEMP": "C:/Temp", "PATH": "C:/Git/bin"},
+        environment=None if ordinary_lookup else {"TEMP": "C:/Temp", "PATH": "C:/Git/bin"},
         child_handles=(201, 301, 401),
         fallback=fallback,
         identity=identity,
+        ordinary_executable_lookup=ordinary_lookup,
     )
 
     assert fallback.wrapper_handles()[0] == 500
     assert fallback.pid == 4242
     assert identity.pid == 4242
     assert identity.thread_handle == 501
-    assert calls.created["application_name"] == executable
+    assert calls.created["application_name"] == (None if ordinary_lookup else executable)
     assert calls.created["command_line"] == ('C:/Git/bin/git.exe push "arg with space"')
     assert calls.created["inherit_handles"] is True
     assert calls.created["handle_list"] == (201, 301, 401)
     assert calls.created["std_handles"] == (201, 301, 401)
     assert calls.created["startup_flags"] == kernel._STARTF_USESTDHANDLES
-    assert calls.created["creation_flags"] == (
-        kernel._CREATE_SUSPENDED
-        | kernel._CREATE_NEW_PROCESS_GROUP
-        | kernel._CREATE_UNICODE_ENVIRONMENT
-        | kernel._EXTENDED_STARTUPINFO_PRESENT
-    )
-    assert calls.created["environment_block"] == ("PATH=C:/Git/bin\0TEMP=C:/Temp\0\0")
+    flags = kernel._CREATE_SUSPENDED | kernel._EXTENDED_STARTUPINFO_PRESENT
+    if ordinary_lookup:
+        assert calls.created["environment_block"] is None
+    else:
+        flags |= kernel._CREATE_NEW_PROCESS_GROUP | kernel._CREATE_UNICODE_ENVIRONMENT
+        assert calls.created["environment_block"] == "PATH=C:/Git/bin\0TEMP=C:/Temp\0\0"
+    assert calls.created["creation_flags"] == flags
     assert calls.trace == [
         "size_attribute_list",
         "initialize_attribute_list",
