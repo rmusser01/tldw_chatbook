@@ -1671,8 +1671,9 @@ async def test_a_lore_landing_restores_nothing_once_the_kind_changed_under_it(
     sets ``state.active_mode`` to Characters directly and loads a character
     without counting a list change; here that is done the same way while a
     lore landing's refresh is held. Without the mode check the restore wrote
-    the lore query into the Characters box (new with this PR's first cut;
-    fix round 2). Mutation M51-F (no mode check) turns it red."""
+    the lore query into the Characters box (new with this PR's fix round 1,
+    which dropped the first cut's mode check; never on dev; fixed in round
+    2). Mutation M51-F (no mode check) turns it red."""
     harbour = WorldBookManager(import_env.db).create_world_book("Harbour Lore")
     fake_file_picker(monkeypatch, import_env.files["lore_tldw_export.json"])
     async with open_styled_roleplay(
