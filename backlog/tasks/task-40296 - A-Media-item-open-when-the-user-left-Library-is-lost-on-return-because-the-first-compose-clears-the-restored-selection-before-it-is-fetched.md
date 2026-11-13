@@ -1,7 +1,10 @@
 ---
 id: TASK-40296
 title: "A Media item open when the user left Library is lost on return, because the first compose clears the restored selection before it is fetched"
-status: To Do
+status: Done
+assignee:
+- '@claude'
+updated_date: '2026-11-13 02:28'
 created_date: 2026-11-12 19:36
 labels:
 - follow-up
@@ -36,7 +39,21 @@ The `test_library_shell.py` nodes are deselected from the `library-shell-dev` pu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Returning to Library with a Media item open reopens that item's viewer and fetches its detail
-- [ ] #2 Returning with an open item that was deleted meanwhile shows the viewer's recovery state
-- [ ] #3 Both nodes pass 3 of 3 at `-n 4`, shown red before the fix, and their lines leave `scripts/library_shell_push_deselect.txt`
+- [x] #1 Returning to Library with a Media item open reopens that item's viewer and fetches its detail
+- [x] #2 Returning with an open item that was deleted meanwhile shows the viewer's recovery state
+- [x] #3 Both nodes pass 3 of 3 at `-n 4`, shown red before the fix, and their lines leave `scripts/library_shell_push_deselect.txt`
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Re-check at base 26b2e677dd: run both nodes, confirm red and the cause (compose before on_mount).
+2. Begin the restored Reader selection (and its highlight hold) in `restore_state`, where the selection is set, so the first compose's highlight adoption keeps it; leave the detail fetch in `on_mount`.
+3. Run both nodes 3x at `-n 4`, the restore covering tests, the size ratchet; drop the two deselect lines.
+
+## Implementation Notes
+
+- Premise still held at base 26b2e677dd (2026-11-13, load 45-52): `fetches_detail_on_mount` failed `assert None is not None` on `_media_state.detail`, `with_deleted_item_shows_recovery` failed "#library-media-viewer-error never mounted within 30.0s". Cause confirmed: Textual composes before `on_mount`; the media branch of `compose_content` calls `_adopt_library_media_highlight` on a list with no page, and with no Reader session begun yet (`on_mount` began it) nothing held the highlight, so the selection was written to "" and `on_mount`'s `if selected_media_id` skipped the fetch. The compose-time adoption came from TASK-34000.18 (b273392327); the hold was only taken in `on_mount` (a29bfe8258).
+- Fix: `restore_state` now resolves the Reader identity and calls `begin_selection(..., immediate=True)` plus `highlight_held_by_reader = True` for a restored viewer, the same pair the by-link door (`_open_library_item_by_id`'s media branch) already sets before compose. `on_mount` keeps only the fetch. The old `pending_request is None` guard was dropped: `restore_state` only runs on a freshly constructed screen (`app_navigation.py`), and a newer restore should supersede anyway.
+- Evidence: both nodes red at base (above), green 3 of 3 at `-n 4` after the fix at load 52-70 (twice: before and after a comment compaction), together with `test_library_shell_restore_state_degrades_editor_view_without_matching_id`. No new test: the two existing nodes are the red-to-green proof. Both lines left `scripts/library_shell_push_deselect.txt`.
+- Files: `tldw_chatbook/UI/Screens/library_screen.py` (net -3 lines), `scripts/library_shell_push_deselect.txt`, `Docs/User_Guide/library/media-and-conversations.md` (one sentence: leaving Library and coming back reopens the open item, or its Retry state).
+

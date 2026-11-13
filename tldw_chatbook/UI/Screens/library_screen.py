@@ -10081,22 +10081,7 @@ class LibraryScreen(BaseAppScreen):
             # "Loading media…" placeholder forever. Deleted-record safety
             # uses the permanent Reader's explicit error + Retry surface,
             # matching a live row whose backing record vanished before open.
-            if self._media_state.reader_session.pending_request is None:
-                reader_identity = self._library_media_reader_identity(
-                    self._media_state.selected_media_id
-                )
-                if reader_identity is not None:
-                    canonical_id, backing_id = reader_identity
-                    self._media_state.reader_session = begin_selection(
-                        self._media_state.reader_session,
-                        canonical_id,
-                        backing_id,
-                        self._media_state.selected_media_id,
-                        immediate=True,
-                    )
-                    # TASK-34000.18 fix round 2: a restored selection is
-                    # the Reader's item too.
-                    self._media_state.highlight_held_by_reader = True
+            # ``restore_state`` begins the Reader selection (TASK-40296).
             self.run_worker(
                 self._refresh_library_media_detail(
                     self._media_state.selected_media_id,
@@ -10736,6 +10721,18 @@ class LibraryScreen(BaseAppScreen):
             media_view = "list"
         self._media_state.selected_media_id = selected_media_id
         self._media_state.view = media_view
+        reader_identity = self._library_media_reader_identity(selected_media_id)
+        if media_view == "viewer" and reader_identity is not None:
+            # TASK-40296: begin the restored Reader item here, not in on_mount:
+            # the first compose runs before on_mount and its highlight adoption
+            # clears a selection the Reader does not hold (TASK-34000.18).
+            self._media_state.reader_session = begin_selection(
+                self._media_state.reader_session,
+                *reader_identity,
+                selected_media_id,
+                immediate=True,
+            )
+            self._media_state.highlight_held_by_reader = True
 
         self._rag_search_state.query = str(state.get("library_rag_query") or "")
         rag_mode = state.get("library_rag_mode")

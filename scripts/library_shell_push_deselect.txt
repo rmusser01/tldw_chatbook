@@ -4,10 +4,6 @@
 # collects fails the job. Remove a line when its fix lands.
 # product defect, TASK-32503
 Tests/UI/test_library_shell.py::test_library_shell_note_save_then_back_refreshes_list_title_and_age
-# product defect, TASK-40296
-Tests/UI/test_library_shell.py::test_library_shell_restored_media_viewer_fetches_detail_on_mount
-# product defect, TASK-40296
-Tests/UI/test_library_shell.py::test_library_shell_restored_media_viewer_with_deleted_item_shows_recovery
 # product defect, TASK-34000.60 (TASK-39152 notes)
 Tests/UI/test_library_shell.py::test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
 # compact Preview scroll memory lost across a breakpoint round trip under load, TASK-40299

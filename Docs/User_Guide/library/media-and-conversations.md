@@ -485,7 +485,9 @@ while you move through items. An open item also survives a trip through the
 Library rail: press Notes (or any other rail row) and come back, and the
 Reader shows the same item on the same tab at the same place, with its Items
 row still marked `loaded` — only **‹ Back** (or Escape, in the narrower
-layouts where it leaves the Reader) returns you to the list. Missing analysis
+layouts where it leaves the Reader) returns you to the list. Leaving Library
+for another destination and coming back reopens that item too, or shows its
+Retry state if it was deleted meanwhile. Missing analysis
 or highlights produces an item-specific empty state; it does not silently
 switch modes. Leaving **Read** for another mode and returning drops you back
 at the same place in the text —
