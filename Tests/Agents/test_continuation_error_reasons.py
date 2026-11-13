@@ -23,6 +23,10 @@ from Tests.Agents.test_provider_continuation_runtime import (
     _deps,
     _kimi_checkpoint,
     _native_turn,
+    _pending_call,
+)
+from Tests.Agents.test_provider_continuation_runtime import (
+    _checkpoint as _runtime_checkpoint,
 )
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
@@ -33,11 +37,14 @@ from tldw_chatbook.Agents.agent_models import (
     ModelTurn,
     ToolBatchReady,
     ToolCall,
+    ToolCallExecuting,
+    ToolCallFinished,
     ToolResult,
 )
 from tldw_chatbook.Agents.agent_runtime import run_agent_loop
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
+    ContinuationRestoreTarget,
     ContinuationResult,
     ContinuationRound,
     ProviderContinuationCheckpoint,
@@ -258,6 +265,135 @@ def test_post_tool_final_without_checkpoint_records_its_reason(warnings_log) -> 
 
     assert outcome.status == RUN_ERROR
     assert _error_states(outcome) == {"continuation_error": "final_checkpoint_missing"}
+
+
+# --- Review v5r1 TE-5: restore and transition exits, driven, not just parsed. ---
+
+_DEEPSEEK_TARGET = ContinuationRestoreTarget(
+    "deepseek", "deepseek-v4-flash", "responses", "https://api.deepseek.com/v1"
+)
+
+
+def _restore_checkpoint() -> ProviderContinuationCheckpoint:
+    return _runtime_checkpoint(_pending_call())
+
+
+#: A persistent run that names no owner message cannot hold a continuation.
+_OWNERLESS = ContinuationEventContext(
+    owner_message_id=None,
+    run_id="run-1",
+    agent_kind="primary",
+    durability="persistent",
+)
+
+
+def _restore(checkpoint, target, *, expand=None, context=None):
+    deps = _deps(
+        [ModelTurn(text="must not run")],
+        order=[],
+        persist=lambda event: None,
+        invoke=lambda call: pytest.fail("no tool may run after a failed restore"),
+        expand=expand,
+        context=context,
+    )
+    return run_agent_loop(
+        CONFIG,
+        [{"role": "user", "content": "go"}],
+        [CALCULATOR],
+        deps,
+        restore_provider_continuation=checkpoint,
+        restore_provider_target=target,
+        resume_provider_continuation=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("target", "context", "expand", "expected"),
+    [
+        (None, None, None, "restore_target_invalid"),
+        (
+            ContinuationRestoreTarget(
+                "deepseek", "deepseek-v4-pro", "responses", "https://api.deepseek.com/v1"
+            ),
+            None,
+            None,
+            "restore_target_invalid",
+        ),
+        (_DEEPSEEK_TARGET, _OWNERLESS, None, "restore_context_invalid"),
+        (_DEEPSEEK_TARGET, None, None, "restore_history_unavailable"),
+        (
+            _DEEPSEEK_TARGET,
+            None,
+            lambda checkpoint: "not a row list",
+            "restore_history_unavailable",
+        ),
+    ],
+    ids=[
+        "no target",
+        "another model",
+        "ownerless context",
+        "no expander",
+        "expander returns no rows",
+    ],
+)
+def test_each_restore_exit_records_its_own_reason(
+    target, context, expand, expected, warnings_log
+) -> None:
+    outcome = _restore(_restore_checkpoint(), target, expand=expand, context=context)
+
+    assert outcome.status == RUN_ERROR
+    assert _error_states(outcome) == {"continuation_error": expected}
+    assert any(f"reason={expected}" in line for line in warnings_log), warnings_log
+
+
+@pytest.mark.parametrize(
+    ("failing_event", "expected"),
+    [
+        (ToolCallExecuting, "executing_transition_failed"),
+        (ToolCallFinished, "result_transition_failed"),
+    ],
+)
+def test_each_tool_transition_exit_records_its_own_reason(
+    failing_event, expected, warnings_log
+) -> None:
+    """The batch barrier holds, then one call's transition cannot be stored."""
+
+    def persist(event) -> None:
+        if isinstance(event, failing_event):
+            raise RuntimeError("Continuation revision conflict.")
+
+    call = ToolCall("calculator", {"expression": "2+2"}, "a", '{"expression":"2+2"}')
+    initial = _kimi_checkpoint(
+        revision=1,
+        state="active",
+        rounds=(
+            ContinuationRound(
+                "",
+                ("tool reasoning",),
+                (
+                    ContinuationCall(
+                        "a", "calculator", '{"expression":"2+2"}', "pending"
+                    ),
+                ),
+            ),
+        ),
+    )
+    invoked: list[ToolCall] = []
+
+    outcome = _run(
+        [_native_turn((call,), initial)],
+        persist=persist,
+        invoke=lambda actual: invoked.append(actual) or ToolResult(ok=True, content="4"),
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert _error_states(outcome) == {
+        "continuation_error": expected,
+        "continuation_store_failure": "revision_conflict",
+    }
+    # A call whose "executing" mark was not stored never runs.
+    assert len(invoked) == (0 if failing_event is ToolCallExecuting else 1)
+    assert any(f"reason={expected}" in line for line in warnings_log), warnings_log
 
 
 def test_store_failure_is_logged_by_code_never_by_text(warnings_log) -> None:
