@@ -8982,8 +8982,14 @@ class LibraryScreen(BaseAppScreen):
         row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         if row_class is None:
             return False
+        browse = self._library_media_browse_controller
         if (
             row_class == "library-media-row"
+            # TASK-40293: no rows YET is not an empty page; standing down while
+            # it loads restored the pre-press focus, which disarmed the channel.
+            and not browse.loading
+            and browse.applied_result is not None
+            and not browse.retained_items
             and not self.query(f".{row_class}")
             and self._library_media_empty_list_fallback_target() is None
         ):
@@ -11396,13 +11402,14 @@ class LibraryScreen(BaseAppScreen):
         the filter ``Input`` is the right place to retype, so it LEADS the
         list rather than being left to the shared seam. ``#library-media-
         filter-clear`` is still deliberately not a candidate: Clear
-        discards the query rather than letting the user fix it.
+        discards the query rather than letting the user fix it. TASK-40293:
+        the page's one recovery action leads ``type:``, which is last.
         """
         selectors = (
-            "#library-media-type-filter",
             "#library-media-empty-clear-type",
             "#library-media-empty-import",
             "#library-media-retry",
+            "#library-media-type-filter",
         )
         applied = self._library_media_browse_controller.applied_scope
         if applied is not None and applied.query:
@@ -11452,6 +11459,13 @@ class LibraryScreen(BaseAppScreen):
         # true, and the retry re-attempts against the replacement rows.
         raw_rows = list(self.query(f".{row_class}"))
         rows = [row for row in raw_rows if not getattr(row, "_pruning", False)]
+        if rows and any(
+            getattr(node, "_recompose_required", False)
+            for node in getattr(rows[0], "ancestors", ())
+        ):
+            # TASK-40293: a queued recompose will replace these rows too, and
+            # Textual's reset off the pruned row reads as a user move.
+            rows = []
         if not rows:
             if raw_rows:
                 # (P1-C final fix round, M5) Every row the query found is being
@@ -17328,6 +17342,8 @@ class LibraryScreen(BaseAppScreen):
                         self.call_after_refresh(
                             self._focus_library_control, focus_identity
                         )
+                    else:  # TASK-40293: the Reader's focus goes with it.
+                        self._arm_library_list_entry_focus()
                 return
         if (
             applied_selection_id

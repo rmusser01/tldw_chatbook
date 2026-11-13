@@ -413,6 +413,10 @@ a prompt to begin.
 [ New prompt ] [ Import... ]        [ Clear filter ]
 ```
 
+On an empty Media page the keyboard lands on that one button (**Import
+media** or **Show all types**), also when an open item's page empties under
+the Reader and the canvas returns to its list by itself.
+
 A filtered empty page keeps its submitted type, query, or collection visible
 until you choose the reset action. Loading and failed refreshes do not use this
 empty presentation: they keep their status, pager authority, and **Retry** so a

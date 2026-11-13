@@ -2634,3 +2634,27 @@ round that asked for a test of the new restore-mismatch copy found it.
 **Incident.** After a folder failed to bind, the workspace create dialog focuses its Retry folders button and then reveals the retry error, the dialog's last child, with `scroll_visible(animate=False, immediate=True)`. At 80x24 the three `test_partial_create_keeps_the_committed_workspace_clear` cases failed at `-n 4` and passed serially: the error sat one row past the clip, with `scroll_y` 13 and `max_scroll_y` 14. I first blamed the long temp path in the error. Review measured paths of 133 to 455 characters and found the reveal reaching the clip's last row at every length. A `watch_scroll_y` trace showed the real cause. The reveal did scroll to 14, and then timer `_tick`s carried `scroll_y` back down to 13. `retry.focus()` makes `Screen.set_focus` queue `scroll_to_center(widget, origin_visible=True)`, which animates. It aimed at 13 before the error's final layout, and an immediate scroll does not stop a running animation. Under load the reveal landed mid-animation, and the animation had the last word.
 
 **What to do.** When code focuses a control and then reveals something itself, focus with `focus(scroll_visible=False)` so that only one scroll owns the pane. To find what moved a scroll offset, patch `Widget.watch_scroll_y` in the test and print each change with its stack: the animator's changes come from `_tick`, and a direct scroll comes from your own call.
+
+---
+
+## A child of a widget whose recompose is only QUEUED is not `_pruning` yet, and focus put on it is lost (TASK-40293, 2026-11-13)
+
+**Incident.** Entering Library Notes landed entry focus on `library-notes-tree-note-1`,
+and 100 ms later focus sat on the Library grip with the entry channel disarmed. The
+Notes canvas's `apply_pane_width` had called `refresh(recompose=True)` a few
+milliseconds BEFORE the channel focused the row. That call only sets
+`_recompose_required` and queues `_check_recompose` with `call_next`; nothing is
+`_pruning` until the recompose actually runs. So the channel's "skip rows a recompose
+is removing" check (TASK-34000.26, `_pruning`) passed the row, the queued recompose
+then pruned it, Textual's `_reset_focus` moved focus to the grip, and the screen's
+`on_descendant_focus` read that as the user leaving the list. The four entry-focus
+nodes had been red for weeks; a `set_focus` wrapper with a short stack, plus a log of
+`refresh(recompose=True)` on the canvas, found the ordering in one run.
+
+**What to do.**
+- Before focusing a widget you expect to survive, check its ancestors'
+  `_recompose_required` as well as its own `_pruning`; either means it is about to be
+  replaced. Retry once the recompose has run (Textual clears the flag before it
+  recomposes, so a post-recompose callback reads False).
+- When focus "lands, then moves to a grip", look for a queued recompose of an
+  ancestor, not for a second writer.
