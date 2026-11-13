@@ -291,6 +291,11 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
                     round_id=approval.get("round_id"),
                     phase=approval.get("phase", "approval"),
                     summary=approval.get("summary"),
+                    # TASK-40315: the captured view words each row's scope
+                    # (a raw-shell row's session scope is this chat's).
+                    view=approval.get("view"),
+                    presentation_revision=approval.get("presentation_revision"),
+                    presentation_state=approval.get("presentation_state"),
                 )
             else:
                 card.display = False

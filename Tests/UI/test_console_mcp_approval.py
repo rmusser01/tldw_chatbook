@@ -509,6 +509,44 @@ async def test_captured_raw_shell_session_scope_names_this_console_chat(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_buddy_raw_shell_round_states_the_shell_session_scope(tmp_path):
+    """TASK-40315: Buddy shows its bound chat's head approval round through
+    the real coordinator, a raw-shell round included, and must word the
+    session scope from the payload's captured view as Console does."""
+    from Tests.UI.test_buddy_conversation_modal import Harness, until
+    from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
+    from tldw_chatbook.UI.Navigation.buddy_conversation import (
+        open_buddy_conversation,
+    )
+
+    app = Harness()
+    async with app.run_test(size=(100, 36)) as pilot:
+        binding = BuddyBinding.for_session(app.target)
+        modal = open_buddy_conversation(app, binding, allow_voice=False)
+        await pilot.pause()
+        pending = asyncio.create_task(
+            asyncio.to_thread(
+                app.controller.request_mcp_approvals,
+                [_raw_shell_pending(tmp_path, app.target.id)],
+                session_id=app.target.id,
+            )
+        )
+        try:
+            await until(lambda: app.controller._interrupt_host.pending_total() == 1)
+            card = modal.query_one(ChatApprovalCard)
+            await until(
+                lambda: card.display and bool(card.query(".approval-row-decision"))
+            )
+            row = card.query_one(".approval-row")
+            assert await _session_scope_line(pilot, row) == (
+                _CAPTURED_SHELL_SESSION_SCOPE
+            )
+        finally:
+            app.controller.begin_shutdown()
+            await pending
+
+
+@pytest.mark.asyncio
 async def test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit():
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
