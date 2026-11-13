@@ -251,9 +251,14 @@ and [Local backup and recovery](../Backup-and-Recovery.md).
   unlock authority if needed, and preview again."** A preview or **Add
   source** failed: the location is wrong or unreadable, or plugin authority is
   locked.
-- **Do not press Review install… or Review preview… after an Import…
-  preview.** Both fail with an error that closes Chatbook instead of opening
-  the review. Use **Import…** to see what a Cursor or Codex folder holds, then
-  install from it with **Repository…** or **Add source…**.
+- **After an Import… preview, Review install… and Review preview… read "No
+  package to review" and stay disabled.** An Import… preview only lists what a
+  Cursor or Codex folder holds; the status line says "Import previews only list
+  what the folder holds. To install from it, use Repository… on the plugin's
+  folder or Add source… on its marketplace."
+- **"Review could not load (…). Nothing was changed. Close and open it
+  again."** The **Manage plugin** dialog failed while loading. It stays open
+  with **Review action** disabled, and Chatbook keeps running; close it and
+  open it again.
 - **The scope line shows the workspace's ID**, for example
   "workspace-default", not its display name.

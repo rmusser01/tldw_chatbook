@@ -2938,3 +2938,7 @@ Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignore
 Tests/UI/test_plugin_review.py::test_refresh_growth_keeps_focused_action_and_cleaned_status_painted
 Tests/UI/test_plugin_review.py::test_action_inputs_hide_without_losing_drafts_or_keyboard_focus
 Tests/UI/test_plugin_review.py::test_confirmed_profile_save_survives_close_during_child_prune
+# TASK-40712 (2026-11-13): an Import… preview's review buttons are disabled with
+# the reason, and a review dialog whose load fails keeps the app running.
+Tests/UI/test_plugins_browse.py::test_import_preview_review_buttons_state_why_and_never_open
+Tests/UI/test_plugins_browse.py::test_review_dialog_load_failure_stays_in_the_dialog

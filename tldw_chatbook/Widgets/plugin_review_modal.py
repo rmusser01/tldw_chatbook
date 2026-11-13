@@ -861,6 +861,20 @@ class PluginReviewModal(ModalScreen):
             )
             self._loading = False
             self.query_one("#plugin-review-dialect", Select).disabled = False
+        # A load worker that raises exits the whole app (TASK-40712); any other
+        # failure stays in this dialog, named by type only. The dialog stays
+        # inert (``_loading`` kept), so no input echo replaces the message.
+        except Exception as error:  # noqa: BLE001
+            from loguru import logger
+
+            logger.warning("Plugin review load failed: {}", type(error).__name__)
+            if not self.is_running:
+                return
+            self._status(
+                f"Review could not load ({type(error).__name__}). Nothing was "
+                "changed. Close and open it again."
+            )
+            self.query_one("#plugin-review-prepare", Button).disabled = True
 
     async def _data_rows(self):
         if self.details is not None:

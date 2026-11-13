@@ -1002,6 +1002,11 @@ MINIMUM_FILES = 2034
 # now wait for the dialog's load and press state at the tail. The floor is the
 # measured entry count.
 MINIMUM_FILES = 2037
+MINIMUM_FILES = 2031
+# TASK-40712 (2026-11-13): append the Plugins screen's Import… preview review
+# buttons and the review dialog's load-failure test at the tail. The floor is
+# the measured entry count.
+MINIMUM_FILES = 2039
 
 
 def read_census(path: Path) -> list[str]:

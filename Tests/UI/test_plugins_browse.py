@@ -550,3 +550,80 @@ async def test_authority_recovery_copy_is_truthful_without_a_reset_step(
         assert "cannot recover these plugins yet" in status
         assert "saved data stay on disk" in status
         assert "Reset authority" not in status
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (211, 44)])
+async def test_import_preview_review_buttons_state_why_and_never_open(
+    request, native_console, native_package, size
+):
+    """TASK-40712 AC#1: an Import… preview holds candidates, not a package. Its
+    two review buttons are disabled with the reason on them, and a press that
+    reaches the screen anyway opens nothing; the app keeps running."""
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    app = BrowseApp(native_console)
+    package = native_package()
+    async with app.run_test(size=size) as pilot:
+        screen = app.screen
+        await settled(pilot, screen)
+        screen.query_one("#plugins-import", Button).focus()
+        await pilot.press("enter")
+        screen.query_one("#plugins-location", Input).value = str(package)
+        screen.query_one("#plugins-import-app", Select).value = "codex"
+        screen.query_one("#plugins-submit", Button).focus()
+        await pilot.press("enter")
+        await settled(pilot, screen)
+        assert screen.browse.preview.candidates
+        status = str(screen.query_one("#plugins-status", Static).render())
+        assert "Import previews only list what the folder holds" in status
+        assert "Repository…" in status and "Add source…" in status
+        for identity in ("plugins-review-install", "plugins-review-preview"):
+            button = screen.query_one(f"#{identity}", Button)
+            assert button.disabled
+            assert str(button.label) == "No package to review"
+            button.press()
+            button.post_message(Button.Pressed(button))
+            await pilot.pause()
+            assert app.screen is screen
+            assert not isinstance(app.screen, PluginReviewModal)
+        # The whole label is painted in the form's button row at both widths.
+        assert "No package to review" in paint(screen)
+        assert app.is_running
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_review_dialog_load_failure_stays_in_the_dialog(
+    request, native_console, native_package
+):
+    """TASK-40712 AC#2: a review dialog whose load raises shows the failure in
+    the dialog and leaves the app running. The forced failure is the crash
+    the task found: an Import… preview handed to the dialog as its producer."""
+    from tldw_chatbook.Plugins.imports import inspect_app_import
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
+
+    app = BrowseApp(native_console)
+    preview = inspect_app_import("codex", native_package())
+    async with app.run_test(size=(120, 35)) as pilot:
+        await settled(pilot, app.screen)
+        await app.push_screen(
+            PluginReviewModal(
+                app.plugin_source_service, producer=preview, workspace_id=None
+            )
+        )
+        modal = app.screen
+        await modal.workers.wait_for_complete()
+        status_widget = modal.query_one("#plugin-review-status", Static)
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if "could not load" in str(status_widget.render()):
+                break
+        await pilot.pause()
+        status = str(status_widget.render())
+        assert "Review could not load (AttributeError)" in status
+        assert "Nothing was changed" in status
+        assert app.is_running and app.screen is modal
+        assert app.return_code is None
+        assert modal.query_one("#plugin-review-prepare", Button).disabled

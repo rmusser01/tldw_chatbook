@@ -20,6 +20,12 @@ from ..Navigation.base_app_screen import BaseAppScreen
 PAGE_SIZE = 25
 
 
+def _is_import_preview(preview) -> bool:
+    from ...Plugins.imports import ImportPreview
+
+    return isinstance(preview, ImportPreview)
+
+
 class PluginsScreen(BaseAppScreen):
     """View state is disposable; source and plugin authority stay app-owned."""
 
@@ -491,12 +497,15 @@ class PluginsScreen(BaseAppScreen):
             ):
                 button.label = "Preview unavailable — unsupported"
         self.query_one("#plugins-submit", Button).disabled = self._action_busy
-        self.query_one("#plugins-review-install", Button).disabled = (
-            self.browse.preview is None
-        )
-        self.query_one("#plugins-review-preview", Button).disabled = (
-            self.browse.preview is None
-        )
+        # An Import… preview lists candidates; it holds no package to review.
+        imported = _is_import_preview(self.browse.preview)
+        for identity, label in (
+            ("plugins-review-install", "Review install…"),
+            ("plugins-review-preview", "Review preview…"),
+        ):
+            button = self.query_one(f"#{identity}", Button)
+            button.disabled = self.browse.preview is None or imported
+            button.label = "No package to review" if imported else label
 
     @on(OptionList.OptionSelected, "#plugins-list")
     def _select_row(self, event):
@@ -564,6 +573,7 @@ class PluginsScreen(BaseAppScreen):
             producer = (
                 self.browse.preview
                 if action in {"review-install", "review-preview"}
+                and not _is_import_preview(self.browse.preview)
                 else None
             )
             if row is not None or producer is not None:
@@ -827,7 +837,11 @@ class PluginsScreen(BaseAppScreen):
                 else:
                     self.query_one("#plugins-detail", Static).update(summary)
                 self._status(
-                    "Preview retained for this session. Installation requires separate review."
+                    "Import previews only list what the folder holds. To install "
+                    "from it, use Repository… on the plugin's folder or Add source… "
+                    "on its marketplace."
+                    if inspection is None
+                    else "Preview retained for this session. Installation requires separate review."
                 )
         except (OSError, ValueError, PermissionError):
             if token == self._token():
