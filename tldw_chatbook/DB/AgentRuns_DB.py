@@ -273,24 +273,12 @@ class ConsoleActivityReceiptsUnavailable(RuntimeError):
 
 @declare_store("db.agent_runs", closer="close", policy="db.base", finite_worker=False, read_only_policy="db.agent_runs.read")
 class AgentRunsDB(SQLiteStoreKernel, BaseDB):
-    """Run records for the agent runtime (vertical-slice spec data model).
+    """Persist run history with a thread-local connection and owned writes.
 
-    SCHEMA VERSIONING (task-15669 resolution, folded into the v11
-    migration per the fleet PR3b coordinator ruling #3): this DB has no
-    migration framework -- ``_initialize_schema`` runs CREATE TABLE IF NOT
-    EXISTS plus guarded idempotent ALTERs, and appends one
-    ``INSERT OR IGNORE INTO schema_version`` row per version. For years
-    ``_CURRENT_SCHEMA_VERSION`` sat at 3 while the version table grew
-    (4..10), because each migration followed the append pattern without
-    touching the constant. From v11 on the CONTRACT is: the constant
-    equals the HIGHEST version row a freshly created database records,
-    and every new migration bumps BOTH (the constant here, and a new
-    ``INSERT OR IGNORE`` row at the end of ``_initialize_schema``) --
-    ``Tests/DB/test_agent_runs_db.py::test_schema_version_constant_
-    agrees_with_the_version_table`` fails if they ever diverge again.
-    An existing older file still opens unchanged: the guarded ALTERs are
-    the effective migration, and the version table is a write-only audit
-    trail (nothing branches on it at runtime).
+    File-backed writable opens require the current execution owner. Keep
+    _CURRENT_SCHEMA_VERSION equal to the highest row recorded by a fresh
+    database. Historical columns use idempotent ALTERs. Workflow and mobile
+    upgrades use recorded versions to skip completed migration steps.
     """
 
     # Numbering note (v21): the routing snapshot was planned as v16 when this
@@ -1744,44 +1732,15 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     def mark_notes_delivered(
         self, note_ids: Sequence[int], delivered_by_run_id: str | None = None
     ) -> list[int]:
-        """Stamp exactly the given notes as delivered.
+        """Stamp the exact captured note IDs still pending at accepted completion.
 
-        Spec §4: the delivery seam captures the precise id list it
-        attached to the outbound message and stamps only that list at run
-        completion -- never "all pending for the conversation". A note
-        created after the list was captured (the mid-run race) is not in
-        ``note_ids`` and so stays pending, riding the next send.
-
-        Qodo #4 (PR #1779 fix round): the UPDATE's own
-        ``AND delivered_at IS NULL`` guard means a note already stamped by
-        a concurrent delivery (elsewhere) is silently skipped rather than
-        re-stamped -- correct for the DB, but the caller previously had no
-        way to know that skip happened, so the bridge's completion seam
-        disclosed every id it captured regardless of what actually got
-        stamped. Concurrent replies on one conversation are architecturally
-        serialized today, so that race is not currently reachable in
-        practice, but this makes the seam self-defending rather than
-        relying on that invariant holding forever.
-
-        Args:
-            note_ids: The note ids to stamp delivered.
-            delivered_by_run_id: The id of the run whose completion is
-                doing this delivery (TASK-16800 Task 6 fix round) --
-                distinct from each note's own ``run_id`` (the run whose
-                diff it critiques). Stamped verbatim onto every row in
-                ``note_ids``, alongside the same ``delivered_at``
-                timestamp, so resume re-derivation can anchor the
-                disclosure at the run that actually delivered it. Left
-                ``None`` (the default) only by callers that predate this
-                column or do not know/care which run is delivering.
+        Notes created after capture stay pending. The SQL guard skips concurrent
+        delivery and never restamps a row. delivered_by_run_id identifies the
+        delivering run, distinct from each note's owning diff run. Its default
+        None supports earlier callers. All stamped rows share one timestamp.
 
         Returns:
-            The subset of ``note_ids`` that this call ACTUALLY stamped
-            (i.e. were still pending at the moment of the UPDATE) -- never
-            more than ``note_ids``, and possibly fewer when a concurrent
-            caller already delivered one of them first. Order is not
-            significant to callers, all of which only ever test set
-            membership against it.
+            Only IDs actually stamped, in unspecified order.
         """
         self._require_execution_owner()
         ids = [int(note_id) for note_id in note_ids]
@@ -1875,41 +1834,11 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     def _rows_to_dicts(
         self, conn: sqlite3.Connection, rows: Sequence[sqlite3.Row]
     ) -> list[dict]:
-        """Turn ``agent_runs`` rows into API dicts, with full step hydration.
+        """Hydrate API rows without migrating or rewriting historical storage.
 
-        DUAL READ (task-18601 part A, AC#4): a run's steps can live in
-        TWO places -- the legacy ``agent_runs.steps`` JSON blob (every run
-        written before this change, and never touched again by
-        ``append_steps`` from now on) and the ``agent_run_steps`` child
-        table (every append from now on, for both brand-new runs and a
-        legacy run that gets appended to again after this change landed).
-
-        Chosen strategy: READ AND CONCATENATE both sources (blob steps
-        first, then child rows in ``seq`` order) rather than migrating a
-        legacy blob into rows on first append. Trade-off, deliberately
-        accepted: a run that mixes legacy blob-steps with new child rows
-        pays one extra query per hydrating read (parse the blob + select
-        the child rows) -- negligible next to the O(n^2) writer cost this
-        task fixes, and a steps-hydrating read of n steps is at best O(n)
-        regardless (it returns n items). The alternative (migrate-on-
-        first-append) would need a write on a READ-triggered path or an
-        extra step inside ``append_steps`` proper, and would still need a
-        migration guard forever (a DB can be opened by an older binary
-        between two appends). Concatenate-at-read is simpler and never
-        mutates data implicitly. A run created after this change has an
-        empty blob ('[]'), so its hydration is one indexed child-table
-        SELECT with no JSON blob to parse at all.
-
-        Args:
-            conn: An open connection (read or write) -- used for the
-                child-table query; a bare ``sqlite3.Row`` has no DB access
-                of its own, so this can no longer be a ``@staticmethod``.
-            rows: The ``agent_runs`` rows to convert.
-
-        Returns:
-            One dict per input row, in the same order, with ``steps`` a
-            list of dicts (blob steps then child-row steps, in order) and
-            ``budget`` JSON-decoded.
+        Return dicts in input order, with JSON-decoded budget and steps.
+        Concatenate the old steps blob first, then child rows in sequence order.
+        New runs have an empty blob. Batch child queries across all input rows.
         """
         rows = list(rows)
         child_by_run = self._batch_hydrate_steps(conn, [r["id"] for r in rows])
@@ -2189,45 +2118,14 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         return self._definition_row_to_dict(row) if row else None
 
     def append_steps(self, run_id: str, steps: list[dict]) -> None:
-        """Append step records to a run's step log.
+        """Append serialized step records after both legacy and existing child steps.
 
-        task-18601 part A: this used to be read-modify-write on the whole
-        ``agent_runs.steps`` JSON blob (read it, ``json.loads``, extend,
-        ``json.dumps``, rewrite the whole column) -- O(n) work per call
-        where n is every step ever recorded for the run, so O(n^2) over a
-        run's lifetime. Measured on a real DB: the 2000th append cost 44x
-        the 1st, ~5.4 minutes of write churn extrapolated to a 25k-step
-        run. Now a pure ``INSERT`` into ``agent_run_steps`` -- no read of
-        the existing log at all, just an existence check on ``run_id``
-        (an indexed point lookup) and a ``SELECT MAX(seq)`` (also indexed,
-        via the ``(run_id, seq)`` primary key -- SQLite answers a
-        ``MAX(seq) WHERE run_id = ?`` by walking straight to the last
-        matching index entry, not by scanning every row). ``agent_runs.
-        steps`` itself is left untouched -- see ``_rows_to_dicts``'s
-        dual-read docstring for how a run's full step list is reassembled
-        at read time.
-
-        Concurrency: computing ``next_seq`` and inserting the new rows
-        both happen inside the SAME ``self.transaction()`` (``BEGIN
-        IMMEDIATE``), which is this file's existing multi-writer-thread
-        discipline (see ``transaction()``'s own docstring: "a primary run
-        and its sub-agent runs" write concurrently today, each from its
-        own thread's held connection). ``BEGIN IMMEDIATE`` acquires
-        SQLite's single write lock up front, so a second thread's
-        ``append_steps`` call on ANY run blocks (up to ``busy_timeout``)
-        until this transaction commits or rolls back -- there is no
-        window between the ``MAX(seq)`` read and the ``INSERT`` for a
-        second writer to compute the same ``next_seq`` and collide on the
-        ``(run_id, seq)`` primary key.
-
-        Args:
-            run_id: The run to append to.
-            steps: Serialized ``AgentStep`` dicts, appended in order after
-                any steps already recorded (both the legacy blob's steps
-                and any already-inserted rows).
+        The legacy JSON blob stays untouched. The indexed run existence and
+        MAX(seq) checks share the BEGIN IMMEDIATE transaction with the inserts,
+        so concurrent appenders cannot allocate the same sequence numbers.
 
         Raises:
-            KeyError: If ``run_id`` does not exist.
+            KeyError: If the run does not exist.
         """
         self._require_execution_owner()
         stamp = _now_iso()
@@ -2711,34 +2609,10 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             return self._row_to_dict(conn, row) if row else None
 
     def get_run_metadata(self, run_id: str) -> dict | None:
-        """Fetch one run's METADATA ONLY -- never touches the step log.
+        """Return one run with JSON-decoded budget and no steps key, or None.
 
-        task-18601 part A, AC#2: a plain single-row SELECT over
-        ``_METADATA_COLUMNS`` (everything except ``steps``), so this
-        never fetches the ``steps`` blob off the page, never queries
-        ``agent_run_steps``, and never ``json.loads``es anything but
-        ``budget``. The returned dict has NO ``steps`` key at all -- see
-        ``_metadata_row_to_dict`` for why that is deliberate.
-
-        Use this instead of :meth:`get_run` wherever the caller only
-        inspects status/budget/result/task/etc, never
-        ``record["steps"]``. Two real call sites were switched to this
-        when it was added: ``ConsoleFleetWakeCoordinator._rows_for``
-        (the pending-wake poll -- ``compose_wake_notice`` only reads
-        id/agent_definition/status/task/result) and
-        ``AgentService.send_to_agent``'s "run finished in an earlier
-        session" check (only reads agent_kind/conversation_id/status).
-        :meth:`get_run` keeps its full (steps-hydrating) contract
-        unchanged for every other caller -- e.g.
-        ``change_review_screen.tool_touched_relpaths``, which reads
-        ``record["steps"]`` directly.
-
-        Args:
-            run_id: The run to fetch.
-
-        Returns:
-            The run as a dict with ``budget`` JSON-decoded and NO
-            ``steps`` key, or ``None`` if ``run_id`` does not exist.
+        Use this for status or other metadata. It neither reads the legacy blob
+        nor queries child steps. Use get_run when the caller needs full steps.
         """
         with self.connection() as conn:
             row = conn.execute(
@@ -2748,30 +2622,15 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         return self._metadata_row_to_dict(row) if row else None
 
     def get_run_fresh(self, run_id: str) -> dict | None:
-        """Fetch one run through a dedicated, immediately-closed connection.
+        """Read one full run on a dedicated connection, closed even on failure.
 
-        task-15863: the per-thread held connection (``_held_connection``)
-        is a WAL reader, and in Python's ``sqlite3`` ANY unfinalized
-        statement on a connection holds its implicit read transaction
-        open -- pinning that connection's snapshot. Every later read on
-        the same thread then reports the world as of the pin: live
-        verification caught the auto-wake notice labelling a child
-        ``running`` a full minute after its terminal ``done`` committed.
-        This escape hatch reads through a brand-new connection that
-        cannot inherit any pinned snapshot; callers use it when a held
-        read returns a state the caller can PROVE stale (the wake path's
-        rule: a settled child's row can never legitimately read
-        non-terminal).
-
-        In-memory databases fall back to the held read: a second
-        connection to ``:memory:`` opens a different, empty database.
-
-        Args:
-            run_id: The run to fetch.
+        An unfinished WAL statement can pin the held thread's snapshot.
+        Use this for a demonstrably stale read, such as a settled child still
+        reported as running (TASK-15863). In-memory stores use the held
+        connection because a new connection would open an empty database.
 
         Returns:
-            The run as a dict (``steps``/``budget`` JSON-decoded), or
-            ``None`` if ``run_id`` does not exist.
+            The run with steps and budget decoded, or None when absent.
         """
         if self.is_memory_db:
             return self.get_run(run_id)
@@ -2924,26 +2783,10 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             return self._row_to_dict(conn, row) if row else None
 
     def latest_primary_run_metadata(self, conversation_id: str) -> dict | None:
-        """``latest_primary_run`` METADATA ONLY -- never touches the step log.
-
-        task-18601 part A, AC#2: same query/ordering as
-        :meth:`latest_primary_run`, but over ``_METADATA_COLUMNS`` (no
-        ``steps``, no ``agent_run_steps`` query). Both of that method's
-        real callers only ever read ``id``/``assistant_message_id``
-        (``ConsoleAgentController.latest_primary_run_id`` and its
-        assistant-message-anchor sibling in
-        ``Chat/console_agent_bridge.py``) -- neither touches
-        ``record["steps"]`` -- so they were switched to this.
-        :meth:`latest_primary_run` keeps its full contract for any future
-        caller that does need steps.
-
-        Args:
-            conversation_id: The conversation whose runs to inspect.
+        """Read the same newest non-superseded primary as latest_primary_run.
 
         Returns:
-            The newest matching run as a dict with ``budget`` JSON-
-            decoded and NO ``steps`` key, or ``None`` when the
-            conversation has no non-superseded primary run.
+            The matching run with decoded budget and no steps key, or None.
         """
         with self.connection() as conn:
             row = conn.execute(
@@ -4089,7 +3932,7 @@ def _upgrade_workflow_schema(conn: sqlite3.Connection) -> None:
                 from .sql_validation import split_migration_statements
 
                 migration = split_migration_statements(
-                    _WORKFLOW_RUNS_SCHEMA, error_type=sqlite3.DatabaseError
+                    schema.WORKFLOW_RUNS_SCHEMA, error_type=sqlite3.DatabaseError
                 )
                 migration.append("INSERT INTO schema_version(version) VALUES (26)")
             for statement in migration:
@@ -4118,121 +3961,6 @@ def _upgrade_mobile_schema(conn: sqlite3.Connection) -> None:
             for statement in migration:
                 conn.execute(statement)
 
-
-# ADR-285 passive workflow persistence; no runtime imports at ordinary DB open.
-_WORKFLOW_RUNS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS workflow_runs (
-    id TEXT PRIMARY KEY,
-    launch_id TEXT NOT NULL UNIQUE,
-    payload_hash TEXT NOT NULL,
-    request_json TEXT NOT NULL CHECK(length(CAST(request_json AS BLOB)) <= 131072),
-    conversation_id TEXT NOT NULL,
-    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),
-    control_revision INTEGER NOT NULL DEFAULT 1 CHECK(typeof(control_revision)='integer' AND control_revision>0),
-    progress_cursor INTEGER NOT NULL DEFAULT 0 CHECK(typeof(progress_cursor)='integer' AND progress_cursor>=0),
-    status TEXT NOT NULL DEFAULT 'awaiting_plan' CHECK(status IN ('awaiting_plan','awaiting_approval','running','paused','stopped','completed','closed','recovery_required','removed','awaiting_resume')),
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_workflow_conversation ON workflow_runs(conversation_id, created_at DESC, id);
-CREATE TABLE IF NOT EXISTS workflow_plan_revisions (
-    workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),
-    revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>0),
-    payload_hash TEXT NOT NULL,
-    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072),
-    PRIMARY KEY(workflow_id, revision)
-);
-CREATE TABLE IF NOT EXISTS workflow_phases (
-    workflow_id TEXT NOT NULL,
-    plan_revision INTEGER NOT NULL,
-    phase_id TEXT NOT NULL,
-    ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 6),
-    PRIMARY KEY(workflow_id, plan_revision, phase_id),
-    UNIQUE(workflow_id, plan_revision, ordinal),
-    FOREIGN KEY(workflow_id, plan_revision) REFERENCES workflow_plan_revisions(workflow_id, revision)
-);
-CREATE TABLE IF NOT EXISTS workflow_tasks (
-    workflow_id TEXT NOT NULL,
-    plan_revision INTEGER NOT NULL,
-    phase_id TEXT NOT NULL,
-    task_id TEXT NOT NULL,
-    ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 12),
-    PRIMARY KEY(workflow_id, plan_revision, phase_id, task_id),
-    UNIQUE(workflow_id, plan_revision, task_id),
-    FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)
-);
-CREATE TABLE IF NOT EXISTS workflow_phase_attempts (
-    id TEXT PRIMARY KEY,
-    workflow_id TEXT NOT NULL,
-    plan_revision INTEGER NOT NULL,
-    phase_id TEXT NOT NULL,
-    ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>0),
-    native_attempt_id TEXT UNIQUE REFERENCES automatic_wake_attempts(id),
-    status TEXT NOT NULL CHECK(status IN ('prepared','accepted','completed','failed','uncertain','closed')),
-    retirement TEXT NOT NULL DEFAULT 'pending' CHECK(retirement IN ('pending','drained','unknown')),
-    UNIQUE(workflow_id, plan_revision, phase_id, ordinal),
-    FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)
-);
-CREATE TABLE IF NOT EXISTS workflow_task_attempts (
-    id TEXT PRIMARY KEY,
-    workflow_id TEXT NOT NULL,
-    plan_revision INTEGER NOT NULL,
-    phase_id TEXT NOT NULL,
-    task_id TEXT NOT NULL,
-    ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>0),
-    run_id TEXT UNIQUE REFERENCES agent_runs(id),
-    native_attempt_id TEXT UNIQUE REFERENCES automatic_wake_attempts(id),
-    status TEXT NOT NULL CHECK(status IN ('prepared','accepted','completed','failed','uncertain','closed')),
-    retirement TEXT NOT NULL DEFAULT 'pending' CHECK(retirement IN ('pending','drained','unknown')),
-    UNIQUE(id, workflow_id),
-    UNIQUE(workflow_id, plan_revision, task_id, ordinal),
-    FOREIGN KEY(workflow_id, plan_revision, phase_id, task_id) REFERENCES workflow_tasks(workflow_id, plan_revision, phase_id, task_id)
-);
-CREATE TABLE IF NOT EXISTS workflow_decisions (
-    id TEXT PRIMARY KEY,
-    workflow_id TEXT NOT NULL,
-    plan_revision INTEGER NOT NULL,
-    phase_id TEXT NOT NULL,
-    control_revision INTEGER NOT NULL CHECK(control_revision>0),
-    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072),
-    UNIQUE(workflow_id, control_revision),
-    FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)
-);
-CREATE TABLE IF NOT EXISTS workflow_payload_reservations (
-    attempt_id TEXT PRIMARY KEY,
-    workflow_id TEXT NOT NULL,
-    bytes INTEGER NOT NULL CHECK(typeof(bytes)='integer' AND bytes BETWEEN 1 AND 131072),
-    state TEXT NOT NULL CHECK(state IN ('reserved','published','removed')),
-    FOREIGN KEY(attempt_id, workflow_id) REFERENCES workflow_task_attempts(id, workflow_id)
-);
-CREATE TABLE IF NOT EXISTS workflow_results (
-    attempt_id TEXT PRIMARY KEY REFERENCES workflow_payload_reservations(attempt_id),
-    workflow_id TEXT NOT NULL,
-    payload_hash TEXT NOT NULL,
-    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072),
-    FOREIGN KEY(attempt_id, workflow_id) REFERENCES workflow_task_attempts(id, workflow_id)
-);
-CREATE TABLE IF NOT EXISTS workflow_active_intervals (
-    id TEXT PRIMARY KEY,
-    workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),
-    owner_id TEXT NOT NULL,
-    started_at REAL NOT NULL CHECK(started_at>=0),
-    ended_at REAL CHECK(ended_at>=started_at),
-    charged_seconds REAL NOT NULL DEFAULT 0 CHECK(charged_seconds>=0)
-);
-CREATE TRIGGER IF NOT EXISTS workflow_launch_immutable
-BEFORE UPDATE OF id, launch_id, payload_hash, request_json, conversation_id, chain_id ON workflow_runs
-BEGIN SELECT RAISE(ABORT, 'workflow launch is immutable'); END;
-CREATE TRIGGER IF NOT EXISTS workflow_plan_immutable
-BEFORE UPDATE ON workflow_plan_revisions
-BEGIN SELECT RAISE(ABORT, 'workflow plan is immutable'); END;
-CREATE TRIGGER IF NOT EXISTS workflow_decision_immutable
-BEFORE UPDATE ON workflow_decisions
-BEGIN SELECT RAISE(ABORT, 'workflow decision is immutable'); END;
-CREATE TRIGGER IF NOT EXISTS workflow_result_immutable
-BEFORE UPDATE ON workflow_results
-BEGIN SELECT RAISE(ABORT, 'workflow result is immutable'); END;
-"""
 
 
 def reject_incompatible_preview(db_path: str | Path) -> None:

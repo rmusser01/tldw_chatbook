@@ -5,10 +5,10 @@ import json
 from dataclasses import dataclass, field
 from itertools import chain
 
-from tldw_chatbook.DB.ChaChaNotes_DB import (
+from tldw_chatbook.DB.ChaChaNotes_DB import validated_thinking_blocks_json
+from tldw_chatbook.Sync_Interop.chat_sync_source import (
     _normalize_legacy_chat_delete_intent_payload,
     _normalize_legacy_chat_sync_intent_payload,
-    _validated_thinking_blocks_json,
 )
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
@@ -116,7 +116,7 @@ def _json(value, budget):
 
 def _message_state(payload, role, budget, *, captured_delete=False):
     """Preserve the native continuation/state predicate, including tombstones."""
-    from tldw_chatbook.Chat.assistant_generation_state import (
+    from tldw_chatbook.DB.assistant_generation_state import (
         normalize_assistant_generation_state,
     )
     from tldw_chatbook.Provider_Contract.provider_continuation import (
@@ -171,7 +171,7 @@ def _message_hash(payload, role, budget):
     if thinking is not None:
         budget.json(thinking)
         budget.value(thinking, text_copies=2)
-        if role != "assistant" or _validated_thinking_blocks_json(thinking) != thinking:
+        if role != "assistant" or validated_thinking_blocks_json(thinking) != thinking:
             raise _SyncRefusal("thinking_unrepresentable")
         envelope["thinking_blocks_json"] = thinking
     budget.value(envelope, text_copies=2)

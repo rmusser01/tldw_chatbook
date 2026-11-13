@@ -103,6 +103,10 @@ from Tests.Backup_Recovery import mobile_consolidation_fixture
 from Tests.Backup_Recovery.test_mobile_consolidation_lifecycle import _capture_fixture
 from Tests.Backup_Recovery.test_mobile_owning_transactions import _small_native_seed
 from Tests.Backup_Recovery.test_mobile_mounted_manual import _PROFILE_APPEND, _closed_seed_files
+
+from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+
+install_semantic_coordination()
 assert not SELECTOR.exists() and not SOURCE.exists() and not CONTROL.exists()
 seeded = {}
 seed_calls = []

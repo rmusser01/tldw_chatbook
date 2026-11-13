@@ -2,10 +2,6 @@
 
 from dataclasses import dataclass, field
 
-from tldw_chatbook.DB.character_conversation_search import (
-    CharacterConversationSearchRepository,
-)
-
 
 @dataclass(frozen=True)
 class _LocalCharacterAssociation:
@@ -34,6 +30,10 @@ def _eligible(row, authority, resolved):
 
 
 def _local_characters(database, *, _read_budget=None):
+    from tldw_chatbook.DB.character_conversation_search import (
+        CharacterConversationSearchRepository,
+    )
+
     repository = CharacterConversationSearchRepository(database)
     authority = database.get_local_authority_id()
     result = []
@@ -72,6 +72,10 @@ def _local_characters(database, *, _read_budget=None):
 def _discharge_local_characters(reads, content, inputs, budget):
     """Fill only C's exact pending slot after captured native ownership proof."""
     from dataclasses import replace
+
+    from tldw_chatbook.DB.character_conversation_search import (
+        CharacterConversationSearchRepository,
+    )
 
     from .mobile_content_graph import _ContentBlocker
     from .mobile_trace_inputs import _RetainedTraceDatabase

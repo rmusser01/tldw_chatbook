@@ -3101,9 +3101,9 @@ class ConsoleRuntime:
         received_intent: Any = None,
     ) -> _ConsoleTurnCustodyRecord:
         """Retain one request before its task may begin running."""
-        from . import console_runtime_custody
+        from .console_send_start import _register_custody
 
-        return console_runtime_custody._register_custody(
+        return _register_custody(
             self,
             request,
             attachments,
@@ -3132,9 +3132,9 @@ class ConsoleRuntime:
         self, turn_id: str, *, user_proof_transferred: bool = False
     ) -> None:
         """Release turn inputs, preserving provenance already owned by the queue."""
-        from . import console_runtime_custody
+        from .console_send_start import _release_custody
 
-        return console_runtime_custody._release_custody(
+        return _release_custody(
             self,
             turn_id,
             user_proof_transferred=user_proof_transferred,
@@ -3725,9 +3725,9 @@ class ConsoleRuntime:
         terminal_callback: Callable[[bool], None] | None,
     ) -> None:
         """Consume a task result and release its retained sensitive inputs."""
-        from . import console_runtime_custody
+        from .console_send_start import _finish_custodied_turn
 
-        return console_runtime_custody._finish_custodied_turn(
+        return _finish_custodied_turn(
             self,
             task,
             turn_id=turn_id,

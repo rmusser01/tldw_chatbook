@@ -8,6 +8,8 @@ import weakref
 from pathlib import Path
 from threading import RLock
 
+AGENT_RUNS_MIGRATIONS = Path(__file__).parents[1] / "tldw_chatbook/DB/migrations"
+
 _owners = {}
 _lock = RLock()
 
@@ -46,3 +48,15 @@ def owned_agent_runs_db(db_path, *args, **kwargs):
             raise
         weakref.finalize(db, _release, path)
         return db
+
+
+def install_agent_runs_v18(connection):
+    """Install the frozen v18 predecessor for forward migration fixtures."""
+    from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA
+
+    schema = next(schema for version, schema in _AGENT_RUNS_SCHEMA if version == 18)
+    connection.execute("PRAGMA foreign_keys = ON")
+    for sql in sorted(schema, key=lambda sql: not sql.startswith("CREATE TABLE")):
+        if not sql.startswith("CREATE TABLE sqlite_sequence"):
+            connection.execute(sql)
+    connection.execute("INSERT INTO schema_version(version) VALUES (18)")

@@ -518,7 +518,7 @@ def _validate_conversation_scalars(row):
 
 
 def _plan_content_settings(reads):
-    from tldw_chatbook.Chat.assistant_generation_state import AssistantGenerationState
+    from tldw_chatbook.DB.assistant_generation_state import AssistantGenerationState
     from tldw_chatbook.Chat.console_capture_policy_repository import (
         ConsoleCapturePolicyRepository,
     )

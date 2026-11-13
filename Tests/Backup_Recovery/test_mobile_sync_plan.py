@@ -188,6 +188,7 @@ def test_nine_native_frontiers_rebuild_current_and_previous_message_proofs(
     from contextlib import closing
 
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
     with content_reads(
         tmp_path,
@@ -227,6 +228,7 @@ def test_nine_native_frontiers_rebuild_current_and_previous_message_proofs(
         assert "erased note body" not in deleted_note.payload
         cid = plan.identities.mapped("conversation", "conversation")
         with closing(CharactersRAGDB(":memory:", "sync-consumer")) as db:
+            source = CharactersRAGDBChatSyncSource(db)
             db.add_conversation({"id": cid})
             for identity in (
                 "sync-live",
@@ -282,9 +284,9 @@ def test_nine_native_frontiers_rebuild_current_and_previous_message_proofs(
                             ),
                         )
                 reader = (
-                    db.read_committed_chat_delete_intent
+                    source.read_committed_chat_delete_intent
                     if proof.operation == "delete"
-                    else db.read_committed_chat_sync_intent
+                    else source.read_committed_chat_sync_intent
                 )
                 native = reader(
                     message_id=proof.mapped_id,
@@ -302,7 +304,7 @@ def test_nine_native_frontiers_rebuild_current_and_previous_message_proofs(
                 assert json.loads(current[0][0]) == json.loads(proof.payload)
             db.prune_sync_log()
             assert (
-                db.read_committed_chat_sync_intent(
+                source.read_committed_chat_sync_intent(
                     message_id=plan.identities.mapped("message", "sync-live"),
                     message_version=2,
                     payload_hash=next(
@@ -642,10 +644,14 @@ def test_native_deleted_predecessor_rejects_foreign_generation_state(
                     "UPDATE sync_log SET payload=? WHERE entity='messages' AND entity_id='revived' AND version=2",
                     (json.dumps(payload),),
                 )
+            from tldw_chatbook.Sync_Interop.chat_sync_source import (
+                CharactersRAGDBChatSyncSource,
+            )
             from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
+            source = CharactersRAGDBChatSyncSource(db)
             assert (
-                db.read_committed_chat_sync_intent(
+                source.read_committed_chat_sync_intent(
                     message_id="revived",
                     message_version=3,
                     payload_hash=canonical_payload_hash(
