@@ -191,8 +191,9 @@ paths or the OS keyring was reset:
 If the plugin folder or a saved-data folder was deleted before the restore, the
 restored folders count as replaced, and each one is reviewed on its own:
 
-- **"a download record no longer matches its folder"**: open **Candidates…**,
-  select the record marked "folder replaced since last bound; Review rebind",
+- **A replaced download record** (after **Confirm recovery** the dialog says
+  "recovery is not finished"): open **Candidates…**, select the record marked
+  "folder replaced since last bound; Review rebind",
   press **Review rebind**, check the plugin, folder, file count and size, then
   press **Confirm rebind**.
 - **A replaced saved-data folder**: in **Manage plugin**, choose **Review

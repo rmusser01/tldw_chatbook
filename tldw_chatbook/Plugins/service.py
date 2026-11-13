@@ -652,18 +652,22 @@ class PluginService:
                 raise ValueError("plugin_restore_authority_unmatched")
             marker, snapshot = max(matching, key=lambda row: row[0].generation)
             current = authority.load_marker()
-            checkpoint = authority.load_runtime_checkpoint()
-            # A marker another authority namespace published (a reset, then new
-            # authority) shares no generations with this one: nothing to count.
-            foreign = (
+            try:
+                checkpoint = authority.load_runtime_checkpoint()
+            except (OSError, ValueError):
+                checkpoint = None
+            # Generations count only within one authority namespace. Commits move
+            # the marker without rewriting the checkpoint, so its namespace, not
+            # its marker, says whose generations the keyring marker counts; with
+            # no readable checkpoint nothing says so (review r14plg-rev2).
+            same_namespace = (
                 checkpoint is not None
-                and checkpoint.marker == current
-                and checkpoint.namespace_id != authority.namespace_id()
+                and checkpoint.namespace_id == authority.namespace_id()
             )
             if current == marker:
                 undone = 0
             elif (
-                not foreign
+                same_namespace
                 and current is not None
                 and current.generation > marker.generation
             ):

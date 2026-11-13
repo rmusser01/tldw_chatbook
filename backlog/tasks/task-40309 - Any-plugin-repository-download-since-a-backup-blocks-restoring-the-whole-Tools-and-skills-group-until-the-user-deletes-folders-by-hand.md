@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 07:55
+updated_date: 2026-11-13 15:43
 labels:
 - follow-up
 - plugins
@@ -107,5 +107,9 @@ The restore engine forces the order. Publication re-checks each retired director
   No member path is re-resolved after its check.
 - **M9, Enter could delete before the copy was read.** The removal review no longer moves focus onto **Remove newer plugin downloads**; focus stays where it was. Pinned in `test_restore_review_lists_newer_plugin_downloads_and_removes_them`; negative control (focus restored): the assertion fails.
 - TASK-40308's set-aside folder moved out of `staging/` (review item I2), so a later restore never lists it as newer downloads.
+**Review r14plg-rev2 (2026-11-13).** On case-insensitive APFS, `…/op/SNAPSHOT` named the `snapshot/` folder itself and was deleted. `remove_fetch_members` now refuses a member whose name casefolds to `snapshot`. After opening the folder it also refuses (`plugin_fetch_removal_invalid`) a member whose device and inode match `snapshot`'s, which catches any other alias.
+- The unit test's refused cases include `added/"SNAPSHOT"`.
+- Negative control, both guards removed: DID NOT RAISE.
+- The reviewer's `probe2.py` item 4 now prints "SNAPSHOT refused".
 <!-- SECTION:NOTES:END -->
 

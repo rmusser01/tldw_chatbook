@@ -861,6 +861,16 @@ async def test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches(
             assert approved and await plugins.authority_status() == "ready"
             ((kept, former, _alias),) = await plugins.kept_data_folders()
             assert kept == root.root_id
+            # r14plg-rev2: the set-aside registry is restored, untrusted text; a
+            # markup-shaped alias must render literally, not crash the dialog.
+            import sqlite3
+
+            (aside,) = root.path.parent.parent.glob("reset-*")
+            with sqlite3.connect(aside / "registry.sqlite3") as connection:
+                connection.execute(
+                    "UPDATE installations SET alias=? WHERE installation_id=?",
+                    ("evil [/] [b]bold", former),
+                )
             reinstalled = await install(plugins, "op-git-again")
             await app.push_screen(
                 PluginReviewModal(
@@ -882,6 +892,7 @@ async def test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches(
             ((label, value),) = chooser._options[1:]
             assert value == root.root_id
             assert former in str(label) and "(not proven)" in str(label)
+            assert "evil [/] [b]bold" in str(label)
             chooser.value = root.root_id
             await pilot.pause()
             manage.query_one("#plugin-review-prepare", Button).press()

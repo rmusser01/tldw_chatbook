@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 07:55
+updated_date: 2026-11-13 15:43
 labels:
 - follow-up
 - plugins
@@ -218,5 +218,18 @@ The owner decisions (2026-11-12) are recorded in the notes.
 - End to end with the committed limits, at load 19→41: 1 passed in 326 s, ADOPTED printed. Children: first 143 s, unchanged 4 s, again 168 s, changed 5 s.
 - `./scripts/preflight.sh` passes; `check_markup_interpolation.py` is OK.
 - Serial: the layer, module-size, screen-size and offload guards pass (221). The `Tests/CI` census, derived-artifacts and plugin-qualification pins pass (158).
+**Review r14plg-rev2 (2026-11-13), the four Minor items fixed.**
+- **M7, the count read a stale or unreadable checkpoint.** The adoption review reads the runtime checkpoint under `except (OSError, ValueError)`, so a malformed one no longer blocks the review. It counts undone changes only when that checkpoint's namespace is the restored authority's: commits move the marker without rewriting the checkpoint, so only its namespace says whose generations the keyring marker counts. Otherwise the count is unknown.
+  - New cases `[foreign-stale-checkpoint]` (another namespace, an older checkpoint marker) and `[malformed-checkpoint]`.
+  - Negative control, round-1 logic: `assert 1 == None`, and `JSONDecodeError` escaping the review.
+- **Markup in the kept-folder choice.** Its labels are now `rich.text.Text`, since a `Select` prompt parses markup and the label interpolates the restored registry's installation id and alias.
+  - The reset-fallback UI test sets the set-aside alias to `evil [/] [b]bold` and asserts it renders literally.
+  - Negative control, plain strings: the dialog crashes with `MarkupError: auto closing tag ('[/]') has nothing to close`.
+- **Docs.** The User Guide's rebind step no longer quotes the old status copy; it refers to "recovery is not finished".
+
+**Checks** (load 8–33):
+- `Tests/Plugins/{test_recovery,test_surviving_process_recovery}.py`, `Tests/Backup_Recovery/test_restore_plan_excluded_directories.py` and `Tests/UI/{test_backup_data_groups,test_plugins_browse,test_plugin_review}.py` at `-n 4`, end to end deselected: 208 passed, 1 failed. The failure, `test_actual_native_fields_stable_in_separate_processes`, fails on the base sources too.
+- `./scripts/preflight.sh` passes; `check_markup_interpolation.py` is OK.
+- Serial: the layer, size and offload guards pass (221).
 <!-- SECTION:NOTES:END -->
 

@@ -185,7 +185,7 @@ def remove_fetch_members(members: tuple[Path, ...]) -> None:
             not member.is_absolute()
             or os.path.normpath(member) != str(member)
             or any(part in {"", ".", ".."} for part in member.parts[1:])
-            or member.name == "snapshot"
+            or member.name.casefold() == "snapshot"
             or member.parent.parent.name != "staging"
         ):
             raise ValueError("plugin_fetch_removal_invalid")
@@ -221,6 +221,19 @@ def remove_fetch_members(members: tuple[Path, ...]) -> None:
                                 )
                             except FileNotFoundError:
                                 continue
+                            # A name variant can resolve to snapshot/ itself on a
+                            # case-insensitive volume (review r14plg-rev2).
+                            try:
+                                kept = os.stat(
+                                    "snapshot", dir_fd=folder_fd, follow_symlinks=False
+                                )
+                            except FileNotFoundError:
+                                kept = None
+                            if kept is not None and (info.st_dev, info.st_ino) == (
+                                kept.st_dev,
+                                kept.st_ino,
+                            ):
+                                raise ValueError("plugin_fetch_removal_invalid")
                             if stat.S_ISDIR(info.st_mode):
                                 shutil.rmtree(member.name, dir_fd=folder_fd)
                             else:

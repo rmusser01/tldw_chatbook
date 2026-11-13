@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from functools import partial
 
+from rich.text import Text
 from textual import on
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
@@ -1128,8 +1129,10 @@ class PluginReviewModal(ModalScreen):
                 not self.installation_id
             )
             kept = self.query_one("#plugin-review-kept", Select)
+            # The former plugin's id and alias come from the restored registry:
+            # a Select prompt parses markup, so render them as plain Text.
             kept.set_options(
-                (display_text(kept_folder_label(*row), limit=256), row[0])
+                (Text(display_text(kept_folder_label(*row), limit=256)), row[0])
                 for row in self._kept
             )
             if self.draft.kept_folder in {row[0] for row in self._kept}:

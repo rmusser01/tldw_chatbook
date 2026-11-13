@@ -1239,6 +1239,8 @@ def test_replace_restore_lists_and_removes_a_fetch_folder_added_since_the_backup
         outside,
         # r14plg-rev1: a '..' member resolved to the data tree.
         root / "staging" / ".." / "data",
+        # r14plg-rev2: a case variant names snapshot/ itself on APFS.
+        added / "SNAPSHOT",
     ):
         with pytest.raises(ValueError, match="plugin_fetch_removal_invalid"):
             backup.remove_fetch_members((wrong,))
@@ -2002,7 +2004,15 @@ async def _restored_after_change(
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @pytest.mark.parametrize(
-    "keyring", ["same-computer", "new-keyring", "in-place", "foreign-marker"]
+    "keyring",
+    [
+        "same-computer",
+        "new-keyring",
+        "in-place",
+        "foreign-marker",
+        "foreign-stale-checkpoint",
+        "malformed-checkpoint",
+    ],
 )
 async def test_backup_passphrase_adopts_restored_plugins_and_rebinds_replaced_folders(
     tmp_path, monkeypatch, native_package, keyring
@@ -2023,14 +2033,33 @@ async def test_backup_passphrase_adopts_restored_plugins_and_rebinds_replaced_fo
     plugins = service("elsewhere" if keyring == "new-keyring" else "computer")
     sources = SourceService(plugins)
     try:
-        if keyring == "foreign-marker":
-            # r14plg-rev1: the keyring marker was published by another authority
-            # namespace (a reset, then new authority): it shares no generations.
+        if keyring.startswith(("foreign", "malformed")):
+            from tldw_chatbook.Plugins.authority_store import MARKER_SERVICE
+
             store = await plugins._call(
                 lambda: plugins._coordinator.authority.marker_store
             )
             checkpoint = store.load_runtime_checkpoint()
-            store.save_runtime_checkpoint(dict(checkpoint, namespace_id="f" * 64))
+            if keyring == "foreign-marker":
+                # r14plg-rev1: the keyring marker was published by another
+                # authority namespace (a reset, then new authority).
+                store.save_runtime_checkpoint(dict(checkpoint, namespace_id="f" * 64))
+            elif keyring == "foreign-stale-checkpoint":
+                # r14plg-rev2: commits since moved the marker on, so the other
+                # namespace's checkpoint names an older marker than the current.
+                stale = {
+                    "generation": 0,
+                    "operation_id": "bootstrap",
+                    "recovery_snapshot_digest": "0" * 64,
+                }
+                store.save_runtime_checkpoint(
+                    dict(checkpoint, namespace_id="f" * 64, marker=stale)
+                )
+            else:
+                # r14plg-rev2: an unreadable checkpoint never blocks the review.
+                store.backend.set_password(
+                    MARKER_SERVICE, store.account + ":runtime-v1", "not a checkpoint"
+                )
         if keyring != "new-keyring":
             assert await plugins.authority_status() == "locked"
             with pytest.raises(FileNotFoundError):
@@ -2042,7 +2071,7 @@ async def test_backup_passphrase_adopts_restored_plugins_and_rebinds_replaced_fo
             await plugins.review_restored_authority("wrong passphrase")
         review = await plugins.review_restored_authority("test passphrase")
         assert review.undone == (
-            None if keyring in {"new-keyring", "foreign-marker"} else 1
+            1 if keyring in {"same-computer", "in-place"} else None
         )
         assert [row[0] for row in review.installations] == [installation]
         assert review.data_roots == 1
