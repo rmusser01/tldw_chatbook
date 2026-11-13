@@ -1462,47 +1462,62 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
 
 # --- LibraryScreen coupling pins (TASK-36952.1, architecture review 2026-10-25 F2) ---
 # Lambdas in ``LibraryScreen.__init__`` are callbacks the Library controllers
-# take instead of typed dependencies; unbound ``LibraryScreen.<method>(fake, ...)``
-# calls under Tests/ drive screen code through a hand-built fake instead of the
-# controller that owns it. Both pins are exact: a rise fails, and a fall fails
-# until the pin is lowered to the measurement in the same change. Never raise
-# them.
+# take instead of typed dependencies. Unbound uses of ``LibraryScreen`` methods
+# under Tests/ (a call on the class, or a method bound to a hand-built fake)
+# run screen code without a mounted screen or the controller that owns it.
+# Both pins are exact: a rise fails, and a fall fails until the pin is lowered
+# to the measurement in the same change. Never raise them.
+# Moving controller construction out of ``__init__`` into a builder method
+# lowers the lambda count without decoupling anything (ChatScreen moved its
+# wiring out of ``__init__`` in wave 4, see ``_BUDGETS`` above): a PR that does
+# so must point ``_library_init_lambdas`` at the builder in the same change.
 #: Measured at dev 26b2e677dd: 416, all passed to controller or note-session
 #: constructors (the review's 413 at 7a5e2513c5 counted the controllers only;
 #: this count was 416 there too).
 _LIBRARY_INIT_LAMBDAS = 416
 #: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
-#: 594 in 57 files, public handlers included (the review's 370 named private
-#: `LibraryScreen._x(fake_self, ...)` calls only).
-_LIBRARY_UNBOUND_TEST_CALLS = 594
+#: 706 in 57 files.
+#: - 594 calls on the class, public handlers included (the review's 370 named
+#:   private `_x(fake_self, ...)` calls only). 60 of them call static or
+#:   class-method helpers (no fake self) and 3 are
+#:   `LibraryScreen.__new__(LibraryScreen)` constructions.
+#: - 112 bindings to a fake: 110 `MethodType` (10 through `getattr`),
+#:   1 `partial`, 1 `.__get__`.
+#: Every one reaches the screen class from a test instead of the code's owner,
+#: so read the number as "test sites coupled to LibraryScreen", not as fake
+#: selves. A static helper lowers it by moving to its owner.
+_LIBRARY_UNBOUND_TEST_CALLS = 706
 
 
 def _library_init_lambdas() -> int:
-    tree = ast.parse(
-        (_REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py").read_text(
-            encoding="utf-8"
-        )
-    )
-    (screen,) = (
+    rel_path = "tldw_chatbook/UI/Screens/library_screen.py"
+    tree = ast.parse((_REPO_ROOT / rel_path).read_text(encoding="utf-8"))
+    screens = [
         n
         for n in tree.body
         if isinstance(n, ast.ClassDef) and n.name == "LibraryScreen"
-    )
-    (init,) = (
+    ]
+    inits = [
         n
+        for screen in screens
         for n in screen.body
         if isinstance(n, ast.FunctionDef) and n.name == "__init__"
+    ]
+    assert len(inits) == 1, (
+        f"LibraryScreen.__init__ not found in {rel_path}; _LIBRARY_INIT_LAMBDAS is stale."
     )
-    return sum(isinstance(node, ast.Lambda) for node in ast.walk(init))
+    return sum(isinstance(node, ast.Lambda) for node in ast.walk(inits[0]))
 
 
 def _unbound_class_calls(source: str, class_name: str) -> int:
-    """Calls made on ``class_name`` itself rather than an instance.
+    """Unbound uses of ``class_name``'s methods: calls on the class, and bindings.
 
-    Counts ``C.m(...)``, ``mod.C.m(...)``, ``Alias.m(...)`` after
-    ``from mod import C as Alias``, and ``getattr(C, name)(...)``, plus the
-    same inside any string constant that parses as Python (a test's
-    subprocess child program).
+    A method reference is ``C.m``, ``mod.C.m``, ``Alias.m`` after
+    ``from mod import C as Alias``, or ``getattr(C, name)``. Counts a call of
+    one (``C.m(...)``), a binding of one (``MethodType(C.m, fake)``,
+    ``partial(C.m, ...)``, either spelling qualified or bare, and
+    ``C.m.__get__(...)``), and the same inside any string constant that
+    parses as Python (a test's subprocess child program).
     """
     tree = ast.parse(source)
     names = {class_name} | {
@@ -1518,18 +1533,32 @@ def _unbound_class_calls(source: str, class_name: str) -> int:
             isinstance(node, ast.Attribute) and node.attr == class_name
         )
 
+    def is_method(node: ast.expr) -> bool:
+        return (isinstance(node, ast.Attribute) and is_class(node.value)) or (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and bool(node.args)
+            and is_class(node.args[0])
+        )
+
     count = 0
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             func = node.func
-            if isinstance(func, ast.Attribute) and is_class(func.value):
-                count += 1
-            elif (
-                isinstance(func, ast.Call)
-                and isinstance(func.func, ast.Name)
-                and func.func.id == "getattr"
-                and func.args
-                and is_class(func.args[0])
+            callee = getattr(func, "id", None) or getattr(func, "attr", None)
+            if (
+                is_method(func)
+                or (
+                    callee in ("MethodType", "partial")
+                    and bool(node.args)
+                    and is_method(node.args[0])
+                )
+                or (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "__get__"
+                    and is_method(func.value)
+                )
             ):
                 count += 1
         elif (
@@ -1579,9 +1608,11 @@ def test_unbound_library_screen_calls_in_tests_match_their_pin() -> None:
     _assert_pinned(
         _library_unbound_test_calls(),
         _LIBRARY_UNBOUND_TEST_CALLS,
-        "unbound LibraryScreen.<method>(...) calls under Tests/",
+        "unbound LibraryScreen method calls and bindings under Tests/",
         "_LIBRARY_UNBOUND_TEST_CALLS",
-        "Test the controller that owns the method, or a mounted screen, instead of the screen class with a fake self.",
+        "Test the controller that owns the method, or a mounted screen, instead of "
+        "calling or binding the screen class's method; move a static helper off "
+        "the screen.",
     )
 
 
@@ -1594,7 +1625,13 @@ def test_unbound_library_screen_calls_in_tests_match_their_pin() -> None:
         ("from mod import Probe as P\nP._x(fake)", 1),
         ("getattr(Probe, name)(fake)", 1),
         ("run('Probe._x(fake)')", 1),
+        ("f._x = MethodType(Probe._x, f)", 1),
+        ("f._x = types.MethodType(mod.Probe._x, f)", 1),
+        ("partial(Probe._x, f)()", 1),
+        ("functools.partial(getattr(Probe, name), f)", 1),
+        ("Probe._x.__get__(f)", 1),
         ("Probe(fake); Probe._x; getattr(Probe, name); fake._x()", 0),
+        ("MethodType(fake._x, f); partial(print, Probe); fake._x.__get__(f)", 0),
         ("'``Probe._x(fake)`` in prose'", 0),
     ],
 )
