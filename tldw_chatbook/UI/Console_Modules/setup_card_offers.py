@@ -43,7 +43,7 @@ def sync_setup_card_offers(
     if card_state.mode == "card":
         # The in-memory snapshot, never a fresh disk read: rendering the card
         # needs no new config admission (a backup may have paused it).
-        app_config = getattr(screen.app_instance, "app_config", None) or {}
+        app_config = screen.app_instance.app_config or {}
         try:
             actions = build_console_env_key_actions(
                 app_config, os.environ, card_mode=card_state.mode
@@ -109,9 +109,7 @@ async def apply_env_key_offer(screen: ChatScreen, action_id: str) -> bool:
         return False
     # Review F2: every reader of the app's config snapshot (Library's
     # analyze-after-import, Reader Generate) sees the new chat default now.
-    mirror_provider_setup_mutation(
-        getattr(screen.app_instance, "app_config", None), mutation
-    )
+    mirror_provider_setup_mutation(screen.app_instance.app_config, mutation)
     settings = build_default_console_session_settings(
         screen._provider_readiness_app_config(), action.provider_key, action.model
     )
@@ -130,21 +128,14 @@ def dismiss_env_key_notice(app: object) -> None:
     """Remove the env-key first-launch toast once a card offer commits.
 
     Review round 2 (F10): after 'Use Anthropic' the 20 s toast still said
-    'new chats use OpenAI, which has no key'. Only that toast is removed
-    (``TldwCli._show_pending_env_key_notice`` remembers its message); other
-    toasts stay. Textual has no public way to remove one toast, so this reads
-    the app's notification collection and is a no-op if that ever changes.
+    'new chats use OpenAI, which has no key'. The app owns that toast, so it
+    removes it (``EnvKeyNoticeMixin.dismiss_env_key_notice``); an app without
+    the notice mixin has no such toast.
 
     Args:
         app: The running app (``TldwCli``).
     """
-    message = getattr(app, "_env_key_notice_message", None)
-    notifications = getattr(app, "_notifications", None)
-    unnotify = getattr(app, "_unnotify", None)
-    if not message or notifications is None or not callable(unnotify):
-        return
-    try:
-        for notification in [n for n in notifications if n.message == message]:
-            unnotify(notification)
-    except Exception:  # noqa: BLE001 - a stale toast never fails the commit
-        logger.debug("env_key_notice_dismiss_failed")
+    from tldw_chatbook.app_env_key_notice import EnvKeyNoticeMixin
+
+    if isinstance(app, EnvKeyNoticeMixin):
+        app.dismiss_env_key_notice()
