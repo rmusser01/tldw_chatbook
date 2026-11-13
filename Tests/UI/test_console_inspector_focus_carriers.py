@@ -81,11 +81,10 @@ def _painted_rows(app, region) -> list[str]:
     """Return the plain text the compositor actually painted in ``region``."""
 
     strips = app.screen._compositor.render_strips()
-    rows: list[str] = []
-    for y in range(region.y, min(region.bottom, len(strips))):
-        row = "".join(segment.text for segment in strips[y])
-        rows.append(row[region.x : region.right])
-    return rows
+    return [
+        strips[y].crop(region.x, region.right).text
+        for y in range(region.y, min(region.bottom, len(strips)))
+    ]
 
 
 async def _open_rail(host, pilot):
