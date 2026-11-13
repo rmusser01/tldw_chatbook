@@ -40,9 +40,21 @@ RETIRED_GEMINI_IDS = frozenset(
     }
 )
 
+#: Listed by Google but not answering a generate call (TASK-34100.2 review
+#: v5r2, G2C-R3-1). Measured 2026-11-12 with the repo's real key, five
+#: 1-output-token calls each over 13 minutes: gemini-flash-latest 0/5 (four
+#: 503 'high demand', one 60 s timeout) and gemini-3.8-flash, the model it
+#: resolves to, 0/5; earlier smoke runs since 2026-10-06 recorded 0/8 and 1/8.
+#: The key was not the cause: gemini-flash-lite-latest and
+#: gemini-3.5-flash-lite answered 5/5 in about a second, with no 429.
+#: Evidence: .worktrees/setup-wizard-ux-qa/evidence/g2cv5-r3-catalog/.
+NOT_ANSWERING_GEMINI_IDS = frozenset({"gemini-flash-latest", "gemini-3.8-flash"})
+
 
 def test_the_default_gemini_model_is_googles_rolling_alias() -> None:
-    assert DEFAULT_GOOGLE_CHAT_MODEL == "gemini-flash-latest"
+    # Review v5r2 G2C-R3-1: the Flash-Lite alias, the rolling alias that
+    # answered every run (gemini-flash-latest stopped answering).
+    assert DEFAULT_GOOGLE_CHAT_MODEL == "gemini-flash-lite-latest"
     assert (
         DEFAULT_CONFIG_FROM_TOML["api_settings"]["google"]["model"]
         == DEFAULT_GOOGLE_CHAT_MODEL
@@ -56,6 +68,8 @@ def test_the_shipped_google_catalog_lists_no_retired_id() -> None:
     assert template_ids[0] == DEFAULT_GOOGLE_CHAT_MODEL
     assert code_ids == template_ids
     assert RETIRED_GEMINI_IDS.isdisjoint(template_ids)
+    assert NOT_ANSWERING_GEMINI_IDS.isdisjoint(template_ids)
+    assert DEFAULT_GOOGLE_CHAT_MODEL not in NOT_ANSWERING_GEMINI_IDS
 
 
 def test_no_code_fallback_names_a_retired_gemini_id() -> None:

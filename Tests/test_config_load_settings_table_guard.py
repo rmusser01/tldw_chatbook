@@ -733,7 +733,10 @@ def test_propagation_follows_imports_not_names():
 # on the placeholder local sections (AC#9) and `streaming = true` on Custom /
 # Custom 2 (AC#10). Review IV-1 (2026-11-05): the four OpenAI ids the live
 # smoke found retired replaced in the [providers] OpenAI list, re-pinned on
-# purpose.
+# purpose. Review v5r2 G2C-R3-1 (2026-11-12): Google's default is now
+# gemini-flash-lite-latest, and the two ids that stopped answering
+# (gemini-flash-latest, gemini-3.8-flash) left the [providers] Google list;
+# re-pinned on purpose.
 # Port of PR #3517 (round 24, 2026-11-23, onto dev b31e3e9241): re-measured on
 # this base, over dev's schema version 3, engine-preset placeholder and
 # TASK-42482 opt-in line, from the test's failure output.
