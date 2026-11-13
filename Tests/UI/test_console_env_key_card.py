@@ -113,7 +113,8 @@ def _fake_screen(events: list) -> SimpleNamespace:
         _sync_native_console_chat_ui=lambda: "sync-coroutine",
         run_worker=lambda work, **kwargs: events.append(("worker", work)),
         app_instance=SimpleNamespace(
-            notify=lambda message, **kwargs: events.append(("notify", message))
+            app_config=None,
+            notify=lambda message, **kwargs: events.append(("notify", message)),
         ),
     )
     return screen
@@ -366,8 +367,10 @@ async def test_committing_a_found_key_dismisses_only_the_env_key_toast() -> None
     offer now removes that toast -- and only that one."""
     from textual.app import App
 
-    class ToastHost(App):
-        pass
+    from tldw_chatbook.app_env_key_notice import EnvKeyNoticeMixin
+
+    class ToastHost(EnvKeyNoticeMixin, App):
+        """The notice mixin is the real app's base, so it owns the toast."""
 
     app = ToastHost()
     async with app.run_test(size=(120, 30)) as pilot:
