@@ -2,13 +2,33 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerResearchSearchClient(Protocol):
+    """Client methods ServerResearchSearchService calls (TASK-36953.1)."""
+
+    async def get_arxiv_paper_by_id(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_biorxiv_paper_by_doi(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_medrxiv_paper_by_doi(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_pubmed_paper_by_id(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_semantic_scholar_paper_by_id(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def paper_search(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def paper_search_detail(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def paper_search_ingest(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def research_websearch(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_arxiv_papers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_biorxiv_papers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_medrxiv_papers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_pubmed_papers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def search_semantic_scholar_papers(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
 
 
 class ServerResearchSearchService:
@@ -16,7 +36,7 @@ class ServerResearchSearchService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerResearchSearchClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -51,7 +71,7 @@ class ServerResearchSearchService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerResearchSearchClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

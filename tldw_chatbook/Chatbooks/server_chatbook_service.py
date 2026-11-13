@@ -6,7 +6,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Union,
+)
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -163,6 +173,25 @@ def _to_plain_dict(value: Any) -> Dict[str, Any]:
     )
 
 
+class ServerChatbookClient(Protocol):
+    """Client methods ServerChatbookService calls (TASK-36953.1)."""
+
+    async def cancel_chatbook_export_job(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def cancel_chatbook_import_job(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def cleanup_chatbook_exports(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def continue_chatbook_export(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def download_chatbook_export(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def export_chatbook(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_chatbook_export_job(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_chatbook_import_job(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def import_chatbook(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chatbook_export_jobs(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chatbook_import_jobs(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def preview_chatbook(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def remove_chatbook_export_job(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def remove_chatbook_import_job(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
 class ServerChatbookService:
     """Thin service around the chatbook endpoints in the shared TLDW API client."""
 
@@ -174,7 +203,7 @@ class ServerChatbookService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient] = None,
+        client: Optional[ServerChatbookClient] = None,
         *,
         policy_enforcer: Any | None = None,
         client_provider: Any | None = None,
@@ -223,7 +252,7 @@ class ServerChatbookService:
     ) -> "ServerChatbookService":
         return cls(client_provider=provider, policy_enforcer=policy_enforcer)
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerChatbookClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

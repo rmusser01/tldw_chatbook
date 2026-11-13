@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerUserGovernanceClient(Protocol):
+    """Client methods ServerUserGovernanceService calls (TASK-36953.1)."""
+
+    async def get_consent_preferences(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_self_privilege_map(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_user_privilege_map(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def grant_consent(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def withdraw_consent(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerUserGovernanceService:
@@ -16,7 +23,7 @@ class ServerUserGovernanceService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerUserGovernanceClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -51,7 +58,7 @@ class ServerUserGovernanceService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerUserGovernanceClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

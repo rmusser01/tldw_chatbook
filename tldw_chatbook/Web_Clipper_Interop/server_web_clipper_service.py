@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerWebClipperClient(Protocol):
+    """Client methods ServerWebClipperService calls (TASK-36953.1)."""
+
+    async def get_web_clip_status(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def persist_web_clip_enrichment(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def save_web_clip(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerWebClipperService:
@@ -16,7 +21,7 @@ class ServerWebClipperService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerWebClipperClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -51,7 +56,7 @@ class ServerWebClipperService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerWebClipperClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:
