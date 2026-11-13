@@ -28,21 +28,29 @@ request's exact meaning:
   caller's ``matches`` performs the same durable, credential-filtered
   comparison the flat prefix uses);
 - at least one message and at least one continuation are new;
-- every continuation is a typed attachment whose owner occurs exactly once
-  among the incoming messages: a recorded message for a recorded slot, a new
-  message for a new one.
+- every continuation is a typed attachment whose owner equals one of the
+  recorded messages (for a recorded slot) or one of the new messages (for a
+  new slot).
 
-The owner check says which side of the history a checkpoint belongs to. That
-no recorded reply gains, loses or swaps a checkpoint comes from content: each
-recorded slot must equal its recorded bytes, and a Kimi checkpoint carries its
-own reply's text, so a swap would need byte-identical checkpoints and would
-send identical bytes either way (the strength of the planner's existing
-suffix rule).
+The owner check is by descriptor equality and says only which side of the
+history a checkpoint belongs to. It cannot name the reply: the Console carries
+every assistant reply as the same ``ACTIVE_REQUEST`` artifact descriptor, so
+every checkpoint names an owner that occurs once per reply (requiring it to be
+unique refused every Kimi turn 3+, pre-merge review 2026-11-13). That no recorded
+reply gains, loses or swaps a checkpoint comes from content: each recorded
+slot must equal its recorded bytes, and a Kimi checkpoint carries its own
+reply's text, so a swap would need byte-identical checkpoints and would send
+identical bytes either way (the strength of the planner's existing suffix
+rule).
 
-Anything else (an edited, removed or reordered recorded entry, a new
-checkpoint on an earlier reply, an ambiguous owner) returns ``None`` and the
-caller's existing rules decide, which refuse it as before. A ``None`` leaves
-no trace of the probe in the planner's retained artifact values.
+Anything else (an edited, removed or reordered recorded entry, an untyped
+continuation, or a new checkpoint whose owner is not a new message) returns
+``None`` and the caller's existing rules decide, which refuse it as before.
+Only an owner that carries an identity (a saved revision) can show that a new
+checkpoint belongs to an earlier reply; with the Console's reply artifacts
+such a checkpoint is appended like any new one, and the ledger still records
+exactly the request sent. A ``None`` leaves no trace of the probe in the
+planner's retained artifact values.
 """
 
 from __future__ import annotations
@@ -124,20 +132,14 @@ def domain_append_indices(
         or incoming_continuations <= recorded_continuations
     ):
         return None
-    positions: dict[TraceProvenance, int] = {}
-    repeated: set[TraceProvenance] = set()
-    for index, message in enumerate(descriptors[:incoming_messages]):
-        if message in positions:
-            repeated.add(message)
-        positions.setdefault(message, index)
+    recorded_owners = frozenset(descriptors[:recorded_messages])
+    new_owners = frozenset(descriptors[recorded_messages:incoming_messages])
     for offset in range(incoming_continuations):
         owner = _owner(descriptors[incoming_messages + offset])
-        # An owner named by two messages proves no attachment (review M2).
-        if owner is None or owner not in positions or owner in repeated:
-            return None
-        if (positions[owner] < recorded_messages) != (
-            offset < recorded_continuations
-        ):
+        allowed = recorded_owners if offset < recorded_continuations else new_owners
+        # Equality, not identity: the Console carries every reply as the same
+        # ACTIVE_REQUEST artifact descriptor, so an owner cannot be unique.
+        if owner is None or owner not in allowed:
             return None
     # Only the recorded continuations are left to compare; their incoming
     # indices are all >= 1, so ``matches`` never takes its (0, 0)
