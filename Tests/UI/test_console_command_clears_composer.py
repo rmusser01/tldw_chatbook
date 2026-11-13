@@ -15,6 +15,11 @@ These drive the real ``TldwCli`` on the real ``ChatScreen``, its real
 controller and store, and press the real keys, as the TASK-33628.16 tests do.
 Only the provider gateway (a fixed reply) and the irreversible shutdown at the
 end of an approved quit are replaced.
+
+PR #3458 review: a command takes only the draft its send captured. Text typed
+right after Enter stays, and a direct call or a button has no captured draft,
+so it takes nothing. /doctor and /skills take their text before their slow
+work starts, so a re-send or Ctrl+Q while that work runs finds nothing left.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from textual.events import Key
 from textual.screen import Screen
 
 from Tests.UI.test_console_command_rows_not_loss import (
@@ -31,13 +37,25 @@ from Tests.UI.test_console_command_rows_not_loss import (
     _saved_chat,
     _system_rows,
 )
+from Tests.UI.test_console_command_origin_chat import (
+    _AsyncGate,
+    _commands_idle,
+    _ThreadGate,
+)
 from Tests.UI.test_console_quit_loss_guard import (
     _mounted_console,
     _quit_dialogs,
     _type_into_composer,
     _until,
 )
+from tldw_chatbook.Chat.console_command_grammar import KIND_COMMAND, CommandParse
 from tldw_chatbook.Media_Playback import stream_resolve
+from tldw_chatbook.Utils import doctor
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
+    APPLY_BUTTON_ID,
+    TEXT_AREA_ID,
+)
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 
@@ -242,3 +260,171 @@ async def test_research_that_started_leaves_an_empty_composer(monkeypatch):
             "Deep research started: what is retrieval augmentation",
         )
         await _until(pilot, lambda: composer.draft_text() == "", "the composer to clear")
+
+
+# -- PR #3458 review: only the captured draft, only inside a sent command -----
+
+
+@pytest.mark.parametrize(
+    "typed",
+    ["/help prefill", "/prefill clear", "/stop", "/sessions"],
+    ids=["help", "prefill", "stop", "action"],
+)
+async def test_text_typed_right_after_enter_stays(monkeypatch, typed):
+    """A command takes only the draft its send captured: what the user typed
+    between Enter and the command's first step stays. /prefill, /stop and the
+    action commands (here /sessions) cleared the whole composer before."""
+    app = _app(monkeypatch, [])
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(app, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        composer.load_draft(typed)
+        console._sync_console_workbench_actions_from_draft()
+        console._sync_console_command_popup()
+        # A bare name opens the popup, where Enter would complete it instead.
+        console._dismiss_console_command_popup()
+        # Enter without pumping messages, then type before the command's
+        # worker gets its first step (as the /rewind restore test does).
+        console.on_key(Key(key="enter", character="\r"))
+        composer.insert_text("next")
+        assert composer.draft_text() == f"{typed}next"
+
+        await _until(
+            pilot,
+            lambda: composer.draft_text() == "next",
+            f"{typed} to take only its own text",
+            timeout=10.0,
+        )
+        await _until(pilot, lambda: _commands_idle(console), f"{typed} to finish")
+        assert composer.draft_text() == "next"
+
+
+async def test_a_direct_call_takes_nothing(monkeypatch):
+    """Outside a sent command there is no captured draft: a direct call of a
+    command handler, or a button that opens the same dialog, leaves the
+    user's draft alone."""
+    app = _app(monkeypatch, [])
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(app, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("my draft")
+
+        await console._console_command_help(
+            CommandParse(kind=KIND_COMMAND, name="help", args="")
+        )
+        await pilot.pause()
+        assert composer.draft_text() == "my draft"
+
+        # The System prompt editor opened from the rail line, then applied.
+        console.run_worker(console._open_console_system_prompt_editor(), exclusive=False)
+        await _until(
+            pilot,
+            lambda: bool(app.screen.query(f"#{APPLY_BUTTON_ID}")),
+            "the System prompt editor",
+        )
+        modal = app.screen
+        modal.query_one(f"#{TEXT_AREA_ID}").text = "Be brief."
+        modal.query_one(f"#{APPLY_BUTTON_ID}").press()
+        await _until(pilot, lambda: app.screen is console, "the editor to close")
+        settings = console._session._ensure_active_console_session_settings()
+        assert settings.system_prompt == "Be brief."
+        assert composer.draft_text() == "my draft"
+
+
+async def test_doctor_takes_its_text_before_its_checks(monkeypatch):
+    """/doctor's checks take 10-25 s. It took its text only after them, so
+    for that whole time Ctrl+Q still asked about "/doctor", and a re-send
+    raced it: "/doctor" sent, " network" typed, "/doctor network" sent -- the
+    first take removed "/doctor" and the second found nothing to take, so
+    " network" stayed. /doctor cannot be refused (every failure is a report
+    row), so it takes its text before the checks start."""
+    gate = _ThreadGate(result=[])
+    monkeypatch.setattr(doctor, "run_doctor", gate)
+    events: list[str] = []
+    app = _app(monkeypatch, events)
+    async with app.run_test(size=(160, 48)) as pilot:
+        console, store, session_id = await _saved_chat(pilot, app)
+        before = len(_system_rows(store, session_id))
+        try:
+            composer = await _type_into_composer(pilot, console, "/doctor")
+            await pilot.press("enter")
+            await _until(
+                pilot,
+                lambda: gate.entered.is_set() or composer.draft_text() == "/doctor ",
+                "/doctor to run or complete",
+            )
+            if not gate.entered.is_set():
+                await pilot.press("enter")
+            await _until(pilot, gate.entered.is_set, "/doctor's checks to start")
+            await _until(
+                pilot,
+                lambda: composer.draft_text() == "",
+                "/doctor to take its text while its checks run",
+                timeout=5.0,
+            )
+
+            # The re-send while the first checks still run.
+            composer.focus()
+            composer.load_draft("/doctor network")
+            console._sync_console_command_popup()
+            await pilot.press("enter")
+            await _until(
+                pilot,
+                lambda: composer.draft_text() == "",
+                "/doctor network to take its text",
+                timeout=5.0,
+            )
+        finally:
+            gate.released.set()
+        await _until(
+            pilot,
+            lambda: len(_system_rows(store, session_id)) == before + 2,
+            "both reports",
+            timeout=30.0,
+        )
+        await _until(pilot, lambda: _commands_idle(console), "both runs to end")
+        assert composer.draft_text() == ""
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: "quit" in events or bool(_quit_dialogs(app)),
+            "Ctrl+Q to quit or ask",
+            timeout=5.0,
+        )
+        dialogs = _quit_dialogs(app)
+        assert not dialogs, f"Ctrl+Q asked after /doctor: {dialogs[0].message!r}"
+        assert events == ["quit"]
+
+
+async def test_skills_takes_its_text_before_its_lookup(monkeypatch):
+    """/skills cannot be refused (an empty list is still a list), so it takes
+    its text before the skill lookup, which awaits, rather than after."""
+    app = _app(monkeypatch, [])
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(app, pilot)
+        gate = _AsyncGate(result={})
+        monkeypatch.setattr(console._skill, "_fetch_console_skill_context", gate)
+        try:
+            composer = await _type_into_composer(pilot, console, "/skills")
+            await pilot.press("enter")
+            await _until(
+                pilot,
+                lambda: gate.entered.is_set() or composer.draft_text() == "/skills ",
+                "/skills to run or complete",
+            )
+            if not gate.entered.is_set():
+                await pilot.press("enter")
+            await _until(pilot, gate.entered.is_set, "the skill lookup to start")
+            await _until(
+                pilot,
+                lambda: composer.draft_text() == "",
+                "/skills to take its text during the lookup",
+                timeout=5.0,
+            )
+        finally:
+            gate.released.set()
+        await _until(pilot, lambda: _commands_idle(console), "/skills to finish")
+        assert composer.draft_text() == ""
