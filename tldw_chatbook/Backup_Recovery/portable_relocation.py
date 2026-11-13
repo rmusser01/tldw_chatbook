@@ -733,6 +733,12 @@ def command_main(data: Path) -> int:
         if not re.fullmatch(r"[a-z][a-z0-9_.:-]{0,255}", code):
             code = "portable_relocation_failed"
         print("Relocation could not complete: " + code)
+        if code == "detached_owner_unavailable:personal_context.repository":
+            print(
+                "Personal Context can't be moved this way because its key stays on "
+                "the original device. Make an encrypted backup with credentials "
+                "there, then restore it with Replace."
+            )
         print(
             "The retained copied source was not changed. Resolve this issue before trying again."
         )

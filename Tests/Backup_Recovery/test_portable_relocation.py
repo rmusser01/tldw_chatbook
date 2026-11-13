@@ -276,3 +276,41 @@ print('SUCCESS '+json.dumps({'profile':selected.profile_id,'data':str(source)}),
     )
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-3000:]
     assert "SUCCESS " in result.stdout
+
+
+@pytest.mark.timeout(240)
+def test_relocation_names_why_personal_context_cannot_move(tmp_path):
+    """TASK-40138 AC#2: the worker's by-name refusal reaches the portable
+    terminal with copy that says what to do instead."""
+    code = r"""
+import builtins,sys
+from pathlib import Path
+from Tests.network_guard import install
+install()
+from Tests.Backup_Recovery.test_detached_layout import _base_profile
+from tldw_chatbook.Backup_Recovery.portable_relocation import command_main
+base=Path(sys.argv[1]);base.mkdir()
+source,root,_=_base_profile(base)
+(root/'tldw_chatbook_personal_context.db').write_bytes(b'keyring-bound ciphertext rows')
+def no_review(*args):raise AssertionError('relocation review was reached')
+builtins.input=no_review
+sys.exit(command_main(source))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path / "fixture")],
+        text=True,
+        capture_output=True,
+        timeout=220,
+        check=False,
+    )
+    assert result.returncode == 1, result.stderr[-6000:] + result.stdout[-3000:]
+    lines = result.stdout.splitlines()
+    assert (
+        "Relocation could not complete: "
+        "detached_owner_unavailable:personal_context.repository"
+    ) in lines
+    assert (
+        "Personal Context can't be moved this way because its key stays on the "
+        "original device. Make an encrypted backup with credentials there, then "
+        "restore it with Replace."
+    ) in lines

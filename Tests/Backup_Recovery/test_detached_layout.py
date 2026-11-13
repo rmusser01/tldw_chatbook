@@ -903,17 +903,102 @@ def test_actor_pack_persona_images_are_validated_in_a_detached_source(
     ] == [hashlib.sha256(data).hexdigest()]
 
 
-@pytest.mark.parametrize("suffix", ["", "-wal"])
-def test_detached_import_refuses_the_personal_context_repository_by_name(
-    tmp_path, suffix
+@pytest.mark.parametrize("present", [True, False])
+def test_detached_import_keeps_interview_drafts_on_the_original_device(
+    tmp_path, present
 ):
-    """TASK-40134 AC#11: detached import carries no credentials, so the repository
-    is refused by name and never imported without its key."""
+    """TASK-40138 AC#1: interview drafts are local-only and their key is
+    keyring-only, so a detached source holding them imports with the drafts as
+    an excluded row and a review line, instead of refusing as unknown content."""
     source, root, _old = _base_profile(tmp_path)
-    (root / ("tldw_chatbook_personal_context.db" + suffix)).write_bytes(b"ciphertext")
+    paths = [
+        Path(str(root / "tldw_chatbook_personal_context_interviews.db") + suffix)
+        for suffix in ("", "-wal", "-shm", "-journal")
+    ]
+    if present:
+        for path in paths:
+            path.write_bytes(b"keyring-bound interview draft ciphertext")
+    before = {path: path.read_bytes() for path in paths if path.exists()}
+    result = _layout().produce_detached_archive(
+        source.absolute(), (tmp_path / "work").absolute(), Event()
+    )
+    with zipfile.ZipFile(result.archive) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    assert not any(
+        row["owner_id"] == "personal_context.interview_drafts"
+        for row in manifest["files"]
+    )
+    assert {
+        row["status"]
+        for row in manifest["producer_inventory"]
+        if row["owner_id"] == "personal_context.interview_drafts"
+    } == {"intentionally_excluded"}
+    line = "Personal Context interview drafts stay on the original device."
+    assert (line in result.review_lines) is present
+    assert all(path.read_bytes() == data for path, data in before.items())
+
+
+@pytest.mark.parametrize(
+    ("adapter", "suffix"),
+    [("installed", ""), ("installed", "-wal"), ("captured", "")],
+)
+def test_detached_import_refuses_the_personal_context_repository_by_name(
+    tmp_path, monkeypatch, adapter, suffix
+):
+    """TASK-40138 AC#2: the repository's key stays in the original device's
+    keyring (detached import is credential-excluded), so it is refused by name
+    whichever adapter declares it: today's `_LocalSQLite` row, or a captured
+    `_SQLiteDeclaration` like TASK-40134's, which the SQLite loop would
+    otherwise normalize and import."""
+    source, root, _old = _base_profile(tmp_path)
+    database = root / "tldw_chatbook_personal_context.db"
+    if adapter == "captured":
+        from tldw_chatbook.Backup_Recovery import owner_registry, sqlite_validation
+        from tldw_chatbook.Sync_Interop.recovery import _SYNC_SCHEMA, _SyncAdapter
+
+        # An installed stand-in whose validator accepts the file, so only the
+        # by-name refusal stops the import.
+        captured = _SyncAdapter(
+            "personal_context.repository",
+            None,
+            database.name,
+            (9,),
+            _SYNC_SCHEMA,
+            (),
+            optional_default=True,
+        )
+        installed = owner_registry.install_adapters()
+        monkeypatch.setattr(
+            owner_registry,
+            "install_adapters",
+            lambda: tuple(
+                captured if owner.owner_id == captured.owner_id else owner
+                for owner in installed
+            ),
+        )
+        resolve = sqlite_validation._installed_owner
+        monkeypatch.setattr(
+            sqlite_validation,
+            "_installed_owner",
+            lambda owner_id: captured
+            if owner_id == captured.owner_id
+            else resolve(owner_id),
+        )
+        _installed_database(captured, database)
+        with sqlite3.connect(database) as connection:
+            connection.execute("PRAGMA user_version=9")  # unlisted owner's version
+    else:
+        Path(str(database) + suffix).write_bytes(b"keyring-bound ciphertext rows")
+    before = {
+        path: path.read_bytes() for path in source.rglob("*") if path.is_file()
+    }
     work = (tmp_path / "work").absolute()
     with pytest.raises(
-        ValueError, match="detached_owner_unavailable:personal_context.repository"
+        ValueError, match="^detached_owner_unavailable:personal_context.repository$"
     ):
         _layout().produce_detached_archive(source.absolute(), work, Event())
-    assert not any(work.rglob("*.zip")) if work.exists() else True
+    assert {
+        path: path.read_bytes() for path in source.rglob("*") if path.is_file()
+    } == before
+    # TASK-40134 AC#11: no archive is produced without the key.
+    assert not work.exists() or not any(work.rglob("*.zip"))

@@ -151,6 +151,22 @@ sidecars) is not an exclusion: since TASK-40134 it is a captured owner in its ow
 selectable "Personal Context" group, described in "Personal Context backup owner
 (TASK-40134)" at the end of this file. The interview drafts have no group.
 
+Detached-layout notes (ADR-256 portable imports, TASK-40138):
+
+- `personal_context.interview_drafts` is in `detached_layout.py`'s fixed owner list,
+  beside `notes.sync_state`, and its four paths are in `known`. A detached source
+  holding the drafts imports with them as `intentionally_excluded` rows and the
+  review line "Personal Context interview drafts stay on the original device."
+- `personal_context.repository` (its file or any sidecar) is refused by name,
+  `detached_owner_unavailable:personal_context.repository`, in `_declared_layout`
+  before any owner opens data. The check names the path, not the adapter, so it
+  holds for TASK-40134's captured adapter and any other declaration alike: detached
+  import is credential-excluded and the relocation host has a null keyring, so the
+  key cannot come along. The portable terminal (`portable_relocation.command_main`)
+  adds: "Personal Context can't be moved this way because its key stays on the
+  original device. Make an encrypted backup with credentials there, then restore it
+  with Replace."
+
 ## SQLite owner registry cross-check
 
 All installed policy IDs, including readers, backup destinations, memory forms and

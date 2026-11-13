@@ -488,6 +488,11 @@ def produce_detached_archive(
         report += (
             "Empty canonical restored embedding cache scaffolding is intentionally excluded.",
         )
+    if any(
+        item.owner == "personal_context.interview_drafts" and item.metadata is not None
+        for item in items
+    ):
+        report += ("Personal Context interview drafts stay on the original device.",)
     manifest = _manifest_for(
         inventory,
         staged,
@@ -625,11 +630,6 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
     for owner_id, path in sqlite_paths.items():
         if owner_id not in owners:
             raise ValueError("detached_owner_unsupported:" + owner_id)
-        if owner_id == "personal_context.repository" and any(
-            Path(str(path) + suffix).exists() for suffix in ("", "-wal", "-shm", "-journal")
-        ):
-            # TASK-40134: detached import carries no key (decision 10).
-            raise ValueError("detached_owner_unavailable:" + owner_id)
         for suffix in ("", "-wal", "-shm", "-journal"):
             candidate = Path(str(path) + suffix)
             if candidate.exists():
@@ -932,6 +932,7 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
             "actor_packs.import_staging",
             "db.workspace_project_index",
             "rag.definitions",
+            "personal_context.interview_drafts",
         ):
             rows = owners[owner_id].discover(config)
             for item in rows:
@@ -1035,6 +1036,19 @@ def _declared_layout(source, selected, root, config, observation=None):
         Path(str(root / "tldw_chatbook_notes_sync_state.db") + suffix)
         for suffix in ("", "-wal", "-shm", "-journal")
     )
+    # TASK-40138: the interview drafts are an installed exclusion (fixed owner
+    # list above). The repository's key stays in the original device's keyring,
+    # which this credential-excluded import cannot carry, so the repository is
+    # refused by name whichever adapter declares it.
+    known.update(
+        Path(str(root / "tldw_chatbook_personal_context_interviews.db") + suffix)
+        for suffix in ("", "-wal", "-shm", "-journal")
+    )
+    if any(
+        Path(str(root / "tldw_chatbook_personal_context.db") + suffix).exists()
+        for suffix in ("", "-wal", "-shm", "-journal")
+    ):
+        raise ValueError("detached_owner_unavailable:personal_context.repository")
     diagnostic = owners["diagnostics.logs"]._log_path(config)
     if not diagnostic.is_absolute() or diagnostic.parent != root:
         raise ValueError("detached_selector_unsupported")
