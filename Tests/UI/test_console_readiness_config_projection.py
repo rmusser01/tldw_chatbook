@@ -449,6 +449,41 @@ async def test_cancelled_config_projection_retires_worker_then_can_retry(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_a_refresh_worker_cancelled_before_its_first_step_still_settles(
+    monkeypatch,
+):
+    """TASK-40324: App exit hung in ``warm()`` behind a read that never ran.
+
+    Shutdown cancels every worker. Without an eager task factory (``run_test``)
+    the readiness worker can be cancelled before its first step, so its
+    ``finally`` never settled the read: ``pending`` stayed set, ChatScreen's
+    pump waited in ``warm()`` forever, and ``App._close_all`` waited for it.
+    """
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    schedule = screen.run_worker
+    # A Textual Worker owns its asyncio task as ``_task``.
+    screen.run_worker = lambda work, **kwargs: SimpleNamespace(
+        _task=schedule(work, **kwargs)
+    )
+    projection = spend.ConsoleReadinessConfigProjection(
+        screen, read_current=lambda: pytest.fail("the cancelled read ran")
+    )
+    warming = asyncio.create_task(projection.warm())
+    try:
+        await asyncio.sleep(0)
+        assert projection.pending and tasks and not tasks[0].done()
+        tasks[0].cancel()  # The shutdown sweep, before the worker's first step.
+        done, _ = await asyncio.wait({warming}, timeout=2)
+        assert warming in done, "warm() waited on a read that never ran"
+        assert warming.result() is False
+        assert not projection.pending and projection._settled.is_set()
+        assert projection._handoff_read is None
+    finally:
+        warming.cancel()
+        await asyncio.gather(warming, *tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_real_screen_presentation_entry_reuses_config_while_actions_read_live(
     monkeypatch,
 ):

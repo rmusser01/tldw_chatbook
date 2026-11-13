@@ -457,9 +457,17 @@ class ConsoleReadinessConfigProjection:
             else:
                 refresh = refresh_method(key)  # Preserve custom override call shape.
             try:
-                handoff_read[2] = screen.run_worker(
+                worker = handoff_read[2] = screen.run_worker(
                     refresh, exclusive=False, group="console-readiness-config"
                 )
+                # TASK-40324: a worker cancelled before its first step (App
+                # shutdown's sweep, without an eager task factory) never runs
+                # the read's finally; settle it here, or warm() waits forever.
+                task = getattr(worker, "_task", None)
+                if task is not None:
+                    task.add_done_callback(
+                        lambda _task, read=handoff_read: self._settle_unstarted(read)
+                    )
             except BaseException as error:
                 # Scheduling did not take ownership of this coroutine. A cold
                 # presentation read remains retryable; cancellation propagates.
@@ -534,6 +542,17 @@ class ConsoleReadinessConfigProjection:
             and self.value is not None
             and time.monotonic() - self.at < self.max_age
         )
+
+    def _settle_unstarted(self, read: list) -> None:
+        """Settle a read whose worker ended before its body (and finally) ran."""
+        if self._handoff_read is not read:
+            return  # Its own finally settled it, or a newer read owns the slot.
+        from .config_sync import _finish_identity_config_read
+
+        self._handoff_read = None
+        self.pending = False
+        _finish_identity_config_read(self, read, False)
+        self._settled.set()
 
     def _retired(self) -> bool:
         return bool(

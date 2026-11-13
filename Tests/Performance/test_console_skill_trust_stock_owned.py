@@ -13,7 +13,7 @@ from Tests.Backup_Recovery.test_home_citation_retirement import _run
 pytestmark = pytest.mark.bootstrap_profile
 
 _SCRIPT = r"""
-import asyncio, contextvars, functools, inspect, json, os, sqlite3, sys, threading, time
+import asyncio, contextlib, contextvars, functools, inspect, json, os, sqlite3, sys, threading, time
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures.thread import _WorkItem
 from pathlib import Path
@@ -150,6 +150,61 @@ async def exercise():
     assert '_skill_foreign_calls' not in vars(metadata)
     wiring._skill_foreign_calls = metadata._skill_foreign_calls = foreign_calls
     skill_wiring._skill_foreign_calls = foreign_calls
+
+    def pending_report():
+        # TASK-40324: what a hang is waiting on -- every non-idle thread's
+        # innermost frames, then every busy asyncio task's innermost awaits
+        # (last, so the failure's 1,000-character tail keeps them).
+        lines, threads = [], []
+        for item in asyncio.all_tasks(loop):
+            chain, coro = [], item.get_coro()
+            for _ in range(80):
+                frame = next((getattr(coro, name) for name in ('cr_frame', 'gi_frame', 'ag_frame') if getattr(coro, name, None) is not None), None)
+                if frame is None:
+                    if coro is not None:
+                        chain.append(type(coro).__name__)
+                    break
+                chain.append(frame.f_code.co_qualname + ':' + str(frame.f_lineno))
+                awaited = next((getattr(coro, name) for name in ('cr_await', 'gi_yieldfrom', 'ag_await') if getattr(coro, name, None) is not None), None)
+                if awaited is not None and not any(hasattr(awaited, name) for name in ('cr_frame', 'gi_frame', 'ag_frame')):
+                    # An async context manager awaits its generator's asend.
+                    awaited = getattr(frame.f_locals.get('self'), 'gen', None) or awaited
+                coro = awaited
+            # Idle message pumps and timers are not the wait.
+            if chain and not chain[0].startswith('Timer._run') and not any(step.startswith('MessagePump._get_message') for step in chain):
+                lines.append('task ' + item.get_name()[:40] + ': ' + ' > '.join(chain[-6:]))
+        names = {thread.ident: thread.name for thread in threading.enumerate()}
+        for ident, frame in sys._current_frames().items():
+            chain = []
+            while frame is not None and len(chain) < 3:
+                chain.append(frame.f_code.co_qualname + ':' + str(frame.f_lineno))
+                frame = frame.f_back
+            if chain and not chain[0].startswith(('Condition.wait', 'BaseSelector', 'KqueueSelector', 'EpollSelector', '_worker')):
+                threads.append('thread ' + str(names.get(ident, ident)) + ': ' + ' < '.join(chain))
+        return threads + lines
+
+    def watch(seconds, what):
+        # Fail within `seconds` and name the pending wait, instead of
+        # sitting out the outer 240-second bound with the loop idle.
+        def fire():
+            # fd 1 directly: Textual redirects sys.stdout inside run_test.
+            report = pending_report() + ['stock_skill_hang: ' + what + ' still pending after ' + str(seconds) + ' s']
+            os.write(1, ('\n'.join(report) + '\n').encode('utf-8', 'replace'))
+            os._exit(3)
+        return loop.call_later(seconds, fire)
+
+    @contextlib.asynccontextmanager
+    async def run_app():
+        exit_watch = None
+        try:
+            async with app.run_test(size=(140, 42)) as pilot:
+                try:
+                    yield pilot
+                finally:
+                    exit_watch = watch(60, 'App exit (run_test teardown)')
+        finally:
+            if exit_watch is not None:
+                exit_watch.cancel()
 
     def counts():
         with storage._lock:
@@ -545,7 +600,7 @@ async def exercise():
             assert sys.monitoring.get_local_events(monitor.tool, code) == 0
             sys.monitoring.set_local_events(monitor.tool, code, event | (start_event if code in {builder_code, discovery_code} else 0))
         monitor.active = monitor.installed = True
-        async with app.run_test(size=(140, 42)) as pilot:
+        async with run_app() as pilot:
             await settle(lambda: getattr(app, '_initial_screen_pushed', False))
             from Tests.UI.background_signals import await_background_task
             initial = app._initial_screen_setup_task
@@ -577,6 +632,7 @@ async def exercise():
                 # context exit still exercises its original creator teardown.
                 # Initial-screen settlement precedes actual lazy builder admission.
                 facts['outer_wait_started_at'] = time.monotonic()
+                discovery_watch = watch(60, 'original skill discovery producer')
                 try:
                     if held_task is None:
                         # Initial-screen completion is not skill-builder completion.
@@ -597,6 +653,7 @@ async def exercise():
                         )
                         facts['original_discovery_producer_prerequisite_observed'] = True
                 finally:
+                    discovery_watch.cancel()
                     facts['outer_wait_finished_at'] = time.monotonic()
                     facts['held_control_bound_at_outer_wait_end'] = held_task is not None
                 assert held_task is not None and held_control_admitted.result() is held_task

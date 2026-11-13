@@ -1032,6 +1032,10 @@ MINIMUM_FILES = 2070
 # Console sync-tick storage files at the tail. The floor is the measured
 # entry count.
 MINIMUM_FILES = 2078
+MINIMUM_FILES = 2072
+# TASK-40324 (2026-11-12): append the readiness projection's unstarted-worker
+# settlement node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2079
 
 
 def read_census(path: Path) -> list[str]:

@@ -2999,3 +2999,6 @@ Tests/UI/test_workspace_archive_review_regressions.py
 # once-a-second Character-scope sync-tick file.
 Tests/UI/test_personas_subscription_readiness.py
 Tests/UI/test_console_sync_tick_storage.py
+# TASK-40324 (2026-11-12): a readiness refresh worker cancelled before its
+# first step still settles its read, so App exit cannot wait in warm().
+Tests/UI/test_console_readiness_config_projection.py::test_a_refresh_worker_cancelled_before_its_first_step_still_settles
