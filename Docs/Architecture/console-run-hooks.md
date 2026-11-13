@@ -50,7 +50,7 @@ Invalid entries fail loud: a warning is logged and that hook is disabled; a non-
 ## Legacy execution mechanics
 
 - **Payload**: JSON on stdin — `{hook_event, session_id, run_id, timestamp, cwd, data}`. `cwd` defaults to `[console] workspace_root`, else the app cwd, overridable per fire. Tool arguments are summarized for notification events (never `str()`-coerced); guard events receive arguments verbatim.
-- **Process model**: `subprocess_exec` argv with `start_new_session=True` (process group); timeout kills the whole group (`killpg` SIGKILL; `taskkill /F /T` on Windows), then a bounded 5 s reap. Escaped descendants are outside the guarantee.
+- **Process model**: `subprocess_exec` argv with `start_new_session=True` (process group); timeout stops the process tree and keeps the original bounded 5 s reap. POSIX uses `killpg` SIGKILL. Windows admits the suspended command into the existing kill-on-close Job Object before resuming it. Once the command exits and its pipes finish, remaining Job members are retired while the original command verdict is preserved.
 - **Capture**: both pipes drained continuously with bounded prefixes (~4000 chars per stream); truncation markers appended. PreToolUse stdout overflow itself denies — incomplete decision JSON must never look like a clean pass.
 - **Concurrency**: a dedicated 4-worker pool for blocking events (never shared), a 1-worker notify coordinator plus a separate notification pool; first-deny-wins reduce (remaining processes run out and are discarded). Notify admission is bounded (64 slots; oversized payloads dropped whole with diagnostics).
 - **Logging**: every execution is a structured loguru record with session/run ids and a SHA-256 command fingerprint.
