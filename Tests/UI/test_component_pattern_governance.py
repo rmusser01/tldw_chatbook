@@ -164,15 +164,46 @@ def test_canonical_classes_defined_only_in_owning_sheet(request) -> None:
     """A bare Canonical-class rule may exist only in its owning sheet."""
     canonical = _canonical()
     sources = {**_sheet_sources(), **_bundled_sources()}
+    definitions = {src: _bare_definitions(css) for src, css in sources.items()}
     offenders: dict[str, list[str]] = {}
     for cls, owner in canonical.items():
-        for src, css in sources.items():
-            if cls in _bare_definitions(css) and src != owner:
+        for src, classes in definitions.items():
+            if cls in classes and src != owner:
                 offenders.setdefault(cls, []).append(src)
     assert not offenders, (
         "Canonical classes redefined outside their owning sheet "
         f"(ADR-161 spec 3.7; scope or fold per the migration rule): {offenders}"
     )
+
+
+@private_profile_test
+def test_ownership_scan_parses_sources_once_and_observes_changes(request, monkeypatch):
+    module = sys.modules[__name__]
+    sources = {"owner.css": ".alpha:hover, .beta { color: red; }"}
+    bundled = {"widget:CSS": "Widget .alpha { color: blue; }"}
+    monkeypatch.setattr(
+        module, "_canonical", lambda: {"alpha": "owner.css", "beta": "owner.css"}
+    )
+    monkeypatch.setattr(module, "_sheet_sources", lambda: sources)
+    monkeypatch.setattr(module, "_bundled_sources", lambda: bundled)
+    original = _bare_definitions
+    scanned = []
+
+    def scan(css):
+        scanned.append(css)
+        return original(css)
+
+    monkeypatch.setattr(module, "_bare_definitions", scan)
+    check = test_canonical_classes_defined_only_in_owning_sheet.__wrapped__
+    check(request)
+    assert scanned == [*sources.values(), *bundled.values()]
+
+    scanned.clear()
+    bundled["widget:CSS"] = ".alpha:focus, .beta { color: blue; }"
+    with pytest.raises(AssertionError) as failure:
+        check(request)
+    assert "{'alpha': ['widget:CSS'], 'beta': ['widget:CSS']}" in str(failure.value)
+    assert scanned == [*sources.values(), *bundled.values()]
 
 
 @private_profile_test
@@ -185,9 +216,9 @@ def test_canonical_owning_sheets_are_bundled(request) -> None:
     """
     owners = sorted(set(_canonical().values()))
     missing = [sheet for sheet in owners if sheet not in CSS_MODULES]
-    assert (
-        not missing
-    ), f"Owning sheets missing from CSS_MODULES (build_css.py): {missing}"
+    assert not missing, (
+        f"Owning sheets missing from CSS_MODULES (build_css.py): {missing}"
+    )
 
 
 @private_profile_test

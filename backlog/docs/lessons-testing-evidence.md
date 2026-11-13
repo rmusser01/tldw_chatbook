@@ -25313,3 +25313,9 @@ minutes:
 **Incident.** TASK-36948.3 added one public method to ChatScreen and raised its `test_screen_size_ratchet.py` row by the measured +38 lines and +1 method, as a dated waiver. The brief called that a one-line fix. The serial `Tests/Architecture` run (26 min) then failed two tests that only that full run reaches: `test_console_review_selection_controller_boundary.py` (`LIVE_RATCHET_ROW`) and `test_console_wave6_closeout_inventory.py` (`LIVE_RATCHET_BUDGET`). TASK-38988 put both pins there on purpose, to catch any raise of the row.
 
 **What to do.** When you raise or lower ChatScreen's row, run `grep -rn "LIVE_RATCHET" Tests/Architecture` and re-pin every match to the new row in the same commit.
+
+## Separate cold assertion rewriting from recurring private-child startup (TASK-40780, 2026-11-13)
+
+**Incident.** A first Settings private-child profile spent 19.94 s collecting, including 9.31 s rewriting assertions in imported test helpers. Warm collection took 5.02 s under the profiler. That cold cost was not paid on every child. A separate profile found recurring work: 1,768 sibling module collectors for one selected node, and a full app constructed just to enumerate Settings categories. Native exact-path collection filtering and an unmounted screen with the existing app-stub pattern reduced paired, unprofiled collection from 3.87 to 2.53 s.
+
+**What to do.** Warm bytecode for both revisions, then compare fresh processes and profiles in alternating order. Report collection, body and total time separately; do not multiply cold rewrite time by the child count. Keep the actual-subprocess collector regression: pytest must still initialize packages, load ancestor fixtures and run the exact parametrized node when sibling paths are ignored. Category enumeration must also match the mounted screen's complete list.

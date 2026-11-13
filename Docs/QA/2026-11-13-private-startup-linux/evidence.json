@@ -1,0 +1,2729 @@
+{
+  "source_manifest": {
+    "base": "1455ceeb96c7c113a569a49a126fd287d4ac593b",
+    "files": {
+      "Tests/private_profile.py": {
+        "before": "a9df402fd0d91f7f9585e2ff278b419d22385fd7e3ce48e98a0f739a039341a6",
+        "after": "bafcdcec091b243aeb8bdfce57f66df4b04da08bf04137e3da643aedb74c9575"
+      },
+      "Tests/UI/test_settings_category_sweep.py": {
+        "before": "01bdab2eb6e169406b244f0fc9f43337dae10785aecc1fa9a21a491228da723c",
+        "after": "b233bccf2334f5c9ea1ad99af8bf87f34b065c3f5a5619e7d34cbec7ae7198f4"
+      },
+      "Tests/UI/test_component_pattern_governance.py": {
+        "before": "d781a6602013243d2b4cf859436dece295cc09c723100473f5534a3ef974ee74",
+        "after": "59a4bf4dba4657aae4a245452d561dc4412d8766518e6bd8d61f206ee38068ea"
+      }
+    }
+  },
+  "method": {
+    "guest_vcpu": 2,
+    "guest_memory_gib": 6,
+    "order_connect_pending": [
+      "before",
+      "after",
+      "after",
+      "before",
+      "after",
+      "before",
+      "before",
+      "after"
+    ],
+    "order_governance": [
+      "before",
+      "after",
+      "after",
+      "before"
+    ],
+    "warmup": "Fresh collect-only parent before each measured trial; fresh actual parent and private child for the measured test.",
+    "metrics": "child_collection_s measures collection hooks; parent_call_s is pytest parent call duration including private child execution/shutdown; total_s also includes fresh parent startup/shutdown."
+  },
+  "environment": {
+    "guest": "Linux tldw-startup-benchmark-40780 6.8.0-149-generic #149-Ubuntu SMP PREEMPT_DYNAMIC Fri Oct 23 13:21:10 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux\nArchitecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           48 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  2\nOn-line CPU(s) list:                     0,1\nVendor ID:                               AuthenticAMD\nModel name:                              AMD Ryzen 7 7700X 8-Core Processor\nCPU family:                              25\nModel:                                   97\nThread(s) per core:                      1\nCore(s) per socket:                      2\nSocket(s):                               1\nStepping:                                2\nBogoMIPS:                                8983.11\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm rep_good nopl cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy svm cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw perfctr_core ssbd perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves avx512_bf16 clzero xsaveerptr wbnoinvd arat npt lbrv nrip_save tsc_scale vmcb_clean flushbyasid pausefilter pfthreshold vgif vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid overflow_recov succor fsrm flush_l1d arch_capabilities\nVirtualization:                          AMD-V\nHypervisor vendor:                       KVM\nVirtualization type:                     full\nL1d cache:                               128 KiB (2 instances)\nL1i cache:                               128 KiB (2 instances)\nL2 cache:                                1 MiB (2 instances)\nL3 cache:                                32 MiB (2 instances)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0,1\nVulnerability Gather data sampling:      Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Mitigation; Safe RET\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; STIBP disabled; PBRSB-eIBRS Not affected; BHI Not affected\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Vulnerable: Clear CPU buffers attempted, no microcode\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Not affected\n               total        used        free      shared  buff/cache   available\nMem:            5925         565        2963           1        2700        5360\nSwap:              0           0           0\nPython 3.12.3\n1455ceeb96c7c113a569a49a126fd287d4ac593b\n2026-11-13T19:42:24+00:00\n",
+    "packages": [
+      {
+        "name": "aiofiles",
+        "version": "25.1.0"
+      },
+      {
+        "name": "aiohappyeyeballs",
+        "version": "2.7.1"
+      },
+      {
+        "name": "aiohttp",
+        "version": "3.14.5"
+      },
+      {
+        "name": "aiohttp-jinja2",
+        "version": "1.6"
+      },
+      {
+        "name": "aiosignal",
+        "version": "1.4.0"
+      },
+      {
+        "name": "annotated-types",
+        "version": "0.8.0"
+      },
+      {
+        "name": "anyio",
+        "version": "4.16.0"
+      },
+      {
+        "name": "attrs",
+        "version": "26.1.0"
+      },
+      {
+        "name": "beautifulsoup4",
+        "version": "4.15.0"
+      },
+      {
+        "name": "certifi",
+        "version": "2026.10.23"
+      },
+      {
+        "name": "cffi",
+        "version": "2.1.1"
+      },
+      {
+        "name": "chardet",
+        "version": "5.2.0"
+      },
+      {
+        "name": "charset-normalizer",
+        "version": "3.5.2"
+      },
+      {
+        "name": "coverage",
+        "version": "7.17.3"
+      },
+      {
+        "name": "croniter",
+        "version": "7.0.0"
+      },
+      {
+        "name": "cryptography",
+        "version": "50.0.2"
+      },
+      {
+        "name": "defusedxml",
+        "version": "0.7.1"
+      },
+      {
+        "name": "emoji",
+        "version": "2.16.0"
+      },
+      {
+        "name": "execnet",
+        "version": "2.1.2"
+      },
+      {
+        "name": "frozenlist",
+        "version": "1.8.0"
+      },
+      {
+        "name": "h11",
+        "version": "0.16.0"
+      },
+      {
+        "name": "html5lib",
+        "version": "1.1"
+      },
+      {
+        "name": "httpcore",
+        "version": "1.0.9"
+      },
+      {
+        "name": "httpx",
+        "version": "0.28.1"
+      },
+      {
+        "name": "idna",
+        "version": "3.20"
+      },
+      {
+        "name": "iniconfig",
+        "version": "2.3.1"
+      },
+      {
+        "name": "jaraco.classes",
+        "version": "3.4.0"
+      },
+      {
+        "name": "jaraco.context",
+        "version": "6.1.2"
+      },
+      {
+        "name": "jaraco.functools",
+        "version": "4.6.0"
+      },
+      {
+        "name": "jeepney",
+        "version": "0.9.0"
+      },
+      {
+        "name": "Jinja2",
+        "version": "3.1.6"
+      },
+      {
+        "name": "jsonschema",
+        "version": "4.26.0"
+      },
+      {
+        "name": "jsonschema-specifications",
+        "version": "2025.9.1"
+      },
+      {
+        "name": "keyring",
+        "version": "25.7.0"
+      },
+      {
+        "name": "linkify-it-py",
+        "version": "2.2.0"
+      },
+      {
+        "name": "loguru",
+        "version": "0.8.0"
+      },
+      {
+        "name": "markdown-it-py",
+        "version": "4.3.0"
+      },
+      {
+        "name": "markdownify",
+        "version": "1.2.3"
+      },
+      {
+        "name": "MarkupSafe",
+        "version": "3.0.4"
+      },
+      {
+        "name": "mdit-py-plugins",
+        "version": "0.7.0"
+      },
+      {
+        "name": "mdurl",
+        "version": "0.1.2"
+      },
+      {
+        "name": "more-itertools",
+        "version": "11.2.1"
+      },
+      {
+        "name": "multidict",
+        "version": "7.2.1"
+      },
+      {
+        "name": "numpy",
+        "version": "2.5.4"
+      },
+      {
+        "name": "packaging",
+        "version": "26.3"
+      },
+      {
+        "name": "pillow",
+        "version": "13.0.0"
+      },
+      {
+        "name": "pip",
+        "version": "24.0"
+      },
+      {
+        "name": "platformdirs",
+        "version": "4.14.5"
+      },
+      {
+        "name": "pluggy",
+        "version": "1.7.0"
+      },
+      {
+        "name": "portalocker",
+        "version": "3.2.0"
+      },
+      {
+        "name": "propcache",
+        "version": "0.5.4"
+      },
+      {
+        "name": "psutil",
+        "version": "7.2.2"
+      },
+      {
+        "name": "pycparser",
+        "version": "3.12"
+      },
+      {
+        "name": "pycryptodomex",
+        "version": "3.24.2"
+      },
+      {
+        "name": "pydantic",
+        "version": "2.14.3"
+      },
+      {
+        "name": "pydantic_core",
+        "version": "2.50.4"
+      },
+      {
+        "name": "Pygments",
+        "version": "2.21.0"
+      },
+      {
+        "name": "pyperclip",
+        "version": "1.11.0"
+      },
+      {
+        "name": "pyte",
+        "version": "0.8.2"
+      },
+      {
+        "name": "pytest",
+        "version": "8.4.2"
+      },
+      {
+        "name": "pytest-asyncio",
+        "version": "1.2.0"
+      },
+      {
+        "name": "pytest-cov",
+        "version": "7.1.0"
+      },
+      {
+        "name": "pytest-timeout",
+        "version": "2.4.0"
+      },
+      {
+        "name": "pytest-xdist",
+        "version": "3.8.0"
+      },
+      {
+        "name": "python-dateutil",
+        "version": "4.0.0"
+      },
+      {
+        "name": "PyYAML",
+        "version": "6.0.3"
+      },
+      {
+        "name": "referencing",
+        "version": "0.37.0"
+      },
+      {
+        "name": "regex",
+        "version": "2026.4.4"
+      },
+      {
+        "name": "requests",
+        "version": "2.34.2"
+      },
+      {
+        "name": "rfc8785",
+        "version": "0.1.4"
+      },
+      {
+        "name": "rich",
+        "version": "15.0.0"
+      },
+      {
+        "name": "rich-pixels",
+        "version": "3.0.1"
+      },
+      {
+        "name": "rpds-py",
+        "version": "2026.9.1"
+      },
+      {
+        "name": "SecretStorage",
+        "version": "3.5.0"
+      },
+      {
+        "name": "sherpa_onnx",
+        "version": "1.13.8"
+      },
+      {
+        "name": "sherpa-onnx-core",
+        "version": "1.13.8"
+      },
+      {
+        "name": "six",
+        "version": "1.17.0"
+      },
+      {
+        "name": "soupsieve",
+        "version": "4.1"
+      },
+      {
+        "name": "textual",
+        "version": "8.2.8"
+      },
+      {
+        "name": "textual-diff-view",
+        "version": "0.1.5"
+      },
+      {
+        "name": "textual-image",
+        "version": "0.14.4"
+      },
+      {
+        "name": "tiktoken",
+        "version": "0.14.0"
+      },
+      {
+        "name": "tinycss2",
+        "version": "1.5.1"
+      },
+      {
+        "name": "tldw_chatbook",
+        "version": "0.2.3",
+        "editable_project_location": "/opt/tldw-private-startup-40780/repo"
+      },
+      {
+        "name": "toml",
+        "version": "0.10.2"
+      },
+      {
+        "name": "typing_extensions",
+        "version": "4.16.0"
+      },
+      {
+        "name": "typing-inspection",
+        "version": "0.4.5"
+      },
+      {
+        "name": "tzdata",
+        "version": "2026.6"
+      },
+      {
+        "name": "urllib3",
+        "version": "2.8.0"
+      },
+      {
+        "name": "wcwidth",
+        "version": "0.9.4"
+      },
+      {
+        "name": "webencodings",
+        "version": "0.6.1"
+      },
+      {
+        "name": "yarl",
+        "version": "1.25.1"
+      }
+    ],
+    "host": {
+      "host-during": "2026-11-13T19:44:03+00:00\nprocs -----------memory---------- ---swap-- -----io---- -system-- -------cpu-------\n r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st gu\n 0  0 1000432 45895564 2062204 61902900    0    0    10   196 3459    3  0  1 99  0  0  0\n 0  0 1000432 45893156 2062204 61903064    0    0     0     0 16038 26231  0  0 96  0  0  3\n 0  0 1000432 45893804 2062204 61903064    0    0     0   276 15925 26566  0  1 97  0  0  2\nMemoryPeak=7142604800\nActiveState=active\n",
+      "host-metadata": "2026-11-13T19:42:44+00:00\nLinux ml-server-1 6.12.107+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.107-1 (2026-08-29) x86_64 GNU/Linux\nArchitecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           48 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  16\nOn-line CPU(s) list:                     0-15\nVendor ID:                               AuthenticAMD\nModel name:                              AMD Ryzen 7 7700X 8-Core Processor\nCPU family:                              25\nModel:                                   97\nThread(s) per core:                      2\nCore(s) per socket:                      8\nSocket(s):                               1\nStepping:                                2\nFrequency boost:                         enabled\nCPU(s) scaling MHz:                      87%\nCPU max MHz:                             5573.0000\nCPU min MHz:                             400.0000\nBogoMIPS:                                8983.24\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid overflow_recov succor smca fsrm flush_l1d amd_lbr_pmc_freeze\nVirtualization:                          AMD-V\nL1d cache:                               256 KiB (8 instances)\nL1i cache:                               256 KiB (8 instances)\nL2 cache:                                8 MiB (8 instances)\nL3 cache:                                32 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-15\nVulnerability Gather data sampling:      Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Mitigation; Safe RET\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; STIBP always-on; PBRSB-eIBRS Not affected; BHI Not affected\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Vulnerable: Clear CPU buffers attempted, no microcode\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB before exit to userspace\n               total        used        free      shared  buff/cache   available\nMem:          127928       27527       45176        5704       62144      100401\nSwap:            976         976           0\n 11:42:44 up 63 days, 14:46,  3 users,  load average: 1.23, 4.19, 7.17\nRuntimeMaxUSec=20min\nMemoryCurrent=6764613632\nCPUUsageNSec=98626489000\nCPUQuotaPerSecUSec=2s\nMemoryMax=8589934592\nActiveState=active\n",
+      "host-finished": "2026-11-13T19:50:25+00:00\ninactive\n 11:50:25 up 63 days, 14:54,  2 users,  load average: 0.62, 1.67, 4.77\n",
+      "host-after-timing": "2026-11-13T19:49:08+00:00\n 11:49:08 up 63 days, 14:52,  3 users,  load average: 1.04, 1.99, 5.13\nMemoryPeak=7231152128\nCPUUsageNSec=422210088000\nActiveState=active\n"
+    }
+  },
+  "measurements": [
+    {
+      "case": "connect",
+      "revision": "before",
+      "iteration": 0,
+      "total_s": 17.527662613000004,
+      "child_collection_s": 2.9710162219999887,
+      "child_phases": {
+        "setup": 0.028097383000002196,
+        "call": 6.176894593,
+        "teardown": 0.46665979300000515
+      },
+      "parent_call_s": 12.405083535000003
+    },
+    {
+      "case": "connect",
+      "revision": "after",
+      "iteration": 1,
+      "total_s": 15.338499636999998,
+      "child_collection_s": 1.8072047889999965,
+      "child_phases": {
+        "setup": 0.027666902999996523,
+        "call": 6.4695895010000015,
+        "teardown": 0.39876016700000605
+      },
+      "parent_call_s": 11.542502607000003
+    },
+    {
+      "case": "connect",
+      "revision": "after",
+      "iteration": 2,
+      "total_s": 15.238602980999985,
+      "child_collection_s": 1.885107027999993,
+      "child_phases": {
+        "setup": 0.028671158000008745,
+        "call": 6.266560486000003,
+        "teardown": 0.359515880999993
+      },
+      "parent_call_s": 11.340646866000014
+    },
+    {
+      "case": "connect",
+      "revision": "before",
+      "iteration": 3,
+      "total_s": 17.445124811,
+      "child_collection_s": 3.0345257589999903,
+      "child_phases": {
+        "setup": 0.027834871000010253,
+        "call": 6.139933815999996,
+        "teardown": 0.4584308600000213
+      },
+      "parent_call_s": 12.483868175999987
+    },
+    {
+      "case": "connect",
+      "revision": "after",
+      "iteration": 4,
+      "total_s": 15.039294353000003,
+      "child_collection_s": 1.8027529590000029,
+      "child_phases": {
+        "setup": 0.027378497000000834,
+        "call": 6.238712468000017,
+        "teardown": 0.37484566099999483
+      },
+      "parent_call_s": 11.184203554999982
+    },
+    {
+      "case": "connect",
+      "revision": "before",
+      "iteration": 5,
+      "total_s": 17.041719916999995,
+      "child_collection_s": 2.913528662999994,
+      "child_phases": {
+        "setup": 0.027621229000004632,
+        "call": 6.062758395000003,
+        "teardown": 0.44864344499998765
+      },
+      "parent_call_s": 12.149029612000021
+    },
+    {
+      "case": "connect",
+      "revision": "before",
+      "iteration": 6,
+      "total_s": 17.14351017300001,
+      "child_collection_s": 2.9511274310000033,
+      "child_phases": {
+        "setup": 0.028116477999986955,
+        "call": 6.040424209999998,
+        "teardown": 0.4218460660000005
+      },
+      "parent_call_s": 12.199021614000003
+    },
+    {
+      "case": "connect",
+      "revision": "after",
+      "iteration": 7,
+      "total_s": 15.140561324999993,
+      "child_collection_s": 1.8166667509999854,
+      "child_phases": {
+        "setup": 0.028322282999994286,
+        "call": 6.282317070000005,
+        "teardown": 0.398490522000003
+      },
+      "parent_call_s": 11.326034642000025
+    },
+    {
+      "case": "pending",
+      "revision": "before",
+      "iteration": 0,
+      "total_s": 13.186735882999983,
+      "child_collection_s": 2.033212499000001,
+      "child_phases": {
+        "setup": 0.02778830600004767,
+        "call": 4.632035945999974,
+        "teardown": 0.35167472699998825
+      },
+      "parent_call_s": 9.246867861999988
+    },
+    {
+      "case": "pending",
+      "revision": "after",
+      "iteration": 1,
+      "total_s": 13.18545506700002,
+      "child_collection_s": 1.9269162449999726,
+      "child_phases": {
+        "setup": 0.027345487999980378,
+        "call": 4.791664132999983,
+        "teardown": 0.3151912339999967
+      },
+      "parent_call_s": 9.190580064000017
+    },
+    {
+      "case": "pending",
+      "revision": "after",
+      "iteration": 2,
+      "total_s": 13.101449392999996,
+      "child_collection_s": 1.9402818519999983,
+      "child_phases": {
+        "setup": 0.028022429999964515,
+        "call": 4.717480293000051,
+        "teardown": 0.28414511600004744
+      },
+      "parent_call_s": 9.101840548000041
+    },
+    {
+      "case": "pending",
+      "revision": "before",
+      "iteration": 3,
+      "total_s": 13.297690443000022,
+      "child_collection_s": 2.0400551960000257,
+      "child_phases": {
+        "setup": 0.02793531200001098,
+        "call": 4.773691602999975,
+        "teardown": 0.29786443999995527
+      },
+      "parent_call_s": 9.322098223000012
+    },
+    {
+      "case": "pending",
+      "revision": "after",
+      "iteration": 4,
+      "total_s": 12.996178360999977,
+      "child_collection_s": 1.90292101,
+      "child_phases": {
+        "setup": 0.02755479799998284,
+        "call": 4.606089434000012,
+        "teardown": 0.2569760410000299
+      },
+      "parent_call_s": 8.948706988999959
+    },
+    {
+      "case": "pending",
+      "revision": "before",
+      "iteration": 5,
+      "total_s": 13.190805245000035,
+      "child_collection_s": 2.0668142920000037,
+      "child_phases": {
+        "setup": 0.028721047000033195,
+        "call": 4.630417900999987,
+        "teardown": 0.28826644100001886
+      },
+      "parent_call_s": 9.202505034000012
+    },
+    {
+      "case": "pending",
+      "revision": "before",
+      "iteration": 6,
+      "total_s": 13.040351837999992,
+      "child_collection_s": 2.037338508000005,
+      "child_phases": {
+        "setup": 0.027895781000040643,
+        "call": 4.598242142000004,
+        "teardown": 0.2598637789999998
+      },
+      "parent_call_s": 9.069105756999988
+    },
+    {
+      "case": "pending",
+      "revision": "after",
+      "iteration": 7,
+      "total_s": 12.98976718299997,
+      "child_collection_s": 1.9490365750000365,
+      "child_phases": {
+        "setup": 0.02783001500000637,
+        "call": 4.665363730000024,
+        "teardown": 0.2592688080000016
+      },
+      "parent_call_s": 9.044643160000021
+    },
+    {
+      "case": "governance",
+      "revision": "before",
+      "iteration": 0,
+      "total_s": 27.914736570000002,
+      "child_collection_s": 0.17550296199999593,
+      "child_phases": {
+        "setup": 0.945526880999978,
+        "call": 23.87503382799997,
+        "teardown": 0.06552637200002209
+      },
+      "parent_call_s": 26.34224384999999
+    },
+    {
+      "case": "governance",
+      "revision": "after",
+      "iteration": 1,
+      "total_s": 5.574659070999985,
+      "child_collection_s": 0.05500508799997306,
+      "child_phases": {
+        "setup": 0.9385259430000019,
+        "call": 1.6728097969999567,
+        "teardown": 0.06390721499997198
+      },
+      "parent_call_s": 3.9951793309999744
+    },
+    {
+      "case": "governance",
+      "revision": "after",
+      "iteration": 2,
+      "total_s": 5.675561222999988,
+      "child_collection_s": 0.05830943199998728,
+      "child_phases": {
+        "setup": 0.9850690439999994,
+        "call": 1.7503077610000446,
+        "teardown": 0.06644749100001945
+      },
+      "parent_call_s": 4.100920566000013
+    },
+    {
+      "case": "governance",
+      "revision": "before",
+      "iteration": 3,
+      "total_s": 26.207123676000037,
+      "child_collection_s": 0.1743203700000322,
+      "child_phases": {
+        "setup": 0.9367246669999645,
+        "call": 22.164586517999965,
+        "teardown": 0.06545622700002696
+      },
+      "parent_call_s": 24.638350118000005
+    }
+  ],
+  "receipts": [
+    {
+      "trial": "connect-0-before-measured",
+      "processes": [
+        {
+          "pid": 1310,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_b191c0eg",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+          ],
+          "plugin_lifetime_s": 16.360382427999994,
+          "events": {
+            "collection_start": 99.384394187,
+            "collection_end": 102.353275048,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.09678317799999547,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 12.405083535000003,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.21107477500000016,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1328,
+          "ppid": 1310,
+          "child_node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+          "profile": "/tmp/pytest-of-runner/pytest-0/test_provider_is_one_row_one_t0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.902793",
+            "--basetemp=/tmp/pytest-of-runner/pytest-0/test_provider_is_one_row_one_t0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-0/test_provider_is_one_row_one_t0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 10.331867246999991,
+          "events": {
+            "collection_start": 103.223327303,
+            "collection_end": 106.194343525,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.028097383000002196,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 6.176894593,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.46665979300000515,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "connect-1-after-measured",
+      "processes": [
+        {
+          "pid": 1379,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_kosmdoag",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+          ],
+          "plugin_lifetime_s": 14.343824361000003,
+          "events": {
+            "collection_start": 120.700679976,
+            "collection_end": 122.674017332,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.027564701000002856,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 11.542502607000003,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.10757156700000792,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1383,
+          "ppid": 1379,
+          "child_node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+          "profile": "/tmp/pytest-of-runner/pytest-1/test_provider_is_one_row_one_t0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.972003",
+            "--basetemp=/tmp/pytest-of-runner/pytest-1/test_provider_is_one_row_one_t0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-1/test_provider_is_one_row_one_t0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 9.446170777999995,
+          "events": {
+            "collection_start": 123.528005147,
+            "collection_end": 125.335209936,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.027666902999996523,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 6.4695895010000015,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.39876016700000605,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "connect-2-after-measured",
+      "processes": [
+        {
+          "pid": 1417,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_zp_oizk9",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+          ],
+          "plugin_lifetime_s": 14.244166940000014,
+          "events": {
+            "collection_start": 139.661529616,
+            "collection_end": 141.72708277,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.029698821000010867,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 11.340646866000014,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.11852329399999917,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1421,
+          "ppid": 1417,
+          "child_node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+          "profile": "/tmp/pytest-of-runner/pytest-2/test_provider_is_one_row_one_t0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.969848",
+            "--basetemp=/tmp/pytest-of-runner/pytest-2/test_provider_is_one_row_one_t0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-2/test_provider_is_one_row_one_t0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 9.270910919000016,
+          "events": {
+            "collection_start": 142.570196211,
+            "collection_end": 144.455303239,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.028671158000008745,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 6.266560486000003,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.359515880999993,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "connect-3-before-measured",
+      "processes": [
+        {
+          "pid": 1469,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_igrg6j16",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+          ],
+          "plugin_lifetime_s": 16.42608206,
+          "events": {
+            "collection_start": 159.722609423,
+            "collection_end": 162.729966028,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.029088206000011496,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 12.483868175999987,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.21845615799998086,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1487,
+          "ppid": 1469,
+          "child_node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+          "profile": "/tmp/pytest-of-runner/pytest-3/test_provider_is_one_row_one_t0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.970455",
+            "--basetemp=/tmp/pytest-of-runner/pytest-3/test_provider_is_one_row_one_t0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-3/test_provider_is_one_row_one_t0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 10.360387750000001,
+          "events": {
+            "collection_start": 163.542470084,
+            "collection_end": 166.576995843,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.027834871000010253,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 6.139933815999996,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.4584308600000213,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "connect-4-after-measured",
+      "processes": [
+        {
+          "pid": 1538,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_ip92xrgz",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+          ],
+          "plugin_lifetime_s": 13.991958939,
+          "events": {
+            "collection_start": 180.855087756,
+            "collection_end": 182.822864122,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.02807740800000147,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 11.184203554999982,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.1105473079999797,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1542,
+          "ppid": 1538,
+          "child_node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+          "profile": "/tmp/pytest-of-runner/pytest-4/test_provider_is_one_row_one_t0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.971483",
+            "--basetemp=/tmp/pytest-of-runner/pytest-4/test_provider_is_one_row_one_t0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-4/test_provider_is_one_row_one_t0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 9.145863265000003,
+          "events": {
+            "collection_start": 183.635148488,
+            "collection_end": 185.437901447,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.027378497000000834,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 6.238712468000017,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.37484566099999483,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "connect-5-before-measured",
+      "processes": [
+        {
+          "pid": 1590,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config__t19aj4z",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+          ],
+          "plugin_lifetime_s": 16.017676023000007,
+          "events": {
+            "collection_start": 200.599778782,
+            "collection_end": 203.531878423,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.02826001899998687,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 12.149029612000021,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.2288418710000144,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1608,
+          "ppid": 1590,
+          "child_node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+          "profile": "/tmp/pytest-of-runner/pytest-5/test_provider_is_one_row_one_t0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.971259",
+            "--basetemp=/tmp/pytest-of-runner/pytest-5/test_provider_is_one_row_one_t0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-5/test_provider_is_one_row_one_t0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 10.144349804,
+          "events": {
+            "collection_start": 204.334467032,
+            "collection_end": 207.247995695,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.027621229000004632,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 6.062758395000003,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.44864344499998765,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "connect-6-before-measured",
+      "processes": [
+        {
+          "pid": 1673,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_9mm58s7v",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+          ],
+          "plugin_lifetime_s": 16.111256791000017,
+          "events": {
+            "collection_start": 222.325556236,
+            "collection_end": 225.292888456,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.027501529999995,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 12.199021614000003,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.2285500529999922,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1691,
+          "ppid": 1673,
+          "child_node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+          "profile": "/tmp/pytest-of-runner/pytest-6/test_provider_is_one_row_one_t0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.972069",
+            "--basetemp=/tmp/pytest-of-runner/pytest-6/test_provider_is_one_row_one_t0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-6/test_provider_is_one_row_one_t0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 10.130639838000008,
+          "events": {
+            "collection_start": 226.091378947,
+            "collection_end": 229.042506378,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.028116477999986955,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 6.040424209999998,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.4218460660000005,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "connect-7-after-measured",
+      "processes": [
+        {
+          "pid": 1742,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_rop8w3xj",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+          ],
+          "plugin_lifetime_s": 14.122160887000035,
+          "events": {
+            "collection_start": 243.143942279,
+            "collection_end": 245.099749979,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.028060363999998117,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 11.326034642000025,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.11897575500000812,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1746,
+          "ppid": 1742,
+          "child_node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+          "profile": "/tmp/pytest-of-runner/pytest-7/test_provider_is_one_row_one_t0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.971505",
+            "--basetemp=/tmp/pytest-of-runner/pytest-7/test_provider_is_one_row_one_t0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-7/test_provider_is_one_row_one_t0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 9.231785172000002,
+          "events": {
+            "collection_start": 245.916672295,
+            "collection_end": 247.733339046,
+            "nodes": [
+              "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "setup",
+              "seconds": 0.028322282999994286,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "call",
+              "seconds": 6.282317070000005,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id",
+              "phase": "teardown",
+              "seconds": 0.398490522000003,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "governance-0-before-measured",
+      "processes": [
+        {
+          "pid": 2131,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_32ozsjfx",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+          ],
+          "plugin_lifetime_s": 27.584573395000007,
+          "events": {
+            "collection_start": 400.390522895,
+            "collection_end": 400.560590102,
+            "nodes": [
+              "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "setup",
+              "seconds": 0.36234963599997627,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "call",
+              "seconds": 26.34224384999999,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "teardown",
+              "seconds": 0.03389959399999043,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 2134,
+          "ppid": 2131,
+          "child_node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+          "profile": "/tmp/pytest-of-runner/pytest-16/test_canonical_classes_defined0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.637205",
+            "--basetemp=/tmp/pytest-of-runner/pytest-16/test_canonical_classes_defined0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-16/test_canonical_classes_defined0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 25.76394767200003,
+          "events": {
+            "collection_start": 401.709827684,
+            "collection_end": 401.885330646,
+            "nodes": [
+              "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "setup",
+              "seconds": 0.945526880999978,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "call",
+              "seconds": 23.87503382799997,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "teardown",
+              "seconds": 0.06552637200002209,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "governance-1-after-measured",
+      "processes": [
+        {
+          "pid": 2140,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_ohd21_vk",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+          ],
+          "plugin_lifetime_s": 5.255152006000003,
+          "events": {
+            "collection_start": 429.382570229,
+            "collection_end": 429.554704581,
+            "nodes": [
+              "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "setup",
+              "seconds": 0.3677744689999827,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "call",
+              "seconds": 3.9951793309999744,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "teardown",
+              "seconds": 0.03591723300002059,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 2143,
+          "ppid": 2140,
+          "child_node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+          "profile": "/tmp/pytest-of-runner/pytest-17/test_canonical_classes_defined0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.631764",
+            "--basetemp=/tmp/pytest-of-runner/pytest-17/test_canonical_classes_defined0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-17/test_canonical_classes_defined0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 3.4237238219999995,
+          "events": {
+            "collection_start": 430.701501719,
+            "collection_end": 430.756506807,
+            "nodes": [
+              "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "setup",
+              "seconds": 0.9385259430000019,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "call",
+              "seconds": 1.6728097969999567,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "teardown",
+              "seconds": 0.06390721499997198,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "governance-2-after-measured",
+      "processes": [
+        {
+          "pid": 2149,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_esyhssxj",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+          ],
+          "plugin_lifetime_s": 5.358613969999965,
+          "events": {
+            "collection_start": 436.030308992,
+            "collection_end": 436.19943353,
+            "nodes": [
+              "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "setup",
+              "seconds": 0.3635309030000258,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "call",
+              "seconds": 4.100920566000013,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "teardown",
+              "seconds": 0.039440466999963064,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 2152,
+          "ppid": 2149,
+          "child_node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+          "profile": "/tmp/pytest-of-runner/pytest-18/test_canonical_classes_defined0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.636033",
+            "--basetemp=/tmp/pytest-of-runner/pytest-18/test_canonical_classes_defined0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-18/test_canonical_classes_defined0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 3.5520651259999454,
+          "events": {
+            "collection_start": 437.338592178,
+            "collection_end": 437.39690161,
+            "nodes": [
+              "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "setup",
+              "seconds": 0.9850690439999994,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "call",
+              "seconds": 1.7503077610000446,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "teardown",
+              "seconds": 0.06644749100001945,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "governance-3-before-measured",
+      "processes": [
+        {
+          "pid": 2158,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_p4jjkv5v",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+          ],
+          "plugin_lifetime_s": 25.90847176699998,
+          "events": {
+            "collection_start": 442.785870709,
+            "collection_end": 442.957220387,
+            "nodes": [
+              "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "setup",
+              "seconds": 0.3676263849999941,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "call",
+              "seconds": 24.638350118000005,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "teardown",
+              "seconds": 0.033559517000014694,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 2161,
+          "ppid": 2158,
+          "child_node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+          "profile": "/tmp/pytest-of-runner/pytest-19/test_canonical_classes_defined0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=179.631922",
+            "--basetemp=/tmp/pytest-of-runner/pytest-19/test_canonical_classes_defined0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-19/test_canonical_classes_defined0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 24.065323119000027,
+          "events": {
+            "collection_start": 444.134459667,
+            "collection_end": 444.308780037,
+            "nodes": [
+              "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "setup",
+              "seconds": 0.9367246669999645,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "call",
+              "seconds": 22.164586517999965,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+              "phase": "teardown",
+              "seconds": 0.06545622700002696,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "pending-0-before-measured",
+      "processes": [
+        {
+          "pid": 1783,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_lqnxp6mf",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+          ],
+          "plugin_lifetime_s": 12.12552635999998,
+          "events": {
+            "collection_start": 267.63041916,
+            "collection_end": 269.653728386,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.02812643200002185,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 9.246867861999988,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.12414198799996257,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1787,
+          "ppid": 1783,
+          "child_node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+          "profile": "/tmp/pytest-of-runner/pytest-8/test_staged_save_acknowledges_0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=119.971353",
+            "--basetemp=/tmp/pytest-of-runner/pytest-8/test_staged_save_acknowledges_0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-8/test_staged_save_acknowledges_0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 7.749685700999976,
+          "events": {
+            "collection_start": 270.468576082,
+            "collection_end": 272.501788581,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.02778830600004767,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 4.632035945999974,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.35167472699998825,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "pending-1-after-measured",
+      "processes": [
+        {
+          "pid": 1827,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_8jtvwjpw",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+          ],
+          "plugin_lifetime_s": 12.107443787000022,
+          "events": {
+            "collection_start": 284.598541694,
+            "collection_end": 286.661301985,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.02894573800000444,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 9.190580064000017,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.11664033900001414,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1831,
+          "ppid": 1827,
+          "child_node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+          "profile": "/tmp/pytest-of-runner/pytest-9/test_staged_save_acknowledges_0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=119.970567",
+            "--basetemp=/tmp/pytest-of-runner/pytest-9/test_staged_save_acknowledges_0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-9/test_staged_save_acknowledges_0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 7.761212787000034,
+          "events": {
+            "collection_start": 287.472745769,
+            "collection_end": 289.399662014,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.027345487999980378,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 4.791664132999983,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.3151912339999967,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "pending-2-after-measured",
+      "processes": [
+        {
+          "pid": 1870,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_p0tg0lfo",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+          ],
+          "plugin_lifetime_s": 12.000067629,
+          "events": {
+            "collection_start": 301.668972079,
+            "collection_end": 303.705712996,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.028066338000030555,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 9.101840548000041,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.11793983300003674,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1876,
+          "ppid": 1870,
+          "child_node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+          "profile": "/tmp/pytest-of-runner/pytest-10/test_staged_save_acknowledges_0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=119.971444",
+            "--basetemp=/tmp/pytest-of-runner/pytest-10/test_staged_save_acknowledges_0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-10/test_staged_save_acknowledges_0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 7.659953255000005,
+          "events": {
+            "collection_start": 304.507275122,
+            "collection_end": 306.447556974,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.028022429999964515,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 4.717480293000051,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.28414511600004744,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "pending-3-before-measured",
+      "processes": [
+        {
+          "pid": 1917,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_9epf1kso",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+          ],
+          "plugin_lifetime_s": 12.198250127000051,
+          "events": {
+            "collection_start": 318.578312452,
+            "collection_end": 320.613195077,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.029023163999966073,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 9.322098223000012,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.11700297199996612,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1921,
+          "ppid": 1917,
+          "child_node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+          "profile": "/tmp/pytest-of-runner/pytest-11/test_staged_save_acknowledges_0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=119.970458",
+            "--basetemp=/tmp/pytest-of-runner/pytest-11/test_staged_save_acknowledges_0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-11/test_staged_save_acknowledges_0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 7.834798592000027,
+          "events": {
+            "collection_start": 321.421466544,
+            "collection_end": 323.46152174,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.02793531200001098,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 4.773691602999975,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.29786443999995527,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "pending-4-after-measured",
+      "processes": [
+        {
+          "pid": 1960,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_66msgr2b",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+          ],
+          "plugin_lifetime_s": 11.900267037999981,
+          "events": {
+            "collection_start": 335.673383158,
+            "collection_end": 337.752104754,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.028650838000032763,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 8.948706988999959,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.1278649540000174,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 1964,
+          "ppid": 1960,
+          "child_node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+          "profile": "/tmp/pytest-of-runner/pytest-12/test_staged_save_acknowledges_0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=119.970852",
+            "--basetemp=/tmp/pytest-of-runner/pytest-12/test_staged_save_acknowledges_0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-12/test_staged_save_acknowledges_0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 7.493640947000017,
+          "events": {
+            "collection_start": 338.56447254,
+            "collection_end": 340.46739355,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.02755479799998284,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 4.606089434000012,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.2569760410000299,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "pending-5-before-measured",
+      "processes": [
+        {
+          "pid": 2004,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_6f1ebm87",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+          ],
+          "plugin_lifetime_s": 12.116866991999984,
+          "events": {
+            "collection_start": 352.521227994,
+            "collection_end": 354.589334602,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.0283640240000409,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 9.202505034000012,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.12210547600000154,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 2008,
+          "ppid": 2004,
+          "child_node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+          "profile": "/tmp/pytest-of-runner/pytest-13/test_staged_save_acknowledges_0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=119.97113",
+            "--basetemp=/tmp/pytest-of-runner/pytest-13/test_staged_save_acknowledges_0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-13/test_staged_save_acknowledges_0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 7.715864820000036,
+          "events": {
+            "collection_start": 355.401706795,
+            "collection_end": 357.468521087,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.028721047000033195,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 4.630417900999987,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.28826644100001886,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "pending-6-before-measured",
+      "processes": [
+        {
+          "pid": 2047,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_5q9owwy_",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+          ],
+          "plugin_lifetime_s": 11.94554715800001,
+          "events": {
+            "collection_start": 369.478584731,
+            "collection_end": 371.520983892,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.02828226200000472,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 9.069105756999988,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.11873942500000112,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 2051,
+          "ppid": 2047,
+          "child_node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+          "profile": "/tmp/pytest-of-runner/pytest-14/test_staged_save_acknowledges_0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=119.971225",
+            "--basetemp=/tmp/pytest-of-runner/pytest-14/test_staged_save_acknowledges_0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-14/test_staged_save_acknowledges_0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 7.623252143000002,
+          "events": {
+            "collection_start": 372.331890106,
+            "collection_end": 374.369228614,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.027895781000040643,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 4.598242142000004,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.2598637789999998,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "pending-7-after-measured",
+      "processes": [
+        {
+          "pid": 2090,
+          "ppid": 1289,
+          "child_node": null,
+          "profile": "/tmp/tldw_test_config_g3jmv0p7",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=180",
+            "-q",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+          ],
+          "plugin_lifetime_s": 11.949294055999985,
+          "events": {
+            "collection_start": 386.345537533,
+            "collection_end": 388.409468065,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.028325120999966202,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 9.044643160000021,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.12136371799999779,
+              "outcome": "passed"
+            }
+          ]
+        },
+        {
+          "pid": 2094,
+          "ppid": 2090,
+          "child_node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+          "profile": "/tmp/pytest-of-runner/pytest-15/test_staged_save_acknowledges_0/private-profile-process/profile",
+          "wrapper_source": "/opt/tldw-private-startup-40780/repo/Tests/private_profile.py",
+          "python": "/opt/tldw-private-startup-40780/venv/bin/python",
+          "argv": [
+            "/opt/tldw-private-startup-40780/venv/lib/python3.12/site-packages/pytest/__main__.py",
+            "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+            "--ignore-glob=*",
+            "-p",
+            "pytest_asyncio.plugin",
+            "-p",
+            "pytest_timeout",
+            "-q",
+            "--timeout=119.97116",
+            "--basetemp=/tmp/pytest-of-runner/pytest-15/test_staged_save_acknowledges_0/private-profile-process/pytest",
+            "--junitxml=/tmp/pytest-of-runner/pytest-15/test_staged_save_acknowledges_0/private-profile-process/pytest.xml"
+          ],
+          "plugin_lifetime_s": 7.615714572000002,
+          "events": {
+            "collection_start": 389.235351479,
+            "collection_end": 391.184388054,
+            "nodes": [
+              "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]"
+            ]
+          },
+          "reports": [
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "setup",
+              "seconds": 0.02783001500000637,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "call",
+              "seconds": 4.665363730000024,
+              "outcome": "passed"
+            },
+            {
+              "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]",
+              "phase": "teardown",
+              "seconds": 0.2592688080000016,
+              "outcome": "passed"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "verification": "....s.......................                                             [100%]\n============================= slowest 25 durations =============================\n9.38s call     Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[0-120x35]\n9.31s call     Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[0-80x24]\n9.16s call     Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[1-120x35]\n8.72s call     Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[1-80x24]\n8.24s call     Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[2-120x35]\n7.72s call     Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[2-80x24]\n3.46s call     Tests/CI/test_private_profile_child_deadline.py::test_a_hung_child_fails_its_parent_with_its_own_timeout_and_stacks\n2.35s call     Tests/UI/test_component_pattern_governance.py::test_ownership_scan_parses_sources_once_and_observes_changes\n\n(17 durations < 1s hidden.)\n=========================== short test summary info ============================\nSKIPPED [1] Tests/CI/test_private_profile_child_deadline.py:172: the child of the next test\n27 passed, 1 skipped in 64.83s (0:01:04)\n",
+  "harness": {
+    "benchmark.py": "\"\"\"Alternating actual private-profile parents/children in a dedicated checkout.\"\"\"\nimport argparse\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\nimport statistics\nimport subprocess\nimport time\n\nparser = argparse.ArgumentParser()\nparser.add_argument('--repo', type=Path, required=True)\nparser.add_argument('--python', required=True)\nparser.add_argument('--output', type=Path, required=True)\nargs = parser.parse_args()\nrepo = args.repo.resolve()\npayload = Path(__file__).resolve().parent\noutput = args.output.resolve()\noutput.mkdir(exist_ok=True)\nmanifest = json.loads((payload/'manifest.json').read_text())\nassert subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip() == manifest['base']\nassert (repo/'.startup-benchmark-40780').is_file(), 'dedicated benchmark checkout required'\nfor name, hashes in manifest['files'].items():\n    assert hashlib.sha256((repo/name).read_bytes()).hexdigest() in hashes.values(), name\n\nenv = dict(os.environ, PYTEST_DISABLE_PLUGIN_AUTOLOAD='1',\n           PYTHONPATH=str(payload)+os.pathsep+str(repo),\n           PYTEST_PLUGINS='tldw_linux_probe', PYTEST_ADDOPTS='')\nfor name in ('TLDW_TEST_PRIVATE_PROFILE_NODE','TLDW_TEST_CONFIG_ROOT',\n             'TLDW_TEST_CONFIG_ROOT_OWNER','PYTEST_XDIST_WORKER','PYTEST_XDIST_WORKER_COUNT'):\n    env.pop(name, None)\nbase = [args.python,'-m','pytest','-p','pytest_asyncio.plugin','-p','pytest_timeout',\n        '-p','no:cacheprovider','--timeout=180','-q']\nnodes = {\n    'connect': 'Tests/UI/test_settings_connect_rows.py::test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id',\n    'pending': 'Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[later-appearance]',\n    'governance': 'Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet',\n}\nrows = []\nprofiles = set()\ntry:\n    for label,node in nodes.items():\n        order = ('before','after','after','before','after','before','before','after')\n        if label == 'governance':\n            order = order[:4]\n        for index,revision in enumerate(order):\n            for name in manifest['files']:\n                (repo/name).write_bytes((payload/revision/name).read_bytes())\n            for warm in (True,False):\n                trial = output/f'{label}-{index}-{revision}-{\"warm\" if warm else \"measured\"}'\n                trial.mkdir()\n                trial_env = dict(env,TLDW_BENCH_OUTPUT=str(trial))\n                command = base+[node]+(['--collect-only'] if warm else [])\n                start = time.perf_counter()\n                with (trial/'pytest.log').open('w') as log:\n                    result = subprocess.run(command,cwd=repo,env=trial_env,\n                                            stdout=log,stderr=subprocess.STDOUT,timeout=240)\n                elapsed = time.perf_counter()-start\n                assert result.returncode == 0, str(trial/'pytest.log')\n                if warm:\n                    continue\n                records = [json.loads(p.read_text()) for p in trial.glob('process-*.json')]\n                children = [r for r in records if r['child_node'] == node]\n                parents = [r for r in records if r['child_node'] is None]\n                assert len(children) == len(parents) == 1, records\n                child,parent = children[0],parents[0]\n                assert child['events']['nodes'] == parent['events']['nodes'] == [node]\n                assert child['pid'] != parent['pid']\n                assert child['profile'] != parent['profile']\n                assert child['profile'] not in profiles\n                profiles.add(child['profile'])\n                assert Path(child['wrapper_source']).resolve() == repo/'Tests/private_profile.py'\n                assert ('--ignore-glob=*' in child['argv']) == (revision == 'after')\n                assert len(child['reports']) == 3 and all(r['outcome']=='passed' for r in child['reports'])\n                phases = {r['phase']:r['seconds'] for r in child['reports']}\n                row = {'case':label,'revision':revision,'iteration':index,\n                       'total_s':elapsed,\n                       'child_collection_s':child['events']['collection_end']-child['events']['collection_start'],\n                       'child_phases':phases,\n                       'parent_call_s':next(r['seconds'] for r in parent['reports'] if r['phase']=='call')}\n                rows.append(row)\n                (output/'results.json').write_text(json.dumps(rows,indent=2))\n                print(json.dumps(row),flush=True)\nfinally:\n    for name in manifest['files']:\n        (repo/name).write_bytes((payload/'after'/name).read_bytes())\nfor label in nodes:\n    for metric in ('total_s','child_collection_s','parent_call_s'):\n        means = {revision:statistics.mean(r[metric] for r in rows if r['case']==label and r['revision']==revision) for revision in ('before','after')}\n        print(label,metric,means,'saving_pct',100*(1-means['after']/means['before']),flush=True)\n",
+    "tldw_linux_probe.py": "\"\"\"Record parent/child phases without changing collection or fixtures.\"\"\"\nimport json\nimport os\nimport sys\nimport time\nfrom pathlib import Path\n\nstarted = time.perf_counter()\nevents = {}\nreports = []\n\n\ndef pytest_collection(session):\n    events['collection_start'] = time.perf_counter()\n\n\ndef pytest_collection_finish(session):\n    events['collection_end'] = time.perf_counter()\n    events['nodes'] = [item.nodeid for item in session.items]\n\n\ndef pytest_runtest_logreport(report):\n    reports.append({'node': report.nodeid, 'phase': report.when,\n                    'seconds': report.duration, 'outcome': report.outcome})\n\n\ndef pytest_unconfigure(config):\n    root = os.environ.get('TLDW_BENCH_OUTPUT')\n    if not root:\n        return\n    wrapper = sys.modules.get('Tests.private_profile')\n    data = {'pid': os.getpid(), 'ppid': os.getppid(),\n            'child_node': os.environ.get('TLDW_TEST_PRIVATE_PROFILE_NODE'),\n            'profile': os.environ.get('TLDW_TEST_CONFIG_ROOT'),\n            'wrapper_source': getattr(wrapper, '__file__', None),\n            'python': sys.executable, 'argv': sys.argv,\n            'plugin_lifetime_s': time.perf_counter()-started,\n            'events': events, 'reports': reports}\n    (Path(root) / f'process-{os.getpid()}.json').write_text(json.dumps(data, indent=2))\n",
+    "runner.sh": "#!/bin/bash\nset -euo pipefail\ncd /opt/tldw-private-startup-40780\nmkdir -p results\nprintf 'SETUP_START '; date -u --iso-8601=seconds\nmkdir repo\ncd repo\ngit init -q\ngit remote add origin https://github.com/rmusser01/tldw_chatbook.git\ngit fetch -q --depth=1 origin 1455ceeb96c7c113a569a49a126fd287d4ac593b\ngit checkout -q --detach FETCH_HEAD\ntouch .startup-benchmark-40780\npython3.12 -m venv ../venv\n../venv/bin/python -m pip install -e . pytest==8.4.2 pytest-asyncio==1.2.0 pytest-timeout==2.4.0 pytest-cov==7.1.0 pytest-xdist==3.8.0 packaging aiohttp-jinja2 > ../results/install.log 2>&1\n../venv/bin/python -m pip list --format=json > ../results/packages.json\n{ uname -a; lscpu; free -m; ../venv/bin/python --version; git rev-parse HEAD; date -u --iso-8601=seconds; } > ../results/guest.txt\nprintf 'BENCHMARK_START '; date -u --iso-8601=seconds\n../venv/bin/python ../benchmark.py --repo \"$PWD\" --python /opt/tldw-private-startup-40780/venv/bin/python --output ../results/measurements | tee ../results/benchmark.log\ncp ../after/Tests/CI/test_private_profile_collection.py Tests/CI/\nmkdir -p .pytest_cache\nprintf 'VERIFICATION_START '; date -u --iso-8601=seconds\nPYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../venv/bin/python -m pytest Tests/CI/test_private_profile_collection.py Tests/CI/test_private_profile_child_deadline.py Tests/test_private_profile_failure_report.py Tests/test_private_profile_coverage.py Tests/UI/test_component_pattern_governance.py::test_ownership_scan_parses_sources_once_and_observes_changes Tests/UI/test_settings_category_sweep.py::test_the_sweep_groups_cover_every_category_once Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus -p pytest_asyncio.plugin -p pytest_timeout -p no:cacheprovider --timeout=180 -q > ../results/verification.log 2>&1\ncat ../results/verification.log\nprintf 'BENCHMARK_COMPLETE '; date -u --iso-8601=seconds\n",
+    "guest-root.sh": "#!/bin/bash\nset -euo pipefail\nexec >/dev/console 2>&1\nfinish() {\n  rc=$?\n  echo \"TLDW_STARTUP_BENCHMARK_EXIT=$rc\"\n  if test -d /opt/tldw-private-startup-40780/results; then\n    echo TLDW_STARTUP_ARTIFACT_BEGIN\n    tar -C /opt/tldw-private-startup-40780 -czf - results | base64\n    echo TLDW_STARTUP_ARTIFACT_END\n  fi\n  sync\n  poweroff -f\n}\ntrap finish EXIT\ncd /opt/tldw-private-startup-40780\ntar -xzf payload.tar.gz\nchown -R runner:runner /opt/tldw-private-startup-40780\nrunuser -u runner -- /bin/bash /opt/tldw-private-startup-40780/runner.sh\n",
+    "start.sh": "#!/bin/sh\nset -eu\nstate=/var/lib/github-qemu-runner\nbench=$state/startup-benchmark-40780\ntest ! -e \"$bench\"\ninstall -d -o gh-runner -g gh-runner -m 0700 \"$bench\"\ninstall -o gh-runner -g gh-runner -m 0600 /tmp/tldw-private-startup-linux-40780/user-data \"$bench/user-data\"\ninstall -o gh-runner -g gh-runner -m 0600 /tmp/tldw-private-startup-linux-40780/meta-data \"$bench/meta-data\"\nrunuser -u gh-runner -- qemu-img create -f qcow2 -F qcow2 -b \"$state/images/base.qcow2\" \"$bench/overlay.qcow2\"\nrunuser -u gh-runner -- cloud-localds \"$bench/seed.img\" \"$bench/user-data\" \"$bench/meta-data\"\nsystemd-run --unit=tldw-ci-startup-benchmark-40780 --collect -p User=gh-runner -p SupplementaryGroups=kvm -p MemoryMax=8G -p CPUQuota=200% -p RuntimeMaxSec=20min -p NoNewPrivileges=yes -p ProtectSystem=strict -p ProtectHome=yes -p \"ReadWritePaths=$bench\" -p \"BindReadOnlyPaths=/etc/github-qemu-runner/resolv.conf:/etc/resolv.conf\" -p 'IPAddressDeny=127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 224.0.0.0/4 ::1/128 fc00::/7 fe80::/10 ff00::/8' /usr/bin/qemu-system-x86_64 -accel kvm -cpu host -machine q35 -smp 2 -m 6144 -drive \"file=$bench/overlay.qcow2,if=virtio,format=qcow2\" -drive \"file=$bench/seed.img,if=virtio,format=raw,readonly=on\" -netdev user,id=n0 -device virtio-net-pci,netdev=n0 -display none -serial \"file:$bench/console.log\" -no-reboot -name tldw-ci-startup-benchmark-40780\n"
+  },
+  "limitations": [
+    "Idle host, one bounded VM, no full-gate throughput claim.",
+    "Python 3.12.3 system venv, not the deployment setup-python 3.12.16 interpreter.",
+    "Four before/after samples per Settings case, two per governance case; no population p95 inference.",
+    "Collector-only whole-test timing ranges overlap."
+  ]
+}

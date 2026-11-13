@@ -991,7 +991,8 @@ MINIMUM_FILES = 2023
 MINIMUM_FILES = 2028
 # TASK-40720 (2026-11-13): append the native sync admission file at the tail.
 # The floor is the measured entry count.
-MINIMUM_FILES = 2029
+# TASK-40750 adds the ownership scanner's completeness/work-budget regression.
+MINIMUM_FILES = 2030
 
 
 def read_census(path: Path) -> list[str]:
@@ -1221,7 +1222,7 @@ def _parametrize_ids(decorator: ast.Call, scope: dict[str, ast.AST]) -> list[str
         ids.append(
             "-".join(
                 _value_id(element, name, index, scope)
-                for element, name in zip(values.elts, argnames)
+                for element, name in zip(values.elts, argnames, strict=False)
             )
         )
     return _unique(ids)
