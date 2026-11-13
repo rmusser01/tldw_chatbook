@@ -1,8 +1,13 @@
-"""Native refresh requests do not allocate work before Textual admission."""
+"""Native refresh requests do not allocate work before Textual admission.
+
+Entry is observed through recording seams on the screen instance, which the
+production schedulers read when they schedule: a coroutine created before
+admission would be the recording wrapper's, so a refused or cancelled worker
+would leave its "never awaited" RuntimeWarning.
+"""
 
 import asyncio
 import gc
-import sys
 import warnings
 
 import pytest
@@ -14,6 +19,22 @@ from Tests.UI.test_console_tab_switch_binds_composer import _host, _running
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+
+
+def record_native_sync_entry(screen, entered):
+    """Record each task that enters the screen's native sync.
+
+    The wrapper is a plain function, so a run poll's display path would treat
+    it as a custom callback and drop ``_preparing_poll``; use it only while no
+    run poll is active.
+    """
+    native_sync = screen._sync_native_console_chat_ui
+
+    async def recording_sync(*args, **kwargs):
+        entered.append(asyncio.current_task())
+        return await native_sync(*args, **kwargs)
+
+    screen._sync_native_console_chat_ui = recording_sync
 
 
 async def test_native_refresh_survives_worker_replacement_and_pre_entry_cancel():
@@ -44,50 +65,50 @@ async def test_native_refresh_survives_worker_replacement_and_pre_entry_cancel()
                 screen._console_sync_requested = True
                 screen._console_sync_maintenance_resume()
 
+            entered = []
+            record_native_sync_entry(screen, entered)
+
+            def quiet():
+                return not screen._console_sync_in_progress and not getattr(
+                    screen, "_console_control_bar_replay_whole_sync", False
+                )
+
             async def exercise(cancel):
-                entered = []
-                previous = sys.getprofile()
-
-                def observe(frame, event, _arg):
-                    if (
-                        event == "call"
-                        and frame.f_code
-                        is ChatScreen._sync_native_console_chat_ui.__code__
-                    ):
-                        entered.append(asyncio.current_task())
-
+                # A pending whole-sync replay takes the resume's request
+                # instead of a console-sync worker.
+                assert await until(quiet, 8)
+                before = set(host.workers)
                 request()
                 first = next(
                     w
                     for w in host.workers
-                    if w.node is screen and w.group == "console-sync"
+                    if w not in before
+                    and w.node is screen
+                    and w.group == "console-sync"
                 )
                 first_task = first._task
-                sys.setprofile(observe)
-                try:
-                    if cancel:
-                        first.cancel()
-                        await asyncio.gather(first_task, return_exceptions=True)
-                        assert first.state != WorkerState.SUCCESS
-                        assert first_task not in entered
-                    else:
-                        request()
-                        second = next(
-                            w
-                            for w in host.workers
-                            if w.node is screen
-                            and w.group == "console-sync"
-                            and w is not first
-                        )
-                        await asyncio.gather(
-                            first_task, second._task, return_exceptions=True
-                        )
-                        assert first_task not in entered
-                        assert second._task in entered
-                        assert second.state == WorkerState.SUCCESS
-                        assert not screen._console_sync_in_progress
-                finally:
-                    sys.setprofile(previous)
+                if cancel:
+                    first.cancel()
+                    await asyncio.gather(first_task, return_exceptions=True)
+                    assert first.state != WorkerState.SUCCESS
+                    assert first_task not in entered
+                else:
+                    request()
+                    second = next(
+                        w
+                        for w in host.workers
+                        if w not in before
+                        and w.node is screen
+                        and w.group == "console-sync"
+                        and w is not first
+                    )
+                    await asyncio.gather(
+                        first_task, second._task, return_exceptions=True
+                    )
+                    assert first_task not in entered
+                    assert second._task in entered
+                    assert second.state == WorkerState.SUCCESS
+                    assert not screen._console_sync_in_progress
 
             await exercise(True)
             store = screen._ensure_console_chat_store()
@@ -96,15 +117,7 @@ async def test_native_refresh_survives_worker_replacement_and_pre_entry_cancel()
             assert await until(
                 lambda: bool(screen.query("#console-session-tab-" + session.id)), 8
             )
-            assert await until(
-                lambda: (
-                    not screen._console_sync_in_progress
-                    and not getattr(
-                        screen, "_console_control_bar_replay_whole_sync", False
-                    )
-                ),
-                8,
-            )
+            assert await until(quiet, 8)
             original_tabs = screen._sync_console_native_session_tabs
 
             async def fail_live_tabs():
@@ -160,45 +173,35 @@ async def test_context_snapshot_native_publication_owns_deferred_refresh(
             )
             key = snapshot._cache_key(controller, session_id)
             assert key is not None and key != snapshot.key
+            # The publication reads both seams from the screen when it runs.
             publications, entered = [], []
-            schedule_code = screen.run_worker.__func__.__code__
-            previous = sys.getprofile()
+            record_native_sync_entry(screen, entered)
+            schedule = screen.run_worker
 
-            def observe(frame, event, result):
-                if (
-                    event == "return"
-                    and frame.f_code is schedule_code
-                    and frame.f_locals.get("group") == "console-context-publication"
-                    and frame.f_back.f_locals.get("self") is snapshot
-                ):
-                    publications.append(result)
+            def recording_schedule(*args, **kwargs):
+                worker = schedule(*args, **kwargs)
+                if kwargs.get("group") == "console-context-publication":
+                    publications.append(worker)
                     if cancel_before_entry:
-                        result.cancel()
-                elif (
-                    event == "call"
-                    and frame.f_code is ChatScreen._sync_native_console_chat_ui.__code__
-                ):
-                    entered.append(asyncio.current_task())
+                        worker.cancel()
+                return worker
 
-            sys.setprofile(observe)
-            try:
-                await snapshot._refresh(controller, session_id, key)
-                assert len(publications) == 1
-                worker = publications.pop()
-                assert worker.group == "console-context-publication"
-                await asyncio.gather(worker._task, return_exceptions=True)
-                if cancel_before_entry:
-                    assert worker._task not in entered
-                    assert worker.is_cancelled
-                else:
-                    assert worker._task in entered
-                    assert worker.state == WorkerState.SUCCESS
-                    assert await until(
-                        lambda: bool(screen.query("#console-session-tab-" + tab.id)), 8
-                    )
-                del worker
-            finally:
-                sys.setprofile(previous)
+            screen.run_worker = recording_schedule
+            await snapshot._refresh(controller, session_id, key)
+            assert len(publications) == 1
+            worker = publications.pop()
+            assert worker.group == "console-context-publication"
+            await asyncio.gather(worker._task, return_exceptions=True)
+            if cancel_before_entry:
+                assert worker._task not in entered
+                assert worker.is_cancelled
+            else:
+                assert worker._task in entered
+                assert worker.state == WorkerState.SUCCESS
+                assert await until(
+                    lambda: bool(screen.query("#console-session-tab-" + tab.id)), 8
+                )
+            del worker
             gc.collect()
         gc.collect()
     leaked = [
