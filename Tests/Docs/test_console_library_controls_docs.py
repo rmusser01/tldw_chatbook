@@ -34,6 +34,10 @@ DOC_CONTRACT: dict[str, tuple[str, ...]] = {
         "Send once",
         "Cancel",
         "Zero results",
+        # TASK-40330: handoffs carry bounded excerpts, not a title label.
+        "the first 3,000 characters of its transcript, each message labelled "
+        "with its sender",
+        "the first 500 characters of its stored text",
     ),
     "Docs/User_Guide/settings/rag.md": (
         "does not grant automatic retrieval or assistant Library access",
@@ -52,12 +56,16 @@ DOC_CONTRACT: dict[str, tuple[str, ...]] = {
         "assistant generation state",
         "unresolved imported or remote state remains inert",
     ),
-    # TASK-38974: pinned at the wording f09a7786d4 shipped for "Use as source".
+    # TASK-38974: pinned at the wording f09a7786d4 shipped for "Use as source";
+    # TASK-40330: it stages an excerpt, not a title label.
     "Docs/User_Guide/library/media-and-conversations.md": (
         "does not send automatically or change the conversation's Auto or "
         "Assistant setting",
-        "Use as source stages a reference to the selected conversation in the "
+        "Use as source stages an excerpt of the selected conversation in the "
         "current Console session",
+        "the first 3,000 characters of its transcript, each message labelled "
+        "with its sender",
+        "the first 500 characters of its stored text",
     ),
     "Docs/Development/Agent-Tools/local-library-tools.md": (
         "selector, not an enable switch",

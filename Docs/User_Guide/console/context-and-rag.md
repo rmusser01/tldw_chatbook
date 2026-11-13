@@ -982,12 +982,15 @@ composer menu's **Attach file**. The control-bar **Context rail**
 action opens the "Console context" rail; Library staging itself happens
 from the Library surfaces named above.
 
-Media, notes, and conversation handoffs now actually reach the model on
-send — they used to display as staged while delivering nothing. Notes
-send a real excerpt of the note body; media and conversation handoffs
-currently send only a short generic label naming the item (e.g. "Media
-staged: \<title\>"), not an excerpt of the content itself — upgrading
-that to a real excerpt is still open (task-2376). Other handoff kinds
+Media, notes, and conversation handoffs reach the model on send, each as
+a bounded excerpt of its content. A note sends the first 4,000 characters
+of its body. A media item
+("Use in Console") sends the first 500 characters of its stored text,
+followed by its title and ID; Library's Media reader ▸ Info says whether that
+excerpt is complete or truncated. A conversation ("Use as source") sends the
+first 3,000 characters of its transcript, each message labelled with its
+sender, followed by its title and ID; a longer conversation is cut there and
+its later messages are left out, with no notice. Other handoff kinds
 (skills, watchlists/collections snapshots, quizzes, personas) cannot
 reach the model at all yet: their Sources rows render **Listed — not
 sent** (expanding a row says so explicitly) instead of Ready, because

@@ -771,12 +771,15 @@ Empty state: "No conversations yet. Chat in Console and it appears here."
 There is no create, rename, or delete here — this panel treats your chats
 as source material, not sessions.
 
-**Use as source** stages a reference to the selected conversation in the
+**Use as source** stages an excerpt of the selected conversation in the
 *current* Console session. It preserves an existing draft; if the draft is
 empty, it fills in "Use this conversation as source context for my next
 question." It does not send automatically or change the conversation's Auto
-or Assistant setting. The current reference contains a title-based summary
-label, not the transcript text; real excerpts remain tracked in task-2376.
+or Assistant setting. The excerpt is the first 3,000 characters of its
+transcript, each message labelled with its sender, followed by the
+conversation's title, ID, message count, workspace, and last update. A longer
+conversation is cut at 3,000 characters and its later messages are left out;
+nothing on screen says so. When you send, the model receives the excerpt.
 
 **Resume conversation** (keyboard: `c`) instead opens the original saved
 conversation and its active branch. **Restore and resume** first recovers
@@ -813,8 +816,8 @@ an archived conversation, with confirmation where required.
    header. When the inline notice says it will add the conversation to the
    active workspace, the same press links it and continues. **Link to
    workspace** adds membership without staging; `c` invokes Resume instead.
-2. Console opens with the selected reference staged and your existing draft
-   preserved. An empty draft receives the suggested context prompt. Edit the
+2. Console opens with the conversation's excerpt staged and your existing
+   draft preserved. An empty draft receives the suggested context prompt. Edit the
    draft before sending; staging itself sends nothing. See the excerpt limit
    above before relying on the conversation's contents.
 3. **Un-stage** clears the staged evidence without changing the draft or
@@ -1011,13 +1014,14 @@ Escape's return to the list live at 100x30).*
   link made from Search evidence has no Undo in the reader (remove it from
   the workspace's sources). An item that is never used stays unlinked, so
   the Default workspace still means what it meant.
-- **Staging now actually reaches the model.** "Use in Console" (media)
-  and "Open in Console" (conversations) used to stage content that
-  displayed as attached but never made it into what the model was sent
-  — that's fixed. What arrives today is a real, correctly attributed
-  reference to the item, but a thin one: a short generic label (e.g.
-  "Media staged: \<title\>"), not an excerpt of the actual content —
-  upgrading that to a real excerpt is still open (task-2376).
+- **Staging sends an excerpt, not the whole item.** "Use in Console"
+  (media) sends the first 500 characters of its stored text, followed by
+  its title, ID, and type, author, and keyword lines. Reader ▸ Info's "Use in
+  Console sends:" line tells you which you will get: "Complete stored text
+  excerpt", "Stored text excerpt (truncated)", or "Metadata only (no stored
+  text)". "Use as source" (conversations) sends the first 3,000 characters of
+  its transcript, each message labelled with its sender; see
+  [Conversations](#conversations).
 - **No conversation delete here** — by design, this panel never modifies
   chats. Manage sessions from Console itself.
 - **"Media item is unavailable."** — the item was removed while you had it
