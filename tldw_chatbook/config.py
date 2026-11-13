@@ -6465,9 +6465,9 @@ def insert_absent_cli_config_bool(section: str, key: str, value: bool) -> bool:
             key,
         )
         try:
-            _publish_runtime_config_unlocked(
-                raw_config=tomllib.loads(replacement), config_path=config_path
-            )
+            # A full reload: publishing the parsed text would skip the loader's
+            # raw-file transforms, e.g. legacy replay_thinking (v5r1 R1-4).
+            _publish_runtime_config_unlocked(config_path=config_path)
         except Exception:  # The line is on disk; report that, not a failed write.
             raise ConfigPostCommitError(
                 ConfigFileSnapshot(config_path, replacement), None
