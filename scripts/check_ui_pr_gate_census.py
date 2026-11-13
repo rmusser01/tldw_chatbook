@@ -989,6 +989,9 @@ MINIMUM_FILES = 2023
 # stale-snapshot pins and the eager held-trust-build closing node at the tail.
 # The floor is the measured entry count.
 MINIMUM_FILES = 2028
+# TASK-40720 (2026-11-13): append the native sync admission file at the tail.
+# The floor is the measured entry count.
+MINIMUM_FILES = 2029
 
 
 def read_census(path: Path) -> list[str]:
