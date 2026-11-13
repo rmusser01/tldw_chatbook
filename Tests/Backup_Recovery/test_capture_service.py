@@ -462,3 +462,49 @@ def test_local_sqlite_wal_lifecycle_does_not_void_a_reviewed_scope(
         include_known_profiles=True,
     )
     assert result.manifest_bytes
+
+
+def test_console_tokenizer_lookup_leaves_no_tokenizers_root_to_restore(
+    tmp_path, monkeypatch
+):
+    """A profile that only used Console carries no custom-tokenizers root.
+
+    TASK-34100.16.1 review (AC#3): opening Console constructed the tokenizer
+    manager, which created an empty ``~/.config/tldw_cli/tokenizers`` (0755).
+    Every later archive then carried ``tokenizers.custom`` as an included
+    root, and isolated restore on a new machine (where that shared folder does
+    not exist as an empty owner-only container) refused every folder with
+    ``isolated_destination_parent_overlaps_control``. Only a write creates
+    the folder now, owner-only.
+    """
+    from tldw_chatbook.Backup_Recovery import capture_service
+    from tldw_chatbook.Utils.custom_tokenizers import CustomTokenizerManager
+
+    home = tmp_path / "home"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    monkeypatch.setenv("HOME", str(home))
+    root = source.parent / "recovery-bootstrap"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+    tokenizers = source.parent / "tokenizers"
+
+    manager = CustomTokenizerManager()  # what Console's token display builds
+    assert manager.get_tokenizer_for_model("gpt-4o", "openai") is None
+    assert manager.list_available_tokenizers() == []
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+
+    assert not tokenizers.exists(), "a read created the tokenizers folder"
+    assert {
+        item.status for item in preview.items if item.owner == "tokenizers.custom"
+    } == {"unused"}
+    manager.add_mapping("model", "tokenizer")  # the first write creates it
+    assert tokenizers.is_dir() and tokenizers.stat().st_mode & 0o077 == 0
