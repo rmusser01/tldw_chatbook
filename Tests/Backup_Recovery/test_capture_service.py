@@ -367,3 +367,98 @@ def test_device_state_store_lifecycle_does_not_void_a_reviewed_scope(
 
     assert after_close == while_open, "closing the store voided the review"
     assert before == while_open, "opening the store voided the review"
+
+
+@pytest.mark.parametrize(
+    "owner",
+    [
+        "notes.sync_state",
+        "personal_context.interview_drafts",
+        pytest.param(
+            "personal_context.repository",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "TASK-34100.16.1.1: its present files stay explicit "
+                    "unsupported rows (owner decision 2026-11-06), and a "
+                    "present row's path is reviewed scope"
+                ),
+            ),
+        ),
+    ],
+)
+def test_local_sqlite_wal_lifecycle_does_not_void_a_reviewed_scope(
+    tmp_path, monkeypatch, owner
+):
+    """No uncaptured local SQLite store's WAL open/close changes the scope.
+
+    TASK-34100.16.1 review: the excluded stores (the Notes device state and
+    the Personal Context interview drafts) share the fixed code path; Create
+    runs with the digest reviewed while the store was open.
+    ``personal_context.repository`` is declared but not excluded: its
+    ``-wal``/``-shm`` rows flip between unsupported (present, path in scope)
+    and unused (absent) as Personal Context opens and closes per-operation
+    WAL connections, so a Review taken during one fails at Create with
+    ``scope_changed``. That case is held for TASK-34100.16.1.1.
+    """
+    import sqlite3
+    from contextlib import closing
+    from pathlib import Path
+
+    from tldw_chatbook.Backup_Recovery import capture_service
+
+    home = tmp_path / "home"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    root = source.parent / "recovery-bootstrap"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+
+    def review():
+        return preview_capture((source,), options=options, include_known_profiles=True)
+
+    first = review()
+    database = next(
+        item.path
+        for item in first.items
+        if item.owner == owner and item.logical_id.endswith(":" + owner)
+    )
+    sidecars = [Path(f"{database}{suffix}") for suffix in ("-wal", "-shm")]
+    _populate_required_dependencies(first)
+    database.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(database)) as connection:  # a store in use before
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE IF NOT EXISTS t (x)")
+        connection.commit()
+    assert not any(path.exists() for path in sidecars)
+    before = review().scope_digest
+    held = sqlite3.connect(database)
+    try:
+        held.execute("BEGIN")
+        held.execute("SELECT count(*) FROM t").fetchone()  # a held WAL read
+        assert all(path.exists() for path in sidecars)
+        while_open = review().scope_digest
+    finally:
+        held.close()
+    assert not any(path.exists() for path in sidecars), "SQLite kept its sidecars"
+    after_close = review().scope_digest
+
+    assert after_close == while_open, "closing the store voided the review"
+    assert before == while_open, "opening the store voided the review"
+    result = capture(
+        (source,),
+        while_open,
+        tmp_path / "after-close.tldw-backup.zip",
+        options=options,
+        cancel=Event(),
+        include_known_profiles=True,
+    )
+    assert result.manifest_bytes
