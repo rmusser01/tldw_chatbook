@@ -2356,6 +2356,60 @@ async def test_a_saved_chat_with_a_remote_schemeless_llamacpp_endpoint_sends_not
     assert row == _ADD_SCHEME_ROW
 
 
+_NO_LONGER_CONFIGURED = (
+    "Provider blocked: this custom endpoint is no longer configured. "
+    "Restore its entry or choose another provider before sending."
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["removed", "skipped"])
+async def test_readiness_for_a_missing_custom_endpoint_says_to_restore_its_entry(
+    entry, monkeypatch
+):
+    """TASK-40302 AC#1: a chat on a ``custom-ep:`` id whose entry was removed,
+    or skipped at load (TASK-39151's schemeless remote llama.cpp entry), read
+    "Provider blocked: 'custom_ep:gpu' is not available in Console yet." with
+    the label "Unknown": a missing feature and a mangled internal id, while
+    the send says to restore the entry."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    settings, config = _llamacpp_source("custom_entry", "gpu-box.lan:8080")
+    if entry == "removed":
+        del config["custom_endpoints"]
+
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    resolution = await _resolve_llamacpp_send(settings, config, [])
+
+    assert readiness.detail == resolution.visible_copy == _NO_LONGER_CONFIGURED
+    assert readiness.native_send_supported is False
+    assert readiness.recovery_action == "select_provider"
+    shown = (readiness.label, readiness.detail, readiness.provider_display_name)
+    assert not any("custom_ep" in text or "custom-ep" in text for text in shown), shown
+
+
+def test_a_provider_console_does_not_support_keeps_its_copy():
+    """TASK-40302 AC#2."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="future_provider", model="m"),
+        app_config={"api_settings": {}},
+        environ={},
+    )
+
+    assert readiness.blocker == "provider_unsupported"
+    assert readiness.detail == (
+        "Provider blocked: 'future_provider' is not available in Console yet. "
+        "Choose a supported provider."
+    )
+
+
 @pytest.mark.parametrize(
     ("endpoint", "row"),
     [

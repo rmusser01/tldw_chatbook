@@ -801,7 +801,8 @@ the Endpoint line reads the same for all of them, and a send reads "Provider
 blocked: invalid llama.cpp base URL." A llama.cpp custom endpoint whose base
 URL is such an address is skipped when the config loads, so a chat on it reads
 "Provider blocked: this custom endpoint is no longer configured. Restore its
-entry or choose another provider before sending."
+entry or choose another provider before sending." A chat whose custom endpoint
+was removed reads the same, in Chat settings and when you send.
 A value typed without a scheme and without a port is shown as "invalid
 endpoint" unless it is on this computer (`localhost`, any `127.x.x.x` address
 or `[::1]`), because it could be a key pasted into the field.

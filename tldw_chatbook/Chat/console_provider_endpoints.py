@@ -33,6 +33,12 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
     "Use an http(s) URL such as http://127.0.0.1:9099."
 )
+#: A ``custom-ep:`` id with no configured entry (removed, or skipped at load);
+#: the send and readiness both say it (TASK-40302).
+CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY = (
+    "Provider blocked: this custom endpoint is no longer configured. "
+    "Restore its entry or choose another provider before sending."
+)
 _ENDPOINT_SETTING_KEYS = (
     "api_base_url",
     "api_base",

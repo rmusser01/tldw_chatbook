@@ -61,6 +61,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_endpoints import (
     CONFIG_READING_LOCAL_EXECUTION_KEYS,
+    CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
     URL_BASED_PROVIDER_KEYS,
     adapter_api_base_url,
     effective_provider_endpoint,
@@ -4432,10 +4433,7 @@ class ConsoleProviderGateway:
             return self._blocked_resolution(
                 selection,
                 provider=selection.provider,
-                visible_copy=(
-                    "Provider blocked: this custom endpoint is no longer configured. "
-                    "Restore its entry or choose another provider before sending."
-                ),
+                visible_copy=CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
             )
         if selection.execution_provider:
             # ADR-200: a routed child freezes execution as well as its URL.

@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     supported_generation_fields,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
     INVALID_LLAMACPP_BASE_URL_COPY,
     URL_BASED_PROVIDER_KEYS,  # also re-exported; console_settings_modal imports it from here
@@ -1850,9 +1851,12 @@ def build_console_settings_readiness(
     from tldw_chatbook.Chat.custom_endpoint_registry import (
         entry_for,
         family_execution_key,
+        split_custom_endpoint_id,
     )
 
     entry = entry_for(app_config, settings.provider)
+    # TASK-40302: a custom-ep id whose entry was removed or skipped at load.
+    entry_missing = entry is None and bool(split_custom_endpoint_id(settings.provider))
     canonical_provider = _canonical_chat_provider_id(
         family_execution_key(entry.family) if entry is not None else settings.provider
     )
@@ -2012,7 +2016,7 @@ def build_console_settings_readiness(
 
     blocker: ConsoleSettingsBlockerCode | None
     recovery_action: ConsoleSettingsRecoveryAction | None
-    if not provider_key:
+    if not provider_key or entry_missing:
         blocker, recovery_action = "provider_missing", "select_provider"
     elif not provider_supported or not execution_supported:
         blocker, recovery_action = (
@@ -2051,7 +2055,9 @@ def build_console_settings_readiness(
         blocker, recovery_action = None, None
 
     native_send_supported = blocker is None
-    display_name = provider_display_name(provider_key)
+    display_name = (
+        "Custom endpoint" if entry_missing else provider_display_name(provider_key)
+    )
     if blocker == "endpoint_invalid":
         if not endpoint_invalid:
             # Missing-endpoint copy path (see the endpoint_missing branch
@@ -2073,7 +2079,9 @@ def build_console_settings_readiness(
     elif blocker in {"provider_missing", "provider_unsupported"}:
         label = "Unknown"
         detail = readiness.user_message
-        if blocker == "provider_unsupported":
+        if entry_missing:
+            detail = CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY
+        elif blocker == "provider_unsupported":
             detail = (
                 f"Provider blocked: '{provider_key}' is not available in Console yet. "
                 "Choose a supported provider."
@@ -2105,6 +2113,8 @@ def build_console_settings_readiness(
     if provider_configuration_invalid:
         configuration = "incomplete"
         configuration_issue = "invalid_settings"
+    if entry_missing:
+        configuration, configuration_issue = "incomplete", "provider_missing"
 
     return ConsoleSettingsReadiness(
         label=label,
