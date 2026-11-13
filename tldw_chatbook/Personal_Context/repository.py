@@ -46,6 +46,7 @@ from .key_protector import (
     ProfileKeyProtector,
     ProfileLockedError,
 )
+from .repository_keys import RepositoryKeyCustody
 from .repository_models import QuarantineEntry
 from .runtime_policy import GLOBAL_POLICY_ID
 
@@ -53,7 +54,7 @@ if TYPE_CHECKING:
     from .native_compatibility import ProfileCompatibilityView
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 _ENVELOPE_SCHEMA_VERSION = 1
 _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
@@ -239,7 +240,8 @@ _SCHEMA_STATEMENTS = (
         purge_generation INTEGER NOT NULL,
         destroyed INTEGER NOT NULL DEFAULT 0,
         current_manifest_version TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        key_account TEXT NOT NULL DEFAULT ''
     )
     """,
     """
@@ -336,7 +338,7 @@ def _uuid(label: str) -> str:
     return f"{label}-{uuid.uuid4()}"
 
 
-class PersonalContextRepository:
+class PersonalContextRepository(RepositoryKeyCustody):
     """Persist canonical profile objects as independently encrypted versions."""
 
     def __init__(
@@ -374,38 +376,13 @@ class PersonalContextRepository:
             if is_new:
                 if recovery_integrity_key is not None:
                     raise ProfileLockedError("No interrupted profile link is present.")
-                keys = self._protector.load_or_create(self._profile_ref)
                 self._initialize_schema(connection)
-            else:
-                meta = connection.execute(
-                    "SELECT destroyed FROM profile_meta WHERE singleton = 1"
-                ).fetchone()
-                protected_keys = (
-                    None
-                    if meta is not None and bool(meta["destroyed"])
-                    else self._protector.load(self._profile_ref)
+        keys = protected_keys = account = None
+        if not is_new:
+            with self._transaction() as connection:
+                account, protected_keys, keys = self._open_keys(
+                    connection, recovery_integrity_key
                 )
-                keys = protected_keys
-                if recovery_integrity_key is not None:
-                    if protected_keys is None:
-                        raise ProfileLockedError(
-                            "Destroyed profile keys cannot be recovered."
-                        )
-                    versions = {
-                        int(row["key_version"])
-                        for row in connection.execute(
-                            "SELECT DISTINCT key_version FROM encrypted_objects"
-                        )
-                    }
-                    if len(versions) != 1:
-                        raise ProfileLockedError(
-                            "Interrupted profile link rebaseline is incomplete."
-                        )
-                    keys = ProfileKeyMaterial(
-                        encryption_key=protected_keys.encryption_key,
-                        integrity_key=recovery_integrity_key,
-                        key_version=versions.pop(),
-                    )
         self._keys = keys
         if recovery_integrity_key is not None:
             manifest = self.get_manifest()
@@ -415,10 +392,24 @@ class PersonalContextRepository:
                     "Interrupted profile link binding could not be authenticated."
                 )
             try:
-                self._protector.replace(self._profile_ref, keys)
+                self._protector.replace(account, keys)
             except BaseException:
                 self._keys = protected_keys
                 raise
+
+    def _authenticate_keys(
+        self, connection: sqlite3.Connection, keys: ProfileKeyMaterial
+    ) -> None:
+        """Adopt keys only once they authenticate the manifest head (see repository_keys)."""
+        previous = self._keys
+        self._keys = keys
+        try:
+            self._manifest_on_connection(
+                connection, consumer_id="repository._authenticate_keys"
+            )
+        except BaseException:
+            self._keys = previous
+            raise
 
     def _connect(self) -> sqlite3.Connection:
         """Open a new owner-checked autocommit connection for this operation."""
@@ -610,7 +601,7 @@ class PersonalContextRepository:
         if len(rows) != 1 or rows[0]["singleton"] != 1:
             raise RepositorySchemaError("Personal Context schema marker is invalid.")
         version = rows[0]["version"]
-        if version not in {1, 2, 3, 4, 5, 6, 7, SCHEMA_VERSION}:
+        if version not in {1, 2, 3, 4, 5, 6, 7, 8, SCHEMA_VERSION}:
             raise RepositorySchemaError(
                 f"Unsupported Personal Context schema version: {version!r}."
             )
@@ -726,6 +717,9 @@ class PersonalContextRepository:
                     "ALTER TABLE first_link_rebaseline_commit "
                     "ADD COLUMN target_key_record_id TEXT"
                 )
+            version = 8
+        if version == 8:
+            self._add_key_account_column(connection)
             version = SCHEMA_VERSION
         connection.execute(
             "UPDATE personal_context_schema SET version = ? WHERE singleton = 1",
@@ -741,7 +735,7 @@ class PersonalContextRepository:
         profile_meta_columns = {
             row["name"] for row in connection.execute("PRAGMA table_info(profile_meta)")
         }
-        if "destroyed" not in profile_meta_columns:
+        if not {"destroyed", "key_account"}.issubset(profile_meta_columns):
             raise RepositorySchemaError("Personal Context schema is incomplete.")
         return False
 
@@ -1186,6 +1180,8 @@ class PersonalContextRepository:
 
     def _require_keys(self) -> ProfileKeyMaterial:
         if self._keys is None:
+            self._adopt_named_keys()
+        if self._keys is None:
             raise ProfileLockedError("Profile key material is unavailable.")
         return self._keys
 
@@ -1551,7 +1547,6 @@ class PersonalContextRepository:
     def create_provisional_profile(self) -> ProfileManifest:
         """Create the installation's only local profile manifest."""
 
-        self._require_keys()
         now = _now()
         profile_id = _uuid("profile-local")
         version_id = _uuid("manifest-version")
@@ -1563,7 +1558,7 @@ class PersonalContextRepository:
             updated_at=now,
             current_version_id=version_id,
         )
-        with self._mutation(
+        with self._new_profile_key() as (account, keys), self._mutation(
             allow_empty=True, consumer_id="repository.create_provisional_profile"
         ) as connection:
             if (
@@ -1575,6 +1570,7 @@ class PersonalContextRepository:
                 raise ProfileAlreadyExistsError(
                     "One Personal Context profile already exists for this installation."
                 )
+            self._keys = keys
             self._insert_encrypted(
                 connection,
                 object_type="manifest",
@@ -1593,10 +1589,10 @@ class PersonalContextRepository:
                 """
                 INSERT INTO profile_meta(
                     singleton, profile_id, purge_generation, destroyed,
-                    current_manifest_version, created_at
-                ) VALUES (1, ?, 0, 0, ?, ?)
+                    current_manifest_version, created_at, key_account
+                ) VALUES (1, ?, 0, 0, ?, ?, ?)
                 """,
-                (profile_id, version_id, _now_text()),
+                (profile_id, version_id, _now_text(), account),
             )
             self._insert_outbox(
                 connection,
@@ -1619,7 +1615,7 @@ class PersonalContextRepository:
             or global_scope.kind is not ScopeKind.GLOBAL
         ):
             raise ValueError("Global scope must belong to the new profile.")
-        with self._mutation(
+        with self._new_profile_key() as (account, keys), self._mutation(
             allow_empty=True, consumer_id="repository.create_profile_with_global_scope"
         ) as connection:
             if (
@@ -1631,6 +1627,7 @@ class PersonalContextRepository:
                 raise ProfileAlreadyExistsError(
                     "One Personal Context profile already exists for this installation."
                 )
+            self._keys = keys
             self._insert_encrypted(
                 connection,
                 object_type="manifest",
@@ -1650,14 +1647,15 @@ class PersonalContextRepository:
                 """
                 INSERT INTO profile_meta(
                     singleton, profile_id, purge_generation, destroyed,
-                    current_manifest_version, created_at
-                ) VALUES (1, ?, ?, 0, ?, ?)
+                    current_manifest_version, created_at, key_account
+                ) VALUES (1, ?, ?, 0, ?, ?, ?)
                 """,
                 (
                     manifest.profile_id,
                     manifest.purge_generation,
                     manifest.current_version_id,
                     _now_text(),
+                    account,
                 ),
             )
             self._insert_outbox(
@@ -1687,9 +1685,8 @@ class PersonalContextRepository:
             or global_scope.kind is not ScopeKind.GLOBAL
         ):
             raise ValueError("Global scope must belong to the new profile.")
-        prepared_keys = False
         try:
-            with self._transaction() as connection:
+            with self._new_profile_key() as (account, keys), self._transaction() as connection:
                 self._require_supported_storage(
                     connection, consumer_id="repository.reinitialize_destroyed_profile"
                 )
@@ -1700,8 +1697,6 @@ class PersonalContextRepository:
                     raise ProfileDestroyedError(
                         "A fresh profile can only replace a removed local copy."
                     )
-                keys = self._protector.load_or_create(self._profile_ref)
-                prepared_keys = True
                 self._keys = keys
                 connection.execute("DELETE FROM profile_meta WHERE singleton = 1")
                 self._insert_encrypted(
@@ -1723,14 +1718,15 @@ class PersonalContextRepository:
                     """
                     INSERT INTO profile_meta(
                         singleton, profile_id, purge_generation, destroyed,
-                        current_manifest_version, created_at
-                    ) VALUES (1, ?, ?, 0, ?, ?)
+                        current_manifest_version, created_at, key_account
+                    ) VALUES (1, ?, ?, 0, ?, ?, ?)
                     """,
                     (
                         manifest.profile_id,
                         manifest.purge_generation,
                         manifest.current_version_id,
                         _now_text(),
+                        account,
                     ),
                 )
                 self._insert_outbox(
@@ -1749,9 +1745,6 @@ class PersonalContextRepository:
                 )
         except BaseException:
             self._keys = None
-            if prepared_keys:
-                with suppress(Exception):
-                    self._protector.delete(self._profile_ref)
             raise
 
     def get_manifest(self) -> ProfileManifest | None:
@@ -2083,6 +2076,7 @@ class PersonalContextRepository:
                 self._require_legacy_on_connection(
                     connection, consumer_id="repository.apply_reviewed_link"
                 )
+                link_account = self._account_on(connection)  # just authenticated
                 freeze = connection.execute(
                     "SELECT plan_id, snapshot_token FROM first_link_freeze "
                     "WHERE singleton = 1"
@@ -2610,7 +2604,7 @@ class PersonalContextRepository:
                 "Profile link key activation is pending."
             )
         try:
-            replace(self._profile_ref, new_keys)
+            replace(link_account, new_keys)
         except BaseException as exc:
             raise ProfileKeyActivationPendingError(
                 "Profile link key activation is pending."
@@ -4974,24 +4968,30 @@ class PersonalContextRepository:
 
         with self._transaction() as connection:
             meta = connection.execute(
-                "SELECT destroyed FROM profile_meta WHERE singleton = 1"
+                "SELECT destroyed, key_account FROM profile_meta WHERE singleton = 1"
             ).fetchone()
             if meta is None:
                 raise ProfileDestroyedError(
                     "No active Personal Context profile exists."
                 )
-            if not meta["destroyed"]:
-                self._require_keys()
+            account = meta["key_account"]  # a removed row keeps it until deleted
+            if not meta["destroyed"]:  # only after the loaded key authenticates:
+                self._manifest_on_connection(
+                    connection, consumer_id="repository.destroy_profile_content"
+                )
+                account = self._named_key_account(account)
                 for table in _PROFILE_CONTENT_TABLES:
                     connection.execute(f"DELETE FROM {table}")
                 connection.execute(
                     """
                     UPDATE profile_meta
-                    SET purge_generation = purge_generation + 1, destroyed = 1
+                    SET purge_generation = purge_generation + 1, destroyed = 1,
+                        key_account = ?
                     WHERE singleton = 1
-                    """
+                    """,
+                    (account,),
                 )
         try:
-            self._protector.delete(self._profile_ref)
+            self._delete_removed_account(account)
         finally:
             self._keys = None

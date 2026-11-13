@@ -40,6 +40,9 @@ NATIVE_PROFILE_CONSUMERS = (
         ("bootstrap_personal_context_service",),
     ),
     NativeProfileConsumer(
+        "repository._authenticate_keys", "repository", ("_authenticate_keys",)
+    ),
+    NativeProfileConsumer(
         "repository._commit_local_body", "repository", ("_commit_local_body",)
     ),
     NativeProfileConsumer(

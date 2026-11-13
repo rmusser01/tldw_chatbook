@@ -61,6 +61,10 @@ class ProfileKeyProtector(Protocol):
 
     def load_or_create(self, profile_ref: str) -> ProfileKeyMaterial: ...
 
+    def create(self, profile_ref: str) -> ProfileKeyMaterial:
+        """Store fresh material in an unused account; never adopt an entry."""
+        ...
+
     def load(self, profile_ref: str) -> ProfileKeyMaterial: ...
 
     def replace(self, profile_ref: str, material: ProfileKeyMaterial) -> None: ...
@@ -104,6 +108,13 @@ class InMemoryProfileKeyProtector:
     def load_or_create(self, profile_ref: str) -> ProfileKeyMaterial:
         profile_ref = _normalized_ref(profile_ref)
         return self._materials.setdefault(profile_ref, _new_material())
+
+    def create(self, profile_ref: str) -> ProfileKeyMaterial:
+        profile_ref = _normalized_ref(profile_ref)
+        if profile_ref in self._materials:
+            raise ProfileLockedError("Profile key account is already in use.")
+        material = self._materials[profile_ref] = _new_material()
+        return material
 
     def load(self, profile_ref: str) -> ProfileKeyMaterial:
         profile_ref = _normalized_ref(profile_ref)
@@ -156,6 +167,22 @@ class KeyringProfileKeyProtector:
             raise ProfileLockedError(
                 "The secure profile keyring is unavailable."
             ) from exc
+        return material
+
+    def create(self, profile_ref: str) -> ProfileKeyMaterial:
+        profile_ref = _normalized_ref(profile_ref)
+        try:
+            occupied = (
+                self._keyring.get_password(_KEYRING_SERVICE, profile_ref) is not None
+            )
+        except Exception as exc:
+            raise ProfileLockedError(
+                "The secure profile keyring is unavailable."
+            ) from exc
+        if occupied:
+            raise ProfileLockedError("Profile key account is already in use.")
+        material = _new_material()
+        self.replace(profile_ref, material)
         return material
 
     def load(self, profile_ref: str) -> ProfileKeyMaterial:

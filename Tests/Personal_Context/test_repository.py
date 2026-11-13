@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import os
+import re
 import sqlite3
-import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from pathlib import Path
 
 import pytest
 from tldw_profile_core import (
@@ -13,12 +17,18 @@ from tldw_profile_core import (
     SyncMode,
 )
 
+import Tests.Personal_Context.test_profile_reconciliation as reconciliation_tests
 import tldw_chatbook.Personal_Context.repository as repository_module
+import tldw_chatbook.Personal_Context.repository_keys as repository_keys
+from Tests.Personal_Context.test_key_protector import SecureKeyring
 from tldw_chatbook.Personal_Context.key_protector import (
     InMemoryProfileKeyProtector,
+    KeyringProfileKeyProtector,
     ProfileKeyMaterial,
     ProfileLockedError,
 )
+from tldw_chatbook.Personal_Context.reconciliation import build_reconciliation_plan
+from tldw_chatbook.Personal_Context.service import PersonalContextService
 from tldw_chatbook.Personal_Context.repository import (
     ConcurrentProfileUpdateError,
     PersonalContextRepository,
@@ -26,48 +36,6 @@ from tldw_chatbook.Personal_Context.repository import (
     ProfileDestroyedError,
     RepositorySchemaError,
 )
-
-
-class _DeliberatelyRacyProtector:
-    def __init__(self) -> None:
-        self.material: ProfileKeyMaterial | None = None
-        self.load_or_create_calls = 0
-        self._lock = threading.Lock()
-        self._race = threading.Barrier(2)
-
-    def load_or_create(self, _profile_ref: str) -> ProfileKeyMaterial:
-        if self.material is not None:
-            return self.material
-        with self._lock:
-            self.load_or_create_calls += 1
-            call = self.load_or_create_calls
-        candidate = ProfileKeyMaterial(bytes([call]) * 32, bytes([call + 16]) * 32)
-        try:
-            self._race.wait(timeout=1)
-        except threading.BrokenBarrierError:
-            pass
-        self.material = candidate
-        return candidate
-
-    def load(self, _profile_ref: str) -> ProfileKeyMaterial:
-        if self.material is None:
-            raise ProfileLockedError("Profile key material is unavailable.")
-        return self.material
-
-    def delete(self, _profile_ref: str) -> None:
-        self.material = None
-
-
-class _TrackingMemoryProtector(InMemoryProfileKeyProtector):
-    def __init__(self) -> None:
-        super().__init__()
-        self.first_material: ProfileKeyMaterial | None = None
-
-    def load_or_create(self, profile_ref: str) -> ProfileKeyMaterial:
-        material = super().load_or_create(profile_ref)
-        if self.first_material is None:
-            self.first_material = material
-        return material
 
 
 class _FailDeleteOnceProtector(InMemoryProfileKeyProtector):
@@ -82,9 +50,11 @@ class _FailDeleteOnceProtector(InMemoryProfileKeyProtector):
         super().delete(profile_ref)
 
 
-def test_simultaneous_first_openers_share_the_winning_key(tmp_path) -> None:
+def test_simultaneous_first_openers_create_no_key_and_one_profile_wins(
+    tmp_path,
+) -> None:
     db_path = tmp_path / "personal-context.db"
-    protector = _DeliberatelyRacyProtector()
+    protector = InMemoryProfileKeyProtector()
     repository_module.connect_private_sqlite(
         "personal_context.repository", db_path, isolation_level=None
     ).close()
@@ -96,18 +66,21 @@ def test_simultaneous_first_openers_share_the_winning_key(tmp_path) -> None:
         ]
         repositories = [future.result(timeout=5) for future in futures]
 
-    assert protector.load_or_create_calls == 1
-    assert repositories[0]._keys == repositories[1]._keys == protector.material
+    assert protector.is_empty
+    assert repositories[0]._keys is None and repositories[1]._keys is None
     manifest = repositories[0].create_provisional_profile()
+    with pytest.raises(ProfileAlreadyExistsError):
+        repositories[1].create_provisional_profile()
+    assert list(protector._materials) == [_stored_account(db_path)]
     assert repositories[0].get_manifest() == manifest
     assert repositories[1].get_manifest() == manifest
+    reopened = PersonalContextRepository(db_path, key_protector=protector)
+    assert reopened.get_manifest() == manifest
 
 
-def test_schema_initialization_failure_keeps_winning_key_for_retry(
-    tmp_path, monkeypatch
-) -> None:
+def test_schema_initialization_failure_creates_no_key(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "personal-context.db"
-    protector = _TrackingMemoryProtector()
+    protector = InMemoryProfileKeyProtector()
 
     def fail_initialization(*_args, **_kwargs):
         raise sqlite3.OperationalError("simulated schema failure")
@@ -119,9 +92,11 @@ def test_schema_initialization_failure_keeps_winning_key_for_retry(
         with pytest.raises(sqlite3.OperationalError, match="simulated schema failure"):
             PersonalContextRepository(db_path, key_protector=protector)
 
-    assert not protector.is_empty
+    assert protector.is_empty
     retried = PersonalContextRepository(db_path, key_protector=protector)
-    assert retried._keys == protector.first_material
+    assert retried._keys is None
+    manifest = retried.create_provisional_profile()
+    assert retried.get_manifest() == manifest
 
 
 def test_repository_creates_one_profile_and_reopens_with_fresh_connection(
@@ -851,3 +826,545 @@ def test_interview_batch_stale_head_rolls_back_every_record_manifest_and_outbox(
             ).fetchone()[0]
             == 0
         )
+
+
+# TASK-40133: the repository names its key's keyring account (schema v9).
+# Every keyring here is the in-process `SecureKeyring` dict (or the in-memory
+# protector); `Tests/conftest.py` also pins PYTHON_KEYRING_BACKEND to the null
+# backend, which `KeyringProfileKeyProtector` refuses, so nothing reaches the OS.
+
+_KEYRING_SERVICE = "tldw_chatbook.personal_context"
+_V8_PROFILE_META = """
+    CREATE TABLE profile_meta (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        profile_id TEXT NOT NULL,
+        purge_generation INTEGER NOT NULL,
+        destroyed INTEGER NOT NULL DEFAULT 0,
+        current_manifest_version TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """
+
+
+class _FailDeleteOnceKeyring(SecureKeyring):
+    __module__ = "keyring.backends.macOS"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_next_delete = False
+
+    def delete_password(self, service: str, username: str) -> None:
+        if self.fail_next_delete:
+            self.fail_next_delete = False
+            raise RuntimeError("temporary keyring failure")
+        super().delete_password(service, username)
+
+
+def _path_account(db_path) -> str:
+    return (
+        "personal-context:"
+        + hashlib.sha256(os.fsencode(str(Path(db_path).absolute()))).hexdigest()
+    )
+
+
+def _stored_account(db_path) -> str | None:
+    """The stored reference, or None where the schema has no such column."""
+
+    with closing(sqlite3.connect(db_path)) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(profile_meta)")}
+        if "key_account" not in columns:
+            return None
+        row = connection.execute("SELECT key_account FROM profile_meta").fetchone()
+    return None if row is None else row[0]
+
+
+def _set_stored_account(db_path, value: str) -> None:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute("UPDATE profile_meta SET key_account = ?", (value,))
+
+
+def _keyring_repo(db_path, backend) -> PersonalContextRepository:
+    return PersonalContextRepository(
+        db_path, key_protector=KeyringProfileKeyProtector(backend)
+    )
+
+
+def _opened(db_path, backend) -> PersonalContextRepository | None:
+    try:
+        return _keyring_repo(db_path, backend)
+    except ProfileLockedError:
+        return None
+
+
+def _profile(db_path, backend, record_factory) -> list[str]:
+    repo = _keyring_repo(db_path, backend)
+    manifest = repo.create_provisional_profile()
+    repo.commit_record_version(
+        record_factory(manifest.profile_id), expected_version_id=None
+    )
+    return [record.record_id for record in repo.list_records()]
+
+
+def _as_v8(db_path, backend) -> None:
+    """Make a real v8 database: v8's catalog, its key under the path account."""
+
+    account = _stored_account(db_path)
+    protector = KeyringProfileKeyProtector(backend)
+    if account:
+        protector.replace(_path_account(db_path), protector.load(account))
+        protector.delete(account)
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        if account is not None:
+            connection.execute("ALTER TABLE profile_meta RENAME TO profile_meta_v9")
+            connection.execute(_V8_PROFILE_META)
+            connection.execute(
+                "INSERT INTO profile_meta SELECT singleton, profile_id, "
+                "purge_generation, destroyed, current_manifest_version, created_at "
+                "FROM profile_meta_v9"
+            )
+            connection.execute("DROP TABLE profile_meta_v9")
+        connection.execute("UPDATE personal_context_schema SET version = 8")
+
+
+def _schema_version(db_path) -> int:
+    with closing(sqlite3.connect(db_path)) as connection:
+        return connection.execute(
+            "SELECT version FROM personal_context_schema"
+        ).fetchone()[0]
+
+
+def _move(source, target) -> None:
+    target.parent.mkdir(mode=0o700, exist_ok=True)
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        if Path(f"{source}{suffix}").exists():
+            os.rename(f"{source}{suffix}", f"{target}{suffix}")
+
+
+def test_v8_database_stamps_its_path_account_once_its_key_authenticates(
+    tmp_path, record_factory
+) -> None:
+    backend = SecureKeyring()
+    db_path = tmp_path / "personal-context.db"
+    records = _profile(db_path, backend, record_factory)
+    _as_v8(db_path, backend)
+    before = dict(backend.values)
+
+    repo = _keyring_repo(db_path, backend)
+
+    assert _schema_version(db_path) == repository_module.SCHEMA_VERSION == 9
+    assert _stored_account(db_path) == _path_account(db_path)
+    assert [record.record_id for record in repo.list_records()] == records
+    assert backend.values == before
+
+
+def test_v8_database_at_a_moved_path_stays_locked_until_moved_back(
+    tmp_path, record_factory
+) -> None:
+    backend = SecureKeyring()
+    original = tmp_path / "original" / "personal-context.db"
+    original.parent.mkdir(mode=0o700)
+    _profile(original, backend, record_factory)
+    _as_v8(original, backend)
+    before = dict(backend.values)
+    moved = tmp_path / "moved" / "personal-context.db"
+    _move(original, moved)
+
+    assert _opened(moved, backend) is None
+    # The migration commits before any key is read: current, but unstamped.
+    assert _schema_version(moved) == 9
+    assert _stored_account(moved) == ""
+
+    _move(moved, original)
+    reopened = _opened(original, backend)
+    assert reopened is not None
+    assert _stored_account(original) == _path_account(original)
+    assert backend.values == before
+
+
+def test_new_and_fresh_profiles_get_new_unused_accounts(tmp_path) -> None:
+    backend = SecureKeyring()
+    db_path = tmp_path / "personal-context.db"
+    path_account = _path_account(db_path)
+    other = ProfileKeyMaterial(b"o" * 32, b"p" * 32)
+    KeyringProfileKeyProtector(backend).replace(path_account, other)
+    planted = dict(backend.values)
+
+    repo = _keyring_repo(db_path, backend)
+    assert backend.values == planted, "a database with no profile holds no key"
+
+    service = PersonalContextService(repo)
+    service.create_profile()
+    first = _stored_account(db_path)
+    assert first not in {"", path_account}
+    assert planted.items() <= backend.values.items()
+    assert set(backend.values) == set(planted) | {(_KEYRING_SERVICE, first)}
+
+    service.remove_local_profile(confirm_only_copy=True)
+    service.start_fresh_profile()
+    fresh = _stored_account(db_path)
+    assert fresh not in {"", path_account, first}
+    assert set(backend.values) == set(planted) | {(_KEYRING_SERVICE, fresh)}
+    assert planted.items() <= backend.values.items()
+    reopened = _keyring_repo(db_path, backend)
+    assert reopened.get_manifest() == service.get_manifest()
+
+
+def test_profile_creation_never_adopts_an_occupied_account(
+    tmp_path, monkeypatch
+) -> None:
+    backend = SecureKeyring()
+    db_path = tmp_path / "personal-context.db"
+    repo = _keyring_repo(db_path, backend)
+    occupied = "personal-context:profile_" + "a" * 32
+    KeyringProfileKeyProtector(backend).replace(
+        occupied, ProfileKeyMaterial(b"o" * 32, b"p" * 32)
+    )
+    planted = dict(backend.values)
+    monkeypatch.setattr(repository_keys.secrets, "token_hex", lambda _n: "a" * 32)
+
+    with pytest.raises(ProfileLockedError, match="already in use"):
+        repo.create_provisional_profile()
+
+    assert backend.values == planted
+    assert repo.get_manifest() is None
+
+
+@pytest.mark.parametrize("create", ["provisional", "fresh_generation"])
+def test_failed_profile_creation_deletes_only_the_account_it_created(
+    tmp_path, monkeypatch, create
+) -> None:
+    backend = SecureKeyring()
+    db_path = tmp_path / "personal-context.db"
+    repo = _keyring_repo(db_path, backend)
+    if create == "fresh_generation":
+        service = PersonalContextService(repo)
+        service.create_profile()
+        service.remove_local_profile(confirm_only_copy=True)
+    KeyringProfileKeyProtector(backend).replace(
+        _path_account(db_path), ProfileKeyMaterial(b"o" * 32, b"p" * 32)
+    )
+    planted = dict(backend.values)
+    before = _stored_account(db_path)
+
+    def fail(*_args, **_kwargs):
+        raise sqlite3.OperationalError("injected creation failure")
+
+    monkeypatch.setattr(repo, "_insert_outbox", fail)
+    with pytest.raises(sqlite3.OperationalError, match="injected"):
+        if create == "provisional":
+            repo.create_provisional_profile()
+        else:
+            PersonalContextService(repo).start_fresh_profile()
+
+    assert backend.values == planted
+    assert _stored_account(db_path) == before
+
+
+def test_v9_database_moves_with_its_account_and_v8_does_not(
+    tmp_path, record_factory
+) -> None:
+    backend = SecureKeyring()
+    v9 = tmp_path / "v9" / "personal-context.db"
+    v9.parent.mkdir(mode=0o700)
+    records = _profile(v9, backend, record_factory)
+    v8 = tmp_path / "v8" / "personal-context.db"
+    v8.parent.mkdir(mode=0o700)
+    _profile(v8, backend, record_factory)
+    _as_v8(v8, backend)
+    before = dict(backend.values)
+
+    _move(v9, tmp_path / "v9-moved" / "personal-context.db")
+    _move(v8, tmp_path / "v8-moved" / "personal-context.db")
+
+    moved = _opened(tmp_path / "v9-moved" / "personal-context.db", backend)
+    assert moved is not None
+    assert [record.record_id for record in moved.list_records()] == records
+    assert _opened(tmp_path / "v8-moved" / "personal-context.db", backend) is None
+    assert backend.values == before
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "recovery:setup_required:personal_context_key_not_in_backup",
+        "not an account",
+        "personal-context:profile_" + "f" * 32,
+        "other database's account",
+    ],
+)
+def test_a_stored_account_that_does_not_authenticate_leaves_the_profile_locked(
+    tmp_path, record_factory, stored
+) -> None:
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    _profile(db_path, backend, record_factory)
+    other_path = tmp_path / "b" / "personal-context.db"
+    other_path.parent.mkdir(mode=0o700)
+    _profile(other_path, backend, record_factory)
+    protector = KeyringProfileKeyProtector(backend)
+    if stored == "other database's account":
+        stored = _stored_account(other_path)
+        # Unrelated keys share key_version 1: only authentication tells them apart.
+        assert protector.load(stored).key_version == 1
+        assert protector.load(_stored_account(db_path)).key_version == 1
+    elif not stored.startswith("personal-context:"):
+        # Malformed names never reach the keyring, even holding the right key.
+        backend.values[(_KEYRING_SERVICE, stored)] = backend.values[
+            (_KEYRING_SERVICE, _stored_account(db_path))
+        ]
+    _set_stored_account(db_path, stored)
+    before = dict(backend.values)
+
+    with pytest.raises(ProfileLockedError):
+        _keyring_repo(db_path, backend)
+
+    assert backend.values == before
+    assert _stored_account(db_path) == stored
+
+
+def test_unstamped_database_whose_path_account_holds_another_key_stays_locked(
+    tmp_path, record_factory
+) -> None:
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    _profile(db_path, backend, record_factory)
+    _as_v8(db_path, backend)
+    other_path = tmp_path / "b" / "personal-context.db"
+    other_path.parent.mkdir(mode=0o700)
+    _profile(other_path, backend, record_factory)
+    protector = KeyringProfileKeyProtector(backend)
+    other_account = _stored_account(other_path) or _path_account(other_path)
+    protector.replace(_path_account(db_path), protector.load(other_account))
+    before = dict(backend.values)
+
+    with pytest.raises(ProfileLockedError):
+        _keyring_repo(db_path, backend)
+
+    assert backend.values == before
+    assert _stored_account(db_path) == ""
+
+
+def _link(repo: PersonalContextRepository) -> None:
+    local_manifest = repo.get_manifest()
+    local_scopes = tuple(repo.list_scopes())
+    remote = reconciliation_tests._snapshot(
+        scopes=(
+            reconciliation_tests._scope(
+                "profile-server", "scope-server-global", ScopeKind.GLOBAL
+            ),
+        ),
+        records=(),
+    )
+    plan = build_reconciliation_plan(
+        local_manifest=local_manifest,
+        local_scopes=local_scopes,
+        local_records=tuple(repo.list_records()),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings={},
+    )
+    reconciliation_tests._freeze(repo, plan)
+    repo.apply_reviewed_link(
+        plan=plan, remote=remote, decisions={}, integrity_key=b"s" * 32
+    )
+
+
+def test_link_and_remove_act_only_on_the_account_this_database_names(
+    tmp_path,
+) -> None:
+    backend = _FailDeleteOnceKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    other_path = tmp_path / "b" / "personal-context.db"
+    other_path.parent.mkdir(mode=0o700)
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    service.create_profile()
+    PersonalContextService(_keyring_repo(other_path, backend)).create_profile()
+    account = _stored_account(db_path)
+    other = {
+        key: value for key, value in backend.values.items() if key[1] != account
+    }
+
+    _link(service._repository)
+
+    linked = KeyringProfileKeyProtector(backend).load(account)
+    assert linked.integrity_key == b"s" * 32 and linked.key_version == 2
+    assert other.items() <= backend.values.items()
+
+    backend.fail_next_delete = True
+    with pytest.raises(ProfileLockedError):
+        service.remove_local_profile(confirm_only_copy=True)
+    assert _stored_account(db_path) == account, "Remove records the account"
+    assert (_KEYRING_SERVICE, account) in backend.values
+
+    service.finish_secure_removal()
+
+    assert _stored_account(db_path) == ""
+    assert backend.values == other
+
+
+def test_a_stale_handle_cannot_remove_an_account_it_never_authenticated(
+    tmp_path,
+) -> None:
+    backend = SecureKeyring()
+    db_path = tmp_path / "personal-context.db"
+    stale = _keyring_repo(db_path, backend)
+    stale.create_provisional_profile()
+    current = PersonalContextService(_keyring_repo(db_path, backend))
+    current.remove_local_profile(confirm_only_copy=True)
+    current.start_fresh_profile()
+    fresh_account = _stored_account(db_path)
+    before = dict(backend.values)
+
+    with pytest.raises(ProfileLockedError):
+        stale.destroy_profile_content()
+
+    assert backend.values == before
+    assert _stored_account(db_path) == fresh_account
+    assert current.get_manifest() is not None
+
+
+def test_start_fresh_link_and_remove_leave_another_databases_path_entry(
+    tmp_path,
+) -> None:
+    backend = SecureKeyring()
+    db_path = tmp_path / "personal-context.db"
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    service.create_profile()
+    service.remove_local_profile(confirm_only_copy=True)
+    path_entry = (_KEYRING_SERVICE, _path_account(db_path))
+    KeyringProfileKeyProtector(backend).replace(
+        path_entry[1], ProfileKeyMaterial(b"o" * 32, b"p" * 32)
+    )
+    planted = backend.values[path_entry]
+
+    service.start_fresh_profile()
+    _link(service._repository)
+    service.remove_local_profile(confirm_only_copy=True)
+
+    assert backend.values.get(path_entry) == planted
+    assert set(backend.values) == {path_entry}
+
+
+# Fresh schemas the shipped repository versions built. Statements unchanged
+# since are taken from the current constructor; the digests pin each set to
+# the commit that shipped it (named in Personal_Context/recovery.py).
+_V1_OUTBOX = """
+    CREATE TABLE encrypted_outbox (
+        outbox_id TEXT PRIMARY KEY,
+        object_type TEXT NOT NULL,
+        object_id TEXT NOT NULL,
+        version_id TEXT NOT NULL,
+        envelope_version TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """
+_V5_FREEZE = """
+    CREATE TABLE first_link_freeze (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        plan_id TEXT NOT NULL,
+        snapshot_token TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """
+_V7_REBASELINE = """
+    CREATE TABLE IF NOT EXISTS first_link_rebaseline_commit (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        plan_id TEXT NOT NULL,
+        target_profile_id TEXT NOT NULL,
+        target_integrity_key_id TEXT NOT NULL,
+        target_purge_generation INTEGER NOT NULL,
+        rebaseline_version INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """
+_HISTORICAL_FRESH_DIGESTS = {
+    1: "02785f2d966ad81ca801f53a7e31a297af34d82b82ff27ebc17ab6db1b5e2a54",
+    2: "8a8bc3e1db4e1cfab516b45253d7f08b2ac39f8a61c22ce22f8bf35b3d5aa5be",
+    4: "84e772ebd12d7073aad036aad99532335de2e540a017a6fa30a53df1b2259f61",
+    5: "6e053e3428be6b6f5e217f5897788ababc55c2b7abb49711475cddb802ba43d3",
+    6: "bed1527022eb15de2b8c1cb8b38c86d8c371d5efb9b332e15eda2fb5a4ec66e2",
+    7: "73e2d103ca41e90d923791f953a8ab9dbee3ac55a9b0a2f9223b615bd4a46783",
+    8: "e657b589a255c0fd6d38e31f03f049a4faa4001edd807b35619cf27ca082c1bd",
+}
+
+
+def _historical_fresh_schema(version: int) -> list[str]:
+    current = {
+        re.search(r"CREATE \w+ (?:IF NOT EXISTS )?(\w+)", statement).group(1): statement
+        for statement in repository_module._SCHEMA_STATEMENTS
+    }
+    current["profile_meta"] = _V8_PROFILE_META
+    names = [
+        "personal_context_schema",
+        "profile_meta",
+        "encrypted_objects",
+        "object_heads",
+        "local_runtime_policy",
+        "local_scope_bindings",
+        "encrypted_outbox",
+        "quarantine",
+        "quarantine_object_idx",
+    ]
+    if version >= 2:
+        names += ["local_undo", "local_record_links"]
+    if version >= 5:
+        names.append("first_link_freeze")
+    if version >= 6:
+        names.append("local_unlinked_scopes")
+    if version >= 7:
+        names.append("first_link_rebaseline_commit")
+    if version < 4:
+        current["encrypted_outbox"] = _V1_OUTBOX
+    if version < 7:
+        current["first_link_freeze"] = _V5_FREEZE
+    if version < 8:
+        current["first_link_rebaseline_commit"] = _V7_REBASELINE
+    return [current[name] for name in names]
+
+
+def _catalog(db_path) -> tuple[str, ...]:
+    with closing(sqlite3.connect(db_path)) as connection:
+        return tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL "
+                "ORDER BY type, name"
+            )
+        )
+
+
+def test_every_reachable_v9_catalog_is_listed_and_built_by_the_repository(
+    tmp_path,
+) -> None:
+    from tldw_chatbook.Personal_Context.recovery import REPOSITORY_SCHEMAS
+
+    fresh = tmp_path / "fresh.db"
+    PersonalContextRepository(fresh, key_protector=InMemoryProfileKeyProtector())
+    built = {"fresh": _catalog(fresh)}
+    for version, digest in _HISTORICAL_FRESH_DIGESTS.items():
+        statements = _historical_fresh_schema(version)
+        assert hashlib.sha256(
+            "\x00".join(sorted(statements)).encode()
+        ).hexdigest() == digest, version
+        db_path = tmp_path / f"v{version}.db"
+        with closing(sqlite3.connect(db_path)) as connection, connection:
+            for statement in statements:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO personal_context_schema(singleton, version) "
+                "VALUES (1, ?)",
+                (version,),
+            )
+        os.chmod(db_path, 0o600)
+        PersonalContextRepository(db_path, key_protector=InMemoryProfileKeyProtector())
+        assert _schema_version(db_path) == 9
+        built[f"v{version}"] = _catalog(db_path)
+
+    listed = [schema for version, schema in REPOSITORY_SCHEMAS]
+    assert {version for version, _ in REPOSITORY_SCHEMAS} == {9}
+    assert len(listed) == len(set(listed))
+    assert set(built.values()) == set(listed)

@@ -1391,7 +1391,9 @@ def test_finish_secure_removal_retries_key_deletion_without_starting_fresh(
 
     assert service.status().state == "removed"
     assert memory_protector.is_empty
-    assert delete_calls == 3
+    # TASK-40133: a completed deletion clears the recorded account, so a further
+    # retry deletes nothing rather than whatever now holds that name.
+    assert delete_calls == 2
 
 
 def test_finish_secure_removal_survives_restart_after_failed_key_deletion(
