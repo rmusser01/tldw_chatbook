@@ -25313,3 +25313,10 @@ minutes:
 **Incident.** TASK-36948.3 added one public method to ChatScreen and raised its `test_screen_size_ratchet.py` row by the measured +38 lines and +1 method, as a dated waiver. The brief called that a one-line fix. The serial `Tests/Architecture` run (26 min) then failed two tests that only that full run reaches: `test_console_review_selection_controller_boundary.py` (`LIVE_RATCHET_ROW`) and `test_console_wave6_closeout_inventory.py` (`LIVE_RATCHET_BUDGET`). TASK-38988 put both pins there on purpose, to catch any raise of the row.
 
 **What to do.** When you raise or lower ChatScreen's row, run `grep -rn "LIVE_RATCHET" Tests/Architecture` and re-pin every match to the new row in the same commit.
+
+
+## Disposable-runner evidence must include failed guest shutdown (TASK-40721, 2026-11-13)
+
+**Incident.** The first local-runner qualification passed two sequential GitHub jobs, but source review found that the pinned QEMU controller waited indefinitely for guest poweroff. A root-capable job could disable that command and consume a slot forever. The systemd default also signaled all QEMU children during service stop, bypassing the controller's intended drain.
+
+**Evidence and correction.** Added host-side reclamation for deleted/offline runner records and a busy-job deadline, and used `KillMode=mixed` for orderly service shutdown. In GitHub run 43480488554, the first guest deliberately replaced poweroff with a no-op; the host logged reclamation and a fresh control runner began the next job 23 seconds later with the previous marker absent. Happy-path replacement alone did not prove the disposal boundary.

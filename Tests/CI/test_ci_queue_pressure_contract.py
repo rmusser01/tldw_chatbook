@@ -21,6 +21,11 @@ PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review"]
 PUSH_ONLY_CANCELLATION = (
     "${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}"
 )
+PR_TEST_RUNNER = (
+    "${{ github.event_name == 'pull_request' && "
+    "github.event.pull_request.head.repo.full_name == github.repository && "
+    "vars.CI_TEST_RUNNER || 'ubuntu-latest' }}"
+)
 LANES = (
     "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
     "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
@@ -1086,7 +1091,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
 
     _assert_ui_capacity(workflow)
     ui = workflow["jobs"]["ui-fast-lane"]
-    assert ui["runs-on"] == "ubuntu-latest"
+    assert ui["runs-on"] == PR_TEST_RUNNER
     assert list(ui["strategy"]["matrix"]) == ["shard"]
     assert ui["timeout-minutes"] <= 20
     assert not ui.get("continue-on-error", False)
@@ -1236,7 +1241,7 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
 
     assert fast["name"] == display_name
     assert fast["if"] == LANES
-    assert fast["runs-on"] == "ubuntu-latest"
+    assert fast["runs-on"] == PR_TEST_RUNNER
     # Roleplay frame B1 (TASK-33910.2): owner decision 2026-10-09, "Raise
     # timeout to 35 (Rec.)" -- 30 -> 35 to fit B1's mounted Roleplay suites in
     # the admission-sensitive step (worst case measured 28m20s). TASK-34916
@@ -1294,7 +1299,7 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
 
     assert p0["name"] == "Console P0 regression gate"
     assert p0["if"] == LANES
-    assert p0["runs-on"] == "ubuntu-latest"
+    assert p0["runs-on"] == PR_TEST_RUNNER
     assert p0["timeout-minutes"] == 20
     # checkout, setup-python, install, sandboxed, admission-sensitive.
     # TASK-34986 moved PR2921's two Dreams/Guardian steps to dreams-boundary
@@ -1359,7 +1364,7 @@ def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None
 
     assert job["name"] == "PR Fast Lane (architecture-review tests)"
     assert job["if"] == LANES
-    assert job["runs-on"] == "ubuntu-latest"
+    assert job["runs-on"] == PR_TEST_RUNNER
     assert job["timeout-minutes"] == 20
     assert "strategy" not in job
     assert len(job["steps"]) == 4
@@ -1386,7 +1391,7 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     assert job["name"] == "PR lane (recovered suites)"
     assert job["needs"] == ["preflight"]
     assert job["if"] == LANES
-    assert job["runs-on"] == "ubuntu-latest"
+    assert job["runs-on"] == PR_TEST_RUNNER
     assert job["timeout-minutes"] == 20
     assert "strategy" not in job
     assert len(job["steps"]) == 4
@@ -1445,7 +1450,7 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
 
     assert job["name"] == "Dreams tracking tests"
     assert job["if"] == LANES
-    assert job["runs-on"] == "ubuntu-latest"
+    assert job["runs-on"] == PR_TEST_RUNNER
     assert job["timeout-minutes"] == 20
     assert "strategy" not in job
     assert len(job["steps"]) == 4
@@ -1487,7 +1492,7 @@ def test_architecture_guards_lane_is_one_serial_minimal_python_312_job() -> None
     assert job["name"] == "Architecture guard contracts"
     assert job["needs"] == ["preflight"]
     assert job["if"] == LANES
-    assert job["runs-on"] == "ubuntu-latest"
+    assert job["runs-on"] == PR_TEST_RUNNER
     assert job["timeout-minutes"] == 20
     assert "strategy" not in job
     assert len(job["steps"]) == 4
@@ -2098,7 +2103,7 @@ def _assert_dreams_required_steps(workflow: dict) -> None:
     job = workflow["jobs"]["dreams-boundary"]
     assert job["name"] == "Dreams and Guardian boundary contracts"
     assert job["if"] == LANES
-    assert job["runs-on"] == "ubuntu-latest"
+    assert job["runs-on"] == PR_TEST_RUNNER
     assert job["timeout-minutes"] == 20
     assert "strategy" not in job
     names = (
