@@ -1261,8 +1261,11 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.3 +24 -- the
     # planner hook for the per-domain append (rule in
     # console_trace_domain_append.py) and its non-contiguous admitted delta.
-    # Rebased onto dev a6df4d8d48 (2026-11-19): 6739 -> 6763, exact measurement.
-    "tldw_chatbook/Chat/console_trace_service.py": 6771,
+    # owner decision 2026-10-04 (expand limits), applied 2026-11-13:
+    # TASK-34100.3 pre-merge review +2 -- the hook hands the rule the flat
+    # prefix and the retained values it restores after a refused probe.
+    # Rebased onto dev a6df4d8d48 (2026-11-19): 6739 -> 6765, exact measurement.
+    "tldw_chatbook/Chat/console_trace_service.py": 6773,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
