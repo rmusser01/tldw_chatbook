@@ -763,7 +763,10 @@ _BUDGETS: dict[str, int] = {
     # files; Folder files lands its search box or Change…/Choose folder…,
     # after its first layout sync reads the workspace's real width; View
     # imported notes lands like Import once's exits: 7462 -> 7492 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7492,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.16.1 +9 -- the
+    # note:// link-follow read retires its worker connection. Rebased onto
+    # dev 2026-11-19: 7492 -> 7501 (measured, wc -l).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7501,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

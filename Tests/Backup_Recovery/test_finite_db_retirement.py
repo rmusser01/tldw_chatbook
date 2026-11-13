@@ -232,6 +232,137 @@ async def test_note_backlinks_lookup_retires_its_worker_connection(tmp_path, loc
         db.close_connection()
 
 
+def _local_notes(tmp_path):
+    """A real notes DB behind the service the app uses, cache seeded as above."""
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+
+    db = CharactersRAGDB(tmp_path / "notes.db", "test")
+    target = db.add_note("Target", "hub")
+    other = db.add_note("Abacus", "body")
+    notes = NotesInteropService(
+        base_db_directory=tmp_path, api_client_id="test", global_db_to_use=db
+    )
+    notes._db_instances["test-user"] = db
+    return db, notes, target, other
+
+
+@pytest.mark.asyncio
+async def test_note_link_picker_lookup_retires_its_worker_connection(tmp_path, local_root):
+    """Typing ``[[`` in a note leaves no pool-thread handle holding storage.
+
+    TASK-34100.16.1 review: the ``[[`` picker (TASK-34000.11) read its
+    candidates on a bare executor thread, the shape the backlinks fix removed.
+    Live, one use of the picker made every later idle Create backup end in
+    ``admission_timeout`` (g161v5-rt/27-28).
+    """
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+
+    db, notes, target, other = _local_notes(tmp_path)
+    service = NotesScopeService(
+        local_notes_service=notes, server_service=None, policy_enforcer=None
+    )
+    try:
+        rows = await service.list_note_link_candidates(
+            scope="local_note", query="", exclude_note_id=target, user_id="test-user"
+        )
+
+        assert [row["id"] for row in rows] == [other]
+        assert not worker_leases(db), "the link-picker worker kept its connection"
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_note_count_fallback_retires_its_worker_connection(tmp_path, local_root):
+    """``count_notes``' general path retires its worker handle too.
+
+    Only the exact production types take the self-closing fast path; any other
+    service shape ran ``count`` on a bare executor thread and kept its lease.
+    """
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+
+    class _Scope(NotesScopeService):
+        pass
+
+    db, notes, _, _ = _local_notes(tmp_path)
+    service = _Scope(local_notes_service=notes, server_service=None, policy_enforcer=None)
+    try:
+        assert await service.count_notes(scope="local_note", user_id="test-user") == 2
+        assert not worker_leases(db), "the count worker kept its connection"
+    finally:
+        db.close_connection()
+
+
+def test_every_notes_scope_offload_retires_its_worker_handles():
+    """Each executor offload in NotesScopeService runs a self-retiring callable.
+
+    Structural guard for the TASK-34100.16.1 class: a bare ``asyncio.to_thread``
+    of a local Notes read keeps a storage lease a backup pause cannot revoke.
+    ``count_in_worker`` closes its own handle.
+    """
+    import ast
+    import inspect
+
+    from tldw_chatbook.Notes import notes_scope_service
+
+    tree = ast.parse(inspect.getsource(notes_scope_service))
+    offloads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"to_thread", "run_in_executor"}
+    ]
+    bare = [
+        (node.lineno, ast.unparse(node.args[0]) if node.args else "")
+        for node in offloads
+        if not (
+            node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in {"run_finite_local_worker", "count_in_worker"}
+        )
+    ]
+
+    assert len(offloads) >= 5
+    assert bare == []
+
+
+@pytest.mark.asyncio
+async def test_note_link_follow_read_retires_its_worker_connection(tmp_path, local_root):
+    """Following a ``note://`` link leaves no pool-thread handle holding storage.
+
+    TASK-34100.16.1 review: Library resolved the link target with a bare
+    ``asyncio.to_thread(notes_service.get_note_by_id, ...)`` (TASK-34000.11).
+    """
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+
+    db, notes, target, _ = _local_notes(tmp_path)
+    opened, notices = [], []
+
+    async def open_note(note_id, *, link_origin):
+        opened.append((note_id, link_origin))
+
+    controller = SimpleNamespace(
+        _close_library_note_link_picker=lambda body: None,
+        _library_note_body_or_none=lambda: None,
+        _library_note_session=SimpleNamespace(snapshot=None),
+        app=SimpleNamespace(notify=lambda *args, **kwargs: notices.append(args)),
+        app_instance=SimpleNamespace(notes_service=notes),
+        _library_notes_user_id=lambda: "test-user",
+        _library_notes_mutation_fenced=lambda: False,
+        _open_library_note_from_link=open_note,
+    )
+    try:
+        await LibraryNotesController._open_library_note_link_target(controller, target)
+
+        assert (opened, notices) == ([(target, True)], [])
+        assert not worker_leases(db), "the link-follow worker kept its connection"
+    finally:
+        db.close_connection()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shape", ["custom", "subclass", "memory"])
 async def test_subscription_unqualified_owner_keeps_previous_route(shape):
