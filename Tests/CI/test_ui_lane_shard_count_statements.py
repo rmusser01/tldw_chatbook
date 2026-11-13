@@ -53,7 +53,13 @@ def _counts() -> dict[str, int]:
     remain single jobs. Count both matrices and reject unknown matrices.
     """
     jobs = _jobs(WORKFLOW)
-    needs = [name for name in jobs["derived-artifacts"]["needs"] if name != "preflight"]
+    # Count the broad dev tier. The light job is mutually exclusive on PRs;
+    # release qualification runs only for main promotion and has its own matrix.
+    needs = [
+        name
+        for name in jobs["derived-artifacts"]["needs"]
+        if name not in {"preflight", "dev-light", "release-qualification"}
+    ]
     if "preflight" in jobs:
         assert all(jobs[name].get("needs") == ["preflight"] for name in needs)
     assert {job for job in needs if "strategy" in jobs[job]} <= {

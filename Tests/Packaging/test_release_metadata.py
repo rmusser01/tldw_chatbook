@@ -444,7 +444,7 @@ def test_production_pypi_publish_checks_version_before_upload() -> None:
     assert 'run: python Packaging/check_pypi_release.py "$RELEASE_VERSION"' in check_job
     assert "Install output path validation dependencies" in check_job
     assert "python -m pip install loguru packaging psutil pydantic" in check_job
-    assert "needs: [build, check_pypi_release]" in publish_job
+    assert "needs: [build, qualify, check_pypi_release]" in publish_job
     assert "needs.check_pypi_release.outputs.publish_release == 'true'" in publish_job
 
 
@@ -460,7 +460,9 @@ def test_release_workflow_serializes_same_ref_runs() -> None:
 
 def test_release_workflow_uses_validated_github_output_writes() -> None:
     workflow = _publish_workflow_text()
-    build_job = _workflow_job_block(workflow, "build")
+    assert "uses: ./.github/workflows/package-check.yml" in _workflow_job_block(workflow, "build")
+    package = (REPO_ROOT / ".github/workflows/package-check.yml").read_text()
+    build_job = _workflow_job_block(package, "build")
 
     assert "version: ${{ steps.release-version.outputs.version }}" in build_job
     assert "from Packaging.check_pypi_release import write_github_output" in build_job
