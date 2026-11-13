@@ -914,8 +914,8 @@ Status: approved by the owner on 2026-11-13. It was proposed on 2026-11-12 with
 its implementing change (TASK-34100.3, folding in TASK-34100.3.1), under the
 title "append in each domain for replayed reasoning", and the branch was held
 from merging until the owner decided. The pre-merge review of 2026-11-13
-tightened the rule and this text (unique owners, a side-effect-free probe, the
-precedence and scope below).
+tightened the rule and this text (a side-effect-free probe, the precedence and
+scope below, and what the owner check can and cannot prove).
 
 TASK-34100.3 made saved-chat Moonshot (Kimi) replies persist, which made a third
 turn reachable. Every model Moonshot lists returns reasoning on each reply, and
@@ -947,13 +947,13 @@ today, the only one known. Every condition must hold:
 - Every recorded continuation equals the incoming continuation at the same
   index, through the same comparison.
 - At least one message and at least one continuation are new.
-- Every incoming continuation is a typed `CONTINUATION_ATTACHMENT` whose owner
-  occurs exactly once among the incoming messages. One in a recorded position
-  must be owned by a recorded message, and a new one by a new message. An
-  owner that two incoming messages share proves nothing, so it is refused.
+- Every incoming continuation is a typed `CONTINUATION_ATTACHMENT`. One in a
+  recorded position must be owned by a message equal to a recorded message,
+  and a new one by a message equal to a new message.
 
-What the owner check proves: for a recorded slot it checks that the owner is
-some recorded message, and the slot's bytes must equal the recorded
+What the owner check proves: only which side of the history a checkpoint
+belongs to, by descriptor equality. For a recorded slot it checks that the
+owner is some recorded message, and the slot's bytes must equal the recorded
 checkpoint. The guarantee that no recorded reply gains, loses or swaps a
 checkpoint therefore comes from content, not from the owner reference. A Kimi
 checkpoint carries its own reply's content, so two recorded checkpoints can
@@ -961,6 +961,17 @@ only trade places if they are byte-identical, and then the request carries the
 same bytes either way. That is the strength of the existing rule for new
 messages before an unchanged continuation suffix, which also matches
 continuations by content.
+
+The owner reference cannot be made an identity proof. The pre-merge review
+asked that each owner occur exactly once among the incoming messages (or be a
+saved revision). The mounted Console carries every assistant reply as the same
+`ProviderArtifactTraceProvenance(ACTIVE_REQUEST, policy)` descriptor, so every
+Kimi checkpoint's owner occurs once per reply, and that requirement refused
+every turn 3+ again (all Kimi pilot rows, 2026-11-13); it was reverted. Only an
+owner that carries an identity (a saved revision) lets the rule refuse a new
+checkpoint attached to an earlier reply. With the Console's reply artifacts
+such a checkpoint is appended like any new one; the ledger stores
+continuations without owners and still records exactly the request sent.
 
 Precedence: the rule is tried first. It takes precedence over the
 completed-tool-turn replacement for a non-project witness, and when it admits a
@@ -985,20 +996,23 @@ delta shape cold bootstrap (`_bootstrap_surface_parent`) and dispatch binding
 already accept. No recorded node is replaced, no history is rewritten, and no
 schema, retention, codec, registry or witness is added. The delta's tool-loop
 overlay names each marked message by its position in the admitted indices. An
-edited, removed or reordered recorded entry, a new checkpoint on an earlier
-reply, or an untyped or ambiguously owned continuation falls through to the
-existing rules, which refuse it as before. The rule lives in
+edited, removed or reordered recorded entry, an untyped continuation, or a new
+checkpoint whose owner is not a new message (detectable only for an
+identity-bearing owner, above) falls through to the existing rules, which
+refuse it as before. The rule lives in
 `Chat/console_trace_domain_append.py`.
 Its rule-level negative controls are in
-`Tests/Chat/test_console_trace_domain_append.py`, including two shared-owner
-cases and a refused probe that must leave the retained values unchanged.
+`Tests/Chat/test_console_trace_domain_append.py`, including a refused probe
+that must leave the retained values unchanged and the Console's own reply
+descriptors (equal artifacts), which pin both the admission and the limitation
+above.
 `Tests/Chat/test_console_trace_domain_append_planner.py` drives the real
 planner (`prepare_current_surface_delta`) over a real ledger, warm and cold:
 it admits exactly the new entries of each domain and reads the ledger back as
 the request sent, and it still refuses an edited saved message the ledger
 never recorded, new bytes for a recorded revision, changed checkpoint bytes,
-reordered checkpoints, a second checkpoint on an earlier reply and a dropped
-replay, plus the tool-loop, Continue and Regenerate routes, live native
+reordered checkpoints, a second checkpoint on an earlier reply (its fixture's
+replies are saved revisions) and a dropped replay, plus the tool-loop, Continue and Regenerate routes, live native
 custody and a completed project-context turn. It also checks that a refused
 probe leaves the planner's retained values as it found them, and that the
 tool-loop overlay survives the non-contiguous delta.
