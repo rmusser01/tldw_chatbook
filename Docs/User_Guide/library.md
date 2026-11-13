@@ -51,9 +51,11 @@ Study. This page is the orientation tour; the details live on these pages:
 > task-32059.
 
 A new profile starts with a compact rail: **Import…**, **New note**, and
-**Explore all tools**. The Get started canvas offers the same journey as three
-controls that unlock in order — **Import a file**, **Find it**, and **Use it in
-Console**. A step you cannot run yet stays pressable and says why and what to
+**Explore all tools**. It has no search box, so **F6** lands on **Import…**
+(or on **Explore all tools** when Import is not offered). The Get started
+canvas offers the same journey as three controls that unlock in order —
+**Import a file**, **Find it**, and **Use it in Console**. A step you cannot
+run yet stays pressable and says why and what to
 do first ("Find it needs something to search — Import a file first."), on the
 line under the three controls and again if you press it. While Library checks
 its sources, it says

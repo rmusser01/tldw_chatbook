@@ -2,8 +2,6 @@
 # (TASK-39153, read by scripts/library_shell_push_shard.py). One node id per
 # line, each under a comment line saying why. A listed id the file no longer
 # collects fails the job. Remove a line when its fix lands.
-# product defect, TASK-40298
-Tests/UI/test_library_shell.py::test_library_starter_hidden_route_focuses_compact_rail_without_search
 # product defect, TASK-40293
 Tests/UI/test_library_shell.py::test_library_media_list_focuses_first_row_and_arrow_keys_move_it
 # product defect, TASK-40293

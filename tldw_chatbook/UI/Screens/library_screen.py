@@ -1434,20 +1434,23 @@ class LibraryScreen(BaseAppScreen):
     #: ``focus_relative_workbench_pane`` idiom, per personas). The rail's
     #: preferred focus is its search box; the canvas's is the hub's first
     #: action, which exists only on the landing.
+    #: TASK-40298: one rail target for every route; a Starter rail has no
+    #: search box, so F6 falls through to its Import, then Explore, rows.
+    _LIBRARY_RAIL_FOCUS_TARGET = WorkbenchPaneTarget(
+        "library-rail",
+        (
+            "library-search-input",
+            f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
+            "library-rail-explore-all",
+            "library-rail-collapse",
+        ),
+    )
     _WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget(
             "library-rail-handle",
             ("library-rail-open",),
         ),
-        WorkbenchPaneTarget(
-            "library-rail",
-            (
-                "library-search-input",
-                f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
-                "library-rail-explore-all",
-                "library-rail-collapse",
-            ),
-        ),
+        _LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget(
             "library-emergency-return",
             ("library-emergency-return",),
@@ -1478,7 +1481,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _CONVERSATION_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        _LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-conversations-filter",)),
         WorkbenchPaneTarget(
             "library-conversation-reader",
@@ -1489,7 +1492,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _COLLECTIONS_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        _LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-collections-filter",)),
         WorkbenchPaneTarget(
             "library-collections-work",
@@ -1500,7 +1503,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _MEDIA_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        _LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-media-filter",)),
         WorkbenchPaneTarget(
             "library-media-viewer",
@@ -1519,7 +1522,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _NOTES_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        _LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-notes-filter",)),
         WorkbenchPaneTarget(
             "library-note-work-pane",
@@ -1532,7 +1535,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _PROMPTS_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        _LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", ("library-prompts-filter",)),
         WorkbenchPaneTarget(
             "library-prompt-work-pane",
@@ -1540,7 +1543,7 @@ class LibraryScreen(BaseAppScreen):
         ),
     )
     _SKILLS_WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget("library-rail", ("library-search-input",)),
+        _LIBRARY_RAIL_FOCUS_TARGET,
         WorkbenchPaneTarget("library-canvas", (LIBRARY_SKILLS_FILTER_ID,)),
         WorkbenchPaneTarget(
             "library-skill-work-pane",

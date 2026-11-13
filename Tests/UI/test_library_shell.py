@@ -3023,6 +3023,11 @@ async def test_library_starter_hidden_route_focuses_compact_rail_without_search(
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             await _wait_for_evidence_round(pilot, gates)
+            # TASK-40298: the round enters before the rail mounts its rows,
+            # and F6 picks from what is mounted when it is pressed.
+            await _wait_for_selector(
+                screen, pilot, f"#library-row-{LIBRARY_ROW_INGEST_MEDIA}"
+            )
             footer = screen.query_one(AppFooterStatus)
             assert "/ focus search" not in footer.shortcut_text
             assert all(
