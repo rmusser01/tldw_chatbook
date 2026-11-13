@@ -1507,6 +1507,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
 
     expected_calls = Counter(
         {
+            ("tldw_chatbook/Plugins/backup", "_Plugins.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/DB/recovery_core", "_CoreAdapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/TTS/recovery", "_Profiles.capture", "copy_private_sqlite"): 1,
@@ -1603,7 +1604,7 @@ def test_parent_creator_inventory_is_checked_and_has_a_disposition() -> None:
         source_path = PROJECT_ROOT / f"{module}.py"
         creator_calls = _qualified_calls(
             source_path,
-            lambda call: ast.unparse(call) == creator_call,
+            lambda call, expected=creator_call: ast.unparse(call) == expected,
         )
         expected_calls = Counter(
             row["symbol"]
