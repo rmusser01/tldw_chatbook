@@ -677,22 +677,17 @@ def _excluded_root(config, owner, path, *, kind, local_id=""):
 class _LocalSQLite:
     """One exact SQLite store under the user data dir, with its sidecars,
     that centralized backup never captures (TASK-39110; ``notes.sync_state``
-    was the first).
-
-    ``reason`` is the refusal code. ``excluded`` False declares the store
-    without excluding it: present files stay explicit ``unsupported`` rows,
-    which block a complete preview, until a capture owner replaces it.
+    was the first). ``reason`` is the refusal code.
     """
 
     owner_id: str
     filename: str
     reason: str
-    excluded: bool = True
     activation_required: bool = False
 
     def discover(self, config):
         database = user_data_dir(config) / self.filename
-        items = tuple(
+        return tuple(
             _excluded_root(
                 config,
                 self.owner_id,
@@ -701,14 +696,6 @@ class _LocalSQLite:
                 local_id=suffix,
             )
             for suffix in ("", "-wal", "-shm", "-journal")
-        )
-        if self.excluded:
-            return items
-        return tuple(
-            replace(item, status="unsupported" if item.metadata else "unused")
-            if item.status == "intentionally_excluded"
-            else item
-            for item in items
         )
 
     def schema_policy(self):

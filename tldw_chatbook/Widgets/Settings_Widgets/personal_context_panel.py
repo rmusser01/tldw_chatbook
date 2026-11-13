@@ -38,6 +38,7 @@ from ...Personal_Context.export_service import ExportRequest, RecoveryExportRequ
 from ...Personal_Context.recovery import (
     RESTORED_LINK_STATE,
     REVIEW_AVAILABLE,
+    REVIEW_UNAVAILABLE,
     approve_restore_review,
     restore_review,
 )
@@ -104,6 +105,10 @@ _RESTORE_REVIEW_COPY = {
         "Personal Context sync is off because this profile was restored together "
         "with saved sync state, which could resume the old device's link. Sync "
         "stays off; the profile stays usable on this device."
+    ),
+    REVIEW_UNAVAILABLE: (
+        "Personal Context sync is off: the restore review for this profile could "
+        "not be read. Reopen this page later to check again; the profile stays usable here."
     ),
 }
 

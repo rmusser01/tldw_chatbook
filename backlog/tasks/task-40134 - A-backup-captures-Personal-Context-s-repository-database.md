@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 17:13
-updated_date: '2026-11-13 08:34'
+updated_date: '2026-11-13 16:01'
 labels:
 - follow-up
 - backup
@@ -116,4 +116,13 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 **Suites.** `Tests/Backup_Recovery` in full (7,015 nodes, `-n 4`, load 30-45): 391 failed and 37 errors. The same 428 nodes on base 26b2e677dd: 350 still fail there. Of the 78 that passed on base, a rerun on this branch at lower load passed 61; the other 17 (14 `test_created_persona_subtree_rollback` setups hitting their subprocess timeout under xdist, `test_rag_projection_capture[foreign]`, `test_generated_media_capture`, `test_storage_initialization_wait[path-drift]`) all pass serially. `test_data_groups` was updated for the new group. Also green: `Tests/Personal_Context`, the Personal Context Sync/App/Agents/Chat suites, `Tests/UI/test_backup_data_groups.py`, `Tests/UI/test_settings_personal_context.py`, `Tests/UI/test_personal_context_link_app_flow.py`, `Tests/Plugins/test_recovery.py` (its in-place replace restore timed out once under load and passes serially), `Tests/DB/test_private_sqlite_inventory.py` (pins extended for C100/B42, one more backup copy and the new recovery-capture owner; `test_backup_inventory_matches_current_sqlite_and_settings_operations` stays red as on base, which never listed the TASK-40132 plugin capture), `Tests/Architecture/test_backup_owner_inventory.py`, the module-size ratchet (`app.py`, `private_sqlite.py` and `repository.py` at their budgets), and preflight.
 
 **Not verified / limits.** AC#5 is pinned at the plan (what publication executes), not by an executed end-to-end replace restore. `_published_owners`' journal read is fail-closed and exercised only through a stub in the activation test; no test drives a real restore journal into the review. The settings review test is a node outside the PR lane (the UI census has no shard margin this round).
+
+**Review r14pca-rev1 fixes (2026-11-13).**
+- **Restored link state.** `PersonalContextLinkService.resume` and `resume_after_local_activation`, and the Settings link flow once a stored link exists (before its staged-key reads and activation), now call `require_sync_allowed()` first. Test: `test_restored_link_resumes_nothing_before_its_review`. Negative control (gate removed from `resume`): `restored link state was read`.
+- `_published_owners` no longer constructs `Journal` (which creates the operation directory) unless that directory already exists.
+- **Renamed code.** The backup-preview code is now `personal_context_backup_key_excluded`; `personal_context_key_not_in_backup` stays reserved for TASK-40136's restore lock.
+- **Dead code.** `_LocalSQLite`'s `excluded=False` branch and its docstring are gone.
+- **Summary filter pinned.** `test_inspection_summary_never_offers_credential_groups`; negative control (filter removed): the credentials group is listed.
+- **Unreadable review.** When the restore review cannot be read and the gate keeps sync off, Settings shows `personal_context_restore_review_unavailable` with copy; an ordinary profile shows nothing. Tests: `test_an_unreadable_restore_review_is_named_only_while_sync_is_off` (negative control: `None == ...unavailable`) and the Settings test's `[unavailable]` case.
+- **Not changed here.** The detached-layout refusal is left to the pcc restack, as instructed.
 

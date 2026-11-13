@@ -4036,7 +4036,7 @@ selectable `personal_context` group ("Personal Context").
 
 | Path or record | Preview status | Capture |
 | --- | --- | --- |
-| `tldw_chatbook_personal_context.db` | included (optional default: absent is `unused`) | SQLite backup route through `recovery.personal_context.repository`; committed WAL frames fold in; exact catalog is one of the six v9 layouts in `REPOSITORY_SCHEMAS` (TASK-40133), version read from `personal_context_schema`. Ciphertext rows, device-only records included (decision 8). Failing validation is `unsupported`. |
+| `tldw_chatbook_personal_context.db` | included (optional default: absent is `unused`) | SQLite backup route through `recovery.personal_context.repository`; committed WAL frames fold in; exact catalog is one of the nine v9 layouts in `REPOSITORY_SCHEMAS` (TASK-40133; three come from databases the v7 build migrated), version read from `personal_context_schema`. Ciphertext rows, device-only records included (decision 8). Failing validation is `unsupported`. |
 | `-wal`, `-shm` | `sqlite.transient`, intentionally excluded | folded into the copy |
 | a `first_link_freeze` or `first_link_rebaseline_commit` row | the database and a `:first_link` marker are `unavailable`; issue `personal_context_first_link_in_progress` | refused before copying (decision 7); a partial backup omits it |
 | the profile key (`profile_meta.key_account` names its keyring account) | — | `include`/`rollback` only: a `personal_context` credential record (service `tldw_chatbook.personal_context`, not remappable), written only after the key authenticates the captured copy's manifest; `credential_manual_recovery_required` like the citation key. An empty reference, a removed profile or a recovery marker carries no record. `exclude` (the default) never reads it and never rewrites the database: the reference is not a secret, and the preview says the key is not in the backup. |
@@ -4049,9 +4049,9 @@ archive keeps its copy, and the plan carries `personal_context_not_restored`.
 `relocate` refuses as a second line. The owner is activation-required: every
 restore binds it. Personal Context sync (`app._load_personal_context_sync_runtime`)
 loads only when `execution_allowed` passes for `personal_context.repository` and
-`runtime.sync_state` (`recovery.require_sync_allowed`). Settings' review approves
+`runtime.sync_state` (`recovery.require_sync_allowed`), and so do the link service's `resume` and `resume_after_local_activation` and the Settings link flow for a stored link, before any state or keyring read. Settings' review approves
 only `personal_context.repository`, and only for a generation whose restore plan
-published neither owner; otherwise it shows `personal_context_restored_link_state`.
+published neither owner; otherwise it shows `personal_context_restored_link_state`, and `personal_context_restore_review_unavailable` when the review cannot be read while the gate is closed.
 It never approves `config` or `runtime.sync_state` (TASK-40137), so sync stays off.
 Detached import refuses the repository by name
 (`detached_owner_unavailable:personal_context.repository`): it carries no key.

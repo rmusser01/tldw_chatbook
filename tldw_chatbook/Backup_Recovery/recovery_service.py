@@ -180,7 +180,7 @@ _ISSUE_MESSAGES = {
         "> Personal Context, then back up again. A partial backup without Personal "
         "Context is available now."
     ),
-    "personal_context_key_not_in_backup": (
+    "personal_context_backup_key_excluded": (
         "Personal Context: database only. Its key is not in this backup, so the "
         "copy is readable only on this device, and only until Personal Context is "
         "linked or removed. To include the key, back up with credentials."

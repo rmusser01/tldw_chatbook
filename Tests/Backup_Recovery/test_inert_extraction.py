@@ -454,17 +454,9 @@ def test_overlapping_groups_copy_each_member_once_and_report_both(tmp_path):
     assert len(list((result.destination / "payload").iterdir())) == 2
 
 
-@pytest.mark.parametrize(
-    "groups", [("credentials",), ("credentials_and_repository",), ("repository",)]
-)
-def test_manual_extraction_never_writes_credential_material(tmp_path, groups):
-    """TASK-40134 AC#6: credential material (where the Personal Context profile
-    key travels) is never offered for, nor written by, manual extraction."""
-    from tldw_chatbook.Backup_Recovery.inert_extraction import (
-        extract_inert,
-        preview_inert_extraction,
-    )
-
+def _credential_archive(tmp_path):
+    """One unencrypted archive whose dependency groups put credential material
+    alone, with the repository, and the repository alone."""
     key = b'{"records": [{"kind": "personal_context", "value": "profile-key-v1:AAAA"}]}'
     payloads = {"credentials": key, "repository": b"ciphertext rows"}
     doc = manifest()
@@ -501,6 +493,21 @@ def test_manual_extraction_never_writes_credential_material(tmp_path, groups):
         output.writestr("manifest.json", json.dumps(doc))
         for name, value in payloads.items():
             output.writestr("payload/" + name, value)
+    return source, key
+
+
+@pytest.mark.parametrize(
+    "groups", [("credentials",), ("credentials_and_repository",), ("repository",)]
+)
+def test_manual_extraction_never_writes_credential_material(tmp_path, groups):
+    """TASK-40134 AC#6: credential material (where the Personal Context profile
+    key travels) is never offered for, nor written by, manual extraction."""
+    from tldw_chatbook.Backup_Recovery.inert_extraction import (
+        extract_inert,
+        preview_inert_extraction,
+    )
+
+    source, key = _credential_archive(tmp_path)
     archive = archive_reader.acquire(
         source, tmp_path / "acquisition", ArchiveLimits(), None, Event()
     )
@@ -527,3 +534,19 @@ def test_manual_extraction_never_writes_credential_material(tmp_path, groups):
     result = extract_inert(archive, plan, cancel=Event())
     written = [path for path in result.destination.rglob("*") if path.is_file()]
     assert all(key not in path.read_bytes() for path in written)
+
+
+def test_inspection_summary_never_offers_credential_groups(tmp_path):
+    """Review r14pca-rev1: the manual-extraction picker (the summary's dependency
+    groups) lists no group holding credential material."""
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    source, _key = _credential_archive(tmp_path)
+    service = RecoveryService(tmp_path / "control")
+    try:
+        inspection = service.start_inspection(source, password=None)
+        assert service.wait(inspection)["state"] == "succeeded"
+        groups = [row["group_id"] for row in service.summary(inspection)["dependency_groups"]]
+    finally:
+        service.close()
+    assert groups == ["repository"]

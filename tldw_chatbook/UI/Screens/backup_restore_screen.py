@@ -1552,7 +1552,7 @@ class BackupRestoreScreen(Screen):
             item.owner == "personal_context.repository" and item.status == "included"
             for item in preview.items
         ):
-            rows.append(self.service.issue_message("personal_context_key_not_in_backup"))
+            rows.append(self.service.issue_message("personal_context_backup_key_excluded"))
         rows.extend(
             f"{item.owner}: {item.status}" + (f" — {item.path}" if item.path else "")
             for item in preview.items

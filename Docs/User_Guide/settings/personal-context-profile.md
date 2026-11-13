@@ -363,7 +363,8 @@ Personal Context merge or resolution action in Settings.
   stays off. Settings > Personal Context shows **Review restored profile** when
   the restore did not bring back saved sync state; reviewing confirms the profile
   on this device but does not turn sync back on. When the restore did bring back
-  sync state, Settings says sync stays off and why.
+  sync state, or when the review cannot be read, Settings says sync stays off
+  and why.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that

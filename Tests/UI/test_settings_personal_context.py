@@ -2235,7 +2235,7 @@ class _RestoredProfileService(_ProfileServiceStub):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("review", ["available", "link_state"])
+@pytest.mark.parametrize("review", ["available", "link_state", "unavailable"])
 async def test_restored_profile_review_never_claims_sync_resumes(
     monkeypatch, review
 ) -> None:
@@ -2245,9 +2245,11 @@ async def test_restored_profile_review_never_claims_sync_resumes(
     import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
     from tldw_chatbook.Personal_Context import recovery
 
-    state = (
-        recovery.REVIEW_AVAILABLE if review == "available" else recovery.RESTORED_LINK_STATE
-    )
+    state = {
+        "available": recovery.REVIEW_AVAILABLE,
+        "link_state": recovery.RESTORED_LINK_STATE,
+        "unavailable": recovery.REVIEW_UNAVAILABLE,
+    }[review]
     reviewed: list[str] = []
     monkeypatch.setattr(module, "restore_review", lambda path: None if reviewed else state)
     monkeypatch.setattr(module, "approve_restore_review", lambda path: reviewed.append(path))
@@ -2262,11 +2264,11 @@ async def test_restored_profile_review_never_claims_sync_resumes(
         await host.workers.wait_for_complete()
         await pilot.pause()
         copy = str(panel.query_one("#personal-context-restore-review-copy", Static).render())
-        assert "Sync" in copy and "off" in copy
+        assert "sync" in copy.lower() and "off" in copy
         assert "resume" not in copy.replace("resume the old device", "")
         buttons = panel.query("#personal-context-restore-review")
-        if review == "link_state":
-            assert "saved sync state" in copy
+        if review != "available":
+            assert ("saved sync state" if review == "link_state" else "could not be read") in copy
             assert not buttons
             return
         await pilot.click("#personal-context-restore-review")
