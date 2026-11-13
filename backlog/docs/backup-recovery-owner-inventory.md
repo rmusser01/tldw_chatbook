@@ -3840,6 +3840,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.link | 1 | disposable | private staged credential rewrite |
 | tldw_chatbook/Agents/hooks_v2/command_executor.py | CommandExecutor._run | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Agents/run_hooks.py | _capture_hook | write | 1 | process_artifact | process-transport |
+| tldw_chatbook/Agents/run_hooks.py | _capture_windows_hook | write | 1 | process_artifact | process-transport; schedules the Windows child stdin writer |
+| tldw_chatbook/Agents/run_hooks.py | _capture_windows_hook.write | write | 1 | process_artifact | process-transport; writes JSON to the Windows child stdin pipe |
 | tldw_chatbook/Audio/diarizer_engine_onnx.py | _env_error | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Audio/diarizer_local.py | LocalDiarizer._send | write | 2 | process_artifact | process-transport |
 | tldw_chatbook/Audio/diarizer_local.py | LocalDiarizer.close | write | 1 | process_artifact | process-transport |
