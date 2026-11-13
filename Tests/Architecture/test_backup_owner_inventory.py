@@ -1701,9 +1701,10 @@ def test_no_reviewer_approves_the_shared_sync_owners():
     Personal Context link from resuming as the restored device. Once both are
     approved, every Sync v2 route sends the restored `device_id` and cursors
     (probe in TASK-40137's notes). By the owner's ruling (2026-11-12), the
-    only future approvers allowed are TASK-40139's sync-identity review (both
-    owners, with the rebind) and TASK-40711's config review (`config` alone).
-    Any approval, called or passed by reference, is counted here."""
+    only approvers allowed are TASK-40711's settings review (`config` alone,
+    `RecoveryService.approve_config`) and TASK-40139's sync-identity review
+    (both owners, with the rebind), which adds its own row here. Any
+    approval, called or passed by reference, is counted here."""
     from tldw_chatbook.MCP.recovery_activation import _OWNERS as mcp_owners
     from tldw_chatbook.Personal_Context.recovery import OWNER as personal_context_owner
     from tldw_chatbook.Plugins.backup import OWNER as plugins_owner
@@ -1739,8 +1740,148 @@ def test_no_reviewer_approves_the_shared_sync_owners():
             ("tldw_chatbook/RAG_Search/activation.py", "owner"): 1,
             ("tldw_chatbook/RAG_Search/model_recovery.py", "'models.artifacts'"): 1,
             ("tldw_chatbook/Skills_Interop/recovery_activation.py", "'skills'"): 1,
+            # TASK-40711: Backup & Restore's settings review, `config` only.
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'config'"): 1,
         }
     )
     assert {"config", "runtime.sync_state"}.isdisjoint(
         {*mcp_owners, personal_context_owner, plugins_owner, *rag_owners}
     )
+
+
+_CONFIG_REVIEW = r"""
+import asyncio, os, sys
+from pathlib import Path
+from types import SimpleNamespace
+from Tests.network_guard import install, blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import ActivationStore, bind_activation
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+state = sys.argv[1]
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+data = selector.parent.parent / 'data'
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(data) + '"\n')
+selector.chmod(0o600)
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop.server_sync_service import ServerSyncService
+repo = SyncStateRepository(data / 'sync.db')
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('profile', (selector.parent, data))
+control = selector.parent.parent / 'operation'
+control.mkdir(mode=0o700)
+register_pending(root, 'restore', ('profile',), control, (selector,))
+with authority.maintenance(('profile',), 2) as session:
+    bind_activation(root, 'restore', selector, 'generation',
+                    ('config', 'runtime.sync_state'), session=session)
+(root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
+
+# The review: the current profile names `config` as pending until approved.
+service = RecoveryService(selector.parent.parent / 'jobs')
+try:
+    before = service.current_requirements()
+    assert before['generation'] == 'generation', dict(before)
+    assert before['pending_owners'] == ('config', 'runtime.sync_state'), dict(before)
+    if state == 'approved':
+        try:
+            service.approve_config('another-generation')
+        except ValueError as error:
+            assert str(error) == 'config_review_changed', error
+        else:
+            raise AssertionError('a stale review approved config')
+        service.approve_config('generation')
+    after = service.current_requirements()
+finally:
+    service.close()
+approved = state == 'approved'
+assert after['pending_owners'] == (
+    ('runtime.sync_state',) if approved else ('config', 'runtime.sync_state')
+), dict(after)
+store = ActivationStore(control / 'activation')
+assert store.allowed('generation', 'config') == approved
+assert not store.allowed('generation', 'runtime.sync_state')
+
+effects = []
+# Model-catalog auto-refresh: both the startup scheduling and the run itself.
+from tldw_chatbook.app import TldwCli
+import tldw_chatbook.app_feature_glue as glue_module
+glue_module.load_settings = lambda: {'model_catalog': {
+    'auto_refresh_enabled': True, 'refresh_consent_recorded': True}}
+async def refresh(**kwargs):
+    effects.append('catalog refresh')
+    return SimpleNamespace(outcomes=(), disk_write_failed=False)
+app = SimpleNamespace(
+    app_config={}, model_catalog_disk_store=object(),
+    local_llm_provider_catalog_service=SimpleNamespace(
+        refresh_stale_configured_providers=refresh),
+    _init_providers_models=lambda: None, post_message=lambda *a: None,
+    notify=lambda *a, **k: None, _refresh_model_catalogs=None,
+    run_worker=lambda *a, **k: effects.append('catalog scheduled'),
+    call_after_refresh=lambda *a, **k: effects.append('consent'))
+scheduled = TldwCli._schedule_startup_model_catalog_refresh(
+    app, after_setup_completion=True)
+assert scheduled == approved, scheduled
+asyncio.run(TldwCli._refresh_model_catalogs(app))
+
+# Native workspace change tracking: the capture's `config` gate.
+from tldw_chatbook.Backup_Recovery import profile_paths
+from tldw_chatbook.Workspaces.change_tracking import _NativeInitializationIssuer
+class Boundary(Exception): pass
+def data_dir(settings):
+    effects.append('change tracking')
+    raise Boundary()
+profile_paths.user_data_dir = data_dir
+issuer = object.__new__(_NativeInitializationIssuer)
+issuer.check = lambda: None
+issuer.runtime = SimpleNamespace(_disposed=False)
+issuer._capacity = issuer._activity = object()
+try:
+    issuer.capture(SimpleNamespace(root=str(data)))
+except Boundary:
+    assert approved
+except ValueError as error:
+    assert not approved and str(error) == 'native initialization source unavailable', error
+else:
+    raise AssertionError('capture passed its boundary')
+
+# Server sync stays refused: `runtime.sync_state` waits for the sync-identity review.
+class Provider:
+    def build_client(self):
+        effects.append('sync client')
+        raise AssertionError('sync reached its client')
+server = ServerSyncService(None, client_provider=Provider(), state_repository=repo)
+try:
+    asyncio.run(server.get_changes(client_id='fixture'))
+except PermissionError as error:
+    assert str(error) == 'sync_activation_required', error
+else:
+    raise AssertionError('sync ran with runtime.sync_state unapproved')
+repo.close()
+assert effects == (
+    ['catalog scheduled', 'catalog refresh', 'change tracking'] if approved else []
+), effects
+assert not blocked_attempts(), blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("state", ["pending", "approved"])
+def test_the_config_review_turns_config_consumers_back_on_and_never_sync(
+    tmp_path, state
+):
+    """TASK-40711: until Backup & Restore's settings review approves `config`,
+    model-catalog auto-refresh and native workspace change tracking stay off
+    and the current profile names `config` as pending. The review approves
+    only the reviewed generation's `config`: both consumers run again, and
+    server sync is still refused with `sync_activation_required` because
+    `runtime.sync_state` waits for the sync-identity review (TASK-40139)."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(tmp_path, state, "config_review", script=_CONFIG_REVIEW, timeout=90)

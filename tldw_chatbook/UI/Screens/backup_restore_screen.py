@@ -902,6 +902,29 @@ class BackupRestoreScreen(Screen):
                     markup=False,
                 )
             )
+            if (
+                current["requirements_checked"]
+                and "config" in current["pending_owners"]
+            ):
+                # TASK-40711: `config` alone; sync identity has its own review.
+                widgets.append(
+                    Static(
+                        "Settings review\nUntil you approve this profile's restored "
+                        "settings, model-catalog auto-refresh and workspace change "
+                        "tracking stay off. Approving turns both back on (catalog "
+                        "refresh from the next start). It does not resume server sync.",
+                        id="backup-config-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Approve settings",
+                        id="backup-approve-config",
+                        name=current["generation"],
+                        classes="backup-restore-screen-button",
+                    )
+                )
             widgets.append(
                 Button(
                     "Recovered media details",
@@ -992,6 +1015,33 @@ class BackupRestoreScreen(Screen):
                     )
                 )
         await listing.mount(*widgets)
+
+    @on(Button.Pressed, "#backup-approve-config")
+    def _approve_config(self, event):
+        event.button.disabled = True
+        self._run_config_approval(self.app, self._revision, event.button.name)
+
+    @work(exclusive=True, thread=True, group="backup-config-review")
+    def _run_config_approval(self, app, revision, generation):
+        try:
+            self.service.approve_config(generation)
+            message = (
+                "Settings approved. Workspace change tracking can run now; "
+                "model-catalog auto-refresh runs from the next start. Server sync stays off."
+            )
+        except (OSError, ValueError, RuntimeError):
+            message = "Settings review unavailable: the current profile changed. Review it again."
+        self._deliver(app, self._config_approval_done, revision, message)
+
+    def _config_approval_done(self, revision, message):
+        if (
+            not self.is_mounted
+            or self._mode != "profiles"
+            or revision != self._revision
+        ):
+            return
+        self.query_one("#backup-message", Static).update(message)
+        self._refresh_list(self.app, revision, "profiles")
 
     @on(Button.Pressed, ".backup-review-delete")
     def _review_delete(self, event):

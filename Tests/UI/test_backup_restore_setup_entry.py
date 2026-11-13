@@ -695,3 +695,79 @@ async def test_a_typed_path_with_an_unknown_home_never_takes_the_app_down(tmp_pa
             )
     finally:
         service.close()
+
+
+@pytest.mark.asyncio
+async def test_restored_profiles_settings_review_approves_config_alone(
+    tmp_path, monkeypatch
+):
+    """TASK-40711: while the current profile's `config` awaits review,
+    Restored profiles names what stays off and offers Approve settings. The
+    button approves the shown generation's `config` through the service, then
+    the review goes and `runtime.sync_state` is still listed as pending.
+
+    The service's two current-profile methods are stand-ins here; the real
+    approval is pinned against an actual activation binding in
+    Tests/Architecture/test_backup_owner_inventory.py.
+    """
+    import asyncio
+    from types import MappingProxyType
+
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    pending = ["config", "runtime.sync_state"]
+    approved = []
+
+    def current_requirements():
+        return MappingProxyType(
+            {
+                "config": str(tmp_path / "config.toml"),
+                "operation_id": "restore",
+                "generation": "generation-1",
+                "required_owners": ("config", "runtime.sync_state"),
+                "pending_owners": tuple(pending),
+                "requirements_checked": True,
+                "needs_setup": bool(pending),
+                "status": "requirements_checked",
+            }
+        )
+
+    def approve_config(generation):
+        approved.append(generation)
+        pending.remove("config")
+
+    service = RecoveryService(tmp_path / "control")
+    monkeypatch.setattr(service, "current_requirements", current_requirements)
+    monkeypatch.setattr(service, "approve_config", approve_config)
+    monkeypatch.setattr(service, "profiles", lambda: ())
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            await pilot.click("#backup-open-profiles")
+            async with asyncio.timeout(10):
+                while not screen.query("#backup-current-requirements"):
+                    await pilot.pause(0.02)
+            assert screen.query("#backup-config-review"), "no settings review"
+            review = _text(screen, "#backup-config-review")
+            assert review.startswith("Settings review")
+            assert (
+                "model-catalog auto-refresh and workspace change tracking stay off"
+                in review
+            )
+            assert "It does not resume server sync." in review
+            button = screen.query_one("#backup-approve-config", Button)
+            assert str(button.label) == "Approve settings"
+            button.press()
+            async with asyncio.timeout(10):
+                while screen.query("#backup-config-review"):
+                    await pilot.pause(0.02)
+            assert approved == ["generation-1"]
+            assert not screen.query("#backup-approve-config")
+            summary = _text(screen, "#backup-current-requirements")
+            assert "• runtime / sync state" in summary and "• config" not in summary
+            assert "Server sync stays off." in _text(screen, "#backup-message")
+    finally:
+        service.close()
