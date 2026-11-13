@@ -87,6 +87,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
       - name: Verify Python imports in a sanitized child
         run: |
           set -euo pipefail
