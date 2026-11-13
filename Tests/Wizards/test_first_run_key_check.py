@@ -298,6 +298,10 @@ async def test_nvidia_nim_reads_key_not_checked_never_a_tick() -> None:
 
 @pytest.mark.asyncio
 async def test_anthropic_enter_checks_the_key_with_its_listing() -> None:
+    """REGRESSION PIN of dev's TASK-33008 Anthropic key check: Enter runs the
+    authenticated model listing and reads its count. It passed on dev
+    4b90eb860b in the v5r3 test review's run with this file's branch-only
+    names softened (review v5r4, TE-R4-3)."""
     staged, status, probe, _scope = await _enter_key(
         "anthropic", _typed_model_discovery_result("anthropic", "claude-sonnet-5")
     )
