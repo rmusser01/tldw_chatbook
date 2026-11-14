@@ -700,6 +700,19 @@ async def test_settings_lists_a_refused_endpoint_with_its_reason_and_edit_fixes_
         row = _text(screen, "#settings-cep-row-leaky")
         assert "not loaded: Endpoint URL must not include a query." in row, row
         assert "not-a-real-secret" not in row
+        # Review r14ep-rev2 M-c: no Duplicate for it, and Rename checks the
+        # name alone.
+        duplicate = screen.query_one("#settings-cep-duplicate-leaky", Button)
+        assert duplicate.has_class("settings-gated-profile-hidden")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-cep-rename-leaky")
+        await _settle_settings_mount_storm(pilot)
+        screen.query_one("#settings-cep-rename-value", Input).value = "Leaky box"
+        await _click_scrolled_settings_button(screen, pilot, "#settings-cep-rename-save")
+        await pilot.app.workers.wait_for_complete()
+        await _settle_settings_mount_storm(pilot)
+        assert "Renamed endpoint to 'Leaky box'" in _text(
+            screen, "#settings-custom-endpoints-status"
+        )
 
         await _click_scrolled_settings_button(screen, pilot, "#settings-cep-edit-leaky")
         await _settle_settings_mount_storm(pilot)

@@ -306,6 +306,31 @@ def custom_endpoint_refusals(app_config: Mapping[str, object]) -> dict[str, str]
     }
 
 
+def missing_custom_endpoint_copy(app_config: Mapping[str, object], provider: str) -> str:
+    """What a chat on a ``custom-ep:`` id with no loaded entry reads (TASK-40300).
+
+    Args:
+        app_config: The full CLI config mapping.
+        provider: The chat's provider id.
+
+    Returns:
+        For an entry refused at load, its reason and where to fix it (review
+        r14ep-rev2 M-d); for one that is gone, the restore copy.
+    """
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
+    )
+
+    slug = split_custom_endpoint_id(provider)
+    reason = custom_endpoint_refusals(app_config).get(slug or "")
+    if reason:
+        return (
+            f"Provider blocked: this custom endpoint is not loaded: {reason} "
+            "Fix it in Settings ▸ Custom endpoints."
+        )
+    return CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY
+
+
 def _load_custom_endpoints(
     app_config: Mapping[str, object],
 ) -> tuple[
@@ -492,6 +517,26 @@ def build_entry_mutation(
     return {f"custom_endpoints.{entry.slug}": values}
 
 
+def validate_display_name(display_name: str) -> list[str]:
+    """Return the display-name errors ``validate_entry`` starts with.
+
+    A rename checks only this, so a refused entry can still be renamed
+    (TASK-40300 review r14ep-rev2 M-c).
+
+    Args:
+        display_name: Candidate display name.
+
+    Returns:
+        At most one error; empty when the name is valid.
+    """
+    name = display_name.strip() if isinstance(display_name, str) else ""
+    if not name:
+        return [_DISPLAY_NAME_REQUIRED_COPY]
+    if len(name) > _MAX_DISPLAY_NAME_LENGTH:
+        return [_DISPLAY_NAME_TOO_LONG_COPY]
+    return []
+
+
 def validate_entry(
     display_name: str,
     family: str,
@@ -519,12 +564,7 @@ def validate_entry(
     Returns:
         Error messages in display order; empty when the candidate is valid.
     """
-    errors: list[str] = []
-    name = display_name.strip() if isinstance(display_name, str) else ""
-    if not name:
-        errors.append(_DISPLAY_NAME_REQUIRED_COPY)
-    elif len(name) > _MAX_DISPLAY_NAME_LENGTH:
-        errors.append(_DISPLAY_NAME_TOO_LONG_COPY)
+    errors = validate_display_name(display_name)
     if family not in ENDPOINT_FAMILIES:
         errors.append(f"Unknown endpoint family: {family}.")
         return errors

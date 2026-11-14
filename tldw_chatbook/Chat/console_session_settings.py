@@ -34,9 +34,8 @@ from tldw_chatbook.Chat.console_provider_support import (
     supported_generation_fields,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
-    CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
-    INVALID_LLAMACPP_BASE_URL_COPY,
+    invalid_llamacpp_base_url_copy,
     URL_BASED_PROVIDER_KEYS,  # also re-exported; console_settings_modal imports it from here
     effective_provider_endpoint,
     first_configured_endpoint,
@@ -1853,6 +1852,7 @@ def build_console_settings_readiness(
     from tldw_chatbook.Chat.custom_endpoint_registry import (
         entry_for,
         family_execution_key,
+        missing_custom_endpoint_copy,
         split_custom_endpoint_id,
     )
 
@@ -2074,7 +2074,7 @@ def build_console_settings_readiness(
             detail = readiness.user_message
         else:
             detail = (
-                INVALID_LLAMACPP_BASE_URL_COPY
+                invalid_llamacpp_base_url_copy(endpoint_error)
                 if provider_key in NATIVE_CONSOLE_PROVIDER_KEYS
                 else f"Provider blocked: {endpoint_error}"
             )
@@ -2086,7 +2086,7 @@ def build_console_settings_readiness(
         label = "Unknown"
         detail = readiness.user_message
         if entry_missing:
-            detail = CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY
+            detail = missing_custom_endpoint_copy(app_config, settings.provider)
         elif blocker == "provider_unsupported":
             detail = (
                 f"Provider blocked: '{provider_key}' is not available in Console yet. "

@@ -31,10 +31,6 @@ UNSAVED_ENDPOINT_COPY = (
 #: its docs) when nothing is configured. The stock `llama-server` port 8080 is
 #: covered by local discovery candidates, not by this default.
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
-INVALID_LLAMACPP_BASE_URL_COPY = (
-    "Provider blocked: invalid llama.cpp base URL. "
-    "Use an http(s) URL such as http://127.0.0.1:9099."
-)
 #: A ``custom-ep:`` id with no configured entry (removed, or skipped at load);
 #: the send and readiness both say it (TASK-40302).
 CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY = (
@@ -141,6 +137,8 @@ def effective_provider_endpoint(
     provider_key: str,
     selected_endpoint: str | None,
     provider_settings: Mapping[str, object],
+    *,
+    custom_endpoint: bool = False,
 ) -> str | None:
     """Resolve the exact endpoint a provider call would use at this moment.
 
@@ -152,11 +150,17 @@ def effective_provider_endpoint(
         provider_key: Normalized provider readiness key.
         selected_endpoint: Optional Console-selected endpoint.
         provider_settings: Provider-specific configuration mapping.
+        custom_endpoint: True for a custom endpoint entry, which the contract
+            reads as its engine does (TASK-40300 review r14ep-rev2 M-a: a
+            relaxed base pasted with ``/models`` sent to
+            ``.../models/chat/completions``).
 
     Returns:
         Effective endpoint to pin into the provider resolution, or ``None``
         when the provider has neither a configured nor built-in endpoint.
     """
+    if custom_endpoint and provider_key == "custom":
+        provider_key = "custom_hosted"
     if isinstance(selected_endpoint, str) and selected_endpoint.strip():
         return _effective_contract_endpoint(provider_key, selected_endpoint)
     if provider_key == "huggingface" and _huggingface_router_mode(provider_settings):
@@ -348,6 +352,18 @@ def unsaved_endpoint_copy(
     return f"{UNSAVED_ENDPOINT_COPY} Selected endpoint: {selected}. Saved endpoint: {configured}."
 
 
+def invalid_llamacpp_base_url_copy(reason: str) -> str:
+    """llama.cpp's refusal copy, naming the contract's reason (TASK-40300 M-b).
+
+    Args:
+        reason: ``endpoint_refusal``'s reason, which names no part of the value.
+
+    Returns:
+        The copy readiness and the send show.
+    """
+    return f"Provider blocked: invalid llama.cpp base URL: {reason}"
+
+
 def refuse_a_refused_endpoint(resolution: object) -> None:
     """Refuse a dispatch whose endpoint the contract refuses (TASK-40300 I1).
 
@@ -396,7 +412,9 @@ def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
     adapter got it schemeless).
     """
     endpoint = read_schemeless_loopback(endpoint)
-    if provider_key not in {"custom", "custom_2", "llama_cpp", "local_llamacpp"}:
+    if provider_key not in {
+        "custom", "custom_2", "custom_hosted", "llama_cpp", "local_llamacpp"
+    }:
         return endpoint
     resolution = resolve_provider_endpoint(provider_key, endpoint)
     return resolution.persisted_endpoint or endpoint

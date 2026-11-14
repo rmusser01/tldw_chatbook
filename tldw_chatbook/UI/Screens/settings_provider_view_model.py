@@ -484,6 +484,50 @@ def _detach_base_url(
     return entry.base_url
 
 
+class DetachRefused(RuntimeError):
+    """Detach would move conversations onto a URL Console refuses (TASK-40300).
+
+    Attributes:
+        user_copy: What the Custom endpoints status line says; it names the
+            entry, never its URL.
+    """
+
+    def __init__(self, user_copy: str) -> None:
+        super().__init__(user_copy)
+        self.user_copy = user_copy
+
+
+def _detach_refusal(entry: CustomEndpointEntry) -> str:
+    """Why detaching ``entry`` is refused, or "" (review r14ep-rev2 M-e).
+
+    Detach moves an OpenAI-compatible entry's conversations to the plain
+    ``custom`` provider, whose reading refuses a base such as DeepInfra's
+    ``/v1/openai`` that only a named entry accepts (owner decision
+    2026-11-13), so those conversations would lose a working endpoint.
+    """
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+    )
+
+    if entry.family != "openai_compatible" or not endpoint_refusal(
+        "custom", entry.base_url
+    ):
+        return ""
+    name = entry.display_name
+    if endpoint_refusal("custom", entry.base_url, custom_endpoint=True):
+        return (
+            f"Detach blocked: '{name}' has an endpoint URL Console refuses, so "
+            "its conversations would move to it. Fix it with Edit, or switch "
+            "those conversations to another provider, then delete it."
+        )
+    return (
+        f"Detach blocked: '{name}' uses an OpenAI-compatible base that only a "
+        "named endpoint accepts (its v1 is not the last part of the path), so "
+        f"its conversations would lose their endpoint. '{name}' keeps working; "
+        "switch those conversations to another provider, then delete it."
+    )
+
+
 def detach_and_delete_entry(
     app_config: Mapping[str, object],
     store: CustomEndpointReferenceStore | None,
@@ -509,6 +553,8 @@ def detach_and_delete_entry(
         provider_id: A ``custom-ep:<slug>`` id naming a valid entry.
 
     Raises:
+        DetachRefused: Referencing sessions would move onto a URL Console
+            refuses; nothing changes (TASK-40300 review r14ep-rev2 M-e).
         KeyError: Unknown session id reported by the store.
         RuntimeError: The config delete failed (referencing sessions that
             were detached keep their conversation-only endpoints; retrying
@@ -521,8 +567,13 @@ def detach_and_delete_entry(
     if entry is None:
         return
     family_provider = family_execution_key(entry.family)
+    references = (
+        conversations_referencing_endpoint(store, provider_id) if store is not None else []
+    )
+    if references and (refusal := _detach_refusal(entry)):
+        raise DetachRefused(refusal)
     if store is not None:
-        for session_id in conversations_referencing_endpoint(store, provider_id):
+        for session_id in references:
             settings = store.session_settings(session_id)
             if settings is None:
                 continue

@@ -797,12 +797,15 @@ as does any other invalid endpoint. Console never contacts such an address for
 llama.cpp, whether it is the chat's endpoint (including a chat saved before
 Chat settings refused the address) or comes from `[api_settings.llama_cpp]`,
 `[console] llama_cpp_base_url_override` or `TLDW_CONSOLE_LLAMA_CPP_BASE_URL`;
-the Endpoint line reads the same for all of them, and a send reads "Provider
-blocked: invalid llama.cpp base URL." A llama.cpp custom endpoint whose base
-URL is such an address is skipped when the config loads, so a chat on it reads
-"Provider blocked: this custom endpoint is no longer configured. Restore its
-entry or choose another provider before sending." A chat whose custom endpoint
-was removed reads the same, in Chat settings and when you send.
+the Endpoint line reads the same for all of them, and Chat settings and a send
+read "Provider blocked: invalid llama.cpp base URL:" and the reason, as in
+"Remote endpoint URLs must include an HTTP or HTTPS scheme." A llama.cpp custom
+endpoint whose base URL is such an address is not loaded, so a chat on it reads
+"Provider blocked: this custom endpoint is not loaded:" with the reason, then
+"Fix it in Settings ▸ Custom endpoints." A chat whose custom endpoint was
+removed reads "Provider blocked: this custom endpoint is no longer configured.
+Restore its entry or choose another provider before sending.", in Chat
+settings and when you send.
 Every other address **s** refuses is refused the same way, for every
 provider: a host such as `-bad.corp`, `127.1`, `localhost..` or a non-ASCII
 one such as `bücher.example`, an IPv6 address with a zone ID, and an address
@@ -810,9 +813,10 @@ with a query, a fragment or a user name and password read "Invalid URL",
 whether it is the chat's endpoint or the provider's configured one, and a
 send says why, as in "Provider blocked: Endpoint URL must not include a
 query." Console neither sends to such an address nor checks it, and neither
-does an agent's sub-call. A custom endpoint whose base URL is one of these is
-not loaded, like the llama.cpp one above; Settings lists it with the reason
-so you can fix or delete it.
+does an agent's sub-call, an approval summary or `/image`'s conversation
+context call. A custom endpoint whose base URL is one of these is not loaded,
+like the llama.cpp one above; Settings lists it with the reason so you can fix
+or delete it.
 A value typed without a scheme and without a port is shown as "invalid
 endpoint" unless it is on this computer (`localhost`, any `127.x.x.x` address
 or `[::1]`), because it could be a key pasted into the field.

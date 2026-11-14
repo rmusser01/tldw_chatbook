@@ -1231,7 +1231,7 @@ def custom_endpoints_summary(screen: SettingsScreen) -> str:
         E.g. "no named endpoints · applies immediately" or "2 named
         endpoints · ..."; built-in slots are listed inside.
     """
-    named = len(load_custom_endpoints(screen._custom_endpoints_view_config()))
+    named = len(load_custom_endpoints(screen._custom_endpoints_view_config(), include_refused=True))
     count = f"{named or 'no'} named endpoint" + "s" * (named != 1)
     return f"{count} · {APPLIES_IMMEDIATELY}"
 
@@ -2255,6 +2255,7 @@ def compose_custom_endpoints_children(screen: SettingsScreen) -> ComposeResult:
     """
     config = screen._custom_endpoints_view_config()
     entries = load_custom_endpoints(config, include_refused=True)  # TASK-40300
+    loaded = load_custom_endpoints(config)  # a refused entry offers no Duplicate (M-c)
     rows = custom_endpoint_rows(config)
     if not rows:
         yield Static(
@@ -2285,14 +2286,12 @@ def compose_custom_endpoints_children(screen: SettingsScreen) -> ComposeResult:
             yield Button(
                 "Edit",
                 id=f"settings-cep-edit-{slug}",
-                tooltip=(
-                    "Edit the endpoint URL, Env var, or model list. "
-                    "Existing conversations re-resolve on their next send."
-                ),
+                tooltip="Edit the endpoint URL, Env var, or model list. Existing conversations re-resolve on their next send.",
             )
             yield Button(
                 "Duplicate",
                 id=f"settings-cep-duplicate-{slug}",
+                classes="" if slug in loaded else "settings-gated-profile-hidden",
                 tooltip=(
                     "Create another endpoint from this one via the "
                     "template flow: same family, new URL (a full copy "

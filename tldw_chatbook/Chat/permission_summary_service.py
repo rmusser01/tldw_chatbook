@@ -46,6 +46,8 @@ class PermissionSummaryResolution:
         api_key: Explicit config key, the provider's resolved key, or None
             for keyless local providers.
         model: Configured model, or None to let the provider default apply.
+        api_base_url: The configured endpoint the call pins once the endpoint
+            contract accepts it (TASK-40300), or None for the adapter default.
         timeout_seconds/max_tokens/tail_max_chars/system_prompt: Call
             parameters; defaults per ADR-332.
     """
@@ -59,6 +61,7 @@ class PermissionSummaryResolution:
     dispatch_name: str = ""
     api_key: Optional[str] = None
     model: Optional[str] = None
+    api_base_url: Optional[str] = None
 
 
 def resolve_permission_summary(
@@ -116,12 +119,44 @@ def resolve_permission_summary(
     explicit_key = str(section.get("api_key") or "").strip()
     if not (readiness.ready or explicit_key):
         return base
+    endpoint = _summary_endpoint(config, dispatch)
+    if endpoint is None:
+        return base
     return replace(
         base,
         active=True,
         dispatch_name=dispatch,
         api_key=readiness.api_key or explicit_key or None,
+        api_base_url=endpoint or None,
     )
+
+
+def _summary_endpoint(config: Mapping, dispatch: str) -> Optional[str]:
+    """The endpoint a summary call pins: "" for the adapter's default, None
+    when the endpoint contract refuses the one it would use (TASK-40300
+    review r14ep-rev2 I2: a ``127.1``, ``-bad.corp`` or ``?token=`` endpoint
+    was sent to, since only the credential was checked).
+    """
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        adapter_api_base_url,
+        effective_provider_endpoint,
+        first_configured_endpoint,
+    )
+    from tldw_chatbook.config import provider_settings_for_key
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+    )
+
+    try:
+        settings = provider_settings_for_key(config.get("api_settings"), dispatch)
+    except Exception:  # noqa: BLE001 -- a malformed table means no summary
+        return None
+    effective = effective_provider_endpoint(dispatch, None, settings)
+    if effective and endpoint_refusal(dispatch, effective):
+        return None
+    if not first_configured_endpoint(settings):
+        return ""
+    return adapter_api_base_url(dispatch, effective) or ""
 
 
 _USER_ASSISTANT_ROLES = frozenset({"user", "assistant"})
@@ -278,6 +313,7 @@ def summarize_pending_round(
                 tail, pending_calls_info, resolution.system_prompt
             ),
             api_key=resolution.api_key,
+            api_base_url=resolution.api_base_url,
             model=resolution.model,
             streaming=False,
             temp=0.0,

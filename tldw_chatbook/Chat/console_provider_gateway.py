@@ -61,9 +61,9 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_endpoints import (
     CONFIG_READING_LOCAL_EXECUTION_KEYS,
-    CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
     URL_BASED_PROVIDER_KEYS,
     adapter_api_base_url,
+    invalid_llamacpp_base_url_copy,
     refuse_a_refused_endpoint,
     effective_provider_endpoint,
     generic_endpoint_differs,
@@ -163,6 +163,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     custom_endpoint_provider_settings,
     entry_for,
     family_execution_key,
+    missing_custom_endpoint_copy,
     split_custom_endpoint_id,
     CustomEndpointEntry,
 )
@@ -236,10 +237,6 @@ GENERATION_READ_TIMEOUT_SECONDS = 300.0
 Large local models routinely need 60-180s for a non-streamed completion, so
 the owned client must not cap reads at the old 30s ceiling.
 """
-INVALID_LLAMACPP_BASE_URL_COPY = (
-    "Provider blocked: invalid llama.cpp base URL. "
-    "Use an http(s) URL such as http://127.0.0.1:9099."
-)
 UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response shape."
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 MAX_TRACE_RESPONSE_ITEMS = 1_024
@@ -3975,13 +3972,13 @@ class ConsoleProviderGateway:
         """
         model = config.explicit_model or config.configured_model
         base_url = normalize_llamacpp_base_url(config.base_url)
-        if endpoint_refusal("llama_cpp", base_url):  # TASK-40300
+        if refusal := endpoint_refusal("llama_cpp", base_url):  # TASK-40300
             return ConsoleProviderResolution(
                 provider="llama_cpp",
                 base_url=config.base_url,
                 model=model,
                 ready=False,
-                visible_copy=INVALID_LLAMACPP_BASE_URL_COPY,
+                visible_copy=invalid_llamacpp_base_url_copy(refusal),
                 readiness_key="llama_cpp",
                 execution_key="llama_cpp",
                 **self._resolution_settings(config),
@@ -4438,7 +4435,7 @@ class ConsoleProviderGateway:
             return self._blocked_resolution(
                 selection,
                 provider=selection.provider,
-                visible_copy=CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY,
+                visible_copy=missing_custom_endpoint_copy(app_config, selection.provider),
             )
         if selection.execution_provider:
             # ADR-200: a routed child freezes execution as well as its URL.
@@ -4710,6 +4707,7 @@ class ConsoleProviderGateway:
                 if custom_entry is not None and not selection.base_url_is_pinned
                 else selection.base_url,
                 provider_settings,
+                custom_endpoint=custom_entry is not None,
             )
 
         # TASK-40300: the endpoint contract decides, before the unsaved guard,
