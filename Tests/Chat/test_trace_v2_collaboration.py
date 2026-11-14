@@ -476,11 +476,21 @@ _LOG_SANITIZER_SHAPES = {
     "stripe-underscore": ("sk" + "_live_" + _FAKE + "a1B2c3D4e5", None),
     "webhook-secret": ("whsec" + "_" + _FAKE + "a1B2" * 4, None),
     "groq": ("gsk" + "_" + _FAKE + "a1B2" * 6, None),
-    "bearer-any-token": ("Bearer " + _FAKE + "!x$", _FAKE + "!x$"),
+    # The secret part must vanish, not only the whole string (review
+    # r14ep-rev2 C1: masking "Bearer tok" alone left the rest).
+    "bearer-any-token": ("Bearer " + "tok!en$" + _FAKE, _FAKE),
+    # Review r14ep-rev2 C1: Laravel Sanctum's ``<id>|<secret>`` token.
+    "bearer-sanctum": ("Authorization: Bearer " + "5|" + _FAKE, _FAKE),
     "url-user-only": ("https://" + _FAKE + "@example.com/repo.git", _FAKE),
     "pem-unterminated": (
         "-----BEGIN PRIVATE KEY-----\n" + _FAKE + "-PEM-BODY",
         _FAKE + "-PEM-BODY",
+    ),
+    # Review r14ep-rev2 M-g: a truncated legacy encrypted key, headers first.
+    "pem-encrypted-unterminated": (
+        "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n"
+        "DEK-Info: AES-128-CBC,0A\n\nMIIEv" + _FAKE,
+        "MIIEv" + _FAKE,
     ),
 }
 
@@ -530,6 +540,9 @@ _LOOK_ALIKE_TEXTS = (
     "curl -H 'Authorization: Bearer <token>' https://api.example.com",
     'export AUTH="Bearer $OPENAI_API_KEY"',
     "git clone ssh://git@github.com/org/repo.git",
+    # Review r14ep-rev2 M-f: ordinary user names.
+    "git clone https://jdoe1234@bitbucket.org/team/repo.git",
+    "scp file ssh://username@server.example.com/x",
     "A PEM file begins with -----BEGIN PRIVATE KEY----- then base64 lines.",
 )
 

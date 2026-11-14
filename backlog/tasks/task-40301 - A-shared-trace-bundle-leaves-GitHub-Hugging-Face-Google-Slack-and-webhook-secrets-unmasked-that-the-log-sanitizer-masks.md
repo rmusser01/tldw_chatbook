@@ -3,7 +3,7 @@ id: TASK-40301
 title: "A shared trace bundle leaves GitHub, Hugging Face, Google, Slack and webhook secrets unmasked that the log sanitizer masks"
 status: Done
 created_date: 2026-11-12 19:36
-updated_date: 2026-11-13 19:16
+updated_date: 2026-11-14 23:59
 assignee:
 - '@claude'
 labels:
@@ -69,3 +69,9 @@ A shared Trace bundle now masks every credential value shape the log sanitizer m
 - `CREDENTIAL_VALUE_PATTERNS` now carries credential-shaped forms of those three rules: `_BEARER_TOKEN` (the token starts with 8 token characters, so a leading `{ < $ % ' "` never matches), `_URL_CREDENTIAL_USERINFO` (user info with a password, or a user part of 8 characters or more; `git@` and `app@` pass), `_PRIVATE_KEY_CREDENTIAL` (a terminated block, or an unterminated one only when base64 follows the BEGIN line). The same tuple is the export's mask and the import's refusal, so both changed together.
 - `_BEARER`, `_DIAGNOSTIC_URL_USERINFO` and `_PRIVATE_KEY_BLOCK` are unchanged on purpose: logs keep masking the broader forms (real bearer tokens included), and `sanitize_trace_credentials_v1`/`_v2` read `_BEARER`, whose output must stay byte-identical for stored traces (TASK-39123); narrowing it there would make stored history read as modified.
 - Test `Tests/Chat/test_trace_v2_collaboration.py::test_code_and_docs_that_only_look_like_credentials_survive_a_shared_bundle` (5 texts x 3 profiles): no credential provenance, `_credential_text` leaves the text unchanged, and an older bundle holding the text imports. Red against round 1's sanitizer: 15/15. Real shapes stay masked (the shapes test; its Bearer case now uses a token-shaped body) and refused (the import test). Laned in recovered-suites and pinned in `RECOVERED_SUITES_TARGETS`.
+
+**Review r14ep-rev2 (round 3).**
+- C1 (critical): `_BEARER_TOKEN` needed 8 token characters first, so when it missed, the export's own rule masked only `Bearer <prefix>` and left the rest: Laravel Sanctum's `Authorization: Bearer 5|<secret>` and `Bearer tok!en$<secret>` exported their secret. It now takes a token character followed by 7 or more non-space characters (`[A-Za-z0-9_.~+/=-]\S{7,}`), so `{`, `<`, `$` and quotes still never start one. Round 2's rewrite of the `bearer-any-token` case dodged this: the original `"Bearer " + "tok!en$" + _FAKE` is back, its checked part is now the secret itself (`_FAKE`; checking `"tok!en$" + _FAKE` passed while `_FAKE` leaked), and a Sanctum case joins it.
+- M-f: the user-only user-info floor is 16 characters, so `https://jdoe1234@bitbucket.org/...` and `ssh://username@server.example.com/...` survive a bundle; the 19-character fake token user stays masked.
+- M-g: an unterminated private key may carry header lines (`Proc-Type:`, `DEK-Info:`) before its base64 body, so a truncated legacy encrypted PEM is masked again.
+- Tests (`Tests/Chat/test_trace_v2_collaboration.py`, laned nodes; new parameters only): the shapes test gains `bearer-sanctum` and `pem-encrypted-unterminated` (and the restored Bearer case); the look-alike test gains the two user names. Red against 7847828f40's sanitizer: 15 failed (Bearer, Sanctum, encrypted PEM, and both user names, each in 3 profiles); green after, 114 cases.

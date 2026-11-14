@@ -474,20 +474,23 @@ _TOKEN_CREDENTIALS = (
 #: and the stored trace projections keep the broader rules, which also match
 #: code and docs a shared bundle must keep: ``f"Bearer {api_key}"``,
 #: ``Bearer <token>``, ``ssh://git@github.com/...``, prose naming a PEM
-#: header. Here a Bearer token starts with 8 token characters, URL user info
-#: has a password or 8 characters, and an unterminated private key has a
-#: base64 body.
+#: header. Here a Bearer token starts with a token character and runs 8
+#: non-space characters (review r14ep-rev2 C1: Sanctum's ``5|<secret>``),
+#: user info has a password or a 16-character user part (M-f: ``jdoe1234@``
+#: stays), and an unterminated private key has a base64 body, after any
+#: ``Proc-Type``/``DEK-Info`` header lines (M-g).
 _BEARER_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9_-])(Bearer\s+)([A-Za-z0-9_.~+/=-]{8,}\S*)", re.IGNORECASE
+    r"(?<![A-Za-z0-9_-])(Bearer\s+)([A-Za-z0-9_.~+/=-]\S{7,})", re.IGNORECASE
 )
 _URL_CREDENTIAL_USERINFO = re.compile(
     r"(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://"
-    r"(?:[^/?#\s@:]*:[^/?#\s@]*|[^/?#\s@:]{8,})@",
+    r"(?:[^/?#\s@:]*:[^/?#\s@]*|[^/?#\s@:]{16,})@",
     re.IGNORECASE,
 )
 _PRIVATE_KEY_CREDENTIAL = re.compile(
     r"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----"
-    r"(?:[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----|\s*[A-Za-z0-9+/]{16,}[\s\S]*)"
+    r"(?:[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----"
+    r"|\s*(?:[A-Za-z-]+:[^\n]*\n)*\s*[A-Za-z0-9+/]{16,}[\s\S]*)"
 )
 #: Every credential value shape logs mask, in its credential-shaped form. A
 #: shared Trace bundle masks with this same tuple (TASK-40301), so the export
