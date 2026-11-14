@@ -356,7 +356,16 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30 after the final fix wave (B2b rows).
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # every CCP helper call passes the services bundle's character DB (+6).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16835,
+    # 2026-11-05 owner decision (expand limits, never contort code; B2b
+    # follow-up burn-down PR 3): TASK-33910.46's centre failure copy and
+    # TASK-33910.37's per-server unfiltered total for a server search's
+    # "N of M" title: +35 (dev 4b90eb860b's 16,834 -> 16,869, rebased
+    # 2026-11-12).
+    # 2026-11-05, same owner rule, PR #3427 review fix round 1: fixed failure
+    # toasts with category-only logs (TASK-38228) and the full-page title
+    # guard (TASK-33910.37): +9 (16,869 -> 16,878); set to
+    # the measurement after the 2026-11-12 rebase.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16878,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
