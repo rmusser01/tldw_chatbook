@@ -21516,11 +21516,20 @@ class ChatScreen(BaseAppScreen):
             or bool(held_reason)
         )
 
+        stop_available = run_active or bool(
+            getattr(controller, "is_stop_allowed", False)
+        )
+        send_label = (
+            queue_presentation.send_label if queue_presentation is not None else "Send"
+        )
+        if config_sync.defer_terminal_send(
+            self, composer.run_active, stop_available, send_label
+        ):
+            return
         composer.sync_action_state(
             has_draft=composer.has_sendable_payload(),  # TASK-33620.15.22
             run_active=run_active,
-            stop_available=run_active
-            or bool(getattr(controller, "is_stop_allowed", False)),
+            stop_available=stop_available,
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
@@ -21534,11 +21543,7 @@ class ChatScreen(BaseAppScreen):
                 else ""
             ),
             ephemeral=self._console_active_session_is_ephemeral(),
-            send_label=(
-                queue_presentation.send_label
-                if queue_presentation is not None
-                else "Send"
-            ),
+            send_label=send_label,
             # task-15862 AC#3: mid-wake, the queue tooltip above rode the
             # setup slot and painted as "finish provider setup"; the flag
             # makes the composer name the wake instead.

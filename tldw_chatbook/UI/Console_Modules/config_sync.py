@@ -35,7 +35,9 @@ _POLL_SYNC: ContextVar[bool] = ContextVar("console_poll_sync", default=False)
 _FULL_RENDER_DEFERRAL: ContextVar[tuple[Any, Callable[[], bool]] | None] = (
     ContextVar("console_full_render_deferral", default=None)
 )
-
+_TERMINAL_RENDER: ContextVar[tuple[Any, Any, str | None, int, Any] | None] = (
+    ContextVar("console_terminal_render", default=None)
+)
 
 def run_console_config_sync(
     sync: Callable[[], None],
@@ -614,7 +616,37 @@ def settle_terminal_projection(
         or getattr(store, "active_session_id", None) != session_id
     ):
         return replay_whole_console_sync(screen)
-    return project_console_tick(screen)
+    token = _TERMINAL_RENDER.set(
+        (screen, store, session_id, get_ident(), current_task())
+    )
+    try:
+        return project_console_tick(screen)
+    finally:
+        _TERMINAL_RENDER.reset(token)
+
+
+def defer_terminal_send(
+    screen: Any, was_active: bool, stop_available: bool, send_label: str
+) -> bool:
+    """Hold the active composer's transition to Send until its transcript settles."""
+    if not was_active or stop_available or send_label != "Send":
+        return False
+    owner = terminal_projection_owner(screen)
+    if owner is None:
+        return False
+    store, session_id = owner
+    render = _TERMINAL_RENDER.get()
+    if (
+        render is not None
+        and render[0] is screen
+        and render[1] is store
+        and render[2] == session_id
+        and render[3] == get_ident()
+        and render[4] is current_task()
+    ):
+        return False
+    replay_whole_console_sync(screen)
+    return True
 
 
 def sync_console_core_state(screen) -> None:
