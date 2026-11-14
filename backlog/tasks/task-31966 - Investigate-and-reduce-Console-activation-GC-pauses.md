@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-09-07 18:45
-updated_date: 2026-11-12 03:42
+updated_date: 2026-11-14 19:52
 labels:
 - console
 - performance
@@ -497,6 +497,13 @@ retirement across a saved append. Repeat the same 12 Terminal journeys at
 ADR required: no new ADR.
 ADR path: existing ADR-120 and ADR-365.
 Reason: preserve the existing switcher and viewport authority and layout.
+### Rebased Terminal activation stalls on 2026-11-14
+
+Attribute the scale reopen against unchanged real Terminal measurements. Remove proven duplicate Console activation and projection work at its existing owners. Keep the exact target, existing windowing and render behavior, focus, cancellation and ordinary quit checks. Recheck the import and ready census without raising their caps. Repeat the six ordinary and six scale journeys in fresh private profiles at 50 ms loop and 100 ms busy paint, retaining misses and partial runs.
+
+ADR required: no new ADR.
+ADR path: existing ADR-120, ADR-198 and ADR-365.
+Reason: preserve activation, collection policy and native viewport ownership while removing redundant work.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 

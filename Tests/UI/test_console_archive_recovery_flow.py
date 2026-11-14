@@ -240,6 +240,7 @@ async def mounted_recovery(
             # turn's preparation reads refuse when it changes under them. A
             # host swapped in here was flipped back mid-turn under load.
             await console._sync_native_console_chat_ui()
+            await recovery.prepare_for_admission(source.id)
             await wait_until(
                 pilot,
                 lambda: console._archive_recovery_view().is_answerable(source.id),
