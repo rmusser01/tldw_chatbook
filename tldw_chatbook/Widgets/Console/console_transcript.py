@@ -7217,7 +7217,7 @@ class ConsoleTranscript(VerticalScroll):
         pending_widgets: list[Widget] = []
         pending_rows: list[_TranscriptRow] = []
 
-        async def _mount_pending(*, before: Widget | None) -> bool:
+        async def _mount_pending(*, before: int | Widget) -> bool:
             """Mount one contiguous missing run and validate attachment."""
             if not pending_widgets:
                 return True
@@ -7226,10 +7226,7 @@ class ConsoleTranscript(VerticalScroll):
                     self._row_widgets.pop(pending_row.key, None)
                     self._row_signatures.pop(pending_row.key, None)
                 return False
-            if before is None:
-                await self.mount(*pending_widgets)
-            else:
-                await self.mount(*pending_widgets, before=before)
+            await self.mount(*pending_widgets, before=before)
             if not self._can_mutate_widget(self) or any(
                 not self._can_mutate_widget(widget, parent=self)
                 for widget in pending_widgets
@@ -7261,13 +7258,8 @@ class ConsoleTranscript(VerticalScroll):
             pending_rows.append(row)
 
         if pending_widgets:
-            try:
-                pill = self.query_one(
-                    "#console-transcript-jump-pill", ConsoleTranscriptJumpPill
-                )
-            except NoMatches:
-                pill = None
-            if not await _mount_pending(before=pill):
+            # The mounted rows precede the recovery and other persistent controls.
+            if not await _mount_pending(before=len(rows) - len(pending_rows)):
                 return
         # Preserve the reorder contract for branch changes after the batched
         # mount/remove work above. TASK-15453 established that move_child is
