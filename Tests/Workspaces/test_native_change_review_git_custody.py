@@ -330,6 +330,7 @@ def test_unavailable_cleanup_proof_retains_original_worker_in_isolated_process(
         )
         evidence = json.loads(result_path.read_text())
         assert evidence["retained"] and not evidence["native_cleanup_proven"]
+        assert evidence["slot_released"] and evidence["disposal_returned"]
         assert not process_exists(evidence["child_pid"])
         assert not process_exists(evidence["probe_pid"])
         print("Unknown cleanup observation:", json.dumps(evidence, sort_keys=True))
@@ -365,19 +366,47 @@ def test_unavailable_cleanup_proof_retains_original_worker_in_isolated_process(
         child_pid = int(wrapper.entered.read_text())
         wait_until(lambda: not process_exists(child_pid))
         host.service.shutdown(timeout=0)
+        from tldw_chatbook.Agents.execution_capacity import holds_unproven_custody
+
+        # TASK-40716: a daemon worker holds the original storage; the record
+        # names it, and nothing waits on an anonymous event.
+        retention = ticket.operation.retention
+        assert retention is not None and retention.label == "native Git"
+        custody = [t for t in threading.enumerate() if holds_unproven_custody(t)]
+        assert len(custody) == 1 and custody[0].daemon
         assert ticket.operation._stopping and ticket.owner.is_admitted
         assert not ticket.retired.is_set() and host.service._queue.unfinished_tasks == 1
+
+        def held():
+            with storage_admission._lock:
+                leases = len(storage_admission._live_leases - before) >= 3
+            with host.runtime.worktree_activity.prelaunch(
+                footprint=WorktreeFootprint(opaque=True)
+            ) as claim:
+                return leases and claim is None
+
+        assert held()
+        # Abandon returns only the slot; the leases and claim stay held.
+        assert host.runtime.execution_capacity.snapshot().tool_workers == 1
+        assert retention.abandon()
+        assert host.runtime.execution_capacity.snapshot().tool_workers == 0
+        assert held() and not ticket.retired.is_set()
+        # Disposal records the retained custody and returns.
+        import asyncio
+
+        asyncio.run(
+            asyncio.wait_for(host.runtime.dispose(timeout_seconds=0), 20)
+        )
+        assert custody[0].is_alive() and not ticket.retired.is_set()
         with storage_admission._lock:
             assert len(storage_admission._live_leases - before) >= 3
-        with host.runtime.worktree_activity.prelaunch(
-            footprint=WorktreeFootprint(opaque=True)
-        ) as claim:
-            assert claim is None
         Path(receipt).write_text(
             json.dumps(
                 {
                     "retained": True,
                     "native_cleanup_proven": False,
+                    "slot_released": True,
+                    "disposal_returned": True,
                     "child_pid": child_pid,
                     "probe_pid": os.getpid(),
                 }

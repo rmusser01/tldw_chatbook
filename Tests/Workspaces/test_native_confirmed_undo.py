@@ -292,20 +292,19 @@ async def test_native_ticket_exists_before_original_worker_enqueue(
     from tldw_chatbook.Workspaces.change_revert_ownership import _UndoCall
 
     h = undo_host
-    original = asyncio.to_thread
+    original = _UndoCall.run
     observations = []
 
-    async def enqueue(callback, *args, **kwargs):
-        if isinstance(getattr(callback, "__self__", None), _UndoCall):
-            call = callback.__self__
-            if callback.__name__ == "run":
-                observations.append(call)
-                assert call in h.runtime._change_revert_native.pending
-                assert call.operation is not None
-                assert h.runtime.execution_capacity.snapshot().tool_workers == 1
-        return await original(callback, *args, **kwargs)
+    def enqueue(call, *args, **kwargs):
+        # The original worker is a daemon custody thread (TASK-40716).
+        assert threading.current_thread().daemon
+        observations.append(call)
+        assert call in h.runtime._change_revert_native.pending
+        assert call.operation is not None
+        assert h.runtime.execution_capacity.snapshot().tool_workers == 1
+        return original(call, *args, **kwargs)
 
-    monkeypatch.setattr(asyncio, "to_thread", enqueue)
+    monkeypatch.setattr(_UndoCall, "run", enqueue)
     async with h.app.run_test(size=(120, 40)) as pilot:
         screen = await open_confirmation(h, pilot)
         await pilot.click("#change-revert-yes")
@@ -582,6 +581,8 @@ async def test_unknown_required_settlement_retains_original_scopes(
         assert json.loads(result_path.read_text()) == {
             "failure": failure,
             "retained": True,
+            "slot_released": True,
+            "disposal_returned": True,
         }
         return
     try:
@@ -714,11 +715,36 @@ async def test_unknown_required_settlement_retains_original_scopes(
                     set(observed["state"].leases.values())
                     <= storage_admission._live_leases
                 )
-            with h.runtime.worktree_activity.prelaunch(
-                footprint=WorktreeFootprint(opaque=True)
-            ) as claim:
-                assert claim is None
-            Path(receipt).write_text(json.dumps({"failure": failure, "retained": True}))
+            def claim_held():
+                with h.runtime.worktree_activity.prelaunch(
+                    footprint=WorktreeFootprint(opaque=True)
+                ) as claim:
+                    return claim is None
+
+            assert claim_held()
+            # TASK-40716: the retained Undo marks its owner unproven, returns
+            # only its slot on abandon, and disposal stops waiting for it.
+            retention = call.operation.retention
+            assert retention is not None and retention.label == "Undo"
+            assert call.owner._cleanup_unproven
+            assert retention.abandon()
+            assert h.runtime.execution_capacity.snapshot().tool_workers == 0
+            assert claim_held() and observed["state"].live
+            assert (
+                await asyncio.wait_for(h.runtime._change_revert_native.drain(), 10)
+                is False
+            )
+            assert not call.retired.is_set() and observed["state"].live
+            Path(receipt).write_text(
+                json.dumps(
+                    {
+                        "failure": failure,
+                        "retained": True,
+                        "slot_released": True,
+                        "disposal_returned": True,
+                    }
+                )
+            )
             os._exit(0)
     except BaseException:  # noqa: BLE001 -- bounded subprocess owns deliberately retained worker
         import traceback

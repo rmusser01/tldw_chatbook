@@ -62,14 +62,9 @@ async def run_native_git(producer, cmd, env, payload, *, cwd, timeout_seconds):
             await asyncio.shield(asyncio.gather(communication, return_exceptions=True))
             controller.close(tree)
         except BaseException:  # noqa: BLE001 -- no proof permits original scopes to return
-            producer.owner.mark_cleanup_unproven()
-            # No proof mechanism remains: keep this original worker/storage alive.
-            never = asyncio.get_running_loop().create_future()
-            while True:
-                try:
-                    await asyncio.shield(never)
-                except asyncio.CancelledError:
-                    continue
+            # No proof mechanism remains: this daemon worker keeps the original
+            # storage until a late proof; its waiters stop waiting (TASK-40716).
+            producer.operation.retain_unproven("native Git").hold()
         raise
 
 

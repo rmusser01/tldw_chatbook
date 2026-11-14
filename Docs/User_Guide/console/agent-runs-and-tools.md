@@ -255,6 +255,16 @@ that one call (the model sees it fail as "tool call cancelled") and the
 turn continues, unlike **Stop**, which ends the run. A tool that must
 finish once started (a Watchlists mutation, for example) cannot be
 abandoned and shows no link.
+
+Sometimes the app cannot confirm that a process a tool started has really
+stopped: a shell command, an SSH request or a Git process. The run then stops at
+once with *Agent stopped: the cleanup of `<tool>` could not be proven, so its
+workspace and storage stay held until you restart the app.* Nothing can reuse
+that folder, storage or reservation while the process might still be running.
+The tool's worker slot stays counted against the app-wide tool limit until you
+press **Release tool slot** under that explanation. Releasing it lets new tool
+calls run; the workspace and storage stay held until you restart the app.
+Quitting the app does not wait for such a tool.
 a long tool call never looks frozen: `⚙ read_file · 4s` names the tool that
 is running and how long it has been running, `Thinking… · 6s` means the
 tool finished and the model is composing the next round, and `Generating…`

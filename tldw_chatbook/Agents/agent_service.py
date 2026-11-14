@@ -2181,7 +2181,7 @@ def _call_with_timeout(
     after its human decision still trips the ceiling promptly, and
     cancellation is checked every slice regardless.
     """
-    from .execution_capacity import CapacityRefused
+    from .execution_capacity import CapacityRefused, cleanup_unproven_result
     from .automatic_work_budget import AutomaticWorkRefused
     from .automatic_work_runtime import current_automatic_work
 
@@ -2244,10 +2244,9 @@ def _call_with_timeout(
         retained_source.__enter__()
 
     def retain_unknown_return():
-        if operation is not None:
-            operation.mark_stopping()
-            operation.owner.mark_cleanup_unproven()
-        threading.Event().wait()
+        # The original scopes on this daemon worker stay held; the caller
+        # returns at once and the run ends (TASK-40716).
+        operation.retain_unproven(tool_name).hold()
 
     @worker_guard(execution_owner)
     def _admitted_call() -> None:
@@ -2391,6 +2390,8 @@ def _call_with_timeout(
     deadline = time.monotonic() + seconds
     while worker.is_alive() and time.monotonic() < deadline:
         worker.join(min(_CANCEL_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
+        if operation is not None and operation.retention is not None:
+            return cleanup_unproven_result(tool_name)
         if worker.is_alive() and (
             should_cancel()
             or (automatic_work is not None and automatic_work.should_cancel())
@@ -2405,6 +2406,8 @@ def _call_with_timeout(
             )
         if worker.is_alive() and pauses_deadline():
             deadline = time.monotonic() + seconds
+    if operation is not None and operation.retention is not None:
+        return cleanup_unproven_result(tool_name)
     if worker.is_alive():
         if operation is not None:
             operation.mark_stopping()

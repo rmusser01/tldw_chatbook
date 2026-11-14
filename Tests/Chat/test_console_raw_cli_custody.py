@@ -484,7 +484,11 @@ async def test_model_call_keeps_its_original_single_operation_through_relay_retu
 async def test_unproven_required_terminal_keeps_real_worker_and_storage(
     raw_host, failed_write
 ):
-    """Qualify permanent retention in an owned subprocess, then end that process."""
+    """An unproven outcome keeps its storage and claim, not the pool or disposal.
+
+    The custody stays held until process exit (TASK-40716), so it is qualified
+    in an owned subprocess that then ends.
+    """
     import json
     import os
     import subprocess
@@ -514,7 +518,12 @@ async def test_unproven_required_terminal_keeps_real_worker_and_storage(
             timeout=40,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(receipt.read_text()) == {"mode": failed_write, "held": True}
+        assert json.loads(receipt.read_text()) == {
+            "mode": failed_write,
+            "held": True,
+            "slot_released": True,
+            "disposal_returned": True,
+        }
         return
     h = raw_host
     db = h.runtime._agent_runs_db
@@ -543,13 +552,20 @@ async def test_unproven_required_terminal_keeps_real_worker_and_storage(
         raw_cli_executor._cleanup_tree = unavailable
     else:
         db.set_terminal_with_step = fail
+    from tldw_chatbook.Agents.execution_capacity import holds_unproven_custody
+
     assert h.controller.start_user_command(stash())
     call = next(iter(h.runtime.raw_cli_source.pending))
     work, _ = h.workers.pop()
     worker = threading.Thread(target=work, daemon=True)
     worker.start()
-    await until(lambda: call.operation._stopping)
-    assert worker.is_alive() and not call.retired.is_set()
+    await until(lambda: call.operation.retention is not None)
+    # The joined-pool worker returns; a daemon worker holds the scopes.
+    await asyncio.to_thread(worker.join, 10)
+    assert not worker.is_alive() and not call.retired.is_set()
+    custody = [t for t in threading.enumerate() if holds_unproven_custody(t)]
+    assert len(custody) == 1 and custody[0].daemon
+    assert call.owner._cleanup_unproven
     if failed_write == "cleanup":
         assert not call.physical_proven and call.required_proven
         assert call.owner._cleanup_unproven
@@ -564,14 +580,32 @@ async def test_unproven_required_terminal_keeps_real_worker_and_storage(
         assert len(row["steps"]) == 1
     assert h.runtime.execution_capacity.snapshot().tool_workers == 1
     assert call.snapshot.root.is_dir()
-    with h.runtime.worktree_activity.prelaunch(
-        footprint=WorktreeFootprint(opaque=True)
-    ) as claim:
-        assert claim is None
+
+    def claim_held():
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            return claim is None
+
+    assert claim_held()
+    # Disposal of Raw CLI stops waiting for the retained call.
+    assert await asyncio.wait_for(h.runtime.raw_cli_source.drain(), 10) is False
+    # Abandon returns only the slot; storage, scratch and the claim stay held.
+    assert call.operation.retention.abandon()
+    assert h.runtime.execution_capacity.snapshot().tool_workers == 0
+    assert call.snapshot.root.is_dir() and claim_held()
+    assert not call.retired.is_set() and custody[0].is_alive()
     Path(os.environ["TASK8_RAW_RETENTION_RECEIPT"]).write_text(
-        json.dumps({"mode": failed_write, "held": True})
+        json.dumps(
+            {
+                "mode": failed_write,
+                "held": True,
+                "slot_released": True,
+                "disposal_returned": True,
+            }
+        )
     )
-    # This branch intentionally has no retirement mechanism; end only this owned process.
+    # The custody is held until process exit; end only this owned process.
     os._exit(0)
 
 

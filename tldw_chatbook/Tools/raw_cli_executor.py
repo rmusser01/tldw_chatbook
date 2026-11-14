@@ -22,7 +22,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-from threading import Event
 import time
 from typing import Any, BinaryIO, Literal, TypeAlias
 
@@ -1208,9 +1207,8 @@ class _ModelRawCliCall:
             yield
         finally:
             if not self.physical_proven:
-                operation.mark_stopping()
-                operation.owner.mark_cleanup_unproven()
-                Event().wait()
+                # The original scopes stay held until a late proof (TASK-40716).
+                operation.retain_unproven(self.name).hold()
             _current_call.reset(token)
             self.operation = None
 

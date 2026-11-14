@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
+import contextvars
 import threading
 from time import monotonic
 from typing import Any
@@ -444,6 +445,35 @@ class ConsoleRawCliController:
             )
         if not custody.start():
             return
+        # Custody runs on a daemon worker. An unproven cleanup holds that
+        # worker's scopes, never this joined pool thread, which returns once
+        # the call is retained (TASK-40716).
+        worker = threading.Thread(
+            target=contextvars.copy_context().run,
+            args=(
+                self._execute_custody,
+                runtime,
+                request,
+                session_id,
+                stash,
+                native_anchor,
+                custody,
+            ),
+            name=f"raw-cli-custody-{request.invocation_id}",
+            daemon=True,
+        )
+        try:
+            worker.start()
+        except RuntimeError:  # no thread available: nothing launched
+            custody.deliver(self._marshal_to_ui, self._refuse, session_id, stash, _AUTHORITY_CHANGED_REFUSAL, refusal=True)
+            custody.finish()
+            return
+        while worker.is_alive() and custody.operation.retention is None:
+            worker.join(0.1)
+
+    def _execute_custody(
+        self, runtime, request, session_id, stash, native_anchor, custody
+    ):
         try:
             with custody.activate():
                 try:

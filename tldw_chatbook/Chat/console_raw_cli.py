@@ -591,8 +591,12 @@ class NativeRawCliSource:
             call.cancel_unstarted()
         if not pending:
             return False
+        from tldw_chatbook.Agents.execution_capacity import (
+            wait_retired_unless_retained,
+        )
+
         task = asyncio.create_task(
-            asyncio.to_thread(lambda: [c.retired.wait() for c in pending])
+            asyncio.to_thread(wait_retired_unless_retained, pending)
         )
         cancelled = False
         while True:

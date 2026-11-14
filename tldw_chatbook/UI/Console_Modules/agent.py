@@ -1286,6 +1286,29 @@ class ConsoleAgentController:
             ),
         )
 
+    def sync_unproven_cleanup(self, transcript: Any) -> None:
+        """Push the rows that explain an unproven tool cleanup (TASK-40716)."""
+        controller = self._console_chat_controller
+        rows = {}
+        if getattr(controller, "unproven_cleanup_runs", None):
+            from tldw_chatbook.Chat.console_unproven_cleanup import (
+                unproven_cleanup_rows,
+            )
+
+            rows = unproven_cleanup_rows(controller)
+        transcript.set_unproven_cleanup_rows(rows)
+
+    def release_unproven_tool_slot(self, message_id: str) -> bool:
+        """Return only the tool slot; the tool's workspace stays held."""
+        from tldw_chatbook.Chat.console_unproven_cleanup import (
+            release_unproven_tool_slot,
+        )
+
+        controller = self._console_chat_controller
+        return controller is not None and release_unproven_tool_slot(
+            controller, message_id
+        )
+
     def console_turn_activity_abandon_action(self) -> str:
         """task-31386: the "abandon call" action for the live line, or ``""``.
 

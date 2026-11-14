@@ -17161,6 +17161,7 @@ class ChatScreen(BaseAppScreen):
                 if type(count) is int and count != 0
             }
             transcript.set_citation_counts(visible_citation_counts)
+            self._agent.sync_unproven_cleanup(transcript)  # TASK-40716
             visible_library_activity_counts = self._library_activity.sync_transcript(
                 transcript
             )

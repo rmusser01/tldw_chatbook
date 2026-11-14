@@ -7644,7 +7644,8 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     color: $ds-text-muted;
 }
 
-.console-transcript-citation-sources {
+.console-transcript-citation-sources,
+.console-transcript-cleanup-release {
     width: auto;
     min-width: $ds-size-13;
     height: $ds-size-3;
@@ -7656,7 +7657,8 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     color: $ds-text-muted;
 }
 
-.console-transcript-citation-sources:focus {
+.console-transcript-citation-sources:focus,
+.console-transcript-cleanup-release:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;

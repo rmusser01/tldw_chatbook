@@ -1118,6 +1118,9 @@ async def test_unknown_peer_proof_keeps_original_model_worker_and_storage(
             "mode": mode,
             "held": True,
             "storage_live": True,
+            "run_ended": True,
+            "slot_released": True,
+            "disposal_returned": True,
         }
         return
 
@@ -1214,8 +1217,16 @@ for line in sys.stdin.buffer:
         if r.terminal is not None
     ]
     native, storage, worker = waiting[0]
-    assert worker.is_alive() and native.operation.owner._cleanup_unproven
-    assert storage.live and not native.finished and not h.finishes
+    # The run ends at once instead of refusing its later calls (TASK-40716);
+    # this daemon worker keeps holding the original storage.
+    await asyncio.wait_for(task, 20)
+    assert len(h.gateway.payloads) == 2, "a later model turn ran after the retention"
+    retention = native.operation.retention
+    assert retention is not None and native.operation.owner._cleanup_unproven
+    assert worker.is_alive() and worker.daemon
+    # The run's other operations may finish; the retained one never does.
+    assert storage.live and not native.finished
+    assert all(op is not native.operation for op, _, _ in h.finishes)
     assert ("db.agent_runs", h.database.db_path) in storage.sources
     assert h.case.runtime.execution_capacity.snapshot().tool_workers == 1
     assert native.requests and all(r.local_returned for r in native.requests)
@@ -1238,8 +1249,40 @@ for line in sys.stdin.buffer:
         assert not h.manager._native_acceptances
         # Actual test-owned infrastructure shutdown is not native proof/release.
         h.manager.close_all()
+    # The run's explanation row offers the release; it returns only the slot
+    # and the original storage stays held.
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        release_unproven_tool_slot,
+        unproven_cleanup_rows,
+    )
+
+    controller = h.rig.controller
+    (row_id,) = unproven_cleanup_rows(controller)
+    explanation = next(
+        m for m in h.rig.store.messages_for_session(h.rig.session.id) if m.id == row_id
+    )
+    assert "could not be proven" in explanation.content
+    assert unproven_cleanup_rows(controller) == {row_id: False}
+    assert release_unproven_tool_slot(controller, row_id)
+    assert not release_unproven_tool_slot(controller, row_id)
+    assert unproven_cleanup_rows(controller) == {row_id: True}
+    assert retention.abandoned
+    assert h.case.runtime.execution_capacity.snapshot().tool_workers == 0
+    assert storage.live and worker.is_alive()
+    # Disposal stops waiting for the retained custody instead of hanging.
+    await asyncio.wait_for(h.case.runtime.dispose(timeout_seconds=0), 20)
+    assert storage.live and worker.is_alive()
     Path(os.environ["TASK8_SSH_RECEIPT"]).write_text(
-        json.dumps({"mode": mode, "held": True, "storage_live": True})
+        json.dumps(
+            {
+                "mode": mode,
+                "held": True,
+                "storage_live": True,
+                "run_ended": True,
+                "slot_released": True,
+                "disposal_returned": True,
+            }
+        )
     )
     os._exit(
         0

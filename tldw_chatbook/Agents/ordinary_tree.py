@@ -677,6 +677,23 @@ class OrdinaryTurn:
                     self.source_scopes -= 1
                 self._retire_scratch()
 
+    def unproven_only(self):
+        """Whether only unproven cleanup or required outcomes keep this turn.
+
+        Such a turn never retires; its claim and scratch stay held (TASK-40716).
+        """
+        with self.lock:
+            if self.settled or not self.sealed or self.primary_hosts:
+                return False
+            members = tuple(self.members.items())
+        unproven = False
+        for owner, member in members:
+            state = owner.drain_state()
+            if state == "live" or not member.host_returned:
+                return False
+            unproven = unproven or state == "unproven" or not member.durable
+        return unproven
+
     def _drained(self, owner, proven):
         with self.lock:
             self.members[owner].drained = proven is True

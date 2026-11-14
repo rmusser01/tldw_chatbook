@@ -3688,6 +3688,7 @@ class ConsoleChatController:
             0.001, float(library_initialization_timeout)
         )
         self._library_search_tasks: dict[str, asyncio.Task] = {}
+        self.unproven_cleanup_runs: dict[str, str] = {}  # TASK-40716: row -> run
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
         # TASK-34350: sends held at the compaction threshold (Ask), and the
@@ -22941,10 +22942,10 @@ class ConsoleChatController:
                 return True
         return False
 
-    def _append_failure_system_row(self, session_id: str, visible_copy: str) -> None:
+    def _append_failure_system_row(self, session_id: str, visible_copy: str):
         """Append a transcript-only system row describing a provider failure."""
         try:
-            self.store.append_message(
+            return self.store.append_message(
                 session_id,
                 role=ConsoleMessageRole.SYSTEM,
                 content=visible_copy,
@@ -22952,7 +22953,7 @@ class ConsoleChatController:
         except KeyError:
             # Session vanished mid-failure (e.g. closed); the run-state copy
             # still carries the failure for the control surfaces.
-            pass
+            return None
 
     def _append_history_trimmed_note(self, session_id: str, dropped: int) -> None:
         """Append a transcript-only system row noting history was trimmed."""
@@ -27017,7 +27018,8 @@ class ConsoleChatController:
             row_copy = self._without_duplicated_summary(
                 visible_copy, wrapup_summary, failed.content
             )
-            self._append_failure_system_row(session_id, row_copy)
+            row = self._append_failure_system_row(session_id, row_copy)
+            self._note_unproven_cleanup(outcome, run_id, row)
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.FAILED, row_copy),
                 session_id=session_id,
@@ -27046,11 +27048,18 @@ class ConsoleChatController:
         self._record_run_assistant_message(run_id, failed)
         if denial_terminal:
             self._append_failure_system_row(session_id, visible_copy)
+        self._note_unproven_cleanup(outcome, run_id, failed)
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
             session_id=session_id,
         )
         return ConsoleSubmitResult(True, True, failed.content)
+
+    def _note_unproven_cleanup(self, outcome, run_id, row) -> None:
+        """Remember the row that explains a run's unproven tool cleanup."""
+        reason = getattr(outcome, "termination_reason", None)
+        if row is not None and run_id and reason == "cleanup_unproven":
+            self.unproven_cleanup_runs[row.id] = run_id
 
     def _refuse_turn_for_project_setup(
         self,

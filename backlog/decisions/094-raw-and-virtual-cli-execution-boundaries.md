@@ -142,3 +142,14 @@ Local-command row and terminal step writes are required. Successful native write
 Qualified direct/model/Task7 execution joins actual containment and existing admission/queue-relay helper returns using the same already-reserved operation and captured storage sources. Model handoff comes from exact catalog/concrete provider/original runtime and actual worker operation, never names or IDs alone. Standalone/unqualified execution remains bounded and reports cleanup-unproven when helper return is absent. Returned cleanup proof and required-output sealing follow helper proof. Original synchronous host acceptance or source-validated discard and operation.finish return precede root/claim retirement.
 
 Disposal seals admission before capacity close and scratch tombstone, retaining original storage/scratch leases until real drain despite repeated cancellation. Costs are coarse OPAQUE contention, source/DB readback checks, a small private RawCLI handoff, and potentially indefinite native worker/storage/disposal retention when process/helper/required-write proof is unavailable. No second executor, queue, journal, permission grant, model/child owner or public workflow entry is introduced.
+
+## Unproven-cleanup amendment (TASK-40716, 2026-11-13)
+
+This supersedes the "retaining original storage/scratch leases until real drain despite repeated cancellation" and "potentially indefinite native worker/storage/disposal retention" costs for unproven cleanup. Custody of the resource is unchanged; disposal no longer waits for it.
+
+The owner decided this on 2026-11-13 ([TASK-40716](../tasks/task-40716%20-%20An-unproven-tool-cleanup-parks-a-worker-forever-refusing-later-tool-calls-and-holding-a-tool-slot.md)).
+
+- When a tool operation's cleanup cannot be proven, its resource stays held and is never reused: the original scopes, storage leases, scratch and activity claim stay where they are. One shared helper, `OwnedOperation.retain_unproven`, records this. The worker that holds those scopes is a daemon thread and waits on the record, so process exit ends it. Raw CLI user commands and Undo now run their custody on a daemon worker instead of a joined pool thread, so a held custody never delays interpreter exit.
+- The call returns at once with `RunTerminationReason.CLEANUP_UNPROVEN`, and every run ends there, not only goal runs. It no longer waits out its deadline, and the rest of the run is no longer refused `previous_tool_still_running` call by call.
+- The tool-worker slot is returned only by a late proof or an explicit user abandon (the "Release tool slot" action next to the run's explanation). Abandon finishes only the operation: the owner's drain is unproven (ADR-155), and the resource stays held until restart.
+- At app exit, disposal records retained items and stops waiting for them, so the process ends promptly. ADR-155's reopening of a prior process's records as uncertain covers the next start.

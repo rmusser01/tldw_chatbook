@@ -298,11 +298,9 @@ class _UserRawCliCall:
 
     def retain_unproven(self):
         if not (self.required_proven and self.physical_proven and self.host_proven):
-            self.operation.mark_stopping()
-            if not self.physical_proven:
-                self.owner.mark_cleanup_unproven()
-            # No native retry/reaper exists; preserve this worker's original scopes.
-            Event().wait()
+            # No native retry/reaper exists. This daemon worker keeps its original
+            # scopes until a late proof; disposal stops waiting (TASK-40716).
+            self.operation.retain_unproven("Raw CLI").hold()
 
     def finish_operation(self):
         """Join the original finish callback before leaving its storage scopes."""

@@ -1,29 +1,46 @@
-"""One unproven tool cleanup must not wedge the rest of its run (TASK-40716).
+"""One unproven tool cleanup ends its run and keeps only its resource (TASK-40716).
 
 The Console's ordinary tree gives every tool call a source scope. When that
-scope's return cannot be proven, the tool worker is retained on purpose: a
-resource that may still be live is never reused. This file pins what that
-retention does to the run that owns it.
+scope's return cannot be proven, the resource behind it may still be live, so
+it stays held and is never reused. The run that owns it ends at once with a
+reason naming the unproven cleanup, and the user can return its tool slot.
 """
 
-import threading
 import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-import pytest
-
-from tldw_chatbook.Agents.agent_models import ToolResult
+from tldw_chatbook.Agents.agent_models import (
+    RUN_STUCK,
+    AgentConfig,
+    ModelTurn,
+    RunTerminationReason,
+    ToolResult,
+)
+from tldw_chatbook.Agents.agent_runtime import run_agent_loop
 from tldw_chatbook.Agents.agent_service import _call_with_timeout
-from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+from tldw_chatbook.Agents.execution_capacity import (
+    RuntimeCapacity,
+    WorkOrigin,
+    holds_unproven_custody,
+)
+from Tests.Agents.test_agent_runtime import CALC, fence, make_deps
 
 
 class _UnprovenSource:
     """A source scope whose return fails after the tool itself returned."""
 
+    def __init__(self):
+        self.entered = 0
+        self.exited = 0
+
     @contextmanager
     def activate(self):
-        yield
+        self.entered += 1
+        try:
+            yield
+        finally:
+            self.exited += 1
         raise OSError("controlled: original source return unavailable")
 
 
@@ -35,83 +52,105 @@ class _OrdinaryTree:
         self.capacity = owner.capacity
         self.members = {owner: None}
         self.source = _UnprovenSource()
+        self.retained_scopes = 0
 
     @contextmanager
     def retain_source_scope(self):
-        yield
+        self.retained_scopes += 1
+        try:
+            yield
+        finally:
+            self.retained_scopes -= 1
 
     def check_local_sources(self):
         return None
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "TASK-40716: an unproven cleanup parks the tool worker on an event "
-        "nothing completes, so every later tool call in the run is refused "
-        "previous_tool_still_running and the app-wide slot stays held"
-    ),
-)
-def test_unproven_source_return_does_not_refuse_every_later_call(
-    monkeypatch, record_property
-):
+def test_unproven_source_return_ends_the_call_and_keeps_only_its_resource():
     capacity = RuntimeCapacity()
     owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
-    service = SimpleNamespace(_ordinary_tree=_OrdinaryTree(owner))
-
-    # Observe the retention, and give this test (only) a way to end it.
-    release = threading.Event()
-    parked = []
-    wait = threading.Event.wait
-
-    def observe(event, timeout=None):
-        current = threading.current_thread()
-        if (
-            timeout is None
-            and owner._cleanup_unproven
-            and current.name.startswith("tool-")
-        ):
-            parked.append(current)
-            return wait(release, 30)
-        return wait(event, timeout)
-
-    monkeypatch.setattr(threading.Event, "wait", observe)
+    tree = _OrdinaryTree(owner)
+    drains = []
+    owner.on_drained(drains.append)
+    retention = None
     try:
         started = time.monotonic()
-        first = _call_with_timeout(
+        result = _call_with_timeout(
             lambda: ToolResult(ok=True, content="read"),
-            1.0,
+            30.0,
             "fs_read",
-            execution_owner=service,
+            execution_owner=SimpleNamespace(_ordinary_tree=tree),
             owner=owner,
         )
-        first_seconds = time.monotonic() - started
-        second = _call_with_timeout(
-            lambda: ToolResult(ok=True, content="listed"),
-            1.0,
-            "fs_list",
-            execution_owner=service,
-            owner=owner,
-        )
+        elapsed = time.monotonic() - started
+
+        # The call reports at once instead of waiting out its 30 s deadline.
+        assert elapsed < 5, elapsed
+        assert not result.ok and result.dispatch_state == "uncertain"
+        assert result.termination_reason is RunTerminationReason.CLEANUP_UNPROVEN
+        assert "cleanup of fs_read could not be proven" in result.error
+
+        (retention,) = capacity.retained()
+        assert retention.label == "fs_read" and owner._cleanup_unproven
+        # The worker still holds the original scopes: the tree's retained
+        # source scope is entered and nothing has unwound it.
+        workers = [t for t in _custody_threads() if t.name == "tool-fs_read"]
+        assert workers and workers[0].daemon
+        assert tree.retained_scopes == 1
+
+        # The slot stays held after the run's root finishes...
         owner.finish_root()
-        snapshot = capacity.snapshot()
-        record_property("first_call_seconds", round(first_seconds, 2))
-        record_property("first_error", first.error)
-        record_property("second_error", second.error)
-        record_property("tool_workers_after_root_finish", snapshot.tool_workers)
+        assert capacity.snapshot().tool_workers == 1
+        assert capacity.snapshot().stopping_tool_workers == 1
+        assert drains == []
 
-        # The reproduction: the worker is retained on an event nothing sets.
-        assert parked and parked[0].is_alive() and owner._cleanup_unproven
-
-        # AC#1: later calls run, or the unproven call itself ends the run with
-        # a reason that names the unproven cleanup.
-        ends_run = first.termination_reason is not None and "cleanup" in first.error
-        assert ends_run or "previous_tool_still_running" not in second.error, (
-            f"first={first.error!r} (after {first_seconds:.1f}s), "
-            f"second={second.error!r}, "
-            f"tool_workers={snapshot.tool_workers} after the root finished"
-        )
+        # ...until the user abandons it. Only the slot returns: the drain is
+        # unproven and the resource (scopes, retained record) stays held.
+        assert retention.abandon() and not retention.abandon()
+        assert capacity.snapshot().tool_workers == 0
+        assert drains == [False]
+        assert capacity.retained() == (retention,)
+        assert tree.retained_scopes == 1 and workers[0].is_alive()
     finally:
-        release.set()
-        for worker in parked:
-            worker.join(5)
+        if retention is not None:
+            retention.prove()
+            for worker in _custody_threads():
+                worker.join(5)
+    # A late proof lets the original scopes unwind.
+    assert tree.retained_scopes == 0
+    assert capacity.retained() == ()
+
+
+def test_cleanup_unproven_result_ends_every_run_not_only_goal_runs():
+    calls = []
+    unproven = ToolResult(
+        ok=False,
+        error="the cleanup of calculator could not be proven",
+        dispatch_state="uncertain",
+        termination_reason=RunTerminationReason.CLEANUP_UNPROVEN,
+    )
+    outcome = run_agent_loop(
+        AgentConfig(model="m", system_prompt="s", allowed_tools=("calculator",)),
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        make_deps(
+            [
+                ModelTurn(text=fence("calculator", {"expression": "1+1"})),
+                ModelTurn(text=fence("calculator", {"expression": "2+2"})),
+                ModelTurn(text="done"),
+            ],
+            invoke=lambda call: calls.append(call) or unproven,
+        ),
+    )
+    assert len(calls) == 1
+    assert outcome.status == RUN_STUCK
+    assert outcome.termination_reason is RunTerminationReason.CLEANUP_UNPROVEN
+    assert outcome.steps[-1].summary == (
+        "Agent stopped: the cleanup of calculator could not be proven."
+    )
+
+
+def _custody_threads():
+    import threading
+
+    return [t for t in threading.enumerate() if holds_unproven_custody(t)]

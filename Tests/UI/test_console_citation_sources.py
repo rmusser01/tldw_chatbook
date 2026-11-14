@@ -539,6 +539,7 @@ def _bare_screen(
     screen._agent = SimpleNamespace(
         console_turn_activity=lambda: "",
         console_turn_activity_abandon_action=lambda: None,
+        sync_unproven_cleanup=lambda _transcript: None,
     )
     screen._console_citation_resolved_signatures = {}
     screen._console_citation_input_signature = None

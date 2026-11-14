@@ -16,7 +16,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from threading import Event
 from typing import Any, BinaryIO, Callable
 
 from tldw_chatbook.STT.executor_process_tree import (
@@ -1625,9 +1624,9 @@ class ModelSshCall:
                 not r.proven
                 for r in (*self.requests, *self.master_launches, *self.session_starts)
             ):
-                operation.mark_stopping()
-                operation.owner.mark_cleanup_unproven()
-                Event().wait()  # Unknown physical state retains the original worker/storage.
+                # Unknown physical state retains the original worker/storage
+                # until a late proof; the run ends at once (TASK-40716).
+                operation.retain_unproven(self.name).hold()
             try:
                 operation.finish()
                 self.finished = True
