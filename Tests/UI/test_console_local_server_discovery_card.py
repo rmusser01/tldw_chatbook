@@ -9,11 +9,13 @@ the highlighted model; Esc saves nothing. The mounted tests are
 import asyncio
 import threading
 import time
+from contextlib import asynccontextmanager
 from dataclasses import replace
 
 import pytest
 from textual.app import ComposeResult
 from textual.screen import Screen
+from textual.worker import Worker, WorkerState
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -42,6 +44,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderTestEvidenceStore,
 )
 from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_setup_modal import (
@@ -922,45 +925,76 @@ async def test_a_card_unblocked_and_broken_while_away_runs_discovery_on_return(
         )
 
 
-class CoveredAtLaunchHarness(ConsolidatedCSSApp):
-    """Pushes a screen over Console right after its first push, as the app
-    pushes the first-run wizard (``call_after_refresh`` after the initial
-    screen push)."""
-
-    def __init__(self, app_instance) -> None:
-        super().__init__()
-        self.app_instance = app_instance
-        self.cover = Screen()
-
-    async def on_mount(self) -> None:
-        await self.push_screen(ChatScreen(self.app_instance))
-        self.call_after_refresh(lambda: self.push_screen(self.cover))
-
-
 @pytest.mark.asyncio
 @private_profile_test
 async def test_a_card_covered_at_launch_runs_discovery_again_on_the_first_return(
-    request,
+    request, monkeypatch
 ) -> None:
-    """A screen pushed at launch (the first-run wizard) covers Console before
-    its attach reconciliation finishes, so the mount's own resume is still
-    deferred when the user leaves. The first return runs that resume; it
-    used to read as the mount's and kept discovery spent, so a server
-    started while the wizard was open was not offered on that return.
-
-    This catches the race only while the cover lands before the attach
-    reconciliation finishes, which nothing public can assert: after a change
-    to the attach path, revert the ``_console_discovery_rearm_pending`` fix in
-    chat_screen.py and check this test still fails."""
+    """Cover the Console after its empty first look and before its deferred resume."""
     app = _blocked_console_app(())
-    host = CoveredAtLaunchHarness(app)
+    host = ConsoleHarness(app)
+    cover = Screen()
+    prepared, release = asyncio.Event(), asyncio.Event()
+    first_looks = []
+    prepare = ConsoleWorkspaceController.prepare_console_workspace_reconciliation
 
-    async with host.run_test(size=(211, 44)) as pilot:
-        await _until_clock(pilot, lambda: host.screen is host.cover, "the cover")
-        console = host.screen_stack[-2]
+    @asynccontextmanager
+    async def hold_first_resume(owner):
+        async with prepare(owner):
+            if owner.app_instance is app and not prepared.is_set():
+                prepared.set()
+                await release.wait()
+            yield
+
+    def observe_discovery(message):
+        if (
+            isinstance(message, Worker.StateChanged)
+            and message.state is WorkerState.SUCCESS
+            and message.worker.group == "console-local-server-discovery"
+        ):
+            first_looks.append(message.worker.node)
+
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "prepare_console_workspace_reconciliation",
+        hold_first_resume,
+    )
+    async with host.run_test(size=(211, 44), message_hook=observe_discovery) as pilot:
+        console = host.screen
+        deadline = time.monotonic() + 20
+        try:
+            await _until_clock(
+                pilot,
+                lambda: prepared.is_set()
+                and any(node is console for node in first_looks)
+                and len(app._discovery_calls) == 1,
+                "the first look and deferred resume",
+                timeout=deadline - time.monotonic(),
+            )
+            assert console._console_mount_visit_refreshed
+            assert console._console_resume_after_reconcile
+            assert not console._console_attach_reconciled
+            visit = console._console_attach_visit_generation
+            attach = console._console_attach_reconcile_worker
+            host.call_after_refresh(lambda: host.push_screen(cover))
+            await _until_clock(
+                pilot,
+                lambda: host.screen is cover
+                and console._console_attach_visit_generation > visit,
+                "the cover and Console suspend",
+                timeout=deadline - time.monotonic(),
+            )
+        finally:
+            release.set()
         await _until_clock(
-            pilot, lambda: len(app._discovery_calls) == 1, "the first look"
+            pilot,
+            lambda: attach.is_finished,
+            "the covered attach worker to retire",
+            timeout=deadline - time.monotonic(),
         )
+        assert attach.state is WorkerState.SUCCESS
+        assert console._console_mount_visit_refreshed
+        assert console._console_discovery_rearm_pending
         for _ in range(20):  # the user reads the wizard for a while
             await pilot.pause(0.05)
 
