@@ -85,7 +85,7 @@ async def run():
         connection._reader_unavailable=False; connection._cleanup_complete=False
         from itertools import count
         connection._request_ids=count(1); connection._pending_requests={}
-        async def send(payload):
+        async def send(payload, *, _dispatch=None):
             events.append('wire')
             connection._pending_requests[payload['id']].set_result({})
         connection._send_message=send
@@ -297,7 +297,7 @@ for line in sys.stdin:
     method=p['method']
     if method=='initialize':
         if sys.argv[1]=='hang': time.sleep(10)
-        result={'protocolVersion':'2025-03-26','capabilities':{},'serverInfo':{}}
+        result={'protocolVersion':'2025-03-26','capabilities':{'tools':{},'resources':{},'prompts':{}},'serverInfo':{}}
     elif method=='tools/list': result={'tools':[{'name':'sentinel','inputSchema':{'type':'object'}}]}
     elif method=='resources/list': result={'resources':[]}
     elif method=='prompts/list': result={'prompts':[]}
@@ -578,7 +578,7 @@ async def run():
     assert process.returncode is None and not waiter.done()
     assert_held()
     shutdown.set()
-    # Returning normally makes asyncio.run cancel the settlement task itself.
+    # Shutdown cancels the caller; source custody still requires native exit.
 observer=threading.Thread(target=during_shutdown)
 observer.start()
 try:
@@ -601,3 +601,123 @@ print('retired and reopened')
 
 def test_mcp_asyncio_run_shutdown_retains_cancelled_settlement(tmp_path):
     _run(tmp_path, 'shutdown', 'approved', script=_SHUTDOWN_SETTLEMENT)
+
+
+_DRAIN_FAILURE = _REQUEST_SETTLEMENT.split('async def run():')[0] + r'''
+async def run():
+    entered=base/'entered'; release=base/'release'; finished=base/'finished'
+    assert await client.connect_to_server('real',sys.executable,['-u','-c',server,'ok',str(entered),str(release),str(finished)])
+    session=client.sessions['real']; process=session.process
+    session.request_timeout_seconds=10
+    client_module._TERMINATE_TIMEOUT_SECONDS=.02
+    writer=process.stdin
+    draining=asyncio.Event(); attempted=asyncio.Event()
+    original_terminate=process.terminate; original_kill=process.kill
+    def refused():
+        attempted.set(); raise PermissionError('disposable signal refusal')
+    process.terminate=refused; process.kill=refused
+    class DrainFailure:
+        first=True
+        def write(self,payload): writer.write(payload)
+        async def drain(self):
+            await writer.drain()
+            if not self.first: return
+            self.first=False
+            for _ in range(200):
+                if entered.exists(): break
+                await asyncio.sleep(.01)
+            assert entered.exists(), 'native server did not receive the actual frame'
+            draining.set()
+            if route=='error': raise OSError('disposable post-write drain failure')
+            await asyncio.Future()
+        def close(self): writer.close()
+        def is_closing(self): return writer.is_closing()
+        async def wait_closed(self): await writer.wait_closed()
+    process.stdin=DrainFailure()
+    waiter=asyncio.create_task(client.call_tool('real','sentinel',{}))
+    stopping=asyncio.create_task(attempted.wait())
+    try:
+        await asyncio.wait_for(draining.wait(),2)
+        if route=='cancel': waiter.cancel()
+        await asyncio.wait((waiter,stopping),timeout=2,return_when=asyncio.FIRST_COMPLETED)
+        assert stopping.done() and not waiter.done(), 'written request released before native settlement'
+        assert process.returncode is None and not finished.exists()
+        assert session._producer_lifetime.calls, 'producer ownership released while child remained live'
+        assert_held()
+        process.terminate=original_terminate; process.kill=original_kill
+        original_kill(); await process.wait()
+        try: result=await waiter
+        except asyncio.CancelledError: assert route=='cancel'
+        else: assert result['error']=='mcp_transport_unavailable',result
+        assert process.returncode is not None and not finished.exists()
+        with authority.maintenance(tuple(witness['namespaces']),.2): pass
+    finally:
+        process.terminate=original_terminate; process.kill=original_kill
+        if process.returncode is None:
+            original_kill(); await process.wait()
+        release.write_text('go')
+        stopping.cancel()
+        await asyncio.gather(stopping,waiter,return_exceptions=True)
+        await client.disconnect_all()
+asyncio.run(run())
+assert not blocked_attempts()
+print('retired and reopened')
+'''
+
+
+@pytest.mark.parametrize('route', ['error', 'cancel'])
+def test_mcp_post_write_drain_failure_retains_native_custody(tmp_path, route):
+    _run(tmp_path, route, 'approved', script=_DRAIN_FAILURE)
+
+
+_SETTLEMENT_TASK_CANCEL = _REQUEST_SETTLEMENT.split('async def run():')[0] + r'''
+async def run():
+    entered=base/'entered'; release=base/'release'; finished=base/'finished'
+    assert await client.connect_to_server('real',sys.executable,['-u','-c',server,'ok',str(entered),str(release),str(finished)])
+    session=client.sessions['real']; process=session.process
+    session.request_timeout_seconds=.05
+    cleanup_entered=asyncio.Event()
+    original_cleanup=session._on_transport_failure
+    async def held_cleanup():
+        cleanup_entered.set()
+        await asyncio.Future()
+    session._on_transport_failure=held_cleanup
+    waiter=asyncio.create_task(client.call_tool('real','sentinel',{}))
+    try:
+        await asyncio.wait_for(cleanup_entered.wait(),2)
+        for _ in range(200):
+            if entered.exists(): break
+            await asyncio.sleep(.01)
+        assert entered.exists() and not finished.exists()
+        settlement=session._request_settlement
+        assert not settlement.done() and not waiter.done()
+        assert settlement.cancel(), 'existing cleanup task was not pending'
+        await asyncio.sleep(.05)
+        assert settlement.cancelling()
+        assert process.returncode is None and not waiter.done()
+        assert session._producer_lifetime.calls
+        assert_held()
+        session._on_transport_failure=original_cleanup
+        process.kill(); await process.wait()
+        try: await waiter
+        except asyncio.CancelledError: pass
+        else: raise AssertionError('settlement cancellation was swallowed')
+        assert process.returncode is not None and not finished.exists()
+        with authority.maintenance(tuple(witness['namespaces']),.2): pass
+    finally:
+        session._on_transport_failure=original_cleanup
+        if process.returncode is None:
+            process.kill(); await process.wait()
+        settlement=getattr(session,'_request_settlement',None)
+        if settlement is not None and not settlement.done(): settlement.cancel()
+        release.write_text('go')
+        await asyncio.gather(waiter,return_exceptions=True)
+        await client.disconnect_all()
+asyncio.run(run())
+assert not blocked_attempts()
+print('retired and reopened')
+'''
+
+
+def test_mcp_cancelled_settlement_task_retains_native_custody(tmp_path):
+    _run(tmp_path, 'settlement_cancel', 'approved', script=_SETTLEMENT_TASK_CANCEL)

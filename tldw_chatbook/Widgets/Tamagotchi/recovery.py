@@ -77,7 +77,9 @@ class _ConfiguredPets(_RawDeclaration):
         if not parent.exists():
             return tuple(items)
         try:
-            names = list(parent.iterdir())
+            from tldw_chatbook.Backup_Recovery.mobile_preview_budget import children
+
+            names = children(parent)
             if len(names) > 100000:
                 raise ValueError("pet_inventory_limit")
             for candidate in sorted(names):

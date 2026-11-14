@@ -59,9 +59,14 @@ class RecoveryReview:
 
 
 def _directory(path):
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import current, path_cost
     from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
 
-    with pinned_directory(path) as parent:
+    scope = current()
+    if scope is not None:
+        scope.read_budget.reserve(1024 + path_cost(path))
+
+    with pinned_directory(path, _custody=scope.custody if scope else None) as parent:
         info = os.fstat(parent)
         if info.st_uid != os.geteuid():
             raise ValueError("mcp_recovery_root_unsafe")
@@ -70,14 +75,25 @@ def _directory(path):
 
 def _read(path):
     from tldw_chatbook.Backup_Recovery.archive_reader import _identity, _regular
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import current, path_cost
+
+    scope = current()
+    if scope is not None:
+        scope.read_budget.reserve(2048 + path_cost(path))
 
     try:
-        with _regular(path) as stream:
+        with _regular(path, _custody=scope.custody if scope else None) as stream:
             info = os.fstat(stream.fileno())
             before = _identity(info)
             if info.st_nlink != 1 or info.st_uid != os.geteuid():
                 raise ValueError("mcp_recovery_source_unsafe")
-            payload = stream.read(_LIMIT + 1)
+            if scope is not None:
+                if info.st_size > _LIMIT:
+                    raise ValueError("mcp_recovery_source_changed")
+                scope.read_budget.reserve(128 + info.st_size + 1)
+            payload = stream.read(info.st_size + 1 if scope else _LIMIT + 1)
+            if scope is not None and len(payload) != info.st_size:
+                raise ValueError("mcp_recovery_source_changed")
             if len(payload) > _LIMIT or before != _identity(os.fstat(stream.fileno())):
                 raise ValueError("mcp_recovery_source_changed")
         if before != _identity(os.stat(path, follow_symlinks=False)):
@@ -99,6 +115,11 @@ def _workspace(payload):
 
 
 def _digest(value):
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import current
+
+    scope = current()
+    if scope is not None:
+        scope.read_budget.value(value, text_copies=8)
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
@@ -145,8 +166,14 @@ def _installed_items(witness):
         _Prepared,
     )
     from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import current
     from tldw_chatbook.Backup_Recovery.plan_records import load_plan
     from tldw_chatbook.Backup_Recovery.staging import _items
+
+    scope = current()
+    if scope is not None:
+        scope.read_budget.value(witness, text_copies=4)
+        scope.read_budget.reserve(8192)
 
     control = Path(witness["store_root"]).parent
     operation = witness["operation_id"]
@@ -154,6 +181,9 @@ def _installed_items(witness):
         journal = Journal(control, operation)
         with journal._locked(exclusive=False) as parent:
             rows = journal._records(parent)
+        if scope is not None:
+            for row in rows:
+                scope.read_budget.value(row.evidence, text_copies=2)
         if not rows or rows[-1].event not in {"committed", "rolled_back"}:
             raise ValueError("mcp_recovery_mapping_unverified")
         rollback = rows[-1].event == "rolled_back"
@@ -187,6 +217,9 @@ def _installed_items(witness):
             or hashlib.sha256(encoded).hexdigest() != receipt.manifest_digest
         ):
             raise ValueError("mcp_recovery_mapping_unverified")
+        if scope is not None:
+            scope.read_budget.json(encoded)
+            scope.read_budget.reserve(16384 + 48 * len(encoded))
         document = _manifest(encoded, ArchiveLimits(), encrypted=True)
         installed = tuple(_items(document, plan).values())
         original = tuple(plan.target.items) if plan.target else ()
@@ -336,7 +369,11 @@ def inventory_path(context, owner, canonical):
 
 def inventory_container(context, root):
     """Recognize exact current and receipt-mapped historical MCP containers."""
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import current, reserve
     from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
+
+    scope = current()
+    reserve(4096)
 
     names = {
         "mcp.local": "local_mcp_store.json",
@@ -365,9 +402,16 @@ def inventory_container(context, root):
             if present and parent == present[0].parent
             else set()
         )
-        with pinned_directory(parent) as fd:
+        with pinned_directory(parent, _custody=scope.custody if scope else None) as fd:
             before = os.fstat(fd)
-            children = set(os.listdir(fd))
+            if scope is not None:
+                names = bootstrap._bounded_names(
+                    fd, 100_000, scope.read_budget, scope.custody
+                )
+                scope.read_budget.container(len(names))
+                children = set(names)
+            else:
+                children = set(os.listdir(fd))
             if not required <= children <= required | optional:
                 raise ValueError("mcp_recovery_container_changed")
             for name in children:
@@ -395,11 +439,15 @@ def _record_name(owner, path):
 
 
 def _record(owner, path, witness):
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import current
+
+    scope = current()
     store = ActivationStore(Path(witness["store_root"]))
     with _private(store._generation(witness["generation"])) as parent:
-        return RootBinding.model_validate(
-            bootstrap._read(parent, _record_name(owner, path))
-        )
+        raw = bootstrap._read(parent, _record_name(owner, path))
+        if scope is not None:
+            scope.read_budget.value(raw, text_copies=2)
+        return RootBinding.model_validate(raw)
 
 
 def _check(record, owner, path, witnesses, witness, workspace):

@@ -3,27 +3,28 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 import json
 import re
 import sqlite3
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Protocol, cast
 
-from tldw_chatbook.Chat.console_trace_models import new_opaque_id
 from tldw_chatbook.Chat.console_trace_custom_pii import (
     custom_pii_ruleset_for_revision,
     redact_pii_value_for_ruleset_revision,
 )
+from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import (
     BUILTIN_PII_RULESET_REVISION_ID,
     CREDENTIAL_FILTER_VERSION,
     CREDENTIAL_SANITIZER_UNAVAILABLE,
     PII_DETECTOR_UNAVAILABLE,
-    PIIRedactionSpan,
     READABLE_CREDENTIAL_FILTER_VERSIONS,
-    CredentialSanitizer,
     CredentialSanitizationResult,
+    CredentialSanitizer,
+    PIIRedactionSpan,
     apply_frozen_pii_masks,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
@@ -59,6 +60,7 @@ def project_semantic_revision_provider_message(
     expected_conversation_id: str,
     policy_id: str | None = None,
     response_call: TraceCallRecord | None = None,
+    _read_budget: _TraceReadBudget | None = None,
 ) -> dict[str, object]:
     """Project a live or policy-materialized revision to provider-message shape.
 
@@ -87,16 +89,24 @@ def project_semantic_revision_provider_message(
         if artifact is None:
             raise ValueError("semantic_revision_materialization_unavailable")
         try:
+            if _read_budget is not None:
+                _read_budget.json(artifact.sanitized_bytes)
             envelope = json.loads(artifact.sanitized_bytes)
         except (TypeError, ValueError, UnicodeError) as exc:
             raise ValueError("semantic_revision_materialization_unavailable") from exc
         if not isinstance(envelope, dict):
             raise ValueError("semantic_revision_materialization_unavailable")
         return _project_revision_response_envelope(
-            cursor, revision, envelope, response_call
+            cursor,
+            revision,
+            envelope,
+            response_call,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
         )
     envelope = SemanticRevisionCoordinator._message_envelope(
-        cursor, revision.live_message_id
+        cursor,
+        revision.live_message_id,
+        **({"_read_budget": _read_budget} if _read_budget is not None else {}),
     )
     if (
         envelope["message_id"] != revision.source_message_id
@@ -104,7 +114,11 @@ def project_semantic_revision_provider_message(
     ):
         raise ValueError("semantic_revision_locator_mismatch")
     return _project_revision_response_envelope(
-        cursor, revision, envelope, response_call
+        cursor,
+        revision,
+        envelope,
+        response_call,
+        **({"_read_budget": _read_budget} if _read_budget is not None else {}),
     )
 
 
@@ -131,12 +145,21 @@ def _project_revision_response_envelope(
     revision: SemanticRevisionRecord,
     envelope: dict[str, object],
     call: TraceCallRecord | None,
+    _read_budget: _TraceReadBudget | None = None,
 ) -> dict[str, object]:
-    projected = _project_revision_envelope(revision, envelope)
+    projected = _project_revision_envelope(
+        revision,
+        envelope,
+        **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+    )
     if call is None:
         return projected
     repository = ConsoleTraceRepository()
-    header = repository.get_request_header(cursor, call.request_header_id or "")
+    header = repository.get_request_header(
+        cursor,
+        call.request_header_id or "",
+        **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+    )
     profile = (
         None if header is None else header.adapter_defaults.get("response_projection")
     )
@@ -194,6 +217,9 @@ def _project_revision_response_envelope(
         parse_thinking_blocks_json,
     )
 
+    if _read_budget is not None:
+        # JSON encoding plus the native typed sidecar decode and selected views.
+        _read_budget.value(raw_thinking, text_copies=3)
     thinking = parse_thinking_blocks_json(json.dumps(raw_thinking, allow_nan=False))
     if any(block.round_ordinal > call.call_sequence for block in thinking.blocks):
         raise ValueError("response_thinking_round_mismatch")
@@ -244,6 +270,7 @@ def project_semantic_revision_provider_messages(
     *,
     revision_ids: tuple[str, ...],
     expected_conversation_id: str,
+    _read_budget: _TraceReadBudget | None = None,
 ) -> dict[str, dict[str, object]]:
     """Batch-project a bounded revision set without per-reference SQL reads."""
 
@@ -251,6 +278,8 @@ def project_semantic_revision_provider_messages(
         return {}
     if len(revision_ids) > 256 or len(set(revision_ids)) != len(revision_ids):
         raise ValueError("semantic_revision_batch")
+    if _read_budget is not None:
+        _read_budget.container(len(revision_ids) * 6)
     placeholders = ",".join("?" for _ in revision_ids)
     revision_rows = cursor.execute(
         f"""SELECT revision_id, source_conversation_id, source_message_id,
@@ -291,6 +320,9 @@ def project_semantic_revision_provider_messages(
              ORDER BY message_id, position""",
         message_ids,
     ):
+        if _read_budget is not None:
+            _read_budget.base64(row[2])
+            _read_budget.container(4)
         attachments[str(row[0])].append(
             {
                 "position": int(row[1]),
@@ -303,6 +335,10 @@ def project_semantic_revision_provider_messages(
     for row in message_rows:
         message_id = str(row[0])
         image_data = row[6]
+        if _read_budget is not None:
+            _read_budget.value(row)
+            if image_data is not None:
+                _read_budget.base64(image_data)
         envelopes[message_id] = {
             "message_id": message_id,
             "conversation_id": row[1],
@@ -316,8 +352,14 @@ def project_semantic_revision_provider_messages(
                 else base64.b64encode(bytes(image_data)).decode("ascii")
             ),
             "image_mime_type": row[7],
-            "provider_continuation": _decode_optional_json(row[8]),
-            "thinking_blocks": _decode_optional_json(row[9]),
+            "provider_continuation": _decode_optional_json(
+                row[8],
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            ),
+            "thinking_blocks": _decode_optional_json(
+                row[9],
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            ),
             "assistant_generation_state": row[10],
             "attachments": attachments[message_id],
         }
@@ -331,7 +373,11 @@ def project_semantic_revision_provider_messages(
             or envelope["conversation_id"] != expected_conversation_id
         ):
             raise ValueError("semantic_revision_locator_mismatch")
-        result[revision_id] = _project_revision_envelope(revision, envelope)
+        result[revision_id] = _project_revision_envelope(
+            revision,
+            envelope,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
     return result
 
 
@@ -342,6 +388,7 @@ def project_semantic_revision_trace_message(
     expected_conversation_id: str,
     policy_id: str,
     response_call: TraceCallRecord | None = None,
+    _read_budget: _TraceReadBudget | None = None,
 ) -> dict[str, object]:
     """Project one canonical revision through its immutable trace masks.
 
@@ -390,6 +437,7 @@ def project_semantic_revision_trace_message(
         expected_conversation_id=expected_conversation_id,
         policy_id=policy_id,
         response_call=response_call,
+        **({"_read_budget": _read_budget} if _read_budget is not None else {}),
     )
     # TASK-39123: a stored older policy's frozen PII spans index the projection
     # of its own credential version, so they apply to that one; the current
@@ -406,7 +454,10 @@ def project_semantic_revision_trace_message(
             if legacy_spans
             else CREDENTIAL_FILTER_VERSION
         )
-    ).sanitize(projected)
+    ).sanitize(
+        projected,
+        **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+    )
     if not credential_projection.available or not isinstance(
         credential_projection.value, dict
     ):
@@ -422,13 +473,16 @@ def project_semantic_revision_trace_message(
         policy_id=policy_id,
         semantic_revision_id=revision_id,
         artifact_id=None,
+        **({"_read_budget": _read_budget} if _read_budget is not None else {}),
     )
     by_path: dict[str, list[PIIRedactionSpan]] = {}
     response_header = (
         None
         if response_call is None
         else repository.get_request_header(
-            cursor, response_call.request_header_id or ""
+            cursor,
+            response_call.request_header_id or "",
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
         )
     )
     response_masks = (
@@ -442,6 +496,8 @@ def project_semantic_revision_trace_message(
         if row.outcome != "applied":
             raise ValueError("redaction_span_unavailable")
         field_path = row.field_path.removeprefix(TRACE_RESPONSE_PII_FIELD_PREFIX)
+        if _read_budget is not None:
+            _read_budget.container(6)
         by_path.setdefault(field_path, []).append(
             PIIRedactionSpan(
                 row.start_codepoint,
@@ -452,12 +508,18 @@ def project_semantic_revision_trace_message(
             )
         )
     masked = apply_frozen_pii_masks(
-        projected, by_path, widen_over_v2_credentials=legacy_spans
+        projected,
+        by_path,
+        widen_over_v2_credentials=legacy_spans,
+        **({"_read_budget": _read_budget} if _read_budget is not None else {}),
     )
     if not isinstance(masked, dict):
         raise ValueError("semantic_revision_materialization_unavailable")
     if legacy_spans:
-        remasked = CredentialSanitizer().sanitize(masked)
+        remasked = CredentialSanitizer().sanitize(
+            masked,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         if not remasked.available or not isinstance(remasked.value, dict):
             return {
                 "role": revision.normalized_role,
@@ -549,6 +611,7 @@ def project_semantic_revision_provider_continuations(
     *,
     revision_ids: tuple[str, ...],
     expected_conversation_id: str,
+    _read_budget: _TraceReadBudget | None = None,
 ) -> dict[str, object]:
     """Batch-project canonical continuation sidecars owned by saved revisions."""
 
@@ -556,6 +619,8 @@ def project_semantic_revision_provider_continuations(
         return {}
     if len(revision_ids) > 256 or len(set(revision_ids)) != len(revision_ids):
         raise ValueError("semantic_revision_batch")
+    if _read_budget is not None:
+        _read_budget.container(len(revision_ids) * 3)
     placeholders = ",".join("?" for _ in revision_ids)
     rows = cursor.execute(
         f"""SELECT r.revision_id, r.source_conversation_id,
@@ -578,7 +643,10 @@ def project_semantic_revision_provider_continuations(
             or row[5] != expected_conversation_id
         ):
             raise ValueError("revision_owner_mismatch")
-        continuation = _decode_optional_json(row[6])
+        continuation = _decode_optional_json(
+            row[6],
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         if continuation is None:
             raise ValueError("semantic_continuation_unavailable")
         result[revision_id] = continuation
@@ -588,7 +656,11 @@ def project_semantic_revision_provider_continuations(
 def _project_revision_envelope(
     revision: SemanticRevisionRecord,
     envelope: dict[str, object],
+    _read_budget: _TraceReadBudget | None = None,
 ) -> dict[str, object]:
+    if _read_budget is not None:
+        # Provider URL concatenation, media containers, and returned message.
+        _read_budget.value(envelope)
     content: object = envelope["content"]
     media: list[dict[str, object]] = []
     primary = envelope["image_data_base64"]
@@ -894,7 +966,12 @@ class SemanticRevisionCoordinator:
         return None if row is None else SemanticRevisionRecord(*row)
 
     @staticmethod
-    def _message_envelope(cursor: sqlite3.Cursor, message_id: str) -> dict[str, object]:
+    def _message_envelope(
+        cursor: sqlite3.Cursor,
+        message_id: str,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
+    ) -> dict[str, object]:
         row = cursor.execute(
             """
             SELECT id, conversation_id, parent_message_id, sender, role, content,
@@ -907,24 +984,28 @@ class SemanticRevisionCoordinator:
         ).fetchone()
         if row is None:
             raise ValueError("semantic_message_unavailable")
-        attachments = [
-            {
-                "position": int(item[0]),
-                "data_base64": base64.b64encode(bytes(item[1])).decode("ascii"),
-                "mime_type": item[2],
-                "display_name": item[3],
-            }
-            for item in cursor.execute(
-                """
-                SELECT position, data, mime_type, display_name
-                  FROM message_attachments
-                 WHERE message_id = ?
-                 ORDER BY position
-                """,
-                (message_id,),
+        if _read_budget is not None:
+            _read_budget.value(row)
+        attachments = []
+        for item in cursor.execute(
+            """SELECT position, data, mime_type, display_name
+                 FROM message_attachments WHERE message_id = ? ORDER BY position""",
+            (message_id,),
+        ):
+            if _read_budget is not None:
+                _read_budget.base64(item[1])
+                _read_budget.container(4)
+            attachments.append(
+                {
+                    "position": int(item[0]),
+                    "data_base64": base64.b64encode(bytes(item[1])).decode("ascii"),
+                    "mime_type": item[2],
+                    "display_name": item[3],
+                }
             )
-        ]
         image_data = row[6]
+        if _read_budget is not None and image_data is not None:
+            _read_budget.base64(image_data)
         return {
             "message_id": row[0],
             "conversation_id": row[1],
@@ -938,8 +1019,14 @@ class SemanticRevisionCoordinator:
                 else base64.b64encode(bytes(image_data)).decode("ascii")
             ),
             "image_mime_type": row[7],
-            "provider_continuation": _decode_optional_json(row[8]),
-            "thinking_blocks": _decode_optional_json(row[9]),
+            "provider_continuation": _decode_optional_json(
+                row[8],
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            ),
+            "thinking_blocks": _decode_optional_json(
+                row[9],
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            ),
             "assistant_generation_state": row[10],
             "attachments": attachments,
         }
@@ -1323,7 +1410,9 @@ class SemanticRevisionCoordinator:
             raise RuntimeError("graph_epoch_unavailable")
 
 
-def _decode_optional_json(value: object) -> object:
+def _decode_optional_json(
+    value: object, *, _read_budget: _TraceReadBudget | None = None
+) -> object:
     """Decode stored JSON without accepting invalid durable envelopes."""
 
     if value is None:
@@ -1331,6 +1420,8 @@ def _decode_optional_json(value: object) -> object:
     if type(value) is not str:
         raise ValueError("semantic_envelope_json_invalid")
     try:
+        if _read_budget is not None:
+            _read_budget.json(value)
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError("semantic_envelope_json_invalid") from exc

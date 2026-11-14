@@ -139,6 +139,13 @@ def test_native_policy_poll_does_not_block_ui_while_config_writer_is_active(tmp_
 _RETAINED = (
     _RESPONSIVE.split("async def main():")[0]
     + r"""
+# A warm native read can return while the config writer is still held.
+def read():
+ entered.set()
+ enabled=original()
+ assert release.wait(20)
+ return enabled
+runtime._canvas_enabled_reader=read
 async def main():
  worker.start();assert await asyncio.to_thread(held.wait,10)
  watchdog=threading.Timer(15,unblock);watchdog.start()
@@ -210,7 +217,9 @@ _RESTART = (
 reads=[]
 def read():
  reads.append(threading.get_ident());entered.set()
- return original()
+ enabled=original()
+ assert release.wait(20)
+ return enabled
 runtime._canvas_enabled_reader=read
 async def main():
  worker.start();assert await asyncio.to_thread(held.wait,10)

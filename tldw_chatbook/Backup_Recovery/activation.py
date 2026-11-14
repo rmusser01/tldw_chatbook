@@ -253,7 +253,12 @@ def _key(value: str) -> str:
 
 @contextmanager
 def _private(root: Path):
-    with pinned_directory(root) as parent:
+    from .mobile_preview_budget import current, path_cost
+
+    scope = current()
+    if scope is not None:
+        scope.read_budget.reserve(1024 + path_cost(root))
+    with pinned_directory(root, _custody=scope.custody if scope else None) as parent:
         info = os.fstat(parent)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
             raise ValueError("activation_root_unsafe")
@@ -306,7 +311,13 @@ class ActivationStore:
         return self.root / ("generation-" + _key(generation))
 
     def _required(self, parent: int, generation: str) -> _Requirement:
-        record = _Requirement.model_validate(_read(parent, "required.json"))
+        from .mobile_preview_budget import current
+
+        raw = _read(parent, "required.json")
+        scope = current()
+        if scope is not None:
+            scope.read_budget.value(raw, text_copies=2)
+        record = _Requirement.model_validate(raw)
         if record.generation != generation or record.owners != sorted(
             set(record.owners)
         ):

@@ -1,6 +1,6 @@
 # Local CI runners (TASK-40721)
 
-Status: host qualified and enabled; routing variables set, workflow integration pending PR merge. See [ADR-359](../../../backlog/decisions/359-isolated-self-hosted-ci-runners.md).
+Status: host qualified and enabled; routing variables set, workflow integration pending PR merge. See [ADR-360](../../../backlog/decisions/360-isolated-self-hosted-ci-runners.md).
 
 ## Host and capacity
 

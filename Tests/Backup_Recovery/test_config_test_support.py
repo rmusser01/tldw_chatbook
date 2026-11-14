@@ -137,11 +137,11 @@ def test_newly_imported_consumer_still_catches_config_errors_after_teardown(
     )
     malformed = {"api_settings": {"moonshot": "not a table"}}
     with pytest.MonkeyPatch.context() as selected_patch:
-        config_test_support.select_config_source(
+        selected = config_test_support.select_config_source(
             selected_patch, tmp_path / "first.toml"
         )
         consumer = importlib.import_module(consumer_name)
-        consumer._test_error_alias = consumer.ProviderSettingsError
+        consumer._test_error_alias = selected.ProviderSettingsError
         consumer._test_library_class = ValueError
         if nested:
             config_test_support.select_config_source(
@@ -155,7 +155,7 @@ def test_newly_imported_consumer_still_catches_config_errors_after_teardown(
     try:
         after = consumer.get_provider_readiness("Moonshot", malformed, environ={})
         assert after == before
-        assert consumer.ProviderSettingsError is config.ProviderSettingsError
+        assert "ProviderSettingsError" not in vars(consumer)
         assert consumer._test_error_alias is config.ProviderSettingsError
         assert consumer._test_library_class is ValueError
     finally:

@@ -155,14 +155,14 @@ def test_guard_detects_injected_private_uses(tmp_path):
 # @declare_store. owner id -> (class under tldw_chatbook, the decorator's keywords).
 # A new store, or a changed closer or policy, updates this table in the same commit.
 DECLARED_STORES = {
-    "db.agent_runs": ("DB.AgentRuns_DB.AgentRunsDB", "closer='close', policy='db.base', finite_worker=False"),
-    "db.chachanotes.primary": ("DB.ChaChaNotes_DB.CharactersRAGDB", "closer='close_connection'"),
+    "db.agent_runs": ("DB.AgentRuns_DB.AgentRunsDB", "closer='close', policy='db.base', finite_worker=False, read_only_policy='db.agent_runs.read'"),
+    "db.chachanotes.primary": ("DB.ChaChaNotes_DB.CharactersRAGDB", "closer='close_connection', read_only_policy='db.chachanotes.read'"),
     "db.dreams": ("DB.Dreams_DB.DreamsDB", "closer='close', policy='db.base'"),
     "db.evals": ("DB.Evals_DB.EvalsDB", "closer='close'"),
     "db.guardian": ("DB.Guardian_DB.GuardianDB", "closer='close', policy='db.base'"),
     "db.library_collections": ("DB.Library_Collections_DB.LibraryCollectionsDB", "closer='close', policy='db.base'"),
     "db.library_ingest_jobs": ("DB.Library_Ingest_Jobs_DB.LibraryIngestJobsDB", "closer='close', finite_worker=False, shared_connection=True"),
-    "db.media.primary": ("DB.Client_Media_DB_v2.MediaDatabase", "closer='close_connection'"),
+    "db.media.primary": ("DB.Client_Media_DB_v2.MediaDatabase", "closer='close_connection', read_only_policy='db.media.read'"),
     "db.prompts.primary": ("DB.Prompts_DB.PromptsDatabase", "closer='close_connection'"),
     "db.rag_indexing": ("DB.RAG_Indexing_DB.RAGIndexingDB", "closer='close', finite_worker=False"),
     "db.scheduled_tasks": ("Scheduling.db.scheduled_tasks_db.ScheduledTasksDB", "policy='db.base'"),

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_worktree import (
     AgentWorktree,
     WorktreeRefusal,
@@ -460,7 +461,6 @@ def test_checkout_created_under_symlinked_temp_base_can_be_recovered(
     )
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     physical_temp = tmp_path / "physical-temp"
     physical_temp.mkdir()
@@ -471,7 +471,7 @@ def test_checkout_created_under_symlinked_temp_base_can_be_recovered(
     )
     created = create_agent_worktree(repo, "run-temp-alias")
     assert isinstance(created, AgentWorktree), created
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="temp-alias-test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="temp-alias-test")
     try:
         (created.worktree_path / "a.txt").write_text("recoverable child work\n")
         db.create_run(

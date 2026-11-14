@@ -357,7 +357,14 @@ def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
         raise ValueError("eval_retained_generation_unverified")
     allowed, reason = bootstrap.startup_permission(selector, root)
     if not allowed:
-        raise ValueError(reason)
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _mobile_discovery_pending,
+        )
+
+        if reason != "recovery_pending" or not _mobile_discovery_pending(
+            root, profile["namespaces"], selector
+        ):
+            raise ValueError(reason)
     binding = bootstrap._binding(selector, profiles, bootstrap._registry(root))
     if binding is None:
         raise ValueError("eval_retained_binding_changed")
@@ -404,12 +411,17 @@ def _retained_definition_paths(context) -> tuple[tuple[str, Path], ...]:
         if store._required(parent, prepared.generation).owners != witness["owners"]:
             raise ValueError("eval_retained_generation_unverified")
     if prepared.isolated_profiles:
-        from tldw_chatbook.Backup_Recovery.isolated_restore import _launch_descriptor
+        from tldw_chatbook.Backup_Recovery.isolated_restore import (
+            _eval_metadata_descriptor,
+        )
 
         entry = next(
             (r for r in prepared.isolated_profiles if r.config == str(selector)), None
         )
-        if entry is None or _launch_descriptor(entry.profile_id, control) != entry:
+        if (
+            entry is None
+            or _eval_metadata_descriptor(entry.profile_id, control) != entry
+        ):
             raise ValueError("eval_retained_profile_unverified")
     elif not any(r.config == str(selector) for r in prepared.replacement_profiles):
         raise ValueError("eval_retained_profile_unverified")

@@ -39,6 +39,100 @@ private_eval.write_text('budget: {default_limit: 7}\\n', encoding='utf-8')
 private_eval.chmod(0o600)
 from tldw_chatbook.app import TldwCli""",
 )
+# The native review result stays authoritative; retain only body-free failure evidence.
+_RETAIN_PUBLIC = _replace(
+    _RETAIN_PUBLIC,
+    "from tldw_chatbook.Backup_Recovery.capture_service import capture, preview_capture",
+    r"""from tldw_chatbook.Backup_Recovery import capture_service as _capture_service
+from dataclasses import asdict as _scope_asdict
+_native_review_digest = _capture_service._review_digest
+_review_observations = []
+
+def _scope_sha(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+
+def _scope_code(value):
+    if isinstance(value, str) and len(value) <= 96 and all(
+        char in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-'
+        for char in value
+    ):
+        return value
+    return {'sha256': _scope_sha(value)}
+
+def _observed_review_digest(inventory, settings, selections, limits, budget):
+    result = _native_review_digest(inventory, settings, selections, limits, budget)
+    if len(_review_observations) >= 2:
+        return result
+    try:
+        rows = {}
+        for item in inventory.items[:512]:
+            key = _scope_sha((item.owner, item.logical_id))
+            metadata = item.metadata
+            row = {
+                'owner': _scope_code(item.owner),
+                'logical_id_sha256': _scope_sha(item.logical_id),
+                'path_sha256': _scope_sha(str(item.path)) if item.path is not None else None,
+                'status': _scope_code(item.status),
+                'dependencies_sha256': _scope_sha(sorted(item.dependencies)),
+                'shared_group_sha256': _scope_sha(item.shared_group),
+                'deletion_validated': item.deletion_validated,
+                'metadata': None if metadata is None else {
+                    'version': metadata.version,
+                    'root_id_sha256': _scope_sha(metadata.root_id),
+                    'relative_path_sha256': _scope_sha(metadata.relative_path),
+                    'parent_id_sha256': _scope_sha(metadata.parent_id),
+                    'kind': _scope_code(metadata.kind),
+                    'policy': _scope_code(metadata.policy),
+                    'mode': metadata.mode,
+                    'mtime_ns': metadata.mtime_ns,
+                },
+            }
+            rows.setdefault(key, []).append(row)
+        observation = {
+            'review_digest': result,
+            'inventory_scope_digest': inventory.scope_digest,
+            'complete': inventory.complete,
+            'reason_codes': [_scope_code(code) for code in inventory.issues[:32]],
+            'reason_count': len(inventory.issues),
+            'item_count': len(inventory.items),
+            'rows_truncated': len(inventory.items) > 512,
+            'policy_sha256': _scope_sha({
+                'limits': _scope_asdict(limits), 'budget': budget,
+                'credential_mode': settings['credential_mode'],
+                'encrypted': settings['encrypted'],
+                'allow_partial': settings['allow_partial'],
+                'acknowledged_credential_issues': settings.get('acknowledged_credential_issues', ()),
+                'selections': _scope_asdict(selections),
+            }),
+            'rows': rows,
+        }
+        _review_observations.append(observation)
+        if len(_review_observations) == 2 and result != _review_observations[0]['review_digest']:
+            before = _review_observations[0]
+            keys = sorted(key for key in before['rows'].keys() | rows.keys()
+                          if before['rows'].get(key) != rows.get(key))
+            report = {
+                'reviewed': {key: value for key, value in before.items() if key != 'rows'},
+                'rediscovered': {key: value for key, value in observation.items() if key != 'rows'},
+                'changed_identity_count': len(keys),
+                'changes_truncated': len(keys) > 24,
+                'changes': [{'identity_sha256': key, 'before': before['rows'].get(key),
+                             'after': rows.get(key)} for key in keys[:24]],
+                'physical_identity': 'not re-read; resolved paths are not retained by Inventory',
+            }
+            print('eval_capture_scope_diagnostic=' + json.dumps(report, sort_keys=True), flush=True)
+    except Exception as diagnostic_error:
+        # Keep the original native digest/result even if diagnostics fail.
+        try:
+            print('eval_capture_scope_diagnostic_error=' + type(diagnostic_error).__name__, flush=True)
+        except OSError:
+            pass
+    return result
+
+_capture_service._review_digest = _observed_review_digest
+from tldw_chatbook.Backup_Recovery.capture_service import capture, preview_capture""",
+)
+
 _RETAIN_RESTORE = _replace(
     _RESTORE,
     "source.rename(source.with_name('source-home-removed'))",

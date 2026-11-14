@@ -19,6 +19,7 @@ from ..DB.AgentRuns_DB import (
     _RUN_LOG_PROBE_AGENT_BASES,
     _RUN_LOG_PROBE_INHERITED,
     AgentRunsDB,
+    _stock_execution_owner,
 )
 from . import console_agent_bridge as bridge_module
 from .console_preparation_reads import run_preparation_read
@@ -64,13 +65,6 @@ def _factory_sources_current(database):
             and inspect.getattr_static(AgentRunsDB, "__getattr__", _MISSING) is _MISSING
             and inspect.getattr_static(AgentRunsDB, "_thread_local", _MISSING)
             is _MISSING
-            and vars(database).get("is_memory_db") is False
-            and type(vars(database).get("_thread_local")) is _local
-            and all(
-                name not in vars(database)
-                for owner, name, _value in _AGENT_RUNS_FACTORY_SLOTS
-                if owner is AgentRunsDB
-            )
             and all(
                 owner.get(name, _MISSING) is value
                 if type(owner) is dict
@@ -85,6 +79,14 @@ def _factory_sources_current(database):
                 and vars(record[0]).get("__wrapped__") is wrapped
                 for record, defining, closure, cells, wrapped in _CHANGE_REVIEW_FACTORY_SOURCES
             )
+            and vars(database).get("is_memory_db") is False
+            and type(vars(database).get("_thread_local")) is _local
+            and all(
+                name not in vars(database)
+                for owner, name, _value in _AGENT_RUNS_FACTORY_SLOTS
+                if owner is AgentRunsDB
+            )
+            and _stock_execution_owner(database) is not None
         )
     except (AttributeError, ValueError):
         return False
@@ -99,6 +101,7 @@ class _MarkerRead:
     conversation_id: str
     local: Any
     path: Any
+    execution_owner: Any
     reader: Any
     renderer: Any
     active_connection: Any = None
@@ -109,14 +112,16 @@ class _MarkerRead:
             or self.runtime._agent_bridge is not self.bridge
             or self.runtime._change_review_coordinator is not self.coordinator
             or self.bridge._db is not self.database
-            or self.database._thread_local is not self.local
-            or self.database.db_path != self.path
-            or self.database.is_memory_db
+            or not _factory_sources_current(self.database)
+            or vars(self.database).get("_thread_local") is not self.local
+            or vars(self.database).get("db_path") != self.path
+            or vars(self.database).get("is_memory_db") is not False
+            or vars(self.database).get("_execution_owner") is not self.execution_owner
+            or vars(self.database).get("_read_only") is not False
             or (
                 self.active_connection is not None
                 and getattr(self.local, "conn", None) is not self.active_connection
             )
-            or not _factory_sources_current(self.database)
             or not _sources_current(self.database, _CHANGE_REVIEW_READ_SOURCES)
             or not _sources_current(self.bridge, _BRIDGE_SOURCES)
             or bridge_module._CHANGE_REVIEW_MARKER_SOURCES is not _BRIDGE_SOURCES
@@ -127,37 +132,40 @@ class _MarkerRead:
 
     def read(self):
         self.require_current()
-        previous = core_cached_connection(
-            self.database, getattr(self.local, "conn", None)
-        )
-        connection = None
-        try:
-            with core_operation(self.database):
-                self.require_current()
-                connection = self.database._held_connection()
-                self.active_connection = connection
-                self.require_current()
-                if getattr(self.local, "conn", None) is not connection:
-                    raise MarkerReadObsolete("change_review_marker_connection_changed")
-                return self.reader(
-                    self.database,
-                    self.conversation_id,
-                    self.renderer,
-                    require_current=self.require_current,
-                )
-        finally:
-            # The counted operation exits first. Retire the actual acquired A,
-            # even if a callback installed a different cache B in the meantime.
-            if connection is not None and connection is not previous:
-                with core_closing(self.database, connection) as allowed:
-                    if not allowed:
-                        raise RuntimeError(
-                            "change_review_marker_connection_not_retired"
+        with self.database._execution_use():
+            previous = core_cached_connection(
+                self.database, getattr(self.local, "conn", None)
+            )
+            connection = None
+            try:
+                with core_operation(self.database):
+                    self.require_current()
+                    connection = self.database._held_connection()
+                    self.active_connection = connection
+                    self.require_current()
+                    if getattr(self.local, "conn", None) is not connection:
+                        raise MarkerReadObsolete(
+                            "change_review_marker_connection_changed"
                         )
-                    connection.close()
-                    if getattr(self.local, "conn", None) is connection:
-                        self.local.conn = None
-            self.active_connection = None
+                    return self.reader(
+                        self.database,
+                        self.conversation_id,
+                        self.renderer,
+                        require_current=self.require_current,
+                    )
+            finally:
+                # The counted operation exits first. Retire the actual acquired A,
+                # even if a callback installed a different cache B in the meantime.
+                if connection is not None and connection is not previous:
+                    with core_closing(self.database, connection) as allowed:
+                        if not allowed:
+                            raise RuntimeError(
+                                "change_review_marker_connection_not_retired"
+                            )
+                        connection.close()
+                        if getattr(self.local, "conn", None) is connection:
+                            self.local.conn = None
+                self.active_connection = None
 
     async def run(self, projection):
         return await run_preparation_read(
@@ -201,6 +209,7 @@ def capture_marker_read(runtime, coordinator, bridge, conversation_id):
         conversation_id,
         database._thread_local,
         database.db_path,
+        vars(database).get("_execution_owner"),
         bridge_module._read_change_review_markers,
         bridge._change_review_marker_block,
     )

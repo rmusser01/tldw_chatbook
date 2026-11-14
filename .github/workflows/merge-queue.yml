@@ -21,7 +21,7 @@ on:
 permissions:
   contents: read
 
-# ADR-359: CI_CONTROL_RUNNER is an opt-in single label; unset or forks use hosted.
+# ADR-360: CI_CONTROL_RUNNER is an opt-in single label; unset or forks use hosted.
 jobs:
   # Outside Derived Artifacts' concurrency group: an obsolete run must not
   # hold its own cleanup (and the replacement head) behind its test matrix.

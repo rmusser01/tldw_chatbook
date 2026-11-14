@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 from Tests.Chat.test_console_chat_create_integration import _FakeConfirm, _FakeExecutor
@@ -2914,7 +2916,6 @@ async def test_failed_review_settlement_blocks_siblings_across_ledger_handles(
     tmp_path, monkeypatch, alias, settlement_result
 ):
     import asyncio
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 
     controller, store, runs, source, target, chain, request = await _native_start_rig(
@@ -2946,7 +2947,7 @@ async def test_failed_review_settlement_blocks_siblings_across_ledger_handles(
         alias_dir = tmp_path / "alias-dir"
         alias_dir.mkdir()
         peer_path = alias_dir / ".." / runs.db_path.name
-    peer = AgentRunsDB(peer_path, client_id="peer", reconcile_on_init=False)
+    peer = owned_agent_runs_db(peer_path, client_id="peer", reconcile_on_init=False)
     start = asyncio.create_task(controller._chat_start.start(request))
     try:
         assert await asyncio.to_thread(entered.wait, 5)
@@ -3262,7 +3263,6 @@ async def test_failed_preparation_with_no_attempt_clears_only_its_restriction(
     """A rolled-back reservation must not leave every unrelated root blocked."""
     import asyncio
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     controller, store, runs, source, target, chain, request = await _native_start_rig(
         tmp_path
@@ -3271,7 +3271,7 @@ async def test_failed_preparation_with_no_attempt_clears_only_its_restriction(
     owner = controller.fleet_wake.runtime_owner_id
     ledger.recover(current_owner_id=owner)
     unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
-    peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+    peer = owned_agent_runs_db(runs.db_path, client_id="peer", reconcile_on_init=False)
     with runs.transaction() as conn:
         conn.execute(
             "CREATE TRIGGER deny_start BEFORE INSERT ON automatic_chat_start_attempts BEGIN SELECT RAISE(ABORT, 'private rollback'); END"
@@ -3347,7 +3347,6 @@ async def test_preparation_exception_reconciles_persisted_authority_conservative
     import asyncio
     import sqlite3
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     controller, store, runs, source, target, chain, request = await _native_start_rig(
         tmp_path
@@ -3356,7 +3355,7 @@ async def test_preparation_exception_reconciles_persisted_authority_conservative
     owner = controller.fleet_wake.runtime_owner_id
     ledger.recover(current_owner_id=owner)
     unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
-    peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+    peer = owned_agent_runs_db(runs.db_path, client_id="peer", reconcile_on_init=False)
     prepare = ledger.prepare_chat_start
 
     def commit_then_raise(**kwargs):
@@ -3433,7 +3432,6 @@ async def test_restriction_registration_failure_still_drains_exact_native_owners
     import asyncio
     from threading import Event
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     controller, store, runs, source, target, chain, request = await _native_start_rig(
         tmp_path
@@ -3441,7 +3439,7 @@ async def test_restriction_registration_failure_still_drains_exact_native_owners
     ledger = runs.automatic_work
     owner = controller.fleet_wake.runtime_owner_id
     ledger.recover(current_owner_id=owner)
-    peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+    peer = owned_agent_runs_db(runs.db_path, client_id="peer", reconcile_on_init=False)
     entered, release, exited = Event(), Event(), Event()
     original = (
         store.commit_durable_turn
@@ -3532,7 +3530,6 @@ async def test_contended_preparation_confirms_absence_after_writer_exits(
     import asyncio
     import sqlite3
     from threading import Event
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     controller, store, runs, source, target, chain, request = await _native_start_rig(
         tmp_path
@@ -3541,7 +3538,7 @@ async def test_contended_preparation_confirms_absence_after_writer_exits(
     owner = controller.fleet_wake.runtime_owner_id
     ledger.recover(current_owner_id=owner)
     unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
-    peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+    peer = owned_agent_runs_db(runs.db_path, client_id="peer", reconcile_on_init=False)
     blocker = sqlite3.connect(runs.db_path)
     failed, released = Event(), Event()
     prepare = ledger.prepare_chat_start
@@ -3741,7 +3738,6 @@ async def test_persistent_registration_and_settlement_failure_retains_native_den
     import sys
     from threading import Event
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     controller, store, runs, source, target, chain, request = await _native_start_rig(
         tmp_path
@@ -3752,7 +3748,7 @@ async def test_persistent_registration_and_settlement_failure_retains_native_den
     unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
     alias = tmp_path / "alias"
     alias.mkdir()
-    peer = AgentRunsDB(
+    peer = owned_agent_runs_db(
         alias / ".." / runs.db_path.name, client_id="peer", reconcile_on_init=False
     )
     peer_ledger = peer.automatic_work

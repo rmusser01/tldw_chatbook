@@ -1,32 +1,9 @@
-"""Library screen module-level helper functions.
+"""Library screen helpers under ADR-097's decomposition boundary.
 
-Moved verbatim out of ``tldw_chatbook/UI/Screens/library_screen.py`` by PR 0a
-of the Library screen decomposition
-(``.superpowers/sdd/2026-09-01-library-decomposition-foundation``; see
-``Docs/superpowers/specs/2026-09-01-library-screen-decomposition-design.md``).
-``library_screen.py`` re-exports the original moved names so its import surface
-is unchanged; later decomposition tasks import directly from this module.
-Study handoff derivations also live here and receive the original defining
-globals mapping, keeping replaced types, constants and copy helpers live.
-
-NOT moved here despite being module-level `FunctionDef`s above
-``class LibraryScreen``: ``_read_library_ingest_options_from_config`` and
-``_library_ingest_options_for`` (with their ``_INGEST_OPTIONS_CACHE_ATTR``
-key). Several tests (``Tests/UI/test_library_ingest_options_cache.py``,
-``Tests/UI/test_library_screen.py::test_load_ingest_options_from_config`` and
-the three ``test_task_33*_options_round_trip_persisted_config`` tests)
-monkeypatch ``get_cli_setting`` / ``_read_library_ingest_options_from_config``
-on the ``library_screen`` module object. Before this move both functions
-shared ``library_screen.py``'s globals, so the patch reached the internal
-``_library_ingest_options_for`` -> ``_read_library_ingest_options_from_config``
-call; moving them into this module gives that call ITS OWN globals dict,
-silently bypassing the patch (Python resolves a free name via
-``func.__globals__``, fixed at the function's *defining* module, not
-wherever it is re-exported to) -- 5 tests fail deterministically. This is
-the exact "monkeypatch bypass breaks tests inside a 'pure move'" risk the
-design doc names, whose stated mitigation for the analogous
-``*_local_source_snapshot`` trio is "stays screen-routed" -- applied here to
-the same class of problem. See PR 0a's task report for the full trace.
+Library retains its public imports; study/landing use its live defining globals.
+Config readers stay screen-owned so patches to ``get_cli_setting`` and
+``_read_library_ingest_options_from_config`` reach their original global lookup.
+See Docs/superpowers/specs/2026-09-01-library-screen-decomposition-design.md.
 """
 from __future__ import annotations
 
@@ -97,7 +74,6 @@ def _ingestible_file_filters() -> Filters:
             return get_type_group(str(path)) != UNSUPPORTED_GROUP
         except Exception:
             return False
-
     return Filters(
         ("Importable files", _is_ingestible),
         ("All files", lambda _path: True),
@@ -114,9 +90,8 @@ def _library_carries_forward_line(titles: Sequence[str]) -> str:
 
     Args:
         titles: Sampled source titles (notes/media/conversations) that will
-            carry forward into Study. Must be non-empty -- callers render no
-            line at all when there is no source context (see
-            ``study_handoff_copy``).
+            carry forward into Study. Must be non-empty -- callers render no line at all
+            when there is no source context (see ``study_handoff_copy``).
 
     Returns:
         ``"Carries forward: a, b, c"`` when there are at most
@@ -136,21 +111,18 @@ def _unbreakable_size_text(size_text: str) -> str:
     the rail's narrow Details column never wraps mid-unit (task-2859 item
     5: "Prompts 144.0 / KB").
 
-    A non-breaking space (U+00A0) was the first thing tried here and does
-    NOT work: Rich's own word-wrap splitter (``rich._wrap.words``, used by
-    every plain ``Static``) tokenizes on ``re.compile(r"\\s*\\S+\\s*")``,
-    and Python's ``re`` module's Unicode-aware ``\\s`` matches U+00A0 the
-    same as an ordinary space -- confirmed by reproducing the exact wrap
-    live (rail width ~24-26 cells still split "144.0" from "KB" with the
-    NBSP already in place) and again directly against ``rich._wrap`` at
-    that width. Removing the space entirely denies the wrapper any
-    character to split on there at all -- verified stable across widths
-    20-29.
+    A non-breaking space (U+00A0) was the first thing tried here and does NOT work:
+    Rich's own word-wrap splitter (``rich._wrap.words``, used by every plain ``Static``)
+    tokenizes on ``re.compile(r"\\s*\\S+\\s*")``, and Python's ``re`` module's
+    Unicode-aware ``\\s`` matches U+00A0 the same as an ordinary space -- confirmed by
+    reproducing the exact wrap live (rail width ~24-26 cells still split "144.0" from
+    "KB" with the NBSP already in place) and again directly against ``rich._wrap`` at
+    that width. Removing the space entirely denies the wrapper any character to split on
+    there at all -- verified stable across widths 20-29.
 
-    ``get_formatted_file_size``/``get_formatted_db_size_with_wal`` values
-    (e.g. ``"144.0 KB"``, ``"512 B"``) carry exactly one space; a fallback
-    value with no space at all (``"?"``, ``"N/A"``, ``"Error"``) passes
-    through unchanged.
+    ``get_formatted_file_size``/``get_formatted_db_size_with_wal`` values (e.g. ``"144.0
+    KB"``, ``"512 B"``) carry exactly one space; a fallback value with no space at all
+    (``"?"``, ``"N/A"``, ``"Error"``) passes through unchanged.
     """
     return size_text.replace(" ", "")
 
@@ -158,9 +130,8 @@ def _unbreakable_size_text(size_text: str) -> str:
 def _active_library_principal_id(app_instance: Any) -> str | None:
     """Authenticated principal scope for the active server context.
 
-    Reads the auth token, which can be an OS-keyring read that blocks for
-    seconds on Linux (TASK-32926): call it from a worker thread, never from
-    the event loop.
+    Reads the auth token, which can be an OS-keyring read that blocks for seconds on
+    Linux (TASK-32926): call it from a worker thread, never from the event loop.
     """
     server_context_provider = getattr(app_instance, "server_context_provider", None)
     get_active_context = getattr(server_context_provider, "get_active_context", None)
@@ -225,7 +196,6 @@ def _library_collection_record_data(record: Any) -> dict[str, Any]:
 
 def _library_collection_browse_summary(record: Any) -> dict[str, Any]:
     """Project one committed record into the strict bounded-page row shape."""
-
     return {
         "collection_id": _record_value(record, "collection_id"),
         "name": _record_value(record, "name"),
@@ -287,10 +257,9 @@ def _collection_scoped_conflicts(
 def _canonical_shortcut_key(key: str) -> str:
     """Fold a shortcut key label to its canonical dedupe form.
 
-    (task-3312 #1) The footer's shared shortcut sets use display spellings
-    ("esc", "F6") while ``BINDINGS`` uses Textual key names ("escape",
-    "f6"); the F1 panel merges the two sources and must treat those as the
-    SAME key or it advertises one action twice.
+    (task-3312 #1) The footer's shared shortcut sets use display spellings ("esc", "F6")
+    while ``BINDINGS`` uses Textual key names ("escape", "f6"); the F1 panel merges the
+    two sources and must treat those as the SAME key or it advertises one action twice.
 
     Args:
         key: A shortcut key label from either source.
@@ -390,12 +359,42 @@ def study_handoff_copy(
 def study_handoff_ready_copy(self: Any, *, source: Mapping[str, Any]) -> str:
     """The readiness line for a hand-off that HAS a source snapshot.
 
-    TASK-34000.6 (S-05): "Source snapshot is ready." promised a
-    generation local mode cannot run (Study refuses with "Source
-    generation requires server mode."). In local mode the line says what
-    needs a server and what still works by hand; server mode keeps the
-    ready line.
+    TASK-34000.6 (S-05): "Source snapshot is ready." promised a generation local mode
+    cannot run (Study refuses with "Source generation requires server mode."). In local
+    mode the line says what needs a server and what still works by hand; server mode
+    keeps the ready line.
     """
     if self._runtime_active_source() == "server":
         return source["LIBRARY_STUDY_HANDOFF_READY_COPY"]
     return source["LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY"]
+
+
+def land_stage_pick(
+    screen: Any,
+    destination: str,
+    item_id: object,
+    shell_selector: str,
+    *,
+    source: Mapping[str, Any],
+) -> None:
+    """Focus a still-pending item's first control once it mounts.
+    Picks rebuild the list; user input can withdraw the screen's focus handoff.
+    Until controls mount, the landing stays pending for the next detail sync.
+    """
+    if screen._library_stage_pick_landing != (destination, str(item_id)):
+        return
+    try:
+        shell = screen.query_one(shell_selector, source["LibraryAdaptiveReaderShell"])
+    except (source["NoMatches"], source["QueryError"]):
+        return
+    target = next(
+        (
+            candidate
+            for candidate in screen.focus_chain
+            if shell.work.display and shell.work in candidate.ancestors_with_self
+        ),
+        None,
+    )
+    if target is not None:
+        screen._library_stage_pick_landing = None
+        screen.set_focus(target)

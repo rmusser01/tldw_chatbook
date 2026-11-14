@@ -7,11 +7,12 @@ from dataclasses import replace
 
 import pytest
 
-from Tests.private_profile import private_profile_test
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.conftest import join_fleet_children, pin_agent_settings
 from Tests.Agents.test_agent_service import FleetChat, fence
 from Tests.Agents.test_fleet_runtime import RunIdProbeProvider
 from Tests.DB.test_automatic_wake_attempts import claim, survivor
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     AgentDefinition,
@@ -32,22 +33,21 @@ from tldw_chatbook.Agents.automatic_work_runtime import (
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
-from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.local_tool_provider import (
+    LocalApprovalEffect,
+    LocalToolExposure,
     LocalToolProvider,
     LocalToolSpec,
-    LocalToolExposure,
-    LocalApprovalEffect,
 )
+from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
     pin_agent_settings(monkeypatch, max_live_subagents=3, subagents_outlive_turn=True)
-    database = AgentRunsDB(tmp_path / "runs.sqlite", client_id="automatic-child")
+    database = owned_agent_runs_db(tmp_path / "runs.sqlite", client_id="automatic-child")
     yield database
     database.close()
 

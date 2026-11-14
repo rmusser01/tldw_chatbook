@@ -4,7 +4,7 @@ from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
-from .bootstrap import _read
+from .bootstrap import _bounded_names, _read
 from .control_records import _ensure, _write
 from .native_files import create_private_directory, pinned_directory
 from .profile_paths import default_config_path
@@ -22,28 +22,46 @@ def work_root(control: Path) -> Path:
     return control.with_name(control.name + "-work")
 
 
-def _private(root: Path) -> None:
-    with pinned_directory(root) as parent:
+def _private(root: Path, *, _custody=None):
+    with pinned_directory(root, _custody=_custody) as parent:
         info = os.fstat(parent)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
             raise ValueError("recovery_control_not_private")
+        return info.st_dev, info.st_ino, info.st_mode
 
 
-def verify_default_storage() -> None:
+def verify_default_storage(*, _budget=None, _custody=None):
     """Recognize only the fixed installed service namespace without repairing it."""
     control = default_control_root()
-    _private(control.parent)
-    with pinned_directory(control.parent) as parent:
-        if set(os.listdir(parent)) != {control.name, work_root(control).name}:
+    if _budget is not None:
+        _budget.reserve(8192 + 64 * len(str(control)))
+    before = _private(control.parent, _custody=_custody)
+    with pinned_directory(control.parent, _custody=_custody) as parent:
+        names = (
+            os.listdir(parent)
+            if _budget is None
+            else _bounded_names(parent, 2, _budget, _custody)
+        )
+        if set(names) != {control.name, work_root(control).name}:
             raise ValueError("recovery_control_unverified")
-    _private(control)
-    _private(work_root(control))
-    with pinned_directory(control) as parent:
-        if _read(parent, "service.json") != _MARKER:
+    control_identity = _private(control, _custody=_custody)
+    work_identity = _private(work_root(control), _custody=_custody)
+    with pinned_directory(control, _custody=_custody) as parent:
+        if _read(parent, "service.json", _budget=_budget, _custody=_custody) != _MARKER:
             raise ValueError("recovery_control_unverified")
+    if (
+        _private(control.parent, _custody=_custody) != before
+        or _private(control, _custody=_custody) != control_identity
+        or _private(work_root(control), _custody=_custody) != work_identity
+    ):
+        raise ValueError("recovery_control_changed")
+    if _budget is not None:
+        return before, control_identity, work_identity
 
 
-def is_private_service_work(candidate: Path, preserved_item) -> bool:
+def is_private_service_work(
+    candidate: Path, preserved_item, *, _budget=None, _custody=None
+) -> bool:
     """Recognize internal work beneath the exact excluded default service store."""
     control = default_control_root()
     if (
@@ -57,7 +75,7 @@ def is_private_service_work(candidate: Path, preserved_item) -> bool:
     ):
         return False
     try:
-        verify_default_storage()
+        verify_default_storage(_budget=_budget, _custody=_custody)
     except (OSError, ValueError, RuntimeError):
         return False
     return True

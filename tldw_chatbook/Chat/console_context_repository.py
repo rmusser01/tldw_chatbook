@@ -1353,11 +1353,31 @@ async def read_context_presentation_inputs(
                 return False
         return True
 
-    if getattr(controller, "_disposed", False):
-        raise RuntimeError("Console context display owner changed.")
+    store = controller.store
+    runtime = getattr(controller, "_hooks_v2_runtime", None)
+
+    def lifetime_current():
+        if (
+            controller._disposed
+            or controller._shutdown_requested.is_set()
+            or session_id in controller._session_close_generations
+            or controller.store is not store
+            or getattr(controller, "_hooks_v2_runtime", None) is not runtime
+            or (
+                runtime is not None
+                and (
+                    runtime._disposed
+                    or runtime._chat_controller is not controller
+                    or runtime._chat_store is not store
+                    or session_id in runtime._admission_fenced_sessions
+                )
+            )
+        ):
+            raise RuntimeError("Console context display owner changed.")
+
+    lifetime_current()
     if type(controller) is not ConsoleChatController or not callbacks_current():
         return controller.context_control_inputs(session_id)
-    store = controller.store
     owner = next((item for item in store.sessions() if item.id == session_id), None)
     if owner is None:
         raise KeyError(session_id)
@@ -1377,6 +1397,7 @@ async def read_context_presentation_inputs(
     )
 
     def current():
+        lifetime_current()
         if (not callbacks_current() or controller._disposed or controller.store is not store
             or controller._context_repository is not repository
             or getattr(store, "persistence", None) is not persistence
@@ -1414,7 +1435,9 @@ async def read_context_presentation_inputs(
                 return read()
         return await run_preparation_read(
             native, creator=controller, session_id=session_id,
-            reads=controller._preparation_reads, require_current=current,
+            reads=controller._preparation_reads,
+            observers=() if runtime is None else (runtime._preparation_reads,),
+            require_current=current,
         )
 
     def probe():

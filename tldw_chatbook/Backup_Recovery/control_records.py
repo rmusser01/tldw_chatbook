@@ -1149,3 +1149,64 @@ def _resume_activation_record(root, parent, name, temporary, before, after):
         flush_directory(parent)
     if _read(parent, name) != after:
         raise ValueError("activation_record_changed")
+
+
+def _mobile_pending(session, journal, prepared, *, _budget=None, _custody=None):
+    from .capture_service import _selectors
+    from .mobile_consolidation import _selector_observation
+
+    session._check()
+    selectors = _selectors(
+        (Path(prepared.source_selector), Path(prepared.target_selector)),
+        include_known_profiles=True,
+        _budget=_budget,
+        _custody=_custody,
+    )
+    if tuple(str(path) for path in selectors) != tuple(
+        row.selector for row in prepared.selector_review
+    ):
+        raise bootstrap.RecoveryRequired("mobile_selector_review_changed")
+    for row in prepared.selector_review:
+        expected = tuple(
+            (item.path, item.device, item.inode, item.mode) for item in row.witnesses
+        )
+        if _selector_observation(
+            Path(row.selector), _budget=_budget, _custody=_custody
+        ) != (row.fingerprint, expected):
+            raise bootstrap.RecoveryRequired("mobile_selector_review_changed")
+    root = session._control.parent
+    expected = _Pending(
+        operation_id=journal.operation_id,
+        control_root=str(journal.root.parent),
+        namespaces=prepared.namespaces,
+        selectors=list(
+            dict.fromkeys((prepared.source_selector, prepared.target_selector))
+        ),
+    )
+    if _budget is not None:
+        _budget.value(expected.model_dump(), text_copies=4)
+    pending, profiles = bootstrap._records(root, _budget=_budget, _custody=_custody)
+    if pending != [expected.model_dump()]:
+        raise bootstrap.RecoveryRequired("mobile_pending_scope_changed")
+    registry = bootstrap._registry(root, _budget=_budget, _custody=_custody)
+    for selector, fingerprint in zip(
+        (prepared.source_selector, prepared.target_selector),
+        prepared.selector_fingerprints,
+        strict=True,
+    ):
+        binding = bootstrap._binding(
+            Path(selector), profiles, registry, _budget=_budget, _custody=_custody
+        )
+        if (
+            binding is None
+            or binding["fingerprint"] != fingerprint
+            or not set(binding["namespaces"]) <= set(session._names)
+        ):
+            raise bootstrap.RecoveryRequired(
+                "mobile_close_old_instance_enrollment_required"
+            )
+    if prepared.bootstrap_root != str(root) or not set(prepared.namespaces) <= set(
+        session._names
+    ):
+        raise bootstrap.RecoveryRequired("mobile_session_scope_changed")
+    return profiles, registry

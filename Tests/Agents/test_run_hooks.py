@@ -1149,6 +1149,287 @@ class TestEngineHardening:
             close()
         assert not psutil.pid_exists(int(marker.read_text()))
 
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows Job Object proof")
+    def test_windows_job_reaps_descendant_after_hook_leader_exits(
+        self, tmp_path, monkeypatch
+    ):
+        import _winapi
+
+        import psutil
+        import win32con
+        import win32job
+
+        from tldw_chatbook.Notes.git_process_containment import ProcessTreeController
+
+        child_marker = tmp_path / "hook-descendant"
+        child = (
+            f"import os,pathlib,time;marker=pathlib.Path({str(child_marker)!r});"
+            "pending=marker.with_suffix('.tmp');pending.write_text(str(os.getpid()));"
+            "pending.replace(marker);time.sleep(30)"
+        )
+        parent = (
+            "import subprocess,sys,time,pathlib;"
+            f"subprocess.Popen([sys.executable,'-c',{child!r}],"
+            "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);"
+            f"marker=pathlib.Path({str(child_marker)!r});"
+            "\nwhile not marker.exists(): time.sleep(0.01)\n"
+        )
+        engine = _engine(HookSpec("PreToolUse", (sys.executable, "-c", parent), timeout_s=2))
+        observed = []
+        descendant_handle = None
+        original_kill = ProcessTreeController.kill
+
+        def kill(controller, tree):
+            nonlocal descendant_handle
+            assert descendant_handle is None
+            descendant_handle = _winapi.OpenProcess(
+                _winapi.SYNCHRONIZE | win32con.PROCESS_QUERY_INFORMATION,
+                False,
+                int(child_marker.read_text()),
+            )
+            assert win32job.IsProcessInJob(descendant_handle, tree.native_identity.job_handle)
+            observed.append((
+                tree.process.poll(),
+                _winapi.WaitForSingleObject(descendant_handle, 0),
+            ))
+            original_kill(controller, tree)
+
+        monkeypatch.setattr(ProcessTreeController, "kill", kill)
+        try:
+            outcome = engine.fire("PreToolUse", session_id="s")
+            assert descendant_handle is not None
+            # A terminated process can retain its PID while its handle is open.
+            assert _winapi.WaitForSingleObject(descendant_handle, 0) == _winapi.WAIT_OBJECT_0
+            assert not outcome.blocked
+            assert observed == [(0, _winapi.WAIT_TIMEOUT)]
+            assert child_marker.exists()
+        finally:
+            try:
+                engine.close()
+                if child_marker.exists():
+                    pid = int(child_marker.read_text())
+                    try:
+                        process = psutil.Process(pid)
+                        if process.create_time() <= child_marker.stat().st_mtime:
+                            process.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+            finally:
+                if descendant_handle is not None:
+                    _winapi.CloseHandle(descendant_handle)
+
+    @pytest.mark.parametrize("failure", [None, "new member", "lost handle", "incomplete list"])
+    def test_windows_hook_reap_waits_for_member_signal(
+        self, tmp_path, monkeypatch, failure
+    ):
+        from tldw_chatbook.Notes import git_process_containment as containment
+
+        calls = []
+
+        class Reader:
+            async def read(self, size):
+                return b""
+
+        class Writer:
+            def write(self, data):
+                pass
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+        class Process:
+            pid = 17
+            returncode = 0
+            stdin = Writer()
+            stdout = Reader()
+            stderr = Reader()
+
+        class Kernel:
+            def __init__(self):
+                self.killed = False
+                self.probes = 0
+
+            def total_processes(self, job):
+                assert job == 1
+                return 2 + int(self.killed and failure == "new member")
+
+            def active_processes(self, job):
+                assert job == 1
+                if self.killed and failure != "incomplete list":
+                    assert ("close", 42) in calls
+                return int(not self.killed)
+
+            def job_member_pids(self, job, capacity):
+                assert job == 1
+                if failure == "incomplete list":
+                    assert capacity == 2
+                    calls.append("incomplete")
+                    return (), 2
+                pids = (23, 24) if failure == "lost handle" else (23,)
+                return pids, len(pids)
+
+            def open_job_member(self, job, pid):
+                assert job == 1
+                if pid == 24:
+                    calls.append("lost")
+                    raise OSError("member handle unavailable")
+                assert pid == 23
+                calls.append("pin")
+                return 42
+
+            def terminate_job(self, job, code):
+                assert (job, code) == (1, 1)
+                self.killed = True
+                calls.append("kill")
+
+            def process_signaled(self, handle):
+                assert self.killed and handle == 42
+                self.probes += 1
+                calls.append("probe")
+                return self.probes == 2
+
+            def close_handle(self, handle):
+                if handle:
+                    calls.append(("close", handle))
+
+        tree = containment.OwnedProcessTree(
+            Process(), containment._WindowsJobIdentity(1, 17, assigned=True)
+        )
+        backend = containment._WindowsJobObjectController()
+        backend._kernel = Kernel()
+
+        def use_test_kernel(controller):
+            controller._backend = backend
+
+        async def spawn(controller, *argv, cwd):
+            return tree
+
+        monkeypatch.setattr(containment.ProcessTreeController, "__init__", use_test_kernel)
+        monkeypatch.setattr(containment.ProcessTreeController, "spawn_windows_hook", spawn)
+        monkeypatch.setattr(run_hooks, "_capture_hook", run_hooks._capture_windows_hook)
+        spec = HookSpec("PreToolUse", (sys.executable, "-c", "pass"), timeout_s=0.2)
+        engine = _engine(spec)
+        try:
+            blocked = engine.fire("PreToolUse", cwd=str(tmp_path), session_id="s").blocked
+        finally:
+            engine.close()
+
+        if failure == "incomplete list":
+            assert calls == ["incomplete", "kill", ("close", 1)]
+        else:
+            assert calls == [
+                "pin",
+                *(["lost"] if failure == "lost handle" else []),
+                "kill", "probe", "probe", ("close", 42), ("close", 1),
+            ]
+        assert blocked is (failure is not None)
+
+    @pytest.mark.parametrize("leader_returncode", [0, None])
+    def test_windows_hook_launch_owns_tree_and_uses_original_limits(
+        self, tmp_path, monkeypatch, leader_returncode
+    ):
+        from contextlib import contextmanager
+
+        from tldw_chatbook.Notes import git_process_containment
+
+        class Reader:
+            def __init__(self, chunks):
+                self.chunks = iter(chunks)
+
+            async def read(self, size):
+                return next(self.chunks, b"")
+
+        class Writer:
+            def write(self, payload):
+                calls.append(("stdin", json.loads(payload)))
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+        class Process:
+            returncode = leader_returncode
+
+            def __init__(self):
+                self.stdin = Writer()
+                self.stdout = Reader([b"x" * (run_hooks.HOOK_IO_BUDGET_BYTES + 1)])
+                self.stderr = Reader([b"err"])
+
+        class Tree:
+            process = Process()
+
+        class Controller:
+            async def spawn_windows_hook(self, *argv, cwd):
+                assert calls == ["guard-enter"]
+                assert argv == (sys.executable, "-c", "pass")
+                assert cwd == str(tmp_path)
+                calls.append("spawn")
+                return Tree()
+
+            async def wait(self, tree, **options):
+                assert isinstance(tree, Tree)
+                calls.append(("wait", options["timeout"]))
+                return "kill" in calls
+
+            def kill(self, tree):
+                assert isinstance(tree, Tree)
+                calls.append("kill")
+                if tree.process.returncode is None:
+                    tree.process.returncode = 1
+                else:
+                    raise OSError("Job exited during kill")
+
+            async def stop_windows_hook(self, tree, *, deadline):
+                try:
+                    self.kill(tree)
+                except OSError:
+                    pass
+                return await self.wait(
+                    tree, timeout=max(0, deadline - asyncio.get_running_loop().time())
+                )
+
+            def close(self, tree):
+                assert isinstance(tree, Tree)
+                assert "kill" in calls
+                calls.append("close")
+
+        @contextmanager
+        def launch_guard(target, *, tool_name):
+            assert target.spec is spec and tool_name == "read"
+            calls.append("guard-enter")
+            try:
+                yield
+            finally:
+                calls.append("guard-exit")
+
+        calls = []
+        spec = HookSpec("PreToolUse", (sys.executable, "-c", "pass"), timeout_s=0.2)
+        monkeypatch.setattr(git_process_containment, "ProcessTreeController", Controller)
+        returncode, capture, timed_out = asyncio.run(
+            run_hooks._capture_windows_hook(
+                trusted_target(spec),
+                {"cwd": str(tmp_path), "data": {"tool_name": "read"}},
+                None,
+                launch_guard,
+            )
+        )
+        assert timed_out is (leader_returncode is None)
+        assert returncode == (1 if timed_out else 0)
+        assert capture.output[1] == b"x" * run_hooks.HOOK_IO_BUDGET_BYTES
+        assert capture.overflow[1] and capture.output[2] == b"err"
+        assert calls[:3] == ["guard-enter", "spawn", "guard-exit"]
+        assert calls[3] == ("stdin", {"cwd": str(tmp_path), "data": {"tool_name": "read"}})
+        assert calls[-1] == "close"
+        assert calls.count("kill") == 1
+        _, cleanup_wait = calls[-2]
+        assert 0 < cleanup_wait <= run_hooks.HOOK_POST_KILL_REAP_TIMEOUT_S
+
     def test_notify_queue_admission_is_bounded(self, monkeypatch, caplog):
         import threading
 

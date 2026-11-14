@@ -123,7 +123,9 @@ def captured_sources(service: object) -> tuple:
 
 def execution(service=None, *, sources=()):
     """Retain admission through final persistence in this native task/thread."""
-    return _guard.execution(service, sources=sources)
+    from .scratch_admission import execution as scratch_execution
+
+    return scratch_execution(_guard, service, sources)
 
 
 def selected_sources(service: object) -> tuple:
@@ -311,12 +313,15 @@ def _worker_databases(service):
 
 def worker_guard(service=None):
     """Capture sources, then acquire independently inside the actual worker."""
+    from .scratch_admission import capture_worker, worker_entry
+
     sources = _guard.captured_sources(service)
+    handoff = capture_worker()
 
     def decorate(function):
         @wraps(function)
         def call(*args, **kwargs):
-            with _guard.worker_isolation():
+            with worker_entry(handoff), _guard.worker_isolation():
                 with execution(service, sources=sources):
                     existing = {
                         db
@@ -340,12 +345,15 @@ def worker_guard(service=None):
 
 def async_worker_guard(service=None):
     """Admit the Console provider coroutine on its actual model-call loop."""
+    from .scratch_admission import capture_worker, worker_entry
+
     sources = _guard.captured_sources(service)
+    handoff = capture_worker()
 
     def decorate(function):
         @wraps(function)
         async def call(*args, **kwargs):
-            with _guard.worker_isolation():
+            with worker_entry(handoff), _guard.worker_isolation():
                 with execution(service, sources=sources):
                     return await function(*args, **kwargs)
 

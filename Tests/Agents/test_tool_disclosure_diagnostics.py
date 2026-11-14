@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from loguru import logger
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import (
     FakeBigProvider,
     ScriptedChat,
@@ -23,7 +24,6 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -64,7 +64,7 @@ def test_message_only_logs_report_schema_decisions_without_bodies(
     if not exhausted:
         replies.append(turn("t0", {}))
     replies.append("done")
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="diagnostics")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="diagnostics")
     service = AgentService(db=db, registry=registry, chat_call=ScriptedChat(replies))
     if exhausted:
         monkeypatch.setattr(

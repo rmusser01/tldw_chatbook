@@ -31,6 +31,8 @@ from tldw_chatbook.UI.Library_Modules.library_export_state import (
     LibraryExportState,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 #: Every method Task 3 moved into `LibraryExportController`, under its
 #: original `LibraryScreen` name. Derived from a full `ast` census of every

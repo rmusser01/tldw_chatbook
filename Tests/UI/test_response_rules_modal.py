@@ -29,6 +29,21 @@ class ManagerHost(ConsolidatedCSSApp):
         await self.push_screen(self.modal)
 
 
+async def _wait_for_save(modal, admission, mocker):
+    from textual.worker import Worker
+
+    admission.assert_called_once()
+    assert len(admission.spy_return_list) == 1
+    worker = admission.spy_return
+    assert (
+        isinstance(worker, Worker)
+        and worker.node is modal
+        and worker.group == "response-rule-editor"
+    )
+    mocker.stop(admission)
+    await worker.wait()
+
+
 @pytest.mark.asyncio
 async def test_global_manager_can_disable_after_last_chat_closes(native):
     _owner, rules, chats, session, _gateway, _controller = native
@@ -63,7 +78,9 @@ async def test_global_manager_does_not_inherit_chat_only_rules(native):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
-async def test_editor_testing_uses_public_runtime_and_never_autoactivates(native, size):
+async def test_editor_testing_uses_public_runtime_and_never_autoactivates(
+    native, size, mocker
+):
     _owner, rules, _chats, session, _gateway, _controller = native
     seed(native)
     _gateway.reply = "Evidence: corrected answer"
@@ -104,9 +121,11 @@ async def test_editor_testing_uses_public_runtime_and_never_autoactivates(native
                 break
             await pilot.press("tab")
         assert host.focused is save
+        save_admission = mocker.spy(modal, "run_worker")
         await pilot.press("enter")
         for _ in range(10):
             await pilot.pause()
+        await _wait_for_save(modal, save_admission, mocker)
         assert (
             rules.store.list_bindings(scope)[0].revision == modal.tested.rule.revision
         )
@@ -460,7 +479,7 @@ async def test_dirty_escape_discards_only_after_confirmation(native):
 @pytest.mark.parametrize("concurrent_edit", [False, True])
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
-    native, action, size, concurrent_edit
+    native, action, size, concurrent_edit, mocker
 ):
     import asyncio
 
@@ -499,6 +518,7 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
             return value
 
         rules.run_db_call = held_post_save_read
+        save_admission = mocker.spy(modal, "run_worker")
         try:
             modal.query_one("#rr-save", Button).press()
             if concurrent_edit:
@@ -511,6 +531,7 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
             await pilot.pause()
             if not modal._busy and rules.store.list_bindings(scope)[0].revision == 2:
                 break
+        await _wait_for_save(modal, save_admission, mocker)
         rules.run_db_call = original_db_call
         saved_selection = modal._selected
         committed = rules.store.list_bindings(scope)[0]

@@ -432,6 +432,7 @@ def _canvas_scope(
         selected_canvas_id=None,
         selected_revision_id=None,
         run_id=run_id,
+        ephemeral=True,
     )
 
 
@@ -474,9 +475,13 @@ def _publish_root_canvas(
     return created, settlement
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_view_binding_builds_authority_on_first_publication_and_rebinds(
     tmp_path,
 ) -> None:
+    from tldw_chatbook.config import get_canvas_execution_enabled
+
+    assert get_canvas_execution_enabled() is True
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     database = CharactersRAGDB(tmp_path / "lazy-canvas.sqlite", "lazy-canvas")

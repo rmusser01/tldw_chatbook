@@ -5,8 +5,8 @@ from threading import Event
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA, recovery_adapters
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -59,7 +59,7 @@ def test_frozen_completion_schema_migrates_linearly_to_progress(tmp_path, versio
 
 def test_fresh_progress_catalog_matches_and_unknown_table_is_refused(tmp_path):
     path = tmp_path / "fresh.db"
-    db = AgentRunsDB(path, client_id="progress-schema")
+    db = owned_agent_runs_db(path, client_id="progress-schema")
     db.close()
     assert validate_candidate(owner(), path, Event(), migrate=False) == ()
     with sqlite3.connect(path) as conn:

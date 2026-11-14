@@ -9,6 +9,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_first_send_atomicity import _controller, _until
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -274,11 +275,12 @@ async def test_stop_during_real_chain_creation_retires_accepted_owner(
     tmp_path, monkeypatch, owned_console_databases, window
 ):
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     db, store, controller, gateway = _controller(tmp_path)
     owned_console_databases(db, controller)
-    runs = AgentRunsDB(tmp_path / "chain-runs.sqlite", client_id="accepted-chain-test")
+    runs = owned_agent_runs_db(
+        tmp_path / "chain-runs.sqlite", client_id="accepted-chain-test"
+    )
     controller._agent_bridge = ConsoleAgentBridge(
         agent_runs_db=runs, store=store, provider_gateway=gateway
     )
@@ -415,7 +417,9 @@ async def test_stop_during_real_chain_creation_retires_accepted_owner(
         release.set()
         await asyncio.gather(task, return_exceptions=True)
         await controller.shutdown()
+        assert await _until(lambda: not controller._maintenance_background, timeout=5)
         runs.close()
+        assert runs.close_idle_connections()
         assert not runs._maintenance_participant.connections
 
 
@@ -660,13 +664,14 @@ async def test_temporary_chain_stop_refuses_successor_publication(
 ):
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_models import ConsoleDispatchRecoveryKind
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     db, store, controller, gateway = _controller(tmp_path)
     owned_console_databases(db, controller)
     session = store.create_session(session_id="temporary", title="Temporary", ephemeral=True)
     gateway.deferred_dispatch_boundary = True
-    runs = AgentRunsDB(tmp_path / "temporary-runs.sqlite", client_id="temporary-stop-test")
+    runs = owned_agent_runs_db(
+        tmp_path / "temporary-runs.sqlite", client_id="temporary-stop-test"
+    )
     controller._agent_bridge = ConsoleAgentBridge(
         agent_runs_db=runs, store=store, provider_gateway=gateway
     )
@@ -734,3 +739,5 @@ async def test_temporary_chain_stop_refuses_successor_publication(
         store.persistence = persistence
         persistence.db = db
         store._sessions[session.id] = session
+        assert await _until(lambda: not controller._maintenance_background, timeout=5)
+        assert runs.close_idle_connections()

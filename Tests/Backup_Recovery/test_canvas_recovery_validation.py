@@ -157,7 +157,7 @@ print('retired and reopened')
 """
 
 
-@pytest.mark.parametrize("predecessor", [81, 82, 83, 84])
+@pytest.mark.parametrize("predecessor", [81, 82, 83, 84, 85, 86, 87])
 def test_all_four_frozen_lineages_remain_accepted_and_migrate(tmp_path, predecessor):
     script = _LINEAGE_SCRIPT.replace(
         "CHACHANOTES_V81_SCHEMAS", f"CHACHANOTES_V{predecessor}_SCHEMAS"
@@ -165,7 +165,7 @@ def test_all_four_frozen_lineages_remain_accepted_and_migrate(tmp_path, predeces
     _run(tmp_path, "core", "lineages", script=script)
 
 
-@pytest.mark.parametrize("chat_version", (83, 84, 86))
+@pytest.mark.parametrize("chat_version", (83, 84, 86, 87))
 @pytest.mark.parametrize("lineage", range(4))
 @pytest.mark.parametrize("source_index", (False, True))
 def test_current_hybrid_catalog_requires_its_exact_embedded_stamp(
@@ -184,6 +184,7 @@ def test_current_hybrid_catalog_requires_its_exact_embedded_stamp(
         CHACHANOTES_V83_SCHEMAS,
         CHACHANOTES_V84_SCHEMAS,
         CHACHANOTES_V86_SCHEMAS,
+        CHACHANOTES_V87_SCHEMAS,
     )
     from tldw_chatbook.DB.recovery_operations import (
         _SUBSCRIPTIONS_SCHEMA,
@@ -196,6 +197,7 @@ def test_current_hybrid_catalog_requires_its_exact_embedded_stamp(
         83: CHACHANOTES_V83_SCHEMAS,
         84: CHACHANOTES_V84_SCHEMAS,
         86: CHACHANOTES_V86_SCHEMAS,
+        87: CHACHANOTES_V87_SCHEMAS,
     }[chat_version][lineage]
     subscriptions = tuple(_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA)
     # The historical base is the bare Subscription catalog, never a composed

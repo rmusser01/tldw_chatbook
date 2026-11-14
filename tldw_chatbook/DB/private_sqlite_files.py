@@ -129,6 +129,7 @@ def _prepare_posix_artifact_generation(
     create_if_missing: bool,
     optional: bool,
     enforce_private_mode: bool,
+    require_private_mode: bool = False,
     open_artifact_fd: Callable[..., int] | None = None,
     postcondition_holds: Callable[..., bool] | None = None,
     identity_out: list[os.stat_result] | None = None,
@@ -254,6 +255,12 @@ def _prepare_posix_artifact_generation(
             enforce_private_mode
             and stat.S_IMODE(opened_stat.st_mode) != _PRIVATE_FILE_MODE
         ):
+            if require_private_mode:
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "private_sqlite_mode_change_refused",
+                )
             os.fchmod(file_fd, _PRIVATE_FILE_MODE)
         try:
             postcondition_holds = postcondition(
@@ -404,6 +411,7 @@ def _prepare_posix_artifact(
     create_if_missing: bool,
     optional: bool = False,
     enforce_private_mode: bool = True,
+    require_private_mode: bool = False,
     open_artifact_fd: Callable[..., int] | None = None,
     postcondition_holds: Callable[..., bool] | None = None,
     identity_out: list[os.stat_result] | None = None,
@@ -417,6 +425,7 @@ def _prepare_posix_artifact(
                 create_if_missing=create_if_missing,
                 optional=optional,
                 enforce_private_mode=enforce_private_mode,
+                require_private_mode=require_private_mode,
                 open_artifact_fd=open_artifact_fd,
                 postcondition_holds=postcondition_holds,
                 identity_out=identity_out,
@@ -474,6 +483,7 @@ def _prepare_artifact(
     create_if_missing: bool,
     optional: bool = False,
     enforce_private_mode: bool = True,
+    require_private_mode: bool = False,
     open_artifact_fd: Callable[..., int] | None = None,
     postcondition_holds: Callable[..., bool] | None = None,
     identity_out: list[os.stat_result] | None = None,
@@ -485,11 +495,18 @@ def _prepare_artifact(
             create_if_missing=create_if_missing,
             optional=optional,
             enforce_private_mode=enforce_private_mode,
+            require_private_mode=require_private_mode,
             open_artifact_fd=open_artifact_fd,
             postcondition_holds=postcondition_holds,
             identity_out=identity_out,
         )
     if private_paths._WINDOWS_PLATFORM:
+        if require_private_mode:
+            raise _failure(
+                selected,
+                PrivatePathStatus.UNVERIFIED_PLATFORM,
+                "required_posix_guards_unavailable",
+            )
         return _prepare_windows_artifact(
             selected,
             writable=writable,
@@ -523,6 +540,7 @@ def prepare_batch(request: PrepareRequest) -> PrepareResult:
             create_if_missing=request.create_if_missing and not suffix,
             optional=bool(suffix),
             enforce_private_mode=not request.preserve_source_mode,
+            require_private_mode=request.require_private_mode,
             identity_out=main_identity if not suffix else None,
         )
         if not exists:

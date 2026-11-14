@@ -7,10 +7,9 @@ blocks, each row's Source word and help, and the widgets the card owns
 Applies-to line). The draft, Save, Revert and the handlers for the events
 these widgets bubble stay on the screen (task-1378's remaining scope).
 
-``settings_screen`` imports this module inside the functions that use it,
-so the Settings route's pre-import payload does not grow (ADR-097); by then
-``settings_screen`` is fully loaded, which is what makes the import of its
-constants below safe.
+``settings_screen`` imports this module inside the functions that use it, so the
+Settings route's pre-import payload does not grow (ADR-097); by then ``settings_screen``
+is fully loaded, which is what makes the import of its constants below safe.
 """
 
 from __future__ import annotations
@@ -227,10 +226,9 @@ SNAPSHOTS_SCOPE = "llama.cpp only"
 class ProviderFilterInput(PickerSearchInput):
     """The one-row Provider control (TASK-33007.2 AC#1, AC#3).
 
-    It shows the chosen provider's name. Typing filters the list under it,
-    which never takes focus, so the control is one Tab stop: Up/Down move
-    the list's highlight, Enter chooses, and Escape keeps the current
-    provider.
+    It shows the chosen provider's name. Typing filters the list under it, which never
+    takes focus, so the control is one Tab stop: Up/Down move the list's highlight,
+    Enter chooses, and Escape keeps the current provider.
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
@@ -505,9 +503,8 @@ def selection_source_word(source: object, value: object) -> str:
         value: The provider or model shown.
 
     Returns:
-        "edited *" for a staged change, "not the default" for a linked
-        form's value; otherwise "new-chat default", or "not set" when config
-        holds none.
+        "edited *" for a staged change, "not the default" for a linked form's value;
+        otherwise "new-chat default", or "not set" when config holds none.
     """
     if source != "settings_draft" and not str(value or "").strip():
         return NOT_SET
@@ -1402,9 +1399,8 @@ def refresh_advanced(screen: SettingsScreen) -> None:
 def compose_providers_models_inspector(screen: SettingsScreen) -> ComposeResult:
     """Compose the Inspector's Providers & Models blocks (spec mock (c)).
 
-    Applies to, Next new chat will use, the focused field (help and range,
-    its config key in a closed disclosure with the card's old reference
-    facts), then Key.
+    Applies to, Next new chat will use, the focused field (help and range, its config
+    key in a closed disclosure with the card's old reference facts), then Key.
 
     Args:
         screen: The Settings screen that owns the Inspector.
@@ -1909,10 +1905,9 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             id="settings-default-model-title",
             classes="destination-section",
         )
-        # TASK-33007.3: a searchable picker over saved, catalog and
-        # discovered ids. The hidden Input keeps #settings-model-value and
-        # its value for staging, save and revert (the modal's legacy-adapter
-        # precedent).
+        # TASK-33007.3: a searchable picker over saved, catalog and discovered ids. The
+        # hidden Input keeps #settings-model-value and its value for staging, save and
+        # revert (the modal's legacy-adapter precedent).
         with Horizontal(id="settings-model-row", classes="settings-input-row"):
             yield Static("Model", classes="settings-input-label")
             app_instance = screen.app_instance
@@ -2065,14 +2060,12 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 )
         with advanced_disclosure(screen, SAVED_MODELS_DISCLOSURE_ID):
             yield from compose_saved_model_list(screen, provider)
-        # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
-        # inline from the saved config (the Connect block pattern) and
-        # persist immediately on change via the screen's handlers.
-        # task-1341 / ADR-303: instant-apply is the labeled exception to the
-        # staged default; the group and its hint line keep these operational
-        # flags apart from the staged fields (TASK-33007.6: no border, the
-        # pane's is the only frame, and its inputs are one row like the
-        # card's).
+        # ADR-020: [model_catalog] auto-refresh toggles. Values initialize inline from
+        # the saved config (the Connect block pattern) and persist immediately on change
+        # via the screen's handlers. task-1341 / ADR-303: instant-apply is the labeled
+        # exception to the staged default; the group and its hint line keep these
+        # operational flags apart from the staged fields (TASK-33007.6: no border, the
+        # pane's is the only frame, and its inputs are one row like the card's).
         model_catalog_settings = screen._model_catalog_card_settings()
         with (
             advanced_disclosure(screen, CATALOG_REFRESH_DISCLOSURE_ID),

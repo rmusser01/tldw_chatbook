@@ -1369,3 +1369,71 @@ async def test_leave_console_is_idempotent_and_cheap_with_no_work():
     # A second leave finds no view attached and does nothing.
     assert await runtime.leave_console(object()) is False
     assert time.monotonic() - started < 2.0
+
+
+@pytest.mark.bootstrap_profile
+def test_runtime_holder_is_lazy_and_chat_names_share_execution_fence(tmp_path):
+    from tldw_chatbook.Chat.console_execution_owner import (
+        ConsoleExecutionBusy,
+        ConsoleExecutionOwner,
+    )
+
+    first = ConsoleRuntime(SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=tmp_path / 'first.db')))
+    second = ConsoleRuntime(SimpleNamespace(chachanotes_db=SimpleNamespace(db_path=tmp_path / 'second.db')))
+    path = tmp_path / 'agent_runs.db'
+    with ConsoleExecutionOwner.acquire(path):
+        pass
+    try:
+        first.ensure_activity_receipt_service()
+        with pytest.raises(ConsoleExecutionBusy):
+            second.ensure_activity_receipt_service()
+    finally:
+        asyncio.run(first.dispose())
+        asyncio.run(second.dispose())
+    with ConsoleExecutionOwner.acquire(path):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_runtime_disposal_retires_remote_subscription_claims():
+    from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+
+    runtime = ConsoleRuntime(SimpleNamespace())
+    projection = runtime.ensure_remote_projection(
+        ConsoleHostIdentity(server_epoch="epoch", console_id="console")
+    )
+    projection.register_client("phone")
+    await runtime.dispose()
+    assert not projection._clients
+    with pytest.raises(RuntimeError):
+        runtime.ensure_remote_projection(projection.host_identity)
+
+
+def test_runtime_trace_callbacks_keep_dynamic_capture_policy_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.Chat import console_runtime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "runtime-policy.sqlite", "runtime-policy")
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    try:
+        store = runtime.ensure_chat_store()
+        gateway = runtime.ensure_provider_gateway()
+        projection = store.trace_projection
+        assert projection is not None
+        for enabled in (False, True):
+            monkeypatch.setattr(
+                console_runtime,
+                "runtime_capture_policy",
+                lambda enabled=enabled: SimpleNamespace(
+                    normalized_reads_enabled=enabled,
+                    normalized_writes_enabled=enabled,
+                ),
+            )
+            assert projection._normalized_reads_enabled() is enabled
+            assert projection.normalized_writes_enabled is enabled
+            assert gateway._normalized_writes_enabled() is enabled
+    finally:
+        asyncio.run(runtime.dispose())
+        db.close_connection()

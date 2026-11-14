@@ -51,6 +51,12 @@ from tldw_chatbook.DB import declare_store
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..STT.persistence import dump_transcription_provenance_document
 from .keyword_store import KeywordStore, KeywordStoreSpec
+from .media_db_errors import (
+    DatabaseError,
+    SchemaError,
+    InputError,
+    ConflictError,
+)
 from .library_search_engine import LibrarySearchSpec, library_search_page
 from .sql_validation import (
     validate_column_name,
@@ -78,7 +84,6 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     fts5_query_tokens,
     quote_fts5_prefix,
 )
-from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 #
 ########################################################################################################################
 #
@@ -86,49 +91,6 @@ from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, S
 
 
 # --- Custom Exceptions ---
-
-
-class DatabaseError(Exception):
-    """Base exception for database related errors."""
-
-    pass
-
-
-class SchemaError(DatabaseError, StoreSchemaError):
-    """Exception for schema version mismatches or migration failures."""
-
-    pass
-
-
-class InputError(StoreInputError, ValueError):
-    """Custom exception for input validation errors."""
-
-    pass
-
-
-class ConflictError(DatabaseError, StoreConflictError):
-    """Indicates a conflict due to concurrent modification (version mismatch)."""
-
-    def __init__(
-        self,
-        message="Conflict detected: Record modified concurrently.",
-        entity=None,
-        identifier=None,
-    ):
-        super().__init__(message)
-        self.entity = entity
-        self.identifier = identifier  # Can be id or uuid
-
-    def __str__(self):
-        base = super().__str__()
-        details = []
-        if self.entity:
-            details.append(f"Entity: {self.entity}")
-        if self.identifier:
-            details.append(f"ID: {self.identifier}")
-        return f"{base} ({', '.join(details)})" if details else base
-
-
 # --- Custom JSON Encoder for DateTime ---
 class DateTimeEncoder(json.JSONEncoder):
     """Custom JSON encoder that handles datetime objects."""
@@ -292,7 +254,7 @@ _MEDIA_KEYWORD_SPEC = KeywordStoreSpec(
 )
 
 
-@declare_store("db.media.primary", closer="close_connection")
+@declare_store("db.media.primary", closer="close_connection", read_only_policy="db.media.read")
 class MediaDatabase:
     """
     Manages SQLite connection and operations for a specific database file,
@@ -1040,6 +1002,8 @@ class MediaDatabase:
         db_path: Union[str, Path],
         client_id: str,
         check_integrity_on_startup: bool = False,
+        *,
+        _read_only: bool = False,
     ):
         """
         Initializes the Database instance, sets up the connection pool (via threading.local),
@@ -1055,6 +1019,7 @@ class MediaDatabase:
             DatabaseError: If database initialization or schema setup fails.
         """
         # Determine if it's an in-memory DB and normalize the path lexically.
+        self._read_only = _read_only
         if isinstance(db_path, Path):
             self.is_memory_db = False
             self.db_path = lexical_path(db_path)
@@ -1124,7 +1089,18 @@ class MediaDatabase:
             # --- Core Initialization Logic ---
             # This establishes the first connection for the current thread
             # and applies/verifies the schema.
-            self._initialize_schema()
+            if self._read_only:
+                if self.is_memory_db:
+                    raise ValueError("Read-only inspection requires an existing file.")
+                row = (
+                    self._get_thread_connection()
+                    .execute("SELECT version FROM schema_version LIMIT 1", ())
+                    .fetchone()
+                )
+                if row is None or row[0] != self._CURRENT_SCHEMA_VERSION:
+                    raise SchemaError("Existing database schema is incompatible.")
+            else:
+                self._initialize_schema()
 
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
@@ -1174,34 +1150,27 @@ class MediaDatabase:
                 )
 
     # --- Connection Management ---
+    @classmethod
+    def open_read_only(cls, db_path: Path):
+        """Read an existing current store without creating or migrating it."""
+        return cls(db_path, client_id="canonical-reader", _read_only=True)
+
     @core_getter
     @registry_acquisition
     def _get_thread_connection(self) -> sqlite3.Connection:
         """Retrieve or create the current thread's SQLite connection.
 
-        task-22224 EXCEPTION -- this held connection keeps the legacy
-        default isolation level for now instead of the store template's
-        ``isolation_level = None`` (rule: ``Library_Ingest_Jobs_DB.py``
-        module docstring). ``transaction()`` here borrows via
-        ``in_transaction`` and write helpers still rely on implicit
-        transactions (``execute_query(commit=True)``/``execute_many``), so
-        flipping requires this file's own commit/rollback/write-site census
-        first, as done for ``ChaChaNotes_DB`` -- its own task. Do NOT copy
-        this pattern into new stores.
+        TASK-22224: keep this store's legacy isolation level. Its transaction
+        borrowing and implicit-commit writers need a separate migration
+        audit before adopting the new-store pattern.
 
-        task-261: the ``SELECT 1`` liveness ping is gated behind an idle
-        threshold (``_LIVENESS_PING_IDLE_SECONDS``) instead of running on
-        every call — connections are thread-local and long-lived, and
-        successful ``close_connection()`` clears the thread-local reference, so
-        a recently-used connection is known-good without a ping. A
-        connection idle past the threshold still gets the ping +
-        transparent-reopen treatment.
+        TASK-261: ping only after the idle threshold and transparently reopen
+        a dead connection. Closing clears the cached thread-local handle.
 
         Returns:
-            sqlite3.Connection: The thread-local database connection.
-
+            The thread-local SQLite connection.
         Raises:
-            DatabaseError: If connecting to the database fails.
+            DatabaseError: If connecting fails.
         """
         from tldw_chatbook.Backup_Recovery.participants import core_access
 
@@ -1233,16 +1202,31 @@ class MediaDatabase:
         if is_closed:
             unpublished = None
             try:
-                conn = unpublished = connect_private_sqlite(
-                    "db.media.primary",
-                    self.db_path_str,
-                    detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-                    check_same_thread=False,
-                    timeout=10,
-                    # TASK-39118: as ChaChaNotes, each cursor holds a registry
-                    # use until its results are consumed, so the quit's idle
-                    # close skips a read in flight instead of closing under it.
-                    factory=_QuiescentSQLiteConnection,
+                # TASK-39118: as ChaChaNotes, each cursor holds a registry
+                # use until its results are consumed, so the quit's idle
+                # close skips a read in flight instead of closing under it.
+                conn = unpublished = (
+                    connect_private_sqlite(
+                        "db.media.read",
+                        self.db_path_str,
+                        read_only=self._read_only,
+                        must_exist=self._read_only,
+                        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+                        check_same_thread=False,
+                        timeout=10,
+                        factory=_QuiescentSQLiteConnection,
+                    )
+                    if self._read_only
+                    else connect_private_sqlite(
+                        "db.media.primary",
+                        self.db_path_str,
+                        read_only=self._read_only,
+                        must_exist=self._read_only,
+                        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+                        check_same_thread=False,
+                        timeout=10,
+                        factory=_QuiescentSQLiteConnection,
+                    )
                 )
                 register_core_connection(self, conn)
                 conn.attach_quiescence_registry(self._connection_quiescence)
@@ -1253,7 +1237,7 @@ class MediaDatabase:
                     conn.close()
                     raise
                 conn.row_factory = sqlite3.Row
-                if not self.is_memory_db:
+                if not self.is_memory_db and not self._read_only:
                     conn.execute("PRAGMA journal_mode=WAL;")
                 # NORMAL is safe under WAL (app-crash-safe; only an OS/power
                 # crash can lose the last commit or two, acceptable for this
@@ -1284,18 +1268,9 @@ class MediaDatabase:
                 if unpublished is not None:
                     with suppress(Exception):  # a failed close retains its lease
                         unpublished.close()
-                # `from error`, NOT `from None` (TASK-19569): the raised
-                # message stays scrubbed (no path, no driver text), but the
-                # private-path contract identifies its boundary failure by
-                # walking `__cause__` to a `PrivatePathError`. Severing the
-                # chain here made this owner the only one of five whose
-                # unsafe-namespace rejection was unidentifiable to callers --
-                # the log line above already records the type, so the
-                # information was being thrown away, not withheld. Chaining is
-                # privacy-safe: `PrivatePathError.__str__` is
-                # `"<status>: <symbolic reason>"` with no path in it (see
-                # `Utils/private_paths.py`), matching the `from e` chaining
-                # the ChaChaNotes and Prompts owners already do.
+                # Preserve the PrivatePathError cause for boundary classification
+                # (TASK-19569). Public/log messages omit paths and driver text;
+                # PrivatePathError.__str__ exposes only status and symbolic reason.
                 raise DatabaseError("Failed to connect to media database.") from error
         self._local.conn_last_used = time.monotonic()
         return self._local.conn

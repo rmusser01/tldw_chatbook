@@ -23,13 +23,13 @@ from __future__ import annotations
 
 import time
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     MAX_STEERING_CHARS,
     STEERING_SOURCE_USER,
 )
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 CONV = "conv-1"
 
@@ -42,7 +42,7 @@ def _bridge_with_fleet(tmp_path):
     not a shortcut around the production path — it IS the production
     path's whole state surface.
     """
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     coordinator = FleetCoordinator(max_live=4, clock=time.monotonic)
     bridge._fleet_coordinators[CONV] = coordinator

@@ -11,7 +11,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 from loguru import logger
 
@@ -212,6 +212,10 @@ def resolve_turn_persona_policy_rules(
             type(exc).__name__,
         )
     return ()
+
+
+if TYPE_CHECKING:
+    from .console_received_intent import ConsoleSessionInputSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -609,6 +613,10 @@ class ConsoleTurnCustodyRequest:
         default=None,
         repr=False,
     )
+    # Command origin survives native queue custody; it grants no tool authority.
+    input_origin: Literal["composer", "command"] = "composer"
+    command_id: str | None = None
+    command_inputs: ConsoleSessionInputSnapshot | None = field(default=None, repr=False)
     # Optional exact UI capture witness; detached/custom callers retain None.
     draft_revision: int | None = field(default=None, repr=False)
     _pressed_inputs: Any | None = field(default=None, repr=False)

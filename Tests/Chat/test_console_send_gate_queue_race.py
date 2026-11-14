@@ -29,6 +29,10 @@ from typing import Any
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Chat.test_console_agent_bridge import (
+    _retire_original_run_databases,  # noqa: F401 - exact constructor-owner fixture
+)
 from Tests.Chat.test_console_dispatch_recovery import (
     _acceptance,
     _database,
@@ -53,10 +57,6 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     QueueMutationStatus,
 )
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from Tests.Chat.test_console_agent_bridge import (
-    _retire_original_run_databases,  # noqa: F401 - exact constructor-owner fixture
-)
 from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
 from tldw_chatbook.UI.Console_Modules.raw_cli import ConsoleRawCliController
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
@@ -521,7 +521,7 @@ async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
     await asyncio.wait_for(gateway.started.wait(), timeout=5)
 
     runtime = _ImmediateRawRuntime()
-    runs_db = AgentRunsDB(tmp_path / "raw-agent-runs.db")
+    runs_db = owned_agent_runs_db(tmp_path / "raw-agent-runs.db")
     worker_threads: list[threading.Thread] = []
 
     def start_worker(work: Any, **options: Any) -> threading.Thread:
@@ -620,7 +620,7 @@ async def test_raw_first_persistence_refuses_provider_reservation_then_reuses_co
     assert reserved_identity is not None
 
     runtime = _ImmediateRawRuntime()
-    runs_db = AgentRunsDB(tmp_path / "raw-agent-runs.db")
+    runs_db = owned_agent_runs_db(tmp_path / "raw-agent-runs.db")
     workers: list[Any] = []
     errors: list[str] = []
     raw_controller = ConsoleRawCliController(

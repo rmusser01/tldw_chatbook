@@ -999,6 +999,26 @@ MINIMUM_FILES = 2029
 # Dev includes the native sync-admission file before these five entries.
 MINIMUM_FILES = 2034
 
+# TASK-36769: the roster also includes both conversation-row P0 selectors.
+# Retain the post-attach native-read responsiveness case.
+# PR #3345: retain every relocated MCP workbench selector.
+MINIMUM_FILES = 2198
+# PR #3345: include both complete UI regression files.
+MINIMUM_FILES = 2200
+
+# PR3345 approved upstream retirement retains 2095 survivors plus five incoming cases.
+MINIMUM_FILES = 2100
+# Retain the seven incoming dev entries after the exact 2,100-entry prefix.
+MINIMUM_FILES = 2107
+# Current dev rebase: the whole preparation file owns the redundant node.
+MINIMUM_FILES = 2199
+# PR #3345 on dev 4b90eb8 retains all 117 incoming entries and the prior census.
+MINIMUM_FILES = 2316
+# Retain the reviewed PR census positions and append the incoming sync admission file.
+MINIMUM_FILES = 2317
+# Retain all six incoming Send and native shutdown selectors in the gate.
+MINIMUM_FILES = 2323
+
 
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.

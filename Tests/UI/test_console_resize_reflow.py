@@ -1351,13 +1351,11 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         cue = rail.query_one("#console-left-rail-outer-hint", Static)
         assert console.query_one("#console-shell").has_class("-console-compact")
         assert helper_calls >= 1
-        # The first pass changes the Character radio's geometry (b333cebdfe,
-        # TASK-39158). Its follow-up may precede the bounded section's demand
-        # update, which then needs one further pass. Pin the first-pass flip
-        # and bounded convergence; the stability assertion below forbids a loop.
+        # The first pass flips the Character radio. Its local geometry settles
+        # before the single outer follow-up (TASK-39158).
         assert compact_flips == [True]
         assert compact_passes == [1]
-        assert 2 <= reconcile_runs <= 3
+        assert reconcile_runs == 1 + len(compact_flips)
         assert outer.content_region.height < before_viewport_height
         assert (
             before_allocations

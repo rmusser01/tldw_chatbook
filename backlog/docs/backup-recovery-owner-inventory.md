@@ -11,7 +11,7 @@ are reported as unknown; they are never copied or recursively followed. Configur
 custom data roots do not authorize scanning their parents. A disabled feature and
 an absent file do not prove that a store is unused.
 
-All rows below are installed source declarations/review candidates. An unsupported
+Active source-census rows below are installed source declarations/review candidates. An unsupported
 row blocks a complete claim; it is not an approved exclusion. The source census
 includes generic helpers, dynamic `open` modes and non-filesystem `write/connect`
 candidates on purpose. These stay conservative until reviewed by their specific
@@ -188,7 +188,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 | sqlite:kanban.local | tldw_chatbook/Kanban_Interop/local_kanban_db | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:notes.file_notes_replica | tldw_chatbook/Notes/file_notes_replica | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:notes.library_parent | tldw_chatbook/Notes/Notes_Library | _PRIVATE_FILE | sqlite/unsupported |
-| sqlite:notes.sync_state | tldw_chatbook/Notes/notes_device_state_store | _PRIVATE_AND_READ_ONLY | sqlite/installed exclusion (`_LocalSQLite`) |
+| sqlite:notes.sync_state | tldw_chatbook/Notes/notes_device_state_store | _PRIVATE_AND_READ_ONLY | sqlite/installed exclusion (`_DeviceStateExclusion`) |
 | sqlite:notifications.client | tldw_chatbook/Notifications/client_notifications_db | _MEMORY | sqlite/unsupported |
 | sqlite:notifications.event_state | tldw_chatbook/Notifications/event_state_repository | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:rag.chachanotes_keyword_leg | tldw_chatbook/RAG_Search/simplified/rag_service | _READ_ONLY_URI | sqlite/unsupported |
@@ -239,7 +239,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/chat_source_participants.py | write_text | write | 1 | generic_boundary | concrete chat source lifetime; runtime/capture validation pending |
 | tldw_chatbook/Backup_Recovery/crypto.py | _open_regular | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/crypto.py | _write_all | write | 1 | generic_boundary | generic |
-| tldw_chatbook/Backup_Recovery/inventory.py | discover | open | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/journal.py | Journal._flush_record | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/journal.py | Journal._locked | open | 1 | generic_boundary | backup_recovery_journal |
 | tldw_chatbook/Backup_Recovery/journal.py | observe_artifact | open | 1 | generic_boundary | backup_recovery_journal |
@@ -249,7 +248,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/publication.py | _flush_original | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _retire | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _installed_metadata | open | 1 | generic_boundary | backup_recovery_publication |
-| tldw_chatbook/Backup_Recovery/publication.py | finalize_candidate | os.unlink | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | mkdir | 2 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | open | 1 | generic_boundary | backup_recovery_publication |
 | tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | write | 1 | generic_boundary | backup_recovery_publication |
@@ -260,7 +258,6 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/staging.py | stage_restore | write | 2 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/staging.py | stage_restore | write_bytes | 2 | disposable | backup_restore_staging |
 | tldw_chatbook/Backup_Recovery/staging.py | stage_restore | write_text | 1 | disposable | backup_restore_staging |
-| tldw_chatbook/Backup_Recovery/mcp_source_participants.py | backup_corrupt | os.replace | 2 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
 | tldw_chatbook/Backup_Recovery/mcp_source_participants.py | reader | open | 1 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
 | tldw_chatbook/Backup_Recovery/mcp_source_participants.py | write_json | dump | 2 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
 | tldw_chatbook/Backup_Recovery/mcp_source_participants.py | write_json | mkdir | 1 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
@@ -304,6 +301,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Backup_Recovery/raw_participants.py | replace | os.replace | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
 | tldw_chatbook/Backup_Recovery/raw_participants.py | replace | os.unlink | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
 | tldw_chatbook/Backup_Recovery/raw_participants.py | _unlink | os.unlink | 1 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| RETIRED:tldw_chatbook/Backup_Recovery/raw_participants.py | _file | open | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| RETIRED:tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | mkdir | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| RETIRED:tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | open | 1 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
 | tldw_chatbook/Chat_Grammars_Interop/local_chat_grammars_service.py | LocalChatGrammarsService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Notes/template_store.py | merge_templates | dump | 1 | unsupported | notes.templates phase8 raw source lifetime; runtime composition pending |
@@ -363,9 +363,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chunking/Chunk_Lib.py | load_document | open | 1 | unsupported | files |
 | tldw_chatbook/Chunking/engine/chunker.py | Chunker.chunk_file_stream | open | 1 | unsupported | files |
 | tldw_chatbook/DB/AgentRuns_DB.py | AgentRunsDB | inherits:BaseDB | 1 | qualified | db.agent_runs |
-| tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB._get_thread_connection | connect_private_sqlite | 1 | unsupported | sqlite |
+| tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB._get_thread_connection | connect_private_sqlite | 2 | unsupported | sqlite |
 | tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB.backup_database | backup_connection_to_private | 1 | unsupported | sqlite |
-| tldw_chatbook/DB/Client_Media_DB_v2.py | MediaDatabase._get_thread_connection | connect_private_sqlite | 1 | unsupported | sqlite |
+| tldw_chatbook/DB/Client_Media_DB_v2.py | MediaDatabase._get_thread_connection | connect_private_sqlite | 2 | unsupported | sqlite |
 | tldw_chatbook/DB/Client_Media_DB_v2.py | MediaDatabase.backup_database | backup_connection_to_private | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/Client_Media_DB_v2.py | check_database_integrity | connect_private_sqlite | 1 | unsupported | sqlite |
 | tldw_chatbook/DB/Evals_DB.py | EvalsDB._get_connection | connect_private_sqlite | 1 | unsupported | sqlite |
@@ -810,6 +810,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/Settings_Modules/settings_image_gen_defaults.py | load_user_image_generation_table | open | 1 | unsupported | files |
 | tldw_chatbook/UI/Settings_Modules/settings_video_gen_defaults.py | load_user_video_generation_table | open | 1 | unsupported | files |
 | tldw_chatbook/UI/Screens/watchlists_collections_screen.py | WatchlistsCollectionsScreen._open_item_in_browser_worker | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/settings_config_adapter.py | SettingsConfigAdapter.validate_config_file | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/settings_image_gen_defaults.py | load_user_image_generation_table | open | 1 | unsupported | files |
+| RETIRED:tldw_chatbook/UI/Screens/settings_video_gen_defaults.py | load_user_video_generation_table | open | 1 | unsupported | files |
 | tldw_chatbook/UI/Speech/audio_cpp_runtime_card.py | AudioCppRuntimeCard.apply_observation | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_playback_mixin.py | SpeechPlaybackMixin._generation_complete | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_playback_mixin.py | SpeechPlaybackMixin._handle_audio_export | copy2 | 1 | unsupported | miscellaneous |
@@ -840,11 +843,11 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | write | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | mkdir | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | write | 1 | generic_boundary | generic |
-| tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.__init__ | makedirs | 1 | unsupported | tokenizers.custom; participant-task10 |
-| tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager._load_mappings | open | 1 | unsupported | tokenizers.custom; participant-task10 |
-| tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.install_tokenizer | copy2 | 1 | unsupported | tokenizers.custom; participant-task10 |
-| tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.save_mappings | dump | 1 | unsupported | tokenizers.custom; participant-task10 |
-| tldw_chatbook/Utils/custom_tokenizers.py | CustomTokenizerManager.save_mappings | open | 1 | unsupported | tokenizers.custom; participant-task10 |
+| tldw_chatbook/Chat/custom_tokenizers.py | CustomTokenizerManager.__init__ | makedirs | 1 | unsupported | tokenizers.custom; participant-task10 |
+| tldw_chatbook/Chat/custom_tokenizers.py | CustomTokenizerManager._load_mappings | open | 1 | unsupported | tokenizers.custom; participant-task10 |
+| tldw_chatbook/Chat/custom_tokenizers.py | CustomTokenizerManager.install_tokenizer | copy2 | 1 | unsupported | tokenizers.custom; participant-task10 |
+| tldw_chatbook/Chat/custom_tokenizers.py | CustomTokenizerManager.save_mappings | dump | 1 | unsupported | tokenizers.custom; participant-task10 |
+| tldw_chatbook/Chat/custom_tokenizers.py | CustomTokenizerManager.save_mappings | open | 1 | unsupported | tokenizers.custom; participant-task10 |
 | tldw_chatbook/Utils/egress.py | guarded_fetch_requests | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/fd_protection.py | protect_file_descriptors | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/file_handlers.py | DataFileHandler._process_csv | open | 1 | unsupported | miscellaneous |
@@ -966,7 +969,6 @@ Admission owns private control-root registry records and persistent lock files; 
 | --- | --- | --- | --- | --- | --- |
 | tldw_chatbook/Backup_Recovery/native_files.py | _flush_private_tree | open | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | create_private_directory | mkdir | 1 | generic_boundary | backup_native_storage |
-| tldw_chatbook/Backup_Recovery/native_files.py | create_private_file | open | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | pinned_directory | open | 2 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/native_files.py | publish_new | open | 1 | generic_boundary | backup_native_storage |
 
@@ -984,7 +986,6 @@ The concrete `renameatx_np` callable assignment and `os.replace` seams are now c
 | tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._migrate_legacy_blob | os.replace | 1 | unsupported | rag |
 | tldw_chatbook/Subscriptions/briefing_export.py | _write_feed_xml_atomically | os.replace | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/TTS/profile_migration_namespace.py | _rename_noreplace | renameatx_np | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | os.replace | 1 | unsupported | tts |
 | tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._copy_pending_video_external | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | os.replace | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | os.replace | 1 | generic_boundary | generic |
@@ -1017,11 +1018,9 @@ The control owner now exclusively creates bounded version-1 before/after write i
 | tldw_chatbook/TTS/audio_cpp_guided_launch.py | AudioCppGeneratedLaunchArtifact.cleanup | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_cpp_guided_launch.py | _remove_partial_artifact | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._transcribe_audio | os.unlink | 1 | unsupported | tts |
-| tldw_chatbook/TTS/profile_migration_namespace.py | remove_zero_reusable_tombstone | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _create_materialization_sync | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _sweep_orphans | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/TTS/profile_reference_materialization.py | _cleanup_materialization_sync | os.unlink | 2 | unsupported | tts |
-| tldw_chatbook/TTS/profile_schema.py | _CandidateValidationJob.cleanup.remove_snapshot | os.unlink | 2 | unsupported | tts |
 | tldw_chatbook/UI/Console_Modules/video.py | ConsoleVideoController._copy_pending_video_external | os.unlink | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | os.unlink | 1 | generic_boundary | generic |
 | tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | os.unlink | 1 | generic_boundary | generic |
@@ -1045,9 +1044,9 @@ The following conservative read-open candidates have been reviewed individually:
 | --- | --- | --- | --- | --- | --- |
 | tldw_chatbook/Backup_Recovery/bootstrap.py | _read | open | 1 | generic_boundary | backup_control_reader |
 | tldw_chatbook/Backup_Recovery/bootstrap.py | _fingerprint | open | 1 | generic_boundary | backup_selector_reader |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _resolved | open | 1 | generic_boundary | admission_path_resolution |
+| tldw_chatbook/Backup_Recovery/profile_paths.py | _verified_resolved_path | open | 1 | generic_boundary | admission_path_resolution |
 
-`storage_admission._resolved` (TASK-33620.15.47) opens only the parent directory
+`profile_paths._verified_resolved_path` (TASK-33620.15.47) opens only the parent directory
 of a path admission is resolving, read-only with `O_NOFOLLOW_ANY`, to prove the
 path link-free; it lstats the leaf through that descriptor and closes it. It
 writes nothing, never opens the leaf, and leaves no descriptor behind.
@@ -1072,24 +1071,20 @@ BLOB assets through a WAL-aware snapshot. Pure discovery resolves custom paths
 without constructing/opening domain stores. Required later-owned file assets and
 operational activation stay explicit dependencies. See [core qualification](backup-recovery-core-owners.md).
 
-| sqlite:recovery.core.chachanotes | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
-| sqlite:recovery.core.media | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
-| sqlite:recovery.core.prompts | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
-| sqlite:recovery.core.library_collections | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
-| sqlite:recovery.core.library_ingest_jobs | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
-| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-admission-and-core-recovery |
-| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-admission-and-core-recovery |
-| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.validate_dependencies | connect_private_sqlite | 2 | generic_boundary | native-admission-and-core-recovery |
+| sqlite:recovery.core.chachanotes | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.media | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.prompts | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.library_collections | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.library_ingest_jobs | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| tldw_chatbook/Backup_Recovery/core_adapters.py | _CoreAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-admission-and-core-recovery |
+| tldw_chatbook/Backup_Recovery/core_adapters.py | _CoreAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-admission-and-core-recovery |
+| tldw_chatbook/Backup_Recovery/core_adapters.py | _CoreAdapter.validate_dependencies | connect_private_sqlite | 2 | generic_boundary | native-admission-and-core-recovery |
 
 | tldw_chatbook/Backup_Recovery/activation.py | _flush_existing | open | 1 | generic_boundary | backup_activation_records |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._create_lock | open | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._open | open | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | open | 1 | unsupported | backup_control |
 | tldw_chatbook/Backup_Recovery/admission.py | Admission._write_new_record | write | 1 | unsupported | backup_control |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.replace | 1 | unsupported | backup_control |
-| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.unlink | 1 | unsupported | backup_control |
-| tldw_chatbook/Backup_Recovery/control_records.py | _publish_activation_record | os.replace | 1 | generic_boundary | backup_control |
-| tldw_chatbook/Backup_Recovery/control_records.py | _bind_activation | os.unlink | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/control_records.py | _bind_activation | _publish_activation_record | 1 | generic_boundary | backup_control |
 | tldw_chatbook/RAG_Search/generation.py | persist_readiness | _publish_activation_record | 1 | generic_boundary | backup_control |
 | tldw_chatbook/RAG_Search/generation.py | _publish_dependencies | _publish_activation_record | 1 | generic_boundary | backup_control |
@@ -1219,23 +1214,23 @@ hardware failure qualification; that release limit remains with task 6's native-
 limit. No Complete backup/publication/replacement UI is qualified by this cohort alone.
 
 Research, writing and EvalsDB retain their literal registered connection/copy sites.
-`DB/recovery_sqlite.py` only shares schema/FK/integrity validation and capture guards;
+`Backup_Recovery/sqlite_validation.py` owns schema/FK/integrity semantics;
+`DB/recovery_sqlite.py` retains physical capture guards and its compatibility validator;
 it neither opens storage nor chooses dynamic SQLite authority. The exact source and
 copy census rows therefore remain unchanged by this consolidation.
 
 ## Task 8 installed operational producer additions
 
-| tldw_chatbook/Agents/recovery.py | _RunLogs.discover | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Backup_Recovery/file_inventory.py | _inventory_tree.walk | open | 2 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _consume_recovery_file | open | 1 | generic_boundary | native-operational-recovery |
-| tldw_chatbook/DB/recovery_operations.py | _AgentRunsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| tldw_chatbook/DB/recovery_operations.py | _AgentRunsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| tldw_chatbook/DB/recovery_operations.py | _SubscriptionsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| tldw_chatbook/DB/recovery_operations.py | _SubscriptionsAdapter.discover | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| tldw_chatbook/DB/recovery_operations.py | _SubscriptionsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| tldw_chatbook/DB/recovery_operations.py | _SubscriptionsAdapter.validate_dependencies | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| tldw_chatbook/DB/recovery_operations.py | _WorkspacesAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| tldw_chatbook/DB/recovery_operations.py | _WorkspacesAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/sqlite_adapters.py | _AgentRunsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/sqlite_adapters.py | _AgentRunsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/sqlite_adapters.py | _SubscriptionsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/sqlite_adapters.py | _SubscriptionsAdapter.discover | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/sqlite_adapters.py | _SubscriptionsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/sqlite_adapters.py | _SubscriptionsAdapter.validate_dependencies | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/sqlite_adapters.py | _WorkspacesAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| tldw_chatbook/Backup_Recovery/sqlite_adapters.py | _WorkspacesAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Kanban_Interop/recovery.py | _KanbanAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Kanban_Interop/recovery.py | _KanbanAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Notes/recovery.py | _FileNotesAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
@@ -1250,9 +1245,9 @@ copy census rows therefore remain unchanged by this consolidation.
 | tldw_chatbook/Scheduling/recovery.py | _ScheduledTasksAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Sync_Interop/recovery.py | _SyncAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Sync_Interop/recovery.py | _SyncAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| sqlite:recovery.operations.workspaces | tldw_chatbook/DB/recovery_operations | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
-| sqlite:recovery.operations.agent_runs | tldw_chatbook/DB/recovery_operations | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
-| sqlite:recovery.operations.subscriptions | tldw_chatbook/DB/recovery_operations | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.workspaces | tldw_chatbook/Backup_Recovery/sqlite_adapters | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.agent_runs | tldw_chatbook/Backup_Recovery/sqlite_adapters | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.subscriptions | tldw_chatbook/Backup_Recovery/sqlite_adapters | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.scheduled_tasks | tldw_chatbook/Scheduling/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.notifications | tldw_chatbook/Notifications/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.events | tldw_chatbook/Notifications/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
@@ -1340,7 +1335,7 @@ may infer production drain from fixture GC.
 
 ## Configuration and durable-file recovery census (TASK-31992)
 
-| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.discover | connect_private_sqlite | 3 | generic_boundary | qualified-core-reference-discovery |
+| tldw_chatbook/Backup_Recovery/core_adapters.py | _CoreAdapter.discover | connect_private_sqlite | 3 | generic_boundary | qualified-core-reference-discovery |
 | tldw_chatbook/Persona_Visual/recovery.py | _Assets._references | connect_private_sqlite | 1 | generic_boundary | qualified-persona-reference-discovery |
 | tldw_chatbook/TTS/recovery.py | _Profiles.validate | connect_private_sqlite | 1 | generic_boundary | qualified-tts-schema-validation |
 | tldw_chatbook/TTS/recovery.py | _Profiles.capture | copy_private_sqlite | 1 | generic_boundary | qualified-tts-capture |
@@ -1383,7 +1378,7 @@ release startup holds. A read-only/copy ID grants no ordinary-writer bypass.
 | notes.templates | config-parent/note_templates.json | `Notes.template_store` effective config selector and shared RMW; actual CLI and `_import_template_files` worker use phase8 source lifetime; runtime composition pending. |
 | chat.prompts | installed package/Chat/prompt_templates | `Chat.prompt_template_manager.PROMPT_TEMPLATES_DIR`, `load_template`; inert internal definitions. |
 | generation.styles | data/image_generation_styles | `Media_Creation.generation_templates` installed template directory; participant pending. |
-| tokenizers.custom | canonical ~/.config/tldw_cli/tokenizers, exact installed tokenizer owner root | `Utils.custom_tokenizers.CustomTokenizerManager.__init__`, `install_tokenizer`, `save_mappings`; participant pending. No environment model-cache inference. |
+| tokenizers.custom | canonical ~/.config/tldw_cli/tokenizers, exact installed tokenizer owner root | `Chat.custom_tokenizers.CustomTokenizerManager.__init__`, `install_tokenizer`, `save_mappings`; `Utils.custom_tokenizers` is the same-module compatibility alias. Participant pending. No environment model-cache inference. |
 | skills | data/skills; known tldw_chatbook_skills.json, skills/, trust/ | Runtime `default_local_skills_store_dir` now delegates the pure recovery selector. `LocalSkillsService._save_index`, `_write_bytes_atomic`, `_write_text_atomic`, create/import/remove/script lifecycle; `Skills_Interop.atomic_write` and trust-store `_atomic_write_bytes`/`_atomic_write_json` require full participant lifetimes. Trust manifests/grants/snapshots are historical bytes, never imported execution authority. |
 | persona.assets | data/persona_visual | `publish_persona_visual`, publication candidate cleanup, importer and authoring-workspace materialization/cleanup; concrete source/native lifetime implemented in phase12, aggregate app/headless qualification pending. Qualified core42 `persona_visual_assets` current/retained locators require exact source size/hash. |
 | persona.visual_identity | data/visual_identities | `Character_Chat.visual_identity.publish_visual_identity_candidate` and cleanup/materialization; actual manual pack assets plus preview locators. Concrete source/native publication, readers, cleanup and UI callers implemented in phase13; aggregate app/headless qualification pending. Unknown source kinds refuse. |
@@ -2217,7 +2212,6 @@ asset reads here do not authorize arbitrary renderer/generation callbacks.
 | --- | --- | --- | ---: | --- | --- |
 | tldw_chatbook/Backup_Recovery/persona_visual_participants.py | _open_native | open | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Backup_Recovery/persona_visual_participants.py | mkdir | mkdir | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
-| tldw_chatbook/Backup_Recovery/persona_visual_participants.py | unlink | os.unlink | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Persona_Visual/assets.py | _decode_selected_frame | open | 1 | memory | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Persona_Visual/authoring_workspace.py | _decode | open | 1 | memory | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Persona_Visual/authoring_workspace.py | _write_private | write | 1 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
@@ -2249,10 +2243,6 @@ asset reads here do not authorize arbitrary renderer/generation callbacks.
 | tldw_chatbook/Character_Chat/visual_identity.py | _write_private_publication_path | write | 1 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Character_Chat/visual_identity.py | cleanup_visual_identity_publication_candidate | secure_private_directory | 1 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
 | tldw_chatbook/Character_Chat/visual_identity.py | publish_visual_identity_candidate | secure_private_directory | 2 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
-| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | write_text | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | write_bytes | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._write_text_file | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Utils/private_paths.py | _MCPAppendStream.write | write | 1 | generic_boundary | exact MCP history append native lifetime; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | _native_mkdir | mkdir | 2 | generic_boundary | private helper; exact visual secure-directory native bridge; other sources ordinary |
@@ -2749,7 +2739,6 @@ Catalog v1, exact source profile/message/slug/type references, operation journal
 
 | tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia.__init__ | secure_private_directory | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia._connection | connect_private_sqlite | 1 | qualified | recovered.media |
-| tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia._finish_delete | os.unlink | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia.retain | atomic_private_write_bytes | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.capture | copy_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | _RecoveredAdapter.discover | connect_private_sqlite | 1 | qualified | recovered.media |
@@ -2779,7 +2768,7 @@ copies preserve live main/WAL bytes; credential reconstruction operates only on
 private staged copies. Model lease rows retain their existing cohort status.
 
 | sqlite:recovery.credentials | tldw_chatbook/Backup_Recovery/credentials | _PRIVATE_FILE | disposable credential reconstruction |
-| sqlite:recovery.validation | tldw_chatbook/DB/private_sqlite | _PRIVATE_AND_READ_ONLY | disposable imported candidate validation |
+| sqlite:recovery.validation | tldw_chatbook/Backup_Recovery/sqlite_validation | _PRIVATE_AND_READ_ONLY | disposable imported candidate validation |
 | sqlite:recovery.validation_schema | tldw_chatbook/DB/recovery_workflow_schema | _MEMORY | installed schema reference |
 | sqlite:recovery.rag_projection_validation | tldw_chatbook/Backup_Recovery/rag_projection_validation | _READ_ONLY_URI | disposable Chroma candidate validation |
 
@@ -2787,13 +2776,10 @@ private staged copies. Model lease rows retain their existing cohort status.
 | tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | open | 1 | generic_boundary | private rollback verification |
 | tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | create_private_file | 1 | disposable | private rollback verification |
 | tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | write | 1 | disposable | private rollback verification |
-| tldw_chatbook/Backup_Recovery/archive_reader.py | _inspect | ZipFile | 1 | generic_boundary | reviewed archive input |
 | tldw_chatbook/RAG_Search/activation.py | _settings_identity | open | 1 | generic_boundary | read-only config and rag.definitions recovery review |
 | tldw_chatbook/RAG_Search/model_recovery.py | _closure.visit | open | 1 | generic_boundary | read-only selected local models.artifacts review; no payload inventory claim |
 | tldw_chatbook/RAG_Search/model_recovery.py | _review | open | 1 | generic_boundary | read-only config selection for local embedding review |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | _regular | open | 1 | generic_boundary | reviewed archive input |
-| tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | create_private_file | 1 | disposable | private archive staging |
-| tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | write | 1 | disposable | private archive staging |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | retain_encrypted | create_private_file | 1 | qualified | operation-owned encrypted credential archive retained after authenticated acquisition |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | retain_encrypted | write | 1 | qualified | operation-owned encrypted credential archive retained after authenticated acquisition |
 | tldw_chatbook/Backup_Recovery/archive_reader.py | verify_sealed | ZipFile | 1 | generic_boundary | private archive validation |
@@ -2805,22 +2791,13 @@ private staged copies. Model lease rows retain their existing cohort status.
 | tldw_chatbook/Backup_Recovery/capture.py | _capture_under_maintenance | write | 1 | disposable | private capture manifest |
 | tldw_chatbook/Backup_Recovery/credentials.py | _read | open_private_binary | 1 | generic_boundary | staged credential input |
 | tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | connect_private_sqlite | 1 | disposable | staged credential reconstruction |
-| tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | os.replace | 1 | disposable | staged credential reconstruction |
 | tldw_chatbook/Backup_Recovery/credentials.py | _write | atomic_private_write_text | 1 | disposable | staged credential rewrite |
 | tldw_chatbook/DB/recovery_workflow_schema.py | open_installed_schema | connect_private_sqlite | 1 | memory | recovery.validation_schema, installed DDL only |
 | tldw_chatbook/Backup_Recovery/rag_projection_validation.py | _native_validate | PersistentClient | 1 | disposable | backup_rag_projection_validation |
 | tldw_chatbook/Backup_Recovery/rag_projection_validation.py | _preflight | connect_private_sqlite | 1 | disposable | backup_rag_projection_validation |
 | tldw_chatbook/Backup_Recovery/rag_projection_validation.py | validate_groups | create_private_file | 1 | disposable | backup_rag_projection_validation |
 | tldw_chatbook/Backup_Recovery/rag_projection_validation.py | validate_groups | write | 1 | disposable | backup_rag_projection_validation |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | mkdir | 2 | disposable | private native capture SQLite copy |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | open | 2 | generic_boundary | native-domain-recovery |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | write | 1 | disposable | private native capture SQLite copy |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | create_private_file | 1 | disposable | private preview SQLite copy |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | open | 1 | generic_boundary | identity-bound live SQLite copy input |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | write | 1 | disposable | private preview SQLite copy |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | open | 1 | disposable | private staged credential rewrite |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.replace | 1 | disposable | private staged credential rewrite |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.unlink | 1 | disposable | private staged credential cleanup |
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | write | 1 | disposable | private staged credential rewrite |
 
 ### Finite loose TTS operation participation
@@ -2853,21 +2830,15 @@ cannot grant readiness or execution approval. The bounded read/union/publication
 holds the pinned directory lock, and failed publication refuses indexing.
 Explicitly unavailable native backup capabilities retain ordinary in-memory
 hints without claiming durable dependency or recovery qualification.
-| tldw_chatbook/Backup_Recovery/control_records.py | _recover_activation_pairs | os.unlink | 1 | generic_boundary | backup_control |
-| tldw_chatbook/Backup_Recovery/control_records.py | _resume_activation_record | os.replace | 1 | generic_boundary | backup_control |
-| tldw_chatbook/Backup_Recovery/control_records.py | _resume_activation_record | os.unlink | 1 | generic_boundary | backup_control |
 | tldw_chatbook/Backup_Recovery/publication.py | _reverse_native_move | open | 1 | generic_boundary | verified native rollback publication |
-| tldw_chatbook/Backup_Recovery/replacement.py | _rollback_replacement | os.unlink | 1 | generic_boundary | backup_control |
 | tldw_chatbook/LLM_Calls/recovery_review.py | _config | open | 1 | generic_boundary | bounded selected configuration read |
-| tldw_chatbook/Backup_Recovery/recovery_copies.py | delete_recovery_copy | os.unlink | 1 | generic_boundary | explicit completed encrypted recovery-copy deletion |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | materialize_temporary_media | connect_private_sqlite | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | materialize_temporary_media | create_private_file | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | materialize_temporary_media | write | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | prepare_temporary_capture | create_private_file | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | prepare_temporary_capture | write | 1 | qualified | recovered.media |
 | tldw_chatbook/Backup_Recovery/recovered_media.py | prepare_temporary_capture | connect_private_sqlite | 1 | qualified | recovered.media |
-| tldw_chatbook/DB/recovery_core.py | _CoreAdapter.temporary_video_references | connect_private_sqlite | 1 | qualified | recovered.media |
-| tldw_chatbook/Backup_Recovery/replacement.py | _abort_prepublication | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/core_adapters.py | _CoreAdapter.temporary_video_references | connect_private_sqlite | 1 | qualified | recovered.media |
 
 | tldw_chatbook/Backup_Recovery/inert_extraction.py | _write | create_private_file | 1 | generic_boundary | private inert extraction report and publication intent |
 | tldw_chatbook/Backup_Recovery/inert_extraction.py | _write | write | 1 | generic_boundary | private inert extraction report and publication intent |
@@ -3064,7 +3035,7 @@ subprocess writer is the owner review's job, not the census's.
 | tldw_chatbook/Backup_Recovery/crypto.py | transform | mkstemp | 1 | generic_boundary | generic |
 | tldw_chatbook/Backup_Recovery/native_platform.py | rename_noreplace | renameat2 | 1 | generic_boundary | backup_native_storage |
 | tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | mkdtemp | 1 | generic_boundary | backup_recovery_publication |
-| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | mkdtemp | 1 | disposable | private preview SQLite copy |
+| tldw_chatbook/Backup_Recovery/storage_sqlite_copies.py | _preview_sqlite_target | mkdtemp | 1 | disposable | private preview SQLite copy |
 | tldw_chatbook/Character_Chat/buddy_conversion.py | publish_buddy_character | mkdtemp | 1 | unsupported | assets |
 | tldw_chatbook/Chat/console_generate_video.py | _stage_pending_video | TemporaryFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Chat/console_scratch_space.py | ConsoleScratchSpaceManager.snapshot | mkdtemp | 1 | process_artifact | process |
@@ -3776,7 +3747,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Web_Server/artifact_share_manifest.py | stage_share | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Server/artifact_share_manifest.py | stage_share | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Server/artifact_share_server.py | ArtifactShareServer.run._serve | atomic_write_json | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Web_Server/mobile_service.py | MobileChatService._build_engine | mkdir | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Web_Server/mobile_service.py | MobileChatService._build_engine | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Server/session_store.py | WebSessionStore.save | dump | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Server/session_store.py | WebSessionStore.save | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Web_Server/session_store.py | WebSessionStore.save | os.replace | 1 | unsupported | miscellaneous |
@@ -3869,6 +3840,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.link | 1 | disposable | private staged credential rewrite |
 | tldw_chatbook/Agents/hooks_v2/command_executor.py | CommandExecutor._run | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Agents/run_hooks.py | _capture_hook | write | 1 | process_artifact | process-transport |
+| tldw_chatbook/Agents/run_hooks.py | _capture_windows_hook | write | 1 | process_artifact | process-transport; schedules the Windows child stdin writer |
+| tldw_chatbook/Agents/run_hooks.py | _capture_windows_hook.write | write | 1 | process_artifact | process-transport; writes JSON to the Windows child stdin pipe |
 | tldw_chatbook/Audio/diarizer_engine_onnx.py | _env_error | write | 1 | process_artifact | process-transport |
 | tldw_chatbook/Audio/diarizer_local.py | LocalDiarizer._send | write | 2 | process_artifact | process-transport |
 | tldw_chatbook/Audio/diarizer_local.py | LocalDiarizer.close | write | 1 | process_artifact | process-transport |
@@ -3989,3 +3962,372 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Notes/note_frontmatter.py | _dump | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
 | tldw_chatbook/Plugins/adapters/vendor.py | _branch_instruction | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
 | tldw_chatbook/Plugins/adapters/vendor.py | _integrated_instruction | safe_dump | 1 | memory | yaml value serialization (no stream); no-independent-file |
+## Current conservative source census reconciliation (2026-11-03)
+
+This refresh records exact final composed source/count candidates. New or expanded
+uncertain candidates remain **unsupported pending source-owner review**. They are
+not approved exclusions, permission grants or qualified backup coverage. Existing
+runtime unknown/unsupported ownership refusals and all source-role checks remain
+authoritative. The one exact moved descriptor operation retains its prior reviewed
+classification under its actual new implementation path.
+
+| Module | Symbol | Candidate call | Count | Classification | Cohort/disposition |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/Agents/recovery.py | _RunLogs.discover_for_stores | connect_private_sqlite | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/archive_reader.py | _acquire_with_manifest | create_private_file | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/archive_reader.py | _acquire_with_manifest | write | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/archive_reader.py | _inspect_with_manifest | ZipFile | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/crypto.py | _transform_owned | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/inventory.py | read_profile_config | open | 2 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_captured_authority.py | _payload | ZipFile | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_captured_sqlite.py | _extract | ZipFile | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_captured_sqlite.py | _extract | create_private_file | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_captured_sqlite.py | _extract | write | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_captured_sqlite.py | _retire_staging | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_captured_sqlite.py | _retire_staging.remove_children | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_consolidation.py | _open_preview_read | connect_private_sqlite | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery.py | _open_completion_read | connect_private_sqlite | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_content_settings.py | _message_metadata | to_json | 2 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_enrollment.py | _container.walk | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_history_files.py | _HistoryFiles._stage_owned | ZipFile | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_history_files.py | _HistoryFiles._stage_owned | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_history_files.py | _HistoryFiles._stage_owned | write | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_history_files.py | _HistoryFiles.read_member | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_imported_run_log.py | _PinnedHistory.pin | open | 2 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_imported_run_log.py | _selected_config | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_journal_frame.py | _Frame.fingerprint | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_native_history.py | _original_history_inventory | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_native_history.py | _target_history_location | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_io.py | copy_snapshot | create_private_file | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_io.py | copy_snapshot | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_io.py | copy_snapshot | write | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_io.py | metadata | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_io.py | move_original | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_io.py | move_original.flush | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_io.py | observation.walk | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_io.py | sync_moved | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_io.py | sync_moved.flush | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_resume.py | _authenticate_stages | ZipFile | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_resume.py | _authenticate_stages | create_private_file | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_rollback_resume.py | _authenticate_stages | write | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_runs_goals.py | _plan_goal_rows | dump | 3 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_runs_history.py | _qualify_history_census | ZipFile | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/mobile_runs_selector.py | _source_config | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/native_files.py | _create_private_file_at | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/sqlite_validation.py | _open_recovery_validation | connect_private_sqlite_descriptor | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _MobileScope._harden_path | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _MobileScope.recover_mode | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _mobile_create_path | mkdir | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _mobile_create_path | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_sqlite_copies.py | _capture_sqlite_target | mkdir | 2 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_sqlite_copies.py | _capture_sqlite_target | open | 2 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_sqlite_copies.py | _capture_sqlite_target | write | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_sqlite_copies.py | _preview_sqlite_target | create_private_file | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_sqlite_copies.py | _preview_sqlite_target | open | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Backup_Recovery/storage_sqlite_copies.py | _preview_sqlite_target | write | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/DB/AgentRuns_DB.py | AgentRunsDB._open_connection | connect_private_sqlite | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/DB/AgentRuns_DB.py | reject_incompatible_preview | connect_private_sqlite | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/DB/ChaChaNotes_DB.py | reject_incompatible_preview | connect_private_sqlite | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/DB/Workspace_DB.py | reject_incompatible_preview | connect_private_sqlite | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/DB/console_execution_owner.py | ConsoleExecutionOwner.acquire | open_private_binary | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| RETIRED:tldw_chatbook/Persona_Visual/builtin_pixel_migu.py | ensure_builtin_pixel_migu_buddy | secure_private_directory | 1 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+| tldw_chatbook/Web_Server/console_web_driver.py | ConsoleWebDriver.reattach.begin | write | 2 | unsupported | pending source-owner review; discovery candidate (TASK-36769) |
+
+## Retired source-census metadata (2026-11-03)
+
+These previous source/count declarations no longer describe active source. They
+remain historical evidence; `RETIRED:` is deliberately outside the active census
+syntax. A count replacement also retains its preceding declaration here.
+
+| Retired module | Symbol | Candidate call | Previous count | Previous classification | Previous cohort |
+| --- | --- | --- | --- | --- | --- |
+| RETIRED:tldw_chatbook/Agents/run_log.py | RunLogWriter.bind | mkdir | 2 | qualified | agents.history |
+| RETIRED:tldw_chatbook/Agents/run_log.py | RunLogWriter.bind | write_text | 1 | qualified | agents.history |
+| RETIRED:tldw_chatbook/Backup_Recovery/inventory.py | discover | open | 1 | generic_boundary | generic |
+| RETIRED:tldw_chatbook/Backup_Recovery/publication.py | finalize_candidate | os.unlink | 1 | generic_boundary | backup_control |
+| RETIRED:tldw_chatbook/Backup_Recovery/mcp_source_participants.py | backup_corrupt | os.replace | 2 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
+| RETIRED:tldw_chatbook/Character_Chat/local_character_persona_service.py | LocalCharacterPersonaService._persist_personas | write_text | 1 | unsupported | concrete chat source lifetime; runtime/capture validation pending |
+| RETIRED:tldw_chatbook/Chat/console_chat_store.py | ConsoleChatStore._persist_new_message | to_json | 3 | memory | serialization-into-db.chachanotes.primary; no-independent-file |
+| RETIRED:tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | write | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Backup_Recovery/raw_participants.py | _remove_temporary | os.unlink | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| RETIRED:tldw_chatbook/Backup_Recovery/raw_participants.py | _replace | os.replace | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| RETIRED:tldw_chatbook/Backup_Recovery/raw_participants.py | _unlink | os.unlink | 1 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| RETIRED:tldw_chatbook/Chunking/chunking_templates.py | ChunkingTemplateManager.save_template | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
+| RETIRED:tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._collect_conversations | dump | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
+| RETIRED:tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._collect_conversations | mkdir | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
+| RETIRED:tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._collect_conversations | open | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
+| RETIRED:tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._collect_notes | write | 8 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
+| RETIRED:tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._create_readme | write | 33 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
+| RETIRED:tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._create_zip_archive | open | 1 | generic_boundary | chatbooks.archives-default-or-explicit-external-destination; participant-task10 |
+| RETIRED:tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator._create_zip_archive | write | 1 | generic_boundary | chatbooks.archives-default-or-explicit-external-destination; participant-task10 |
+| RETIRED:tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._import_conversations | open | 1 | generic_boundary | runtime.chatbook_scratch:data/temp/imports; external-input-or-extracted-per-run-read; destination-DB-owners |
+| RETIRED:tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter.preview_chatbook | open | 1 | generic_boundary | runtime.chatbook_scratch:data/temp/imports; external-input-or-extracted-per-run-read; destination-DB-owners |
+| RETIRED:tldw_chatbook/Chatbooks/local_chatbook_service.py | LocalChatbookService._load_registry | open | 1 | unsupported | chatbooks.registry; participant-task10 |
+| RETIRED:tldw_chatbook/Coding/code_mapper.py | SimpleIO.read_text | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/DB/ChaChaNotes_DB.py | CharactersRAGDB._get_thread_connection | connect_private_sqlite | 1 | unsupported | sqlite |
+| RETIRED:tldw_chatbook/DB/Client_Media_DB_v2.py | MediaDatabase._get_thread_connection | connect_private_sqlite | 1 | unsupported | sqlite |
+| RETIRED:tldw_chatbook/DB/Client_Media_DB_v2.py | import_obsidian_note_to_db | dump | 1 | unsupported | sqlite |
+| RETIRED:tldw_chatbook/DB/Prompts_DB.py | export_prompts_formatted | ZipFile | 1 | unsupported | sqlite |
+| RETIRED:tldw_chatbook/DB/Prompts_DB.py | export_prompts_formatted | open | 2 | unsupported | sqlite |
+| RETIRED:tldw_chatbook/DB/Prompts_DB.py | export_prompts_formatted | write | 2 | unsupported | sqlite |
+| RETIRED:tldw_chatbook/DB/RAG_Indexing_DB.py | RAGIndexingDB._get_connection | connect_private_sqlite | 1 | unsupported | sqlite |
+| RETIRED:tldw_chatbook/DB/base_db.py | BaseDB._get_connection | connect_private_sqlite | 1 | unsupported | sqlite |
+| RETIRED:tldw_chatbook/Evals/config_loader.py | EvalConfigLoader.save | dump | 1 | generic_boundary | eval.definitions phase8 exact default source; explicit exports ordinary; runtime composition pending |
+| RETIRED:tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.create_sample_dataset | dump | 1 | external_input | evals |
+| RETIRED:tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.create_sample_dataset | open | 1 | external_input | evals |
+| RETIRED:tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.export_template_as_file | dump | 2 | external_input | evals |
+| RETIRED:tldw_chatbook/Evals/eval_templates.py | EvalTemplateManager.export_template_as_file | open | 2 | external_input | evals |
+| RETIRED:tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events_vllm.py | handle_start_vllm_server_button_pressed | write | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py | save_summary_to_file | makedirs | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py | save_summary_to_file | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py | save_summary_to_file | write | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/LLM_Calls/Summarization_General_Lib.py | extract_metadata_and_content | open | 1 | unsupported | files |
+| RETIRED:tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py | ModelCatalogDiskStore.save | mkdir | 1 | disposable | diagnostics |
+| RETIRED:tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py | ModelCatalogDiskStore.save | write_bytes | 1 | disposable | diagnostics |
+| RETIRED:tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py | process_mobi | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Models/evaluation_state.py | EvaluationState.load_from_file | open | 1 | external_input | evals |
+| RETIRED:tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | dump | 1 | external_input | evals |
+| RETIRED:tldw_chatbook/Models/evaluation_state.py | EvaluationState.save_to_file | open | 1 | external_input | evals |
+| RETIRED:tldw_chatbook/Notes/note_import_receipts.py | NoteImportReceiptRepository._connect | connect_private_sqlite | 1 | qualified | notes.sync_state |
+| RETIRED:tldw_chatbook/Notes/sync_engine.py | NotesSyncEngine._write_file_info | write_text | 1 | external_input | external-notes-workspace-or-export |
+| RETIRED:tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._read_file | open | 1 | external_input | external-notes-workspace-or-export |
+| RETIRED:tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.write_text | open | 1 | external_input | external-notes-workspace-or-export |
+| RETIRED:tldw_chatbook/Notifications/client_notifications_db.py | ClientNotificationsDB._get_connection | connect_private_sqlite | 1 | qualified | notifications.client |
+| RETIRED:tldw_chatbook/Notifications/event_state_repository.py | EventStateRepository._get_connection | connect_private_sqlite | 1 | qualified | runtime.event_state |
+| RETIRED:tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._save_one | dump | 1 | unsupported | rag |
+| RETIRED:tldw_chatbook/RAG_Search/config_profiles.py | ConfigProfileManager._save_one | open | 1 | unsupported | rag |
+| RETIRED:tldw_chatbook/Research_Interop/local_research_service.py | LocalResearchService._connect | connect_private_sqlite | 2 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Sync_Interop/sync_state_repository.py | SyncStateRepository._get_connection | connect_private_sqlite | 1 | qualified | runtime.sync_state |
+| RETIRED:tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | write | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/chatterbox_isolated.py | ChatterboxIsolatedBackend._read_response | open | 2 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/chatterbox_isolated.py | ChatterboxIsolatedBackend._send_command | write | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/chatterbox_process.py | main | open | 5 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/chatterbox_voice_manager.py | ChatterboxVoiceManager.save_profiles | dump | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.__init__ | mkdir | 2 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/higgs_voice_manager.py | HiggsVoiceProfileManager.save_profiles | dump | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._download_model_if_needed | makedirs | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._download_model_if_needed | open | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._download_model_if_needed | write | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._download_voice_if_needed | makedirs | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._download_voice_if_needed | open | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._download_voice_if_needed | write | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._initialize_onnx | write | 2 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/backends/voice_manager_base.py | VoiceManagerBase.__init__ | mkdir | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/profile_schema.py | open_exact_current_profile_store | connect_private_sqlite | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/profile_schema.py | open_exact_current_profile_store | connect_private_sqlite_descriptor | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/profile_schema.py | _ExactCurrentProfileConnection.open_descriptor | open | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/utils/download_models.py | ModelDownloader.__init__ | mkdir | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/utils/download_models.py | ModelDownloader.download_file | mkdir | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/utils/download_models.py | ModelDownloader.download_file | open | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/utils/download_models.py | ModelDownloader.download_file | write | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/utils/download_models.py | ModelDownloader.download_kokoro_model | mkdir | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/Tools/file_operation_tools.py | WriteFileTool.execute | open | 2 | external_input | external |
+| RETIRED:tldw_chatbook/Tools/file_operation_tools.py | WriteFileTool.execute | write | 2 | external_input | external |
+| RETIRED:tldw_chatbook/Tools/local_tool_impls.py | edit_file | open | 1 | unsupported | external |
+| RETIRED:tldw_chatbook/Tools/local_tool_impls.py | edit_file | write_bytes | 1 | external_input | external |
+| RETIRED:tldw_chatbook/Tools/local_tool_impls.py | read_file | open | 1 | unsupported | external |
+| RETIRED:tldw_chatbook/Tools/local_tool_impls.py | write_file | write_bytes | 1 | external_input | external |
+| RETIRED:tldw_chatbook/Tools/patch_tool_impls.py | patch_files | open | 1 | unsupported | external |
+| RETIRED:tldw_chatbook/Tools/patch_tool_impls.py | patch_files | write_bytes | 1 | external_input | external |
+| RETIRED:tldw_chatbook/UI/Chatbooks_Window.py | ChatbooksWindow._refresh_chatbooks | ZipFile | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow._export_to_zip_worker | ZipFile | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow._export_to_zip_worker | mkdir | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow._export_to_zip_worker | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow.generate_compilation._read_selected_files | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/CodeRepoCopyPasteWindow.py | CodeRepoCopyPasteWindow.handle_node_selected._read_local_file | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget._handle_file_selection | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._begin_console_realtime_reply_audio | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._connect_console_realtime | connect | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/image_gen_demo_screen.py | ImageGenDemoScreen._render_result | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/library_screen.py | LibraryScreen._write_library_note_export_file | write_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/library_screen.py | LibraryScreen._write_library_prompt_export_file | write_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/settings_screen.py | SettingsScreen._handle_about_link | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/watchlists_collections_screen.py | WatchlistsCollectionsScreen._open_item_in_browser | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_single_worker | copy_private_sqlite | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_single_worker | create_private_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_single_worker | secure_private_directory | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_worker | copy_private_sqlite | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_worker | secure_private_directory | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._check_single_worker | connect_private_sqlite | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._export_characters_worker | create_private_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._export_characters_worker | secure_private_directory | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._export_conversations_worker | create_private_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._export_conversations_worker | secure_private_directory | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._export_notes_worker | create_private_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._export_notes_worker | secure_private_directory | 2 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._get_schema_version | connect_private_sqlite | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._integrity_worker | connect_private_sqlite | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._perform_database_restore | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._restore_single_database | secure_private_directory | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._restore_single_worker | copy_private_sqlite | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._restore_single_worker | mkdir | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._vacuum_single_worker | connect_private_sqlite | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._vacuum_worker | connect_private_sqlite | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._write_backup_manifest | create_private_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._write_backup_manifest | dump | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow.on_markdown_link_clicked | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py | VoiceSetupStep._play_sample | write | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Utils/Splash_Screens/custom/custom_image.py | CustomImageEffect._load_and_convert_image | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Utils/Utils.py | ensure_directory_exists | makedirs | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Utils/Utils.py | generate_unique_identifier | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Utils/Utils.py | save_segments_to_json | dump | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Utils/Utils.py | save_segments_to_json | makedirs | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Utils/Utils.py | save_segments_to_json | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Utils/paths.py | get_project_databases_dir | mkdir | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Widgets/Chat_Widgets/chat_message_enhanced.py | ChatMessageEnhanced._render_pixelated | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Widgets/Chat_Widgets/chat_message_enhanced.py | ChatMessageEnhanced._render_regular | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Widgets/Console/console_context_modal.py | ConsoleContextModal._save_json | mkdir | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Widgets/Console/console_context_modal.py | ConsoleContextModal._save_json | write_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleMarkdownMessage._open_link | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Widgets/chunk_preview_modal.py | ChunkPreviewModal.export_preview | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Widgets/chunk_preview_modal.py | ChunkPreviewModal.export_preview | write | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_export_theme | dump | 1 | generic_boundary | caller-selected-external-theme-export |
+| RETIRED:tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor.on_save_theme | dump | 1 | unsupported | ui.themes phase8 raw source lifetime; runtime composition pending |
+| RETIRED:tldw_chatbook/Writing_Interop/local_writing_service.py | LocalWritingService._connect | connect_private_sqlite | 2 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/app.py | <module> | mkdir | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/app.py | TldwCli._display_buffered_logs | write | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/app.py | TldwCli._setup_buffered_logging.PersistentLogHandler.emit | write | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/app.py | _generated_css_is_stale | open | 2 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/app.py | _generated_css_is_stale._sha256 | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/app.py | _ingest_pool_real_stderr | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/app.py | _load_css_build_manifest | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/app.py | _save_css_build_manifest | write_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/app.py | main_cli_runner | mkdir | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/config.py | _config_interprocess_lock | create_private_text | 1 | unsupported | config |
+| RETIRED:tldw_chatbook/config.py | _config_interprocess_lock | open_private_text_append_stream | 1 | unsupported | config |
+| RETIRED:tldw_chatbook/config.py | _write_raw_cli_config_unlocked | atomic_private_write_text | 1 | unsupported | config |
+| RETIRED:tldw_chatbook/config.py | get_user_data_dir | secure_private_directory | 2 | unsupported | config |
+| RETIRED:tldw_chatbook/config.py | load_settings | mkdir | 1 | unsupported | config |
+| RETIRED:tldw_chatbook/css/build_css.py | build_css | open | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/css/build_css.py | build_css | write | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/css/build_css.py | build_screen_css | write_text | 2 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/css/build_css.py | build_widget_defaults | write_text | 2 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/css/build_css.py | write_build_manifest | write_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/runtime_policy/server_credentials.py | KeyringServerCredentialStore._save_index | set_password | 1 | unsupported | runtime |
+| RETIRED:tldw_chatbook/runtime_policy/server_credentials.py | KeyringServerCredentialStore.delete_scoped_secret | delete_password | 3 | unsupported | runtime |
+| RETIRED:tldw_chatbook/Backup_Recovery/native_files.py | create_private_file | open | 1 | generic_boundary | backup_native_storage |
+| RETIRED:tldw_chatbook/Backup_Recovery/native_files.py | _rename_new | renameatx_np | 1 | generic_boundary | backup_native_storage |
+| RETIRED:tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | os.replace | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/LLM_Provider_Catalog/model_discovery_disk_cache.py | ModelCatalogDiskStore.save | os.replace | 1 | disposable | diagnostics |
+| RETIRED:tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | os.replace | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_databases | os.replace | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Tools_Settings_Window.py | ToolsSettingsWindow._backup_worker | os.replace | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Chat/trajectory_export.py | write_trajectory_export | os.unlink | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._create_temporary | os.unlink | 2 | external_input | external-notes-workspace-or-export |
+| RETIRED:tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.write_text | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| RETIRED:tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | os.unlink | 2 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/profile_migration_namespace.py | remove_zero_reusable_tombstone | os.unlink | 1 | unsupported | tts |
+| RETIRED:tldw_chatbook/TTS/profile_schema.py | _CandidateValidationJob.cleanup.remove_snapshot | os.unlink | 2 | unsupported | tts |
+| RETIRED:tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.replace | 1 | unsupported | backup_control |
+| RETIRED:tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.unlink | 1 | unsupported | backup_control |
+| RETIRED:tldw_chatbook/Backup_Recovery/control_records.py | _publish_activation_record | os.replace | 1 | generic_boundary | backup_control |
+| RETIRED:tldw_chatbook/Backup_Recovery/control_records.py | _bind_activation | os.unlink | 1 | generic_boundary | backup_control |
+| RETIRED:tldw_chatbook/DB/private_sqlite.py | _connect_registered_sqlite | connect | 1 | generic_boundary | generic |
+| RETIRED:tldw_chatbook/Agents/recovery.py | _RunLogs.discover | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| RETIRED:tldw_chatbook/Notes/recovery.py | _ReceiptsAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| RETIRED:tldw_chatbook/Notes/recovery.py | _ReceiptsAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
+| RETIRED:tldw_chatbook/Backup_Recovery/persona_visual_participants.py | unlink | os.unlink | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| RETIRED:tldw_chatbook/Backup_Recovery/visual_identity_participants.py | unlink | os.unlink | 2 | generic_boundary | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| RETIRED:tldw_chatbook/Character_Chat/visual_identity.py | _inspect_image_bytes | open | 1 | memory | concrete Shared Visual Identity source/native lifetime; aggregate app qualification pending |
+| RETIRED:tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | mkdir | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | write_text | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | mkdir | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | write_bytes | 1 | unsupported | miscellaneous |
+| RETIRED:tldw_chatbook/Utils/private_paths.py | _native_open | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| RETIRED:tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.replace | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| RETIRED:tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | os.unlink | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| RETIRED:tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia._finish_delete | os.unlink | 1 | qualified | recovered.media |
+| RETIRED:tldw_chatbook/Backup_Recovery/archive_reader.py | _inspect | ZipFile | 1 | generic_boundary | reviewed archive input |
+| RETIRED:tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | create_private_file | 1 | disposable | private archive staging |
+| RETIRED:tldw_chatbook/Backup_Recovery/archive_reader.py | acquire | write | 1 | disposable | private archive staging |
+| RETIRED:tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | os.replace | 1 | disposable | staged credential reconstruction |
+| RETIRED:tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | mkdir | 2 | disposable | private native capture SQLite copy |
+| RETIRED:tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | open | 2 | generic_boundary | native-domain-recovery |
+| RETIRED:tldw_chatbook/Backup_Recovery/storage_admission.py | _CaptureScope.sqlite_target | write | 1 | disposable | private native capture SQLite copy |
+| RETIRED:tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | create_private_file | 1 | disposable | private preview SQLite copy |
+| RETIRED:tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | open | 1 | generic_boundary | identity-bound live SQLite copy input |
+| RETIRED:tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | write | 1 | disposable | private preview SQLite copy |
+| RETIRED:tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.replace | 1 | disposable | private staged credential rewrite |
+| RETIRED:tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.unlink | 1 | disposable | private staged credential cleanup |
+| RETIRED:tldw_chatbook/Backup_Recovery/control_records.py | _recover_activation_pairs | os.unlink | 1 | generic_boundary | backup_control |
+| RETIRED:tldw_chatbook/Backup_Recovery/control_records.py | _resume_activation_record | os.replace | 1 | generic_boundary | backup_control |
+| RETIRED:tldw_chatbook/Backup_Recovery/control_records.py | _resume_activation_record | os.unlink | 1 | generic_boundary | backup_control |
+| RETIRED:tldw_chatbook/Backup_Recovery/replacement.py | _rollback_replacement | os.unlink | 1 | generic_boundary | backup_control |
+| RETIRED:tldw_chatbook/Backup_Recovery/recovery_copies.py | delete_recovery_copy | os.unlink | 1 | generic_boundary | explicit completed encrypted recovery-copy deletion |
+| RETIRED:tldw_chatbook/Backup_Recovery/replacement.py | _abort_prepublication | os.unlink | 1 | generic_boundary | backup_control |
+
+## Current registered SQLite owner facts (2026-11-03)
+
+These are existing registry declarations. Recording the actual module and target
+kinds does not extend their native policy or establish complete backup coverage.
+
+| Registry owner | Production module | Existing target-kind set | Existing scope/limitation |
+| --- | --- | --- | --- |
+| sqlite:db.agent_runs.read | tldw_chatbook/DB/AgentRuns_DB | _READ_ONLY_URI | Non-owning Console inspection without schema initialization or recovery. |
+| sqlite:db.chachanotes.read | tldw_chatbook/DB/ChaChaNotes_DB | _READ_ONLY_URI | Canonical saved-history and notes reads without schema initialization. |
+| sqlite:db.media.read | tldw_chatbook/DB/Client_Media_DB_v2 | _READ_ONLY_URI | Canonical Library reads without schema initialization. |
+| sqlite:db.workspaces.preflight | tldw_chatbook/DB/Workspace_DB | _READ_ONLY_URI | Fixed incompatible-preview metadata rejection before native schema initialization. |
+| sqlite:recovery.mobile.completion.read | tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery | _READ_ONLY_URI | Ordinary admitted completion/schema reads; SQLite SHM coordination only. |
+| sqlite:recovery.mobile.preview | tldw_chatbook/Backup_Recovery/mobile_consolidation | _READ_ONLY_URI | Read-only legacy inventory over native checked SQLite snapshots. |
+| RETIRED-sqlite:tests.store_kernel | Tests/DB/test_store_kernel | _PRIVATE_OR_MEMORY | Kernel contract tests support private files and exact in-memory targets. |
+
+Retired registry documentation, retained without active authority:
+
+| Retired registry owner | Previous module | Previous kinds | Previous description |
+| --- | --- | --- | --- |
+| RETIRED-sqlite:settings.bulk_backup | tldw_chatbook/UI/Tools_Settings_Window | _PRIVATE_AND_READ_ONLY | sqlite/unsupported |
+| RETIRED-sqlite:settings.integrity | tldw_chatbook/UI/Tools_Settings_Window | _READ_ONLY_URI | sqlite/unsupported |
+| RETIRED-sqlite:settings.pre_restore_backup | tldw_chatbook/UI/Tools_Settings_Window | _PRIVATE_AND_READ_ONLY | sqlite/unsupported |
+| RETIRED-sqlite:settings.restore | tldw_chatbook/UI/Tools_Settings_Window | _PRIVATE_AND_READ_ONLY | sqlite/unsupported |
+| RETIRED-sqlite:settings.schema | tldw_chatbook/UI/Tools_Settings_Window | _READ_ONLY_URI | sqlite/unsupported |
+| RETIRED-sqlite:settings.single_backup | tldw_chatbook/UI/Tools_Settings_Window | _PRIVATE_AND_READ_ONLY | sqlite/unsupported |
+| RETIRED-sqlite:settings.vacuum | tldw_chatbook/UI/Tools_Settings_Window | _PRIVATE_FILE | sqlite/unsupported |
+| RETIRED-sqlite:recovery.operations.receipts | tldw_chatbook/Notes/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+
+## Intermediate composed-source reconciliation (PR3345 rebase)
+
+These rows record the current intermediate source, not final qualification.
+They restore live reviewed rows omitted by automatic merge and record five new
+publication/cleanup candidates as unsupported pending source-owner review.
+Historical reconciliations above retain their original scope; RETIRED rows and
+preserved conflict preimages are historical declarations, not active owners.
+Existing qualified labels can denote installed exclusions or exact-memory owners;
+they grant no payload capture authority. Installed adapters, policy and native
+lifetime/refusal checks remain authoritative. In particular notes.sync_state is
+an exclusion, while notifications/client and sync retain exact-memory policies.
+Event-state can also be file-backed; Dreams/Guardian retain installed adapters
+and inactive restoration semantics. No permission or privacy classification is
+created by this discovery census.
+
+| Module | Symbol | Call | Count | Classification | Cohort |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.replace | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/admission.py | Admission._write | os.unlink | 1 | unsupported | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _bind_activation | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _publish_activation_record | os.replace | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _recover_activation_pairs | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _resume_activation_record | os.replace | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/control_records.py | _resume_activation_record | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | os.replace | 1 | disposable | staged credential reconstruction |
+| tldw_chatbook/Backup_Recovery/crypto.py | _transform_owned | os.link | 1 | unsupported | pending source-owner review; native publication/cleanup candidate; no payload authority |
+| tldw_chatbook/Backup_Recovery/mcp_source_participants.py | backup_corrupt | os.replace | 2 | generic_boundary | exact five MCP source lifetimes; custom sources ordinary; service/runtime pending |
+| tldw_chatbook/Backup_Recovery/mobile_captured_sqlite.py | _retire_staging.remove_children | os.unlink | 1 | unsupported | pending source-owner review; native publication/cleanup candidate; no payload authority |
+| tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery.py | _finish_terminal | os.unlink | 1 | unsupported | pending source-owner review; native publication/cleanup candidate; no payload authority |
+| tldw_chatbook/Backup_Recovery/mobile_native_operation.py | _consolidate.commit_terminal | os.unlink | 1 | unsupported | pending source-owner review; native publication/cleanup candidate; no payload authority |
+| tldw_chatbook/Backup_Recovery/mobile_rollback.py | _retire_rollback_pending | os.unlink | 1 | unsupported | pending source-owner review; native publication/cleanup candidate; no payload authority |
+| tldw_chatbook/Backup_Recovery/persona_visual_participants.py | unlink | os.unlink | 2 | generic_boundary | concrete Persona Visual source/native lifetime; aggregate app qualification pending |
+| tldw_chatbook/Backup_Recovery/publication.py | finalize_candidate | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/recovered_media.py | RecoveredMedia._finish_delete | os.unlink | 1 | qualified | recovered.media |
+| tldw_chatbook/Backup_Recovery/recovery_copies.py | delete_recovery_copy | os.unlink | 1 | generic_boundary | explicit completed encrypted recovery-copy deletion |
+| tldw_chatbook/Backup_Recovery/replacement.py | _abort_prepublication | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/replacement.py | _rollback_replacement | os.unlink | 1 | generic_boundary | backup_control |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | create_private_file | 1 | disposable | private preview SQLite copy |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.replace | 1 | disposable | private staged credential rewrite |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _write_staged_credential_file | os.unlink | 1 | disposable | private staged credential cleanup |
+| tldw_chatbook/TTS/profile_migration_namespace.py | remove_zero_reusable_tombstone | os.unlink | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | os.replace | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_schema.py | _CandidateValidationJob.cleanup.remove_snapshot | os.unlink | 2 | unsupported | tts |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._dictionary_export_worker | write_text | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | mkdir | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Screens/personas_screen.py | PersonasScreen._export_expression_set | write_bytes | 1 | unsupported | miscellaneous |

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from html.parser import HTMLParser
 from threading import RLock
 from typing import Any
@@ -102,6 +102,7 @@ class _Selection:
     following: bool = True
     conversation_id: str | None = None
     owner: Any = None
+    ephemeral: bool = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +138,7 @@ class CanvasBridgeTarget:
     active_message_ids: tuple[str, ...]
     canvas_id: str
     revision_id: str
+    ephemeral: bool = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -221,6 +223,7 @@ class NativeConsoleCanvasAuthority:
             self._canvas_controller.capture_selection_owner(
                 scope, temporary=self._is_temporary(scope)
             ),
+            ephemeral=self._is_temporary(scope),
         )
 
     def _capture_selected_scope(self, scope: CanvasScope) -> CanvasScope:
@@ -233,6 +236,7 @@ class NativeConsoleCanvasAuthority:
             if (
                 current.session_id != scope.session_id
                 or current.conversation_id != scope.conversation_id
+                or current.ephemeral != scope.ephemeral
                 or current.active_message_ids != scope.active_message_ids
             ):
                 raise RuntimeError("canvas_scope_unavailable")
@@ -244,12 +248,17 @@ class NativeConsoleCanvasAuthority:
             )
             promoted = (
                 selection.conversation_id == scope.session_id
+                and selection.ephemeral
                 and not self._is_temporary(scope)
                 and owner is not None
                 and selection.owner is owner
             )
             if (
-                selection.conversation_id != scope.conversation_id and not promoted
+                (
+                    selection.conversation_id != scope.conversation_id
+                    or selection.ephemeral != scope.ephemeral
+                )
+                and not promoted
             ) or selection.owner is not owner:
                 raise RuntimeError("canvas_scope_unavailable")
             selected = replace(
@@ -260,6 +269,7 @@ class NativeConsoleCanvasAuthority:
             self._read_exact(selected, selection.canvas_id, selection.revision_id)
             if promoted:
                 selection.conversation_id = scope.conversation_id
+                selection.ephemeral = self._is_temporary(scope)
             return selected
 
     def dispose(self) -> None:
@@ -327,6 +337,7 @@ class NativeConsoleCanvasAuthority:
             if (
                 current.session_id != scope.session_id
                 or current.conversation_id != scope.conversation_id
+                or current.ephemeral != scope.ephemeral
                 or any(
                     not isinstance(info, CanvasRevisionInfo)
                     or info.origin.message_id not in current.active_message_ids
@@ -400,7 +411,11 @@ class NativeConsoleCanvasAuthority:
                         and previous.canvas_id == revision.canvas_id
                         else "selection_changed",
                     )
-                    previous = _Selection(revision.canvas_id, revision.revision_id)
+                    previous = _Selection(
+                        revision.canvas_id,
+                        revision.revision_id,
+                        ephemeral=self._is_temporary(scope),
+                    )
                 receipt.state_published = True
             if receipt.auto_opened:
                 return
@@ -561,6 +576,7 @@ class NativeConsoleCanvasAuthority:
                 or self._view_generation != capture.view_generation
                 or current.session_id != scope.session_id
                 or current.conversation_id != scope.conversation_id
+                or current.ephemeral != scope.ephemeral
                 or current.active_message_ids != scope.active_message_ids
                 or selection != capture.selection
             ):
@@ -712,6 +728,7 @@ class NativeConsoleCanvasAuthority:
                 active_message_ids=scope.active_message_ids,
                 canvas_id=chosen.revision.canvas_id,
                 revision_id=chosen.revision.revision_id,
+                ephemeral=self._is_temporary(scope),
             )
             self._browser_targets.move_to_end(browser_session_id)
             while len(self._browser_targets) > _MAX_BROWSER_BINDINGS:
@@ -753,6 +770,7 @@ class NativeConsoleCanvasAuthority:
             self._disposed
             or self._enabled_reader() is not True
             or current.conversation_id != captured.conversation_id
+            or current.ephemeral != captured.ephemeral
             or current.active_message_ids != captured.active_message_ids
         ):
             raise RuntimeError("canvas_scope_unavailable")
@@ -783,6 +801,7 @@ class NativeConsoleCanvasAuthority:
                     active_message_ids=canvas_scope.active_message_ids,
                     canvas_id=selection.canvas_id,
                     revision_id=selection.revision_id,
+                    ephemeral=self._is_temporary(canvas_scope),
                 )
             return selected_scope
 
@@ -834,7 +853,12 @@ class NativeConsoleCanvasAuthority:
         canvas_scope = self._selected_scope(scope)
         with self._lock:
             following = self._selection.get(
-                session_id, _Selection(scope.canvas_id, scope.revision_id)
+                session_id,
+                _Selection(
+                    scope.canvas_id,
+                    scope.revision_id,
+                    ephemeral=self._is_temporary(canvas_scope),
+                ),
             ).following
             if action == "select":
                 if not canvas_id:
@@ -1106,6 +1130,7 @@ class NativeConsoleCanvasAuthority:
         return (
             current.session_id == target.session_id
             and current.conversation_id == target.conversation_id
+            and current.ephemeral == target.ephemeral
             and current.active_message_ids == target.active_message_ids
         )
 
@@ -1259,4 +1284,6 @@ class NativeConsoleCanvasAuthority:
         )
 
     def _is_temporary(self, scope: CanvasScope) -> bool:
-        return scope.conversation_id == scope.session_id
+        if type(scope.ephemeral) is not bool:
+            raise RuntimeError("canvas_scope_unavailable")
+        return scope.ephemeral

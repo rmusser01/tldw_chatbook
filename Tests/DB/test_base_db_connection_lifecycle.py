@@ -107,3 +107,33 @@ def test_check_integrity_closes_connection_when_open_fails(
 
     monkeypatch.setattr(probe_db, "_get_connection", refuse)
     assert probe_db.check_integrity() is False
+
+
+def test_check_integrity_close_failure_returns_false_and_retains_native_owner(
+    probe_db, monkeypatch
+):
+    from tldw_chatbook.DB import private_sqlite
+
+    class CloseOnce(sqlite3.Connection):
+        close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise sqlite3.OperationalError("controlled native close refusal")
+            super().close()
+
+    connect = probe_db._get_connection
+    connection = connect(factory=CloseOnce)
+    monkeypatch.setattr(probe_db, "_get_connection", lambda **_: connection)
+    try:
+        assert probe_db.check_integrity() is False
+        assert connection.close_calls == 1
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+        assert connection in private_sqlite._ordinary_connections
+    finally:
+        connection.close()
+    assert connection.close_calls == 2
+    assert connection not in private_sqlite._ordinary_connections
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")

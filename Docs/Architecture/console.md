@@ -66,7 +66,7 @@ Console attention event callbacks use `ConsoleRuntime.request_console_attention_
 
 Ordinary resume prepares the original active-workspace registry read after successful FULL sync and before restoring runtime answerability (TASK-35593). `prepare_console_workspace_reconciliation` supplies a single-use result to the original synchronous reconciler in that resume stack. Native admission, current registry generation, source/session/view checks and physical retirement remain intact; workspace repair and subsequent resume actions retain their order. Explicit saved-chat resume and custom callbacks keep their original routes. The prepared result is discarded at the end of the stack and is not a reusable display or authority cache.
 
-FULL synchronization awaits the existing stock `ConsoleReadinessConfigProjection.warm()` before synchronous rail/control presentation (TASK-35594). This avoids entering native config admission on the UI thread when the display projection expires. The await is outside the workspace build scope and config operation; source/session ownership is checked by the existing projection, and the screen rechecks its attach visit and maintenance state before rendering. Refusal retains whole-FULL replay without declaring attach complete. Direct/custom presentation keeps its original fallback, live actions keep their checks, and cancellation retains the finite native read until physical retirement. No display lifetime is extended and general narrow polling remains Proposed (ADR-231). A queued readiness refresh keeps its entry-time session lookup inside the same cold/refusal cleanup boundary as the native read. If that session closes before worker entry, the worker publishes nothing and settles pending waiters. A refresh that fails or is refused (its read or default handoff raises, or the owner, source, runtime or pricing sources moved) schedules the existing coalesced control-bar retry, so a lone sync deferred on a cold display still converges. The retry waits 0.2 s and doubles that wait for each consecutive failure on the same owner, up to 5 s. A successful read or an owner change resets the wait. A projection keeps one pending retry, whoever started the failed read, and each new failure replaces it. A successful refresh with nothing changed schedules no whole-FULL sync. Cancellation, a closing screen and a disposed runtime also schedule nothing (TASK-38649). Cancellation still retains an issued finite read until physical retirement.
+FULL synchronization awaits the existing stock `ConsoleReadinessConfigProjection.warm()` before synchronous rail/control presentation (TASK-35594). This avoids entering native config admission on the UI thread when the display projection expires. The await is outside the workspace build scope and config operation; source/session ownership is checked by the existing projection, and the screen rechecks its attach visit and maintenance state before rendering. Refusal retains whole-FULL replay without declaring attach complete. An ordinary FULL keeps its refusal backoff through the checked projection and rail phases and resets it after both render. Direct controls, the active poll, and forced settlement retain their own retry behavior. Direct/custom presentation keeps its original fallback, live actions keep their checks, and cancellation retains the finite native read until physical retirement. No display lifetime is extended and general narrow polling remains Proposed (ADR-231). A queued readiness refresh keeps its entry-time session lookup inside the same cold/refusal cleanup boundary as the native read. If that session closes before worker entry, the worker publishes nothing and settles pending waiters. A refresh that fails or is refused (its read or default handoff raises, or the owner, source, runtime or pricing sources moved) schedules the existing coalesced control-bar retry, so a lone sync deferred on a cold display still converges. The retry waits 0.2 s and doubles that wait for each consecutive failure on the same owner, up to 5 s. A successful read or an owner change resets the wait. A projection keeps one pending retry, whoever started the failed read, and each new failure replaces it. A successful refresh with nothing changed publishes and schedules nothing. Cancellation, a closing screen and a disposed runtime also schedule nothing (TASK-38649). Cancellation still retains an issued finite read until physical retirement.
 
 
 Console/Canvas configuration scheduling follows [ADR-121's staged handoff](../../backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md#staged-console-handoff-opportunity-2026-11-07-before-successor-implementation). Canonical Canvas background polls may decline either native config lock or a qualified temporary UI handoff; a declined poll is unavailable, never an enabled or restart-disable verdict. `config_sync` records owed CORE work inactive until the original stock off-loop warm stage, then carries the exact current successful receipt through physical read retirement into one guarded callback attempt. Identity joins only its actual issued publication, including `changed=False`. Warm failure, source/visit loss, cancellation, maintenance, visibility/view loss or a dropped replay retire the handoff; it also ends after that attempt while ordinary replay may remain owed. The coalesced callback lives in `config_sync.run_coalesced_control_bar_sync`; the whole watcher lives in `Canvas.config_policy._watch_runtime_canvas_policy`, reached through the runtime's live namespace delegate. Original CORE/draft/workspace ordering, 0.2/0.25 s cadences, effect-time checks, restart latch, custom-reader fallback and physical native-read custody remain intact. Physical presentation latency is qualified separately.
@@ -164,6 +164,15 @@ Activation focus restoration checks the focused control and its ancestors, not o
 Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech controls; hidden legacy compat statics kept for contract tests; a dispatch-recovery callout; the dense `ConsoleControlBar`; then the main grid — left `ConsoleRailHandle` → `ConsoleLeftRail` (3fr) → center column (13fr, hosting either the transcript region or the embedded terminal workspace) → `ConsoleInspectorRail` (4fr) → right handle. Below the grid: status chips (position from `[console] status_chips_position`), staged evidence strip, dispatch-recovery region, prompt-queue region, the `ConsoleComposerBar`, command popup, and setup modal.
 
 Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
+
+New FULL presentation passes defer while `ChatScreen.on_screen_suspend` marks
+the view suspended. An already admitted refresh retains its original checks and
+retirement; subsequent requests keep `_console_sync_requested` and any whole-sync
+coalesced replay pending. The existing attachment reconciliation and coalescer
+consume that work on real resume using the latest store state. This is a
+presentation boundary: app-owned turns, approvals, detached supervision and native
+shutdown retain their existing owners (`_sync_native_console_chat_ui`,
+`_run_coalesced_control_bar_sync`, and `on_screen_resume`).
 
 `ConsoleSessionController._sync_console_session_draft` treats an already closed
 outgoing owner's optional snapshot as absent and continues binding the active
@@ -826,7 +835,8 @@ full literal body, rather than embedding bodies in fingerprint diagnostics.
 The unreleased v86 marker-preservation trigger permits only the exact recorded
 same-owner predecessor/successor transition. It continues to preserve valid markers
 against arbitrary metadata writes. The exact recovery schema catalog changes with
-that trigger; the schema version is 86 on current dev.
+that trigger; the native mix-in step remains 86, followed by shared Console
+consolidation at 87 (ADR-244).
 
 Context Next Send uses the same literal composition and source fences with
 `capture(publish_facts=False)`: it does not publish last-used/reconciliation facts,
@@ -903,3 +913,224 @@ Existing optional omissions and manual/automatic busy/input restoration remain.
 ADR285 records the native source and retirement contract. Source-specific
 qualification and historical adverse outcomes remain in the
 [workflow evidence index](../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md).
+
+## Physical execution owner (ADR-244)
+
+`Chat/console_execution_owner.py` holds a nonblocking OS lease for the secured
+physical run-store parent and leaf. `ConsoleRuntime` acquires it lazily before
+constructing the sibling `agent_runs.db`; different chat filenames in that
+parent share this resource. The empty runtime holder and saved-history readers
+do not acquire it. Settings and retention writers share the App's owner; manual
+worktree recovery shares its bridge's owner. A lost/unsafe lease refuses writes.
+
+The executing App/child retains the lease through physical SQLite operations.
+Disposal releases it only after the runtime drains, change-review publisher and
+cleanup prove retirement. Bounded or failed cleanup retains the owner until
+process exit; cancelling a waiter or losing a parent is never takeover authority.
+See [ADR-244](../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md).
+
+
+## Served lifecycle ownership (TASK-36761, ADR-244)
+
+Served mode selects `Web_Server/console_web_driver.py` through `TldwCli` only for
+`CHATBOOK_SERVED_CHILD`. The App, ConsoleRuntime, native stores and execution-owner
+lease survive terminal disconnect/replacement; a generation-fenced full repaint
+restores the terminal without another input thread. Parent host ownership and the
+saved-conversation reservation seam are documented in [web-server.md](web-server.md).
+`ConsoleChatStore.resolve_saved_session` owns one saved-identity operation and
+physical hydration task shared by terminal, Buddy, launch, Goal and remote opens.
+Every observer shields its wait. Restored rows require completed progress/policy
+readiness AND publication/adoption before host snapshots or remote commands can
+expose them. Pure metadata reads do not adopt provisional presentation custody. Native
+failure removes only that exact unpublished row. Presentation callers carry an
+opaque creator cleanup proof through their final visibility/focus commit; a
+successful remote or other opener publishes/adopts the owner and revokes cleanup.
+Runtime shutdown drains the physical read and existing native teardown before
+returning cancellation. Detached task/future failures are consumed.
+
+A cold saved owner defaults to its durable conversation ID (including Goal's
+sealed iteration binding); conflicting requested IDs refuse. A live session's
+first persistence retains its original ID. Saved opens join its existing staged
+first-identity reservation across SQL commit and native identity/policy
+publication without hiding that already-live session from normal controls.
+Native new_chat and fork reserve their preallocated durable IDs in the same store
+operation before the first commit/copy. They publish their intended settings,
+assistant identity and opening draft before observers can return. New-chat local
+project controls use the existing native metadata writer in the atomic creation
+transaction; fork preserves native non-consenting controls. The disposable fork
+view completion projects the ready owner and never rewrites its draft.
+
+`app_served.py` watches the child control connection independently of Canvas
+exposure. Genuine parent/control loss closes boot admission and automatic wakes,
+marks the Console as tearing down, synchronously fences its already-installed
+controller and requests ordinary App exit in a finally block. Native full shutdown
+retains the original view and execution lease through ordered project-index,
+view-worker and image retirement. Physical cleanup retains the lease on failure
+or cancellation; the parent only permits a new host after observing actual process exit. Browser
+revocation and Canvas disable do not enter this native shutdown path.
+
+## Command-owned input and exact native controls (ADR-244)
+
+`Chat/console_remote_commands.py::ConsoleRemoteCommands` is the runtime command
+adapter for an existing `ConsoleHostIdentity` / `ConsoleTarget`. Its supported
+actions are `create`, `open`, `send`, `steer`, `redirect`, `stop`, `subagent_guidance` and
+`subagent_stop`, plus exact retained `decision` answers. Unsupported actions refuse. This seam does not select a desktop
+tab or construct a second controller. Browser transport wiring and receipt
+observation are separate owners.
+
+Send requires text and all five last-confirmed target revisions:
+`settings_revision`, `generation_settings_revision`, `context_policy_revision`,
+`identity_revision` and `conversation_binding_revision`. It builds a
+`ConsoleSessionInputSnapshot` with `input_origin="command"` and a command ID,
+empty attachments/prefill, and no staged-RAG launch. Its native source witnesses
+remain currentness requirements; desktop typing, prefill, attachment edits and
+view changes cannot invalidate or clear this command. Composer snapshots retain
+the original complete input comparisons. The same received-turn slot is claimed
+with `draft_revision=None`, then the existing checked configuration, hook review,
+permissions, native preparation and atomic promotion run under runtime custody.
+The synchronous resident configuration proof precedes receipt; complete async
+capture still follows the existing Preparing claim. Settings/binding changes
+before promotion refuse stale input.
+
+Command origin and its repr-hidden native input witness follow
+`ConsoleTurnCustodyRequest` through the existing prompt queue; configuration
+changes while queued are rechecked before its claim and native promotion. Command requests capture no desktop prefill and bypass only the queue's
+composer rider checks; normal queue revision, context, permission, capacity and
+continuation ownership still apply. Native `preserve_composer` behavior protects
+drafts and acceptance callbacks through prepared continuations and durable
+acceptance. Buddy's existing composer guards remain unchanged.
+
+At the Ask compaction threshold, a phone command uses the native cardless refusal
+before durable acceptance. Native cancellation passes `restore_draft=False` for
+command input, preserving desktop text and revision even when it changes during
+preparation. It does not reconstruct a saved composer afterward. The forecast
+still describes only the active desktop composer; admission checks the captured
+phone request. Compaction cards and `/compact` remain native desktop controls.
+
+A missing Capture-On request after durable acceptance retains the exact native
+TRACE_CALL preparation. Desktop Retry rebuilds from that frozen continuation,
+including a phone turn whose tab is no longer selected. Successful rebuilding
+consumes only the current controller-created `not_established` failure marker
+under the durable lock, with both marker and continuation identities unchanged;
+that marker is not a gateway recovery boundary. Unknown or replaced markers and
+failed rebuilds retain the pause. Normal native reservation/contact checks still
+run. Native Cancel settles DISCARD and honors the captured `preserve_composer`
+flag, preserving phone-target and active desktop draft text and revision. These
+remain native desktop recovery controls; no phone trace-action API is added.
+
+Validated explicit phone Send issues the existing opaque user-origin proof.
+Successful initial queue transfer retains that exact proof in the immutable
+request; actual promotion accepts it once. Refused promotion releases it from
+both native proof maps while retaining the paused request/body. The retained
+request does not preserve reusable archive-recovery provenance after refusal,
+and no generic promotion or automatic path reissues it. Native Library policy,
+answerability and destination gates still apply independently.
+
+`send()` returns the custody turn ID while it is Preparing. `execute()` returns
+body-free `state`, optional `native_id`, and `reason`: Send is `pending`, guidance
+is `queued`, accepted Stop is `accepted`, and native refusal is `refused`.
+Neither queued guidance nor accepted Stop claims mailbox consumption or physical
+worker exit. Main controls use explicit-session `steer_run`, `redirect_run` and
+`stop_run`; existing active-tab methods delegate to those native controls. A
+remote Stop needs an exact existing turn or live run and cannot stop a successor.
+
+
+Native speech preparation retains ADR-284 ownership: the same preparation
+daemon, service, transcriber and process admission survive logical cancellation
+until actual handoff or retirement. Controller maintenance readiness propagates
+to the dictation session; failed cleanup and late results remain fenced. Browser
+detach only retires its view attachment and does not dispose that owner. Exact
+phone Stop controls the selected turn/run, not microphone or model preparation,
+and does not claim physical worker exit. Model loading leaves the user's Xet
+configuration unchanged. The production progress probe supplies no attributable
+transport progress, so opaque native loading has no universal stall deadline.
+
+## Retained remote projection and decisions (TASK-36763, ADR-244)
+
+`Chat/console_remote_projection.py::ConsoleRemoteProjection` reads the existing
+runtime/store/round owners without a ChatScreen, changing selection, hydration,
+or provider construction. Discovery combines live identities with canonical saved
+conversation listings; an unhydrated live persisted target pages native metadata
+first, then canonical bounded history, including when fleet/decisions remain live.
+The history cursor fences that metadata and canonical content revisions; a change
+restarts from native metadata with reset. Saved-only history uses the canonical mobile read-only Library adapter.
+Each non-null target is checked against host, session incarnation and supplied
+turn/run/handle/round identities before reading and again before returning.
+
+Snapshot sections are `chats`, `messages`, `fleet`, `decisions`, and `recoveries`,
+with host identity, native `sequence`, `reset_required`, and `next_cursor`. Chat
+rows include the five command `expected_revisions`. Pages contain at most 100
+rows and 64 KiB; large message text continues at a character offset. Content/scope
+revision changes reset continuation. System/automatic instruction bodies, hidden
+thinking, quarantined generation text, provider credentials and full DB rows are
+excluded. Recovery and unfaithful reviews expose only pending/Open terminal state.
+
+The mobile stream handler in `Web_Server/static/mobile/app.js` treats an ordinary,
+flag-free `console.changed` as a refresh hint. It preserves the last confirmed
+controls during that refresh so a physical pointer gesture is not lost. It never
+confirms a target or clears uncertainty from a hint. A `reset`, including
+`console.changed` with `payload.reset_required === true`, and disconnect/errors
+still invalidate confirmation immediately. Native target/ticket checks and the
+five-revision Send fence remain authoritative when dispatching commands; no
+command is queued for later dispatch or automatically replayed.
+
+`InterruptRoundHost.remote_rounds` snapshots native ownership under its lock and
+formats outside that lock. Ordinary tool approval summaries share the native
+pure `Chat/approval_review.py` destination-first, bounded redaction policy with
+the terminal card; phone serialization/redaction failure hides the review and
+refuses answers. Raw shell, hook/skill/worktree/chat-create and project instruction
+confirmations remain unsupported pending terminal reviews. Ordinary approvals
+and validated user questions resolve through their original kind-specific native
+resolvers; exact kind/session/incarnation/run/round scope and bounded completed
+outcomes preserve one original winner. No remote policy grants or hook bypasses
+are added.
+
+Answerability belongs to a registered live subscription and an exact rendered
+round. Registration is capped at 64 clients and rendered-round claims at 100.
+Snapshot reads grant no answerability. Disconnect releases only that client's
+claims, so another phone's visible round keeps its native human-input clock
+answerable. Resolution and runtime disposal remove claims; native clock refresh
+matches the rendered round, not merely the session/kind. Task9 supplies the
+parent-generated authenticated subscription IDs and disconnect/revocation wiring.
+
+Saved first-identity observer registration and producer terminal outcome/removal
+share the existing preparation RLock. The operation records failure even before an
+observer Future is allocated; callbacks are delivered outside that critical
+section. Manual Save, durable publication/discard/retirement use the same handoff.
+Joined Character presentation carries the exact session, incarnation and durable
+binding to final publication; failed noncreator cleanup cannot remove that owner.
+
+## Fresh-profile tokenizer availability (Task11)
+
+The active custom-tokenizer service lives in `Chat/custom_tokenizers.py`: it owns
+installed tokenizer mappings, token counting and admitted artifact writes.
+`Utils.custom_tokenizers` aliases that same module object for existing callers;
+manager/availability rebinding and native function globals share one namespace.
+Reload through either path reloads the canonical service in that same object.
+
+The token counter asks `custom_tokenizers_available()` before entering the custom
+tokenizer tier. With no cached manager, the availability probe uses the native
+pinned directory seam and no-follow stat to prove that the default tokenizer
+root or mappings file is absent. Definite absence returns false without creating
+a directory, manager or storage lease; it is not cached. Existing mappings and
+uncertain/unsafe paths retain the original admitted manager path and errors.
+Explicit manager construction, installation and mapping writes retain their
+existing admission and pause behavior. A fresh unseeded served profile reached
+the provider and completed its phone continuation with the tokenizer directory
+still absent; see the [qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).
+
+
+The served presentation boundary supplies the stock compact-model metadata loader
+to the native remote-command owner. Explicit Send runs it through the existing
+controller/runtime preparation-read observers, rechecks the exact target and all
+five revisions, then uses the unchanged cold source-capsule checks. The loader
+imports the original widget module without mounting a widget or opening a trust
+service. A command owner without this presentation dependency refuses Send;
+projection, Stop and other non-Send controls do not need it.
+
+Library outcome display reads include the native session incarnation in their
+cache/request identity. Saved chats retain stable canonical session IDs across
+close and reopen, so the ID alone cannot identify a restored owner. A new
+incarnation rereads trajectory records; unchanged incarnations keep the existing
+read coalescing and worker retirement. During a fresh off-loop read the prior
+projection may remain visible until the new read lands.

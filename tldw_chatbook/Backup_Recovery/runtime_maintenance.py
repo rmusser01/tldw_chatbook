@@ -554,6 +554,21 @@ class RuntimeMaintenance:
             self.closed,
             deadline,
         )
+        # All accepted producers, projections and embedding work have settled.
+        pools = sys.modules.get(
+            "tldw_chatbook.RAG_Search.simplified.db_connection_pool"
+        )
+        await _settle_stage(
+            [
+                _bind(
+                    None if pools is None else pools.maintenance,
+                    "RAG_Search.simplified.db_connection_pool",
+                    "PoolMaintenance",
+                )
+            ],
+            self.closed,
+            deadline,
+        )
         if tuple(app.screen_stack) != self.screens:
             raise RecoveryRequired("runtime_screens_changed")
         if self._owner_snapshot() != self._owners:

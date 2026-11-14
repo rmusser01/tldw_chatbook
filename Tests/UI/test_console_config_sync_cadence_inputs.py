@@ -701,9 +701,11 @@ async def test_the_input_read_of_the_agent_rail_starts_no_historical_read(tmp_pa
         _finish,
         _historical_bridge,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
 
-    database = AgentRunsDB(tmp_path / "cadence-history.sqlite", "cadence-history")
+    database = owned_agent_runs_db(
+        tmp_path / "cadence-history.sqlite", "cadence-history"
+    )
     try:
         bridge, child = _historical_bridge(database)
         agent, tasks = _agent(bridge)

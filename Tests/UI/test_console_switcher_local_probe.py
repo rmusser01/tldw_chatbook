@@ -11,6 +11,7 @@ import asyncio
 import errno
 import inspect
 import threading
+from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
@@ -122,7 +123,9 @@ def _stub_network(monkeypatch, fake: Servers) -> None:
     real = probe_module.probe_settings_endpoint
 
     async def probe(base_url, **kwargs):
-        async with httpx.AsyncClient(transport=httpx.MockTransport(fake.handle)) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(fake.handle)
+        ) as client:
             return await real(base_url, http_client=client, **kwargs)
 
     monkeypatch.setattr(probe_module, "probe_settings_endpoint", probe)
@@ -199,14 +202,15 @@ async def _wait(pilot, predicate, tries: int = 100) -> None:
     pytest.fail("never happened")
 
 
-async def _fresh_readiness_display(console, pilot) -> None:
+async def _fresh_readiness_display(console, pilot, ready=None) -> None:
     """Warm the checked readiness display the poll paints through (TASK-38958).
 
     The display lasts a second. Under load a test's setup outlived it, so the
     poll's control bar refused the expired display and left the header to its
     0.2 s replay, after the test's one pause. With a fresh display the poll
     paints the header itself, before it returns. Call it before changing the
-    state the poll should paint: its awaits let other syncs run.
+    state the poll should paint: its awaits let other syncs run. A ready
+    callback may check admission and poll synchronously while the proof is fresh.
     """
     from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
         ConsoleReadinessConfigProjection,
@@ -214,7 +218,7 @@ async def _fresh_readiness_display(console, pilot) -> None:
 
     projection = ConsoleReadinessConfigProjection.for_screen(console)
     for _ in range(100):
-        if await projection.warm():
+        if await projection.warm() and (ready is None or ready()):
             return
         await pilot.pause(0.02)
     pytest.fail("the Console's readiness display never warmed")
@@ -327,7 +331,9 @@ async def test_a_fresh_explicit_test_is_not_probed_again(servers):
     async with app.run_test(size=(211, 44)) as pilot:
         identity, _none = _evidence(app, LLAMA)
         store = ProviderTestEvidenceStore(lambda: app)
-        store.settle(store.begin(identity), ProviderProbeResult("reachable", ("model-a",)))
+        store.settle(
+            store.begin(identity), ProviderProbeResult("reachable", ("model-a",))
+        )
         await app.push_screen(build(app))
         await _settle(app, pilot)
 
@@ -473,7 +479,9 @@ async def test_closing_mid_probe_raises_nothing_and_a_late_result_loses(
 
         identity, _none = _evidence(app, LLAMA)
         store = ProviderTestEvidenceStore(lambda: app)
-        store.settle(store.begin(identity), ProviderProbeResult("reachable", ("model-a",)))
+        store.settle(
+            store.begin(identity), ProviderProbeResult("reachable", ("model-a",))
+        )
         servers.hold.set()  # The parked probe now settles "refused", late.
         await _wait(pilot, lambda: servers.in_flight == 0)
         await _wait(pilot, lambda: ("unreachable", False) in offered)
@@ -507,7 +515,11 @@ def _with_shipped(*providers: str) -> dict:
 def _group(switcher: ConsoleModelPopover, header: str) -> list:
     rows = switcher._rows
     start = next(
-        (i for i, row in enumerate(rows) if row.kind == "header" and row.text.startswith(header)),
+        (
+            i
+            for i, row in enumerate(rows)
+            if row.kind == "header" and row.text.startswith(header)
+        ),
         None,
     )
     if start is None:
@@ -543,7 +555,9 @@ async def test_an_untouched_shipped_default_that_refuses_is_quietly_not_running(
     assert not {"tabbyapi", "aphrodite"} & setup, setup
     assert [row.kind for row in quiet] == ["info"], quiet
     assert "TabbyAPI" in quiet[0].text and "Aphrodite Engine" in quiet[0].text
-    assert not any(f"refused :{TABBY}" in line or f"refused :{APHRODITE}" in line for line in lines)
+    assert not any(
+        f"refused :{TABBY}" in line or f"refused :{APHRODITE}" in line for line in lines
+    )
 
 
 @pytest.mark.parametrize("owned", (False, True), ids=("untouched", "set-up"))
@@ -727,7 +741,9 @@ async def test_find_counts_one_listed_provider_in_the_singular(servers):
         await _settle(app, pilot)
         placeholder = switcher.query_one("#console-popover-find", Input).placeholder
 
-    assert placeholder.startswith("type to search 1 model in 1 provider · "), placeholder
+    assert placeholder.startswith("type to search 1 model in 1 provider · "), (
+        placeholder
+    )
 
 
 @private_profile_test
@@ -774,9 +790,7 @@ async def test_find_filters_not_running_by_provider_name_as_every_group(
 
 
 @pytest.mark.parametrize("owned_by", ("chat default", "edit"))
-async def test_a_configured_default_that_refuses_still_reads_refused(
-    servers, owned_by
-):
+async def test_a_configured_default_that_refuses_still_reads_refused(servers, owned_by):
     """TASK-33005.6 AC#3: the chat default, or a table the user changed (here
     only its model), is configured, so its refusal stays a NEEDS SETUP row."""
     config = _with_shipped("tabbyapi")
@@ -818,7 +832,9 @@ async def test_an_untouched_shipped_default_that_runs_reads_reachable(servers):
     [(401, "Not ready · key rejected", True), (403, "Ready · not tested", False)],
     ids=["401", "403"],
 )
-async def test_a_listing_403_never_blocks_but_a_401_does(servers, status, word, blocked):
+async def test_a_listing_403_never_blocks_but_a_401_does(
+    servers, status, word, blocked
+):
     """Qodo #2958 follow-up (owner ruling): llama.cpp answers its listing with
     a 401 or a 403. The switcher row and the Console's readiness for the same
     connection agree; only the 401 rejects the key and blocks sending."""
@@ -830,7 +846,9 @@ async def test_a_listing_403_never_blocks_but_a_401_does(servers, status, word, 
         await _settle(app, pilot)
         row = line_with(list_lines(app, switcher), "llama.cpp")
         console = build_console_settings_readiness(
-            build_target_default_console_session_settings(CONFIG, "llama_cpp", "model-a"),
+            build_target_default_console_session_settings(
+                CONFIG, "llama_cpp", "model-a"
+            ),
             app_config=CONFIG,
             connection_evidence=shared_connection_evidence(lambda: app),
         )
@@ -1098,9 +1116,10 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
     ),
     ids=("refused", "key-rejected"),
 )
+@pytest.mark.parametrize("poll_phase", ["unchanged", "config-lock-held"])
 @private_profile_test
 async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
-    request, category, word, hint
+    request, category, word, hint, poll_phase
 ):
     """TASK-33005.7 AC#2/#3/#5: the Inspector's setup line read "Provider
     configuration required" for any blocker, and a rejected key's composer
@@ -1113,7 +1132,11 @@ async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
         _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook import config
     from tldw_chatbook.Chat.console_session_settings import readiness_words
+    from tldw_chatbook.UI.Console_Modules.config_sync import (
+        run_console_presentation_sync,
+    )
 
     harness = _ConsoleFlowHarness(_persisted_console_app())
     async with harness.run_test(size=(211, 44)) as pilot:
@@ -1124,8 +1147,10 @@ async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
         # (a poll there refreshed nothing in about half the local runs).
         await _wait(
             pilot,
-            lambda: console._console_attach_reconciled
-            and not console._console_attach_reconcile_running,
+            lambda: (
+                console._console_attach_reconciled
+                and not console._console_attach_reconcile_running
+            ),
             tries=500,
         )
         console._stop_console_credential_poll_timer()
@@ -1134,19 +1159,72 @@ async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
             settings, app_config=console._provider_readiness_app_config()
         )
         store = ProviderTestEvidenceStore(lambda: harness)
-        # Warm before the settle, so no await sits between the settle and the
-        # poll: a sync during the warm-up could paint the settled word itself
-        # (TASK-38958 review). The display's key excludes evidence.
-        await _fresh_readiness_display(console, pilot)
-        store.settle(
-            store.begin(identity), ProviderProbeResult("unreachable", (), category)
-        )
-        console._poll_console_credential_readiness()
-        # Read before any pause, so a queued repaint (the attach's) cannot
-        # stand in for the poll (TASK-38958).
-        status = _rail_text(console, "#workbench-header-status")
-        await pilot.pause()
+        evidence_version = status = None
 
+        def settle_and_poll():
+            nonlocal evidence_version
+            store.settle(
+                store.begin(identity), ProviderProbeResult("unreachable", (), category)
+            )
+            evidence_version = shared_connection_evidence(lambda: harness).version
+            console._poll_console_credential_readiness()
+
+        def try_first_poll():
+            nonlocal status
+            with ExitStack() as acquired:
+                for lock in (
+                    config._settings_rebuild_lock(),
+                    config._config_file_lock(),
+                ):
+                    if not lock.acquire(blocking=False):
+                        return False
+                    acquired.callback(lock.release)
+                if not run_console_presentation_sync(console, lambda: None):
+                    return False
+                # A queued repaint cannot see the new evidence before this poll.
+                settle_and_poll()
+                status = _rail_text(console, "#workbench-header-status")
+                snapshot = console._console_credential_snapshot
+                assert snapshot is not None and snapshot[2] == evidence_version
+                return True
+
+        held, release = threading.Event(), threading.Event()
+        holder = None
+        if poll_phase == "config-lock-held":
+            await _fresh_readiness_display(console, pilot)
+
+            def hold_config_lock():
+                with config._settings_rebuild_lock():
+                    held.set()
+                    assert release.wait(5), "config hold was never released"
+
+            holder = threading.Thread(target=hold_config_lock)
+            holder.start()
+        try:
+            if holder is None:
+                await _fresh_readiness_display(console, pilot, try_first_poll)
+            else:
+                assert await asyncio.to_thread(held.wait, 5)
+                settle_and_poll()
+                snapshot = console._console_credential_snapshot
+                assert snapshot is None or snapshot[2] != evidence_version
+            await pilot.pause()
+        finally:
+            release.set()
+            if holder is not None:
+                holder.join(5)
+                assert not holder.is_alive()
+
+        def poll_rendered_settlement():
+            nonlocal status
+            console._poll_console_credential_readiness()
+            snapshot = console._console_credential_snapshot
+            settled = snapshot is not None and snapshot[2] == evidence_version
+            if settled and holder is not None:
+                status = _rail_text(console, "#workbench-header-status")
+            return settled
+
+        await _wait(pilot, poll_rendered_settlement)
         _settings, readiness = console._active_console_settings_readiness()
         inspector = console._build_console_inspector_state(None)
         rows = {row.label: row.value for row in inspector.rows}
@@ -1171,7 +1249,9 @@ async def test_a_cloud_row_whose_key_check_timed_out_opens_settings(servers):
             app_config=CONFIG,
         )
         store = ProviderTestEvidenceStore(lambda: app)
-        store.settle(store.begin(identity), ProviderProbeResult("unreachable", (), "timeout"))
+        store.settle(
+            store.begin(identity), ProviderProbeResult("unreachable", (), "timeout")
+        )
         switcher = build(app)
         await app.push_screen(switcher)
         await _settle(app, pilot)

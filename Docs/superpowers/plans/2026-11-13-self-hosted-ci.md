@@ -5,7 +5,7 @@ Architecture: GitHub orchestrates disposable KVM runners on the existing Linux s
 Tech stack: GitHub Actions, Ubuntu 24.04, QEMU/KVM, systemd, existing runner controller.
 Spec: Docs/superpowers/specs/2026-11-13-self-hosted-ci-design.md
 ADR required: yes
-ADR path: backlog/decisions/359-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
 Reason: CI execution, credential and isolation boundary.
 
 ## Tasks

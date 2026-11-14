@@ -443,6 +443,8 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         Disposition.PERSISTED_DEFAULT,
         "compare shipped database sentinels before mapping isolated or replacement destinations; never open these literal paths",
     ),
+    # ADR-256 portable roots are confined acquired/private-attempt members;
+    # exact contexts and counts retain the same owner-path census enforcement.
     ExceptionRule(
         "tldw_chatbook/Backup_Recovery/detached_layout.py",
         "function:_owner_items",
@@ -451,8 +453,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         Disposition.PERSISTED_DEFAULT,
         "recognize absent lazy default stores without substituting an old or host database",
     ),
-    # ADR-256 portable roots are confined acquired/private-attempt members;
-    # exact contexts and counts retain the same owner-path census enforcement.
     ExceptionRule(
         "tldw_chatbook/Backup_Recovery/detached_layout.py",
         "function:produce_detached_archive",
@@ -526,12 +526,20 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "resolver seed for the default config path",
     ),
     ExceptionRule(
-        "tldw_chatbook/DB/recovery_operations.py",
+        "tldw_chatbook/Backup_Recovery/sqlite_adapters.py",
         "function:_sqlite_inventory_status",
         "literal:~/.local/share/tldw_cli/",
         1,
         Disposition.PERSISTED_DEFAULT,
         "compare the shipped database sentinel before classifying an absent optional default; never open this literal path",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/Chat/custom_tokenizers.py",
+        "function:__init__",
+        "literal:~/.config/tldw_cli/tokenizers",
+        1,
+        Disposition.SHARED_ARTIFACT,
+        "shared custom tokenizer artifact directory",
     ),
     ExceptionRule(
         "tldw_chatbook/Evals/eval_orchestrator.py",
@@ -748,14 +756,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         1,
         Disposition.SHARED_ARTIFACT,
         "reusable Higgs voice artifact directory",
-    ),
-    ExceptionRule(
-        "tldw_chatbook/Utils/custom_tokenizers.py",
-        "function:__init__",
-        "literal:~/.config/tldw_cli/tokenizers",
-        1,
-        Disposition.SHARED_ARTIFACT,
-        "shared custom tokenizer artifact directory",
     ),
     ExceptionRule(
         "tldw_chatbook/Utils/startup_errors.py",

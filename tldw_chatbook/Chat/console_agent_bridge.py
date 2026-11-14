@@ -67,12 +67,12 @@ from tldw_chatbook.Agents.agent_models import (
     FENCE_TOOL_RESULT_PREFIX,
     LOAD_TOOLS_NAME,
     MAX_RUN_CONTROL_STEPS,
-    MAX_STEERING_CHARS,
+    MAX_STEERING_CHARS as MAX_STEERING_CHARS,
     RUN_CANCELLED as RUN_CANCELLED,
     RUN_DONE as RUN_DONE,
     RunBudget,
     RUNTIME_TOOL_NAMES,
-    STEERING_SOURCE_USER,
+    STEERING_SOURCE_USER,  # noqa: F401 -- live steering owner dependency
     TERMINAL_RUN_STATUSES,
     SPAWN_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
@@ -3181,65 +3181,52 @@ _PER_CALL_SAMPLING_RESOLUTION_FIELDS = {
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
-    AgentService calls it as ``chat_call(api_endpoint=…, messages_payload=…,
-    streaming=False, model=…)`` and expects a
-    ``{"choices":[{"message":{"content": <full text>}}]}`` response. Sub-agent
-    turns (leading system content prefixed by the registry-resolved or
-    shipped-default ``agents.subagent_system`` prompt — see ``_is_subagent``)
-    are streamed to a throwaway gate and never touch the transcript.
+    AgentService calls it as ``chat_call(api_endpoint=…, messages_payload=…, streaming=False,
+    model=…)`` and expects a ``{"choices":[{"message":{"content": <full text>}}]}`` response.
+    Sub-agent turns (leading system content prefixed by the registry-resolved or shipped-default
+    ``agents.subagent_system`` prompt — see ``_is_subagent``) are streamed to a throwaway gate and
+    never touch the transcript.
 
-    Every non-sealed primary turn streams live to the store as it arrives —
-    not just the final answer — since the gate cannot know in advance
-    whether a given turn will end up being a tool call or the final answer:
-    a well-behaved fence-first tool call never streams anything (the gate
-    seals from the first token), but a disobedient turn that emits prose
-    before a mid-stream fence has already forwarded that prose to the store
-    by the time the completed turn is classified as a tool call. When that
-    happens, this adapter resets the message's streamed content back to
-    empty once the turn is confirmed to carry a tool call (see
-    ``ConsoleChatStore.reset_stream_content``), so the leaked prose — already
-    preserved in that turn's ``STEP_MODEL`` step log — does not survive to
-    garble the next turn's chunks on the same message (Plan-B Task 5
-    Finding A).
+    Every non-sealed primary turn streams live to the store as it arrives — not just the final
+    answer — since the gate cannot know in advance whether a given turn will end up being a tool
+    call or the final answer: a well-behaved fence-first tool call never streams anything (the gate
+    seals from the first token), but a disobedient turn that emits prose before a mid-stream fence
+    has already forwarded that prose to the store by the time the completed turn is classified as a
+    tool call. When that happens, this adapter resets the message's streamed content back to empty
+    once the turn is confirmed to carry a tool call (see
+    ``ConsoleChatStore.reset_stream_content``), so the leaked prose — already preserved in that
+    turn's ``STEP_MODEL`` step log — does not survive to garble the next turn's chunks on the same
+    message (Plan-B Task 5 Finding A).
 
-    ``should_cancel`` is polled once per received chunk, AFTER it has been fed
-    to the gate and (for the primary) flushed to the store — never before.
-    Checking before-feed would let a single-chunk turn's content vanish
-    entirely (e.g. a whole leading tool-call fence dropped mid-flight),
-    which the pure loop would then misreport as a normal empty "done" turn
-    rather than "cancelled", since it only re-polls cancellation at its own
-    step/tool-call boundaries. Checking after-feed guarantees every received
-    chunk is always accounted for, while still stopping the stream promptly
-    (no more chunks are pulled once cancellation is observed) and letting the
-    loop's own boundary check catch the cancellation on the next poll.
-    While NO chunk arrives it is also polled on a timer (TASK-33666; see
-    ``watch_content_stalls``), so a Stop ends the wait on a silent provider.
-    That poll runs only between chunks, so it never drops a received one.
+    ``should_cancel`` is polled once per received chunk, AFTER it has been fed to the gate and (for
+    the primary) flushed to the store — never before. Checking before-feed would let a single-chunk
+    turn's content vanish entirely (e.g. a whole leading tool-call fence dropped mid-flight), which
+    the pure loop would then misreport as a normal empty "done" turn rather than "cancelled", since
+    it only re-polls cancellation at its own step/tool-call boundaries. Checking after-feed
+    guarantees every received chunk is always accounted for, while still stopping the stream
+    promptly (no more chunks are pulled once cancellation is observed) and letting the loop's own
+    boundary check catch the cancellation on the next poll. While NO chunk arrives it is also
+    polled on a timer (TASK-33666; see ``watch_content_stalls``), so a Stop ends the wait on a
+    silent provider. That poll runs only between chunks, so it never drops a received one.
 
-    ``chat_call`` bridges into async gateway code via the single event
-    ``loop`` passed in at construction — created once by
-    ``ConsoleAgentBridge.run_reply`` and reused for every turn of that run
-    (the tool-call turn(s), any sub-agent turns, and the final-answer turn),
-    rather than a fresh ``asyncio.run()`` per turn (PR #629 Fix 1(c)). A
-    fresh loop per turn meant a fresh loop identity on every single
-    ``chat_call``, which forced the gateway's owned ``httpx.AsyncClient`` to
-    swap (see ``ConsoleProviderGateway._active_http_client``) once per turn
-    instead of at most once per run.
+    ``chat_call`` bridges into async gateway code via the single event ``loop`` passed in at
+    construction — created once by ``ConsoleAgentBridge.run_reply`` and reused for every turn of
+    that run (the tool-call turn(s), any sub-agent turns, and the final-answer turn), rather than a
+    fresh ``asyncio.run()`` per turn (PR #629 Fix 1(c)). A fresh loop per turn meant a fresh loop
+    identity on every single ``chat_call``, which forced the gateway's owned ``httpx.AsyncClient``
+    to swap (see ``ConsoleProviderGateway._active_http_client``) once per turn instead of at most
+    once per run.
 
-    PR2a Task 6.5: that shared loop is now driven by its OWN thread
-    (``run_forever``, started in ``run_reply``) and every turn is submitted
-    with ``asyncio.run_coroutine_threadsafe``. It used to be driven by
-    ``run_until_complete`` on whichever thread happened to call — sound
-    only while the whole run tree was single-threaded. Under the fleet a
-    child runs on its own thread and calls ``chat_call`` while the parent
-    is inside its own call, and a second ``run_until_complete`` on an
-    already-running loop raises ``RuntimeError: This event loop is already
-    running``: PROBED, and it failed EVERY overlapping child (the child's
-    run row persisted `error` and its coroutine was dropped un-awaited).
-    Submitting instead keeps exactly one loop and one httpx client per run
-    — Fix 1(c) intact — while letting the parent's and the children's
-    turns be genuinely in flight at once, which is the whole point of the
-    fleet.
+    PR2a Task 6.5: that shared loop is now driven by its OWN thread (``run_forever``, started in
+    ``run_reply``) and every turn is submitted with ``asyncio.run_coroutine_threadsafe``. It used
+    to be driven by ``run_until_complete`` on whichever thread happened to call — sound only while
+    the whole run tree was single-threaded. Under the fleet a child runs on its own thread and
+    calls ``chat_call`` while the parent is inside its own call, and a second
+    ``run_until_complete`` on an already-running loop raises ``RuntimeError: This event loop is
+    already running``: PROBED, and it failed EVERY overlapping child (the child's run row persisted
+    `error` and its coroutine was dropped un-awaited). Submitting instead keeps exactly one loop
+    and one httpx client per run — Fix 1(c) intact — while letting the parent's and the children's
+    turns be genuinely in flight at once, which is the whole point of the fleet.
     """
 
     def _acknowledge_live_native_continuation(self, original, projected, model_result):
@@ -7737,6 +7724,20 @@ class ConsoleAgentBridge:
 
     # -- rail reads -----------------------------------------------------
 
+    def current_primary_run_id(self, conversation_id: str) -> str | None:
+        """Qualify the memoized primary against its exact live native mailbox."""
+        run_id = self.live_primary_run_id(conversation_id)
+        service = self._fleet_services.get(conversation_id)
+        if service is None or run_id is None:
+            return None
+        with service._primary_steering_lock:
+            if (
+                self._fleet_services.get(conversation_id) is service
+                and run_id in service._primary_mailboxes
+            ):
+                return run_id
+        return None
+
     def live_primary_run_id(self, conversation_id: str) -> str | None:
         """task-31386: the primary run last bound or stepping in ``conversation_id``.
 
@@ -8166,7 +8167,13 @@ class ConsoleAgentBridge:
                 handles.append(handle)
         return handles
 
-    def cancel_subagent(self, conversation_id: str, handle_id: str) -> bool:
+    def cancel_subagent(
+        self,
+        conversation_id: str,
+        handle_id: str,
+        *,
+        expected_run_id: str | None = None,
+    ) -> bool:
         """Cooperatively cancel ONE live child of this conversation's fleet.
 
         PR2b Task 5 (per-row cancel): delegates straight to
@@ -8189,6 +8196,15 @@ class ConsoleAgentBridge:
             published run's fleet is off) or `handle_id` is unknown/already
             terminal; `True` when a live handle was found and cancelled.
         """
+        if expected_run_id is not None:
+            coordinator = self._fleet_coordinators.get(conversation_id)
+            handle = coordinator.get(handle_id) if coordinator is not None else None
+            if (
+                handle is None
+                or handle.run_id != expected_run_id
+                or handle.status in TERMINAL_RUN_STATUSES
+            ):
+                return False
         self._prune_settled_fleet_survivors(conversation_id)
         service = self._fleet_services.get(conversation_id)
         if service is not None and service.cancel_subagent(handle_id):
@@ -8268,69 +8284,23 @@ class ConsoleAgentBridge:
                 cancelled += 1
         return cancelled
 
-    def steer_subagent(self, conversation_id: str, row_id: str, text: str) -> bool:
-        """Queue USER steering for ONE live child of this conversation's fleet.
+    def steer_subagent(
+        self,
+        conversation_id: str,
+        row_id: str,
+        text: str,
+        *,
+        expected_run_id: str | None = None,
+    ) -> bool:
+        """Queue USER steering for ONE live child of this conversation's fleet."""
+        from . import console_subagent_control
 
-        PR3b Task 3 (spec §6's second path into Task 1's per-child
-        mailbox; §7's drill-in steering input). The USER twin of
-        ``AgentService``'s ``send_to_agent`` closure (Task 2), sharing its
-        resolution SHAPE but not its plumbing:
-
-        * **No service hop, deliberately** — unlike ``cancel_subagent``
-          just above, whose retained-owner walk exists only because cancel
-          Events are service-local, the mailbox lives on the
-          conversation-lifetime ``FleetCoordinator`` this bridge owns
-          (``_fleet_coordinators``), reachable from the UI thread under
-          the coordinator's own brief lock. A live survivor another turn's
-          service spawned is steerable for free.
-        * **Both id vocabularies, handle id FIRST** (Task 2's pinned
-          order): a live fleet row's ``row_id`` IS the handle id, but the
-          drill-in target the panel actually holds
-          (``_console_agent_drilldown_run_id``) is a RUN id — both must
-          reach the same mailbox, and a pathological collision lands on
-          the handle-id owner.
-        * **Validation at THIS boundary** (non-empty after strip,
-          ``MAX_STEERING_CHARS``) — ``post_steering`` deliberately does
-          not validate (Task 1's pinned decision); each producer owes its
-          own refusal. This producer's user-facing copy lives in the
-          steering bar widget, which refuses before posting — the checks
-          here are the boundary's own, so no caller can bypass them.
-        * **Steering never cancels** (spec §3 invariant 4): the post
-          touches the mailbox and nothing else — no cancel Event, no run
-          row, no handle status.
-
-        Args:
-            conversation_id: The conversation whose fleet to look up.
-            row_id: A live child's handle id, or its run id.
-            text: The steering message body (posted stripped; the drain
-                point prepends the ``[Steering from user]`` label).
-
-        Returns:
-            ``True`` when the entry was queued for a LIVE child; ``False``
-            — never raises — for empty/oversize text, a conversation with
-            no coordinator, an unknown id, or a finished child (including
-            losing the race where the child goes terminal between the
-            snapshot and the post — ``post_steering`` refuses terminal
-            handles itself, and that refusal is returned honestly).
-        """
-        stripped = (text or "").strip()
-        if not stripped or len(stripped) > MAX_STEERING_CHARS:
-            return False
-        coordinator = self._fleet_coordinators.get(conversation_id)
-        if coordinator is None:
-            return False
-        live = [
-            handle
-            for handle in coordinator.snapshot()
-            if handle.status not in TERMINAL_RUN_STATUSES
-        ]
-        target = next((h for h in live if h.handle_id == row_id), None) or next(
-            (h for h in live if h.run_id == row_id), None
-        )
-        if target is None:
-            return False
-        return coordinator.post_steering(
-            target.handle_id, STEERING_SOURCE_USER, stripped
+        return console_subagent_control.steer_subagent(
+            self,
+            conversation_id,
+            row_id,
+            text,
+            expected_run_id=expected_run_id,
         )
 
     def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
@@ -9991,56 +9961,50 @@ def _read_change_review_markers(
     ]
 
 
-
-# Direct defining callbacks for finite marker presentation.
+# Definition-time identity of the marker and preflight callbacks.
 _CONSOLE_PRESENTATION_SOURCES = tuple(
     (
         name,
-        vars(ConsoleAgentBridge)[name],
+        descriptor,
         (
-            (
-                function,
-                function.__code__,
-                function.__defaults__,
-                function.__kwdefaults__,
-                tuple((function.__kwdefaults__ or {}).items()),
-            ),
+            function,
+            function.__code__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
         ),
     )
-    for name in (
-        "change_review_marker_messages",
-        "_change_review_marker_block",
-        "preview_tool_surface",
-        "light_surface_local_tools_available",
+    for name, descriptor in (
+        *(
+            (name, vars(ConsoleAgentBridge)[name])
+            for name in (
+                "change_review_marker_messages",
+                "_change_review_marker_block",
+                "preview_tool_surface",
+                "light_surface_local_tools_available",
+            )
+        ),
+        ("_read_change_review_markers", _read_change_review_markers),
+        ("_preview_kill_reader", _preview_kill_reader),
+        ("__call__", _PreviewAppToolKillSwitch.__call__),
     )
-    for descriptor in (vars(ConsoleAgentBridge)[name],)
     for function in (
         descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
     )
 )
-_CHANGE_REVIEW_MARKER_SOURCES = _CONSOLE_PRESENTATION_SOURCES[:2]
+_CHANGE_REVIEW_MARKER_SOURCES = tuple(
+    (name, method, (source,))
+    for name, method, source in _CONSOLE_PRESENTATION_SOURCES[:2]
+)
 _CONSOLE_TOOL_PREVIEW_METHODS = tuple(
-    (name, method, bindings[0][1])
-    for name, method, bindings in _CONSOLE_PRESENTATION_SOURCES[2:]
+    (name, method, source[1])
+    for name, method, source in _CONSOLE_PRESENTATION_SOURCES[2:4]
 )
+(
+    _CHANGE_REVIEW_MARKER_HELPER_SOURCE,
+    _CONSOLE_PREVIEW_KILL_SOURCE,
+    _CONSOLE_PREVIEW_APP_KILL_SOURCE,
+) = (source for _, _, source in _CONSOLE_PRESENTATION_SOURCES[4:])
 
-
-# Original collision view is part of ordinary catalog identity, not a new owner.
+# Original collision view is part of ordinary catalog identity.
 _NATIVE_ORDINARY_COLLISION_PROVIDER = _CollisionFilteredMCPProvider
-_CONSOLE_PRESENTATION_HELPER_SOURCES = tuple(
-    (
-        function,
-        function.__code__,
-        function.__defaults__,
-        function.__kwdefaults__,
-        tuple((function.__kwdefaults__ or {}).items()),
-    )
-    for function in (
-        _read_change_review_markers,
-        _preview_kill_reader,
-        _PreviewAppToolKillSwitch.__call__,
-    )
-)
-_CHANGE_REVIEW_MARKER_HELPER_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[0]
-_CONSOLE_PREVIEW_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[1]
-_CONSOLE_PREVIEW_APP_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[2]

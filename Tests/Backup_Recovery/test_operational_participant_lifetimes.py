@@ -3,29 +3,57 @@
 import select
 import sqlite3
 import time
+from contextlib import ExitStack, nullcontext
 
 import pytest
 
-from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
-from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
-from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
-from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
-from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
-
 from Tests.Backup_Recovery.test_admission import launch, line, release
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root
+from tldw_chatbook.Backup_Recovery import bootstrap
+from tldw_chatbook.Backup_Recovery import storage_admission as storage
+from tldw_chatbook.Backup_Recovery.participants import (
+    core_closing,
+    repository_participant,
+    retire_current_thread_caches,
+)
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
+from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
 
 CACHED = (WorkspaceDB, AgentRunsDB, ClientNotificationsDB)
-FRESH = (ScheduledTasksDB, LocalResearchService, LocalWritingService)
+FRESH = (ScheduledTasksDB,)
+HELD_SERVICES = (LocalResearchService, LocalWritingService)
+ALL = CACHED + FRESH + HELD_SERVICES
+
+
+@pytest.fixture
+def open_store():
+    owners = {}
+    with ExitStack() as cleanup:
+
+        def open_store(owner_type, path):
+            if issubclass(owner_type, AgentRunsDB):
+                if path not in owners:
+                    owners[path] = cleanup.enter_context(
+                        ConsoleExecutionOwner.acquire(path)
+                    )
+                owner = owner_type(path, execution_owner=owners[path])
+                cleanup.callback(owner.close)
+                return owner
+            return owner_type(path)
+
+        yield open_store
 
 
 @pytest.mark.parametrize("owner_type", CACHED)
 def test_failed_source_close_retains_live_handle_and_native_exclusion(
-    tmp_path, monkeypatch, owner_type, local_root, launch
+    tmp_path, monkeypatch, owner_type, local_root, launch, open_store
 ):
-    owner = owner_type(tmp_path / "store.sqlite")
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     connection = owner._held_connection()
     real_close = connection.close
 
@@ -39,20 +67,27 @@ def test_failed_source_close_retains_live_handle_and_native_exclusion(
         owner.close()
         assert owner._thread_local.conn is connection
         assert connection.execute("SELECT 42").fetchone()[0] == 42
+        with storage._lock:
+            assert (
+                repository_participant(owner).connections[connection]
+                in storage._live_leases
+            )
         assert not pause.drain(time.monotonic() + 0.02)
         assert not select.select([child.stdout], [], [], 0.02)[0]
     finally:
         monkeypatch.setattr(connection, "close", real_close)
         real_close()
         owner.close()
+        if owner_type is AgentRunsDB:
+            owner._execution_owner.close()
         pause.resume()
     assert line(child) == "entered"
     release(child)
 
 
 @pytest.mark.parametrize("owner_type", CACHED)
-def test_cached_getter_refuses_late_borrower(tmp_path, owner_type):
-    owner = owner_type(tmp_path / "store.sqlite")
+def test_cached_getter_refuses_late_borrower(tmp_path, owner_type, open_store):
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     pause = storage._begin_local_pause()
     try:
         with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
@@ -63,8 +98,8 @@ def test_cached_getter_refuses_late_borrower(tmp_path, owner_type):
 
 
 @pytest.mark.parametrize("owner_type", CACHED)
-def test_source_close_cannot_revoke_managed_work(tmp_path, owner_type):
-    owner = owner_type(tmp_path / "store.sqlite")
+def test_source_close_cannot_revoke_managed_work(tmp_path, owner_type, open_store):
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     try:
         with owner.transaction() as connection:
             connection.execute("CREATE TABLE phase5_result(value)")
@@ -79,18 +114,16 @@ def test_source_close_cannot_revoke_managed_work(tmp_path, owner_type):
         owner.close()
 
 
-@pytest.mark.parametrize("owner_type", CACHED + FRESH)
-def test_installed_scope_finishes_after_participant_pause(tmp_path, owner_type):
+@pytest.mark.parametrize("owner_type", ALL)
+def test_installed_scope_finishes_after_participant_pause(
+    tmp_path, owner_type, open_store
+):
     from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
-    owner = owner_type(tmp_path / "store.sqlite")
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     try:
         participant = repository_participant(owner)
-        scope = (
-            owner.connection
-            if owner_type in CACHED + (ScheduledTasksDB,)
-            else owner._connection
-        )
+        scope = managed_scope(owner)
         with scope() as connection:
             participant.close_admission()
             with scope() as nested:
@@ -104,11 +137,11 @@ def test_installed_scope_finishes_after_participant_pause(tmp_path, owner_type):
         owner.close()
 
 
-@pytest.mark.parametrize("owner_type", FRESH)
-def test_fresh_raw_getter_refuses_participant_gate(tmp_path, owner_type):
+@pytest.mark.parametrize("owner_type", FRESH + HELD_SERVICES)
+def test_fresh_raw_getter_refuses_participant_gate(tmp_path, owner_type, open_store):
     from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
-    owner = owner_type(tmp_path / "store.sqlite")
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     try:
         participant = repository_participant(owner)
         participant.close_admission()
@@ -123,29 +156,23 @@ def test_fresh_raw_getter_refuses_participant_gate(tmp_path, owner_type):
 
 
 def raw_getter(owner):
-    return (
-        owner._connect
-        if isinstance(owner, (LocalResearchService, LocalWritingService))
-        else owner._get_connection
-    )
+    return owner._connect if isinstance(owner, HELD_SERVICES) else owner._get_connection
 
 
 def managed_scope(owner):
-    return (
-        owner._connection
-        if isinstance(owner, (LocalResearchService, LocalWritingService))
-        else owner.connection
-    )
+    return owner._transaction if isinstance(owner, HELD_SERVICES) else owner.connection
 
 
-@pytest.mark.parametrize("owner_type", CACHED + FRESH)
+@pytest.mark.parametrize("owner_type", ALL)
 def test_setup_exception_positively_closes_allocated_native(
-    tmp_path, monkeypatch, owner_type
+    tmp_path, monkeypatch, owner_type, open_store
 ):
     import importlib
     from tldw_chatbook.DB.base_db import BaseDB
 
-    owner = owner_type(tmp_path / "store.sqlite")
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
+    if owner_type in HELD_SERVICES:
+        owner._ensure_schema()
     connections = []
     if owner_type in CACHED + (ScheduledTasksDB,):
         target, name = BaseDB, "_get_connection"
@@ -183,8 +210,10 @@ def test_setup_exception_positively_closes_allocated_native(
 
 
 @pytest.mark.parametrize("owner_type", CACHED)
-def test_live_ping_failure_keeps_native_borrower(tmp_path, monkeypatch, owner_type):
-    owner = owner_type(tmp_path / "store.sqlite")
+def test_live_ping_failure_keeps_native_borrower(
+    tmp_path, monkeypatch, owner_type, open_store
+):
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     conn = owner._held_connection()
     execute = conn.execute
     owner._thread_local.conn_last_used = 0
@@ -206,9 +235,9 @@ def test_live_ping_failure_keeps_native_borrower(tmp_path, monkeypatch, owner_ty
 
 @pytest.mark.parametrize("owner_type", CACHED)
 def test_explicit_raw_close_allows_source_reopen_without_idle_probe(
-    tmp_path, owner_type
+    tmp_path, owner_type, open_store
 ):
-    owner = owner_type(tmp_path / "store.sqlite")
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     try:
         first = owner._held_connection()
         first.close()
@@ -219,24 +248,34 @@ def test_explicit_raw_close_allows_source_reopen_without_idle_probe(
         owner.close()
 
 
-@pytest.mark.parametrize("owner_type", FRESH)
+@pytest.mark.parametrize("owner_type", FRESH + HELD_SERVICES)
 def test_fresh_scope_native_close_success_failure_and_raw_escape(
-    tmp_path, monkeypatch, owner_type, local_root, launch
+    tmp_path, monkeypatch, owner_type, local_root, launch, open_store
 ):
-    owner = owner_type(tmp_path / "store.sqlite")
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     getter = raw_getter(owner)
     child = None
     try:
         with managed_scope(owner)() as conn:
             assert conn.execute("SELECT 42").fetchone()[0] == 42
-        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-            conn.execute("SELECT 42")
+        held = conn
+        if owner_type in HELD_SERVICES:
+            assert held.execute("SELECT 42").fetchone()[0] == 42
+        else:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                held.execute("SELECT 42")
         with pytest.raises(ValueError, match="rollback"):
             with managed_scope(owner)() as conn:
                 raise ValueError("rollback")
-        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-            conn.execute("SELECT 42")
+        if owner_type in HELD_SERVICES:
+            assert conn is held
+            assert held.execute("SELECT 42").fetchone()[0] == 42
+        else:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                conn.execute("SELECT 42")
         raw = getter()
+        if owner_type in HELD_SERVICES:
+            assert raw is held
         try:
             with managed_scope(owner)():
                 pass
@@ -248,7 +287,12 @@ def test_fresh_scope_native_close_success_failure_and_raw_escape(
                 assert raw.execute("SELECT 42").fetchone()[0] == 42
                 assert not pause.drain(time.monotonic() + 0.02)
                 assert not select.select([child.stdout], [], [], 0.02)[0]
-                raw.close()
+                if owner_type in HELD_SERVICES:
+                    retire_current_thread_caches(pause)
+                else:
+                    raw.close()
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    raw.execute("SELECT 42")
                 assert pause.drain(time.monotonic() + 0.5)
             finally:
                 pause.resume()
@@ -260,16 +304,18 @@ def test_fresh_scope_native_close_success_failure_and_raw_escape(
         owner.close()
 
 
-@pytest.mark.parametrize("owner_type", CACHED + FRESH)
+@pytest.mark.parametrize("owner_type", ALL)
 @pytest.mark.parametrize("pause_point", ("allocation", "setup"))
 def test_participant_pause_during_raw_allocation_refuses_return(
-    tmp_path, monkeypatch, owner_type, pause_point
+    tmp_path, monkeypatch, owner_type, pause_point, open_store
 ):
     import importlib
     from tldw_chatbook.DB.base_db import BaseDB
     from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
-    owner = owner_type(tmp_path / "store.sqlite")
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
+    if owner_type in HELD_SERVICES:
+        owner._ensure_schema()
     participant = repository_participant(owner)
     allocated = []
     target, name = (
@@ -300,6 +346,7 @@ def test_participant_pause_during_raw_allocation_refuses_return(
     try:
         with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
             raw_getter(owner)()
+        assert len(allocated) == 1
         with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
             allocated[0].execute("SELECT 42")
     finally:
@@ -311,12 +358,12 @@ def test_participant_pause_during_raw_allocation_refuses_return(
 
 @pytest.mark.parametrize("owner_type", CACHED)
 def test_source_thread_retires_after_managed_work_and_raw_borrowers(
-    tmp_path, owner_type, local_root, launch
+    tmp_path, owner_type, local_root, launch, open_store
 ):
     import queue
     import threading
 
-    owner = owner_type(tmp_path / "store.sqlite")
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     owner.close()
     ready, finish_work, close_source = (
         threading.Event(),
@@ -356,17 +403,25 @@ def test_source_thread_retires_after_managed_work_and_raw_borrowers(
     child = launch(local_root / "admission", "maintenance", ("bootstrap.unbound",))
     try:
         owner.close()  # This thread has no authority over the worker's cache.
-        with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
-            conn.close()
+        with core_closing(owner, conn) as allowed:
+            assert not allowed
         assert not pause.drain(time.monotonic() + 0.02)
         finish_work.set()
         assert result.get(timeout=5) == "work-finished"
+        with core_closing(owner, conn) as allowed:
+            assert not allowed
+        with storage._lock:
+            assert (
+                repository_participant(owner).connections[conn] in storage._live_leases
+            )
         assert not pause.drain(time.monotonic() + 0.02)
         assert not select.select([child.stdout], [], [], 0.02)[0]
         close_source.set()
         assert result.get(timeout=5) == "closed"
         worker.join(5)
         assert not worker.is_alive()
+        if owner_type is AgentRunsDB:
+            owner._execution_owner.close()
         assert pause.drain(time.monotonic() + 0.5)
     finally:
         finish_work.set()
@@ -378,15 +433,17 @@ def test_source_thread_retires_after_managed_work_and_raw_borrowers(
     release(child)
 
 
-@pytest.mark.parametrize("owner_type", CACHED + FRESH)
-def test_separate_instance_nested_admission_and_association(tmp_path, owner_type):
+@pytest.mark.parametrize("owner_type", ALL)
+def test_separate_instance_nested_admission_and_association(
+    tmp_path, owner_type, open_store
+):
     from tldw_chatbook.Backup_Recovery.participants import (
         repository_participant,
         register_core_connection,
     )
 
-    first = owner_type(tmp_path / "same.sqlite")
-    second = owner_type(tmp_path / "same.sqlite")
+    first = open_store(owner_type, tmp_path / "same.sqlite")
+    second = open_store(owner_type, tmp_path / "same.sqlite")
     raw = raw_getter(first)()
     pause = None
     try:
@@ -422,16 +479,21 @@ def test_separate_instance_nested_admission_and_association(tmp_path, owner_type
         second.close()
 
 
-@pytest.mark.parametrize("owner_type", FRESH)
+@pytest.mark.parametrize("owner_type", FRESH + HELD_SERVICES)
 def test_operation_exit_failed_native_close_retains_live_handle(
-    tmp_path, monkeypatch, owner_type, local_root, launch
+    tmp_path, monkeypatch, owner_type, local_root, launch, open_store
 ):
     from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
-    owner = owner_type(tmp_path / "store.sqlite")
+    owner = open_store(owner_type, tmp_path / "store.sqlite")
     connection = None
     try:
-        with pytest.raises(sqlite3.OperationalError, match="injected close failure"):
+        expected_close = (
+            nullcontext()
+            if owner_type in HELD_SERVICES
+            else pytest.raises(sqlite3.OperationalError, match="injected close failure")
+        )
+        with expected_close:
             with managed_scope(owner)() as connection:
                 close = connection.close
 
@@ -444,13 +506,24 @@ def test_operation_exit_failed_native_close_retains_live_handle(
         pause = storage._begin_local_pause()
         child = launch(local_root / "admission", "maintenance", ("bootstrap.unbound",))
         try:
-            owner.close()  # These owners' public close only owns memory.
+            if owner_type in HELD_SERVICES:
+                with pytest.raises(
+                    sqlite3.OperationalError, match="injected close failure"
+                ):
+                    retire_current_thread_caches(pause)
+            else:
+                owner.close()
             assert connection.execute("SELECT 42").fetchone()[0] == 42
             assert not participant.drain(time.monotonic() + 0.02)
             assert not pause.drain(time.monotonic() + 0.02)
             assert not select.select([child.stdout], [], [], 0.02)[0]
             monkeypatch.setattr(connection, "close", close)
-            close()
+            if owner_type in HELD_SERVICES:
+                retire_current_thread_caches(pause)
+            else:
+                close()
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 42")
             assert participant.drain(time.monotonic() + 0.5)
             assert pause.drain(time.monotonic() + 0.5)
         finally:
@@ -464,14 +537,16 @@ def test_operation_exit_failed_native_close_retains_live_handle(
         owner.close()
 
 
-@pytest.mark.parametrize("owner_type", CACHED + FRESH)
-def test_ordinary_subclass_receives_no_installed_participant(tmp_path, owner_type):
+@pytest.mark.parametrize("owner_type", ALL)
+def test_ordinary_subclass_receives_no_installed_participant(
+    tmp_path, owner_type, open_store
+):
     from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     class Ordinary(owner_type):
         pass
 
-    owner = Ordinary(tmp_path / "ordinary.sqlite")
+    owner = open_store(Ordinary, tmp_path / "ordinary.sqlite")
     try:
         with managed_scope(owner)() as connection:
             assert connection.execute("SELECT 42").fetchone()[0] == 42
@@ -481,7 +556,7 @@ def test_ordinary_subclass_receives_no_installed_participant(tmp_path, owner_typ
         owner.close()
 
 
-@pytest.mark.parametrize("owner_type", CACHED + FRESH)
+@pytest.mark.parametrize("owner_type", ALL)
 def test_memory_retains_original_connection_policy_during_pause(owner_type):
     from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
@@ -531,7 +606,7 @@ def test_relative_file_path_binds_at_construction(tmp_path, monkeypatch, owner_t
     monkeypatch.chdir(other)
     try:
         assert owner.db_path == tmp_path / "relative.sqlite"
-        with owner._connection() as conn:
+        with owner._transaction() as conn:
             assert conn.execute("SELECT 42").fetchone()[0] == 42
         assert not (other / "relative.sqlite").exists()
     finally:
@@ -574,11 +649,12 @@ def test_previous_raw_allocation_rechecks_participant_before_return(
 
     owner = owner_type(tmp_path / "previous.sqlite", "phase5-race")
     owner.close()
+    if owner_type is EventStateRepository:
+        owner._ensure_schema()
     participant = repository_participant(owner)
     target, name = (
         (BaseDB, "_get_connection")
-        if owner_type
-        in (LibraryCollectionsDB, EventStateRepository, SyncStateRepository)
+        if owner_type in (LibraryCollectionsDB, SyncStateRepository)
         else (importlib.import_module(owner_type.__module__), "connect_private_sqlite")
     )
     original = getattr(target, name)
@@ -620,33 +696,40 @@ def test_scheduled_schema_migrations_finish_in_original_admitted_scope(
 ):
     from tldw_chatbook.Scheduling.db.migrations import v0_to_v1
 
-    owner = ScheduledTasksDB(tmp_path / "scheduled.sqlite")
+    owner = None
     original = v0_to_v1.migrate
     pause = None
 
     def pause_between_migrations(db):
         nonlocal pause
         original(db)
+        assert pause is None
         pause = storage._begin_local_pause()
 
     monkeypatch.setattr(v0_to_v1, "migrate", pause_between_migrations)
     try:
-        owner._initialize_schema()
+        owner = ScheduledTasksDB(tmp_path / "scheduled.sqlite")
+        assert pause is not None
+        pause.resume()
+        pause = None
+        with owner.connection() as connection:
+            assert (
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_version"
+                ).fetchone()[0]
+                == ScheduledTasksDB._CURRENT_SCHEMA_VERSION
+            )
     finally:
         if pause is not None:
             pause.resume()
-        owner.close()
-    with owner.connection() as connection:
-        assert (
-            connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-            == 3
-        )
+        if owner is not None:
+            owner.close()
 
 
 def test_agent_fresh_read_owns_scope_and_closes_only_fresh_handle(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, open_store
 ):
-    owner = AgentRunsDB(tmp_path / "agents.sqlite")
+    owner = open_store(AgentRunsDB, tmp_path / "agents.sqlite")
     held = owner._held_connection()
     original = owner._get_connection
     fresh = []
@@ -676,14 +759,14 @@ def test_agent_fresh_read_owns_scope_and_closes_only_fresh_handle(
         owner.close()
 
 
-@pytest.mark.parametrize("owner_type", CACHED + FRESH)
+@pytest.mark.parametrize("owner_type", ALL)
 def test_pending_operation_remains_visible_until_refused_on_worker(
-    tmp_path, monkeypatch, owner_type, local_root
+    tmp_path, monkeypatch, owner_type, local_root, open_store
 ):
     import queue
     import threading
 
-    owner = owner_type(tmp_path / "pending.sqlite")
+    owner = open_store(owner_type, tmp_path / "pending.sqlite")
     owner.close()
     entered, proceed = threading.Event(), threading.Event()
     result = queue.Queue()
@@ -712,12 +795,23 @@ def test_pending_operation_remains_visible_until_refused_on_worker(
     assert entered.wait(5)
     pause = storage._begin_local_pause()
     try:
+        with storage._lock:
+            (pending,) = (
+                attempt
+                for attempt in storage._pending_acquisitions
+                if attempt.thread is worker
+            )
         assert not pause.drain(time.monotonic() + 0.02)
         proceed.set()
         failure = result.get(timeout=5)
         assert isinstance(failure, bootstrap.RecoveryRequired), repr(failure)
+        assert failure.args == ("storage_locally_paused",)
         worker.join(5)
         assert not worker.is_alive()
+        with storage._lock:
+            assert pending not in storage._pending_acquisitions
+        if owner_type is AgentRunsDB:
+            owner._execution_owner.close()
         assert pause.drain(time.monotonic() + 0.5)
     finally:
         proceed.set()
@@ -764,10 +858,18 @@ for module in (
 ):
     importlib.import_module(module)
 from tldw_chatbook.Backup_Recovery.participants import repository_types
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 assert len(repository_types()) >= 13
 for number, cls in enumerate(repository_types()):
-    owner = cls(Path(sys.argv[1]) / (str(number) + ".sqlite")) if cls.__name__ not in {"CharactersRAGDB", "MediaDatabase", "PromptsDatabase"} else cls(Path(sys.argv[1]) / (str(number) + ".sqlite"), "import-check")
-    owner.close()
+    path = Path(sys.argv[1]) / (str(number) + ".sqlite")
+    if cls is AgentRunsDB:
+        with ConsoleExecutionOwner.acquire(path) as execution:
+            cls(path, execution_owner=execution).close()
+    elif cls.__name__ in {"CharactersRAGDB", "MediaDatabase", "PromptsDatabase"}:
+        cls(path, "import-check").close()
+    else:
+        cls(path).close()
 print("constructors-retired")
 """
     result = subprocess.run(

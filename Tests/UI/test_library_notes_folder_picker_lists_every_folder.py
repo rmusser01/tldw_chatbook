@@ -33,6 +33,7 @@ paint") -- unrelated to N-24, and still true.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 
 import pytest
@@ -41,9 +42,9 @@ from textual.widgets import Button, Input, TextArea
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import SIZE, _NotesProfile, _open_notes, _until
 from Tests.UI.test_library_shell import (
-    _FakeSkillsScopeService,
     LibraryProductionCSSHarness,
     _active_library_screen,
+    _FakeSkillsScopeService,
     _seed_conversations,
     _wait_for_library_shell,
 )
@@ -217,18 +218,32 @@ async def _leave_text_fields(screen, pilot) -> None:
 
 
 async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDialog:
-    # PR #3259 CI (UI Fast Lane 15, 2026-10-31): the opened note's snapshot
-    # lands before the canvas recomposes its placement actions, so a click
-    # made right after "the note to open" found no button on a loaded
-    # runner. Wait for the control itself, on screen and enabled.
-    def clickable() -> bool:
-        found = host.screen.query(button_id)
-        if not found:
-            return False
-        button = found.first()
-        return not button.disabled and button.region.area > 0
-
-    await _wait(pilot, clickable, f"{button_id} on screen and enabled")
+    # Pilot captures coordinates before yielding; a nonzero region may be stale.
+    try:
+        async with asyncio.timeout(WAIT):
+            while True:
+                await host.screen.wait_for_refresh()
+                found = host.screen.query(button_id)
+                if not found:
+                    continue
+                button = found.first()
+                if (
+                    button.is_attached
+                    and button.is_mounted
+                    and button.display
+                    and button.visible
+                    and not button.disabled
+                    and not button.loading
+                    and button.region.area > 0
+                    and button.region.offset in host.screen.size.region
+                    and (host.mouse_captured is None or host.mouse_captured is button)
+                    and host.screen.get_widget_at(*button.region.offset)[0] is button
+                ):
+                    break
+    except TimeoutError:
+        raise AssertionError(
+            f"timed out waiting for {button_id} painted and enabled"
+        ) from None
     await pilot.click(button_id)
     await _wait(
         pilot,
@@ -260,8 +275,10 @@ async def _choose(
     await _wait(
         pilot,
         lambda: _picker_rows(host) == rows and total in _painted(host),
-        lambda: f"the list narrowed to {rows} ({total}): {_picker_rows(host)} "
-        f"{_painted(host)}",
+        lambda: (
+            f"the list narrowed to {rows} ({total}): {_picker_rows(host)} "
+            f"{_painted(host)}"
+        ),
     )
     await pilot.press("down", "enter")
     await _wait(pilot, lambda: host.screen is screen, "the picker to choose")
@@ -269,13 +286,28 @@ async def _choose(
     return outcomes[-1]
 
 
+@pytest.mark.parametrize(
+    "pending_layout", [False, True], ids=["settled", "pending-layout"]
+)
 async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narrows_by_typing(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, pending_layout
 ) -> None:
     """AC#4: every active folder at any depth, a named title, type-to-filter."""
     host, tree = _mounted(tmp_path)
     note_id = tree.profile.note_id
-    async with host.run_test(size=SIZE) as pilot:
+    presses: dict[Button.Pressed, tuple[Button, int]] = {}
+
+    def observe_move(message) -> None:
+        if (
+            isinstance(message, Button.Pressed)
+            and message.button.id == "library-notes-placement-move"
+            and message not in presses
+        ):
+            presses[message] = (message.button, message.button.region.x)
+
+    async with host.run_test(
+        size=SIZE, message_hook=observe_move if pending_layout else None
+    ) as pilot:
         screen = await _notes_collapsed(host, pilot)
         outcomes = _record_mutations(screen, monkeypatch)
         await _leave_text_fields(screen, pilot)
@@ -292,19 +324,46 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
         await pilot.press("enter")
         await _wait(
             pilot,
-            lambda: screen._library_note_session.snapshot is not None
-            and screen._library_note_session.snapshot.note_id == note_id,
+            lambda: (
+                screen._library_note_session.snapshot is not None
+                and screen._library_note_session.snapshot.note_id == note_id
+            ),
             "the note to open",
         )
         before = _memberships(tmp_path)
 
-        await _open_picker(host, pilot, "#library-notes-placement-move")
+        if pending_layout:
+            await _wait(
+                pilot,
+                lambda: (
+                    bool(screen.query("#library-notes-placement-move"))
+                    and not screen.query_one("#library-notes-placement-move").disabled
+                    and screen.query_one("#library-notes-placement-move").region.area
+                    > 0
+                ),
+                "the Move control before arming pending layout",
+            )
+            button = screen.query_one("#library-notes-placement-move", Button)
+            previous_offset = button.styles.offset
+            previous_region = button.region
+            presses.clear()
+            # A nonzero region can still precede a queued layout frame.
+            button.styles.offset = (2, 0)
+            assert button.region == previous_region
+            try:
+                await _open_picker(host, pilot, "#library-notes-placement-move")
+                # Read the originating press before the modal can retire the button.
+                assert list(presses.values()) == [(button, previous_region.x + 2)]
+            finally:
+                button.styles.offset = previous_offset
+        else:
+            await _open_picker(host, pilot, "#library-notes-placement-move")
         await _wait(
             pilot,
-            lambda: _picker_rows(host) == ALL_FOLDERS
-            and "5 folders" in _painted(host),
-            lambda: f"every folder with its total: {_picker_rows(host)} "
-            f"{_painted(host)}",
+            lambda: _picker_rows(host) == ALL_FOLDERS and "5 folders" in _painted(host),
+            lambda: (
+                f"every folder with its total: {_picker_rows(host)} {_painted(host)}"
+            ),
         )
         painted = _painted(host)
         assert 'Move "Ideas inbox" to…' in painted, painted
@@ -326,8 +385,7 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
         await _open_picker(host, pilot, "#library-notes-placement-add")
         await _wait(
             pilot,
-            lambda: _picker_rows(host) == ALL_FOLDERS
-            and "5 folders" in _painted(host),
+            lambda: _picker_rows(host) == ALL_FOLDERS and "5 folders" in _painted(host),
             lambda: f"Add to folder's rows: {_picker_rows(host)} {_painted(host)}",
         )
         assert 'Add "Ideas inbox" to folder…' in _painted(host), _painted(host)
@@ -386,8 +444,10 @@ async def test_moving_a_folder_into_a_collapsed_folder_shows_the_destinations_no
         # A folder cannot move into itself or beneath itself.
         await _wait(
             pilot,
-            lambda: _picker_rows(host) == ["Top level", "Study", "Study / Japanese"]
-            and "2 folders" in _painted(host),
+            lambda: (
+                _picker_rows(host) == ["Top level", "Study", "Study / Japanese"]
+                and "2 folders" in _painted(host)
+            ),
             lambda: f"Projects' subtree left out: {_picker_rows(host)}",
         )
         assert 'Move folder "Projects" to…' in _painted(host)
@@ -423,8 +483,10 @@ async def test_moving_a_folder_into_a_collapsed_folder_shows_the_destinations_no
         await _wait(
             pilot,
             destination_lists_its_notes,
-            lambda: "Study's own notes under ▾ Study after the move: "
-            f"{_painted_list(host, screen)}",
+            lambda: (
+                "Study's own notes under ▾ Study after the move: "
+                f"{_painted_list(host, screen)}"
+            ),
         )
         painted = _painted_list(host, screen)
         study = painted.index("▾ Study")

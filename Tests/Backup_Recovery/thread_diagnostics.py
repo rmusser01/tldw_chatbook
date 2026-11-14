@@ -204,39 +204,65 @@ def observe_notes_write_failure(path: Path, database):
         raise
 
 
-def _snapshot_change(error: BaseException, code) -> dict | None:
+def _snapshot_change(
+    error: BaseException, code, helper_code=None, scope=None
+) -> dict | None:
     """Name proven differences in a failed copy's existing locals, never values."""
     if (
-        type(error) is not ValueError or len(error.args) != 1
+        type(error) is not ValueError
+        or len(error.args) != 1
         or type(error.args[0]) is not str
         or error.args[0] != "preview_sqlite_changed"
     ):
         return None
     trace = error.__traceback__
+    wrapper_seen = False
     for _ in range(64):
         if trace is None:
             return None
+        frame = trace.tb_frame
+        if (
+            trace.tb_next is not None
+            and frame.f_code is code
+            and scope is not None
+            and frame.f_locals.get("self") is scope
+        ):
+            wrapper_seen = True
         if trace.tb_next is None:
             break
         trace = trace.tb_next
     else:
         return None
-    if trace.tb_frame.f_code is not code:
-        return None  # A helper failure must not use stale caller locals.
-    local = trace.tb_frame.f_locals
+    frame = trace.tb_frame
+    if frame.f_code is not code and (
+        helper_code is None
+        or frame.f_code is not helper_code
+        or not wrapper_seen
+        or scope is None
+        or frame.f_locals.get("self") is not scope
+    ):
+        return None  # Deeper or foreign failures cannot use stale caller locals.
+    local = frame.f_locals
     suffix, expected, opened = (
-        local.get("suffix"), local.get("expected"), local.get("opened")
+        local.get("suffix"),
+        local.get("expected"),
+        local.get("opened"),
     )
     if (
-        type(suffix) is not str or suffix not in {"", "-wal"}
-        or type(expected) is not tuple or len(expected) != 5
+        type(suffix) is not str
+        or suffix not in {"", "-wal"}
+        or type(expected) is not tuple
+        or len(expected) != 5
         or any(type(value) is not int for value in expected)
         or type(opened) is not os.stat_result
     ):
         return None
     actual = (
-        opened.st_dev, opened.st_ino, opened.st_size,
-        opened.st_mtime_ns, opened.st_ctime_ns,
+        opened.st_dev,
+        opened.st_ino,
+        opened.st_size,
+        opened.st_mtime_ns,
+        opened.st_ctime_ns,
     )
     fields = ("device", "inode", "size", "mtime_ns", "ctime_ns")
     phase = "opened_state"
@@ -247,18 +273,24 @@ def _snapshot_change(error: BaseException, code) -> dict | None:
             phase, changed = "copy_growth", ["size"]
         elif (
             type(count) is int
-            and type(observed) is tuple and len(observed) == 5
+            and type(observed) is tuple
+            and len(observed) == 5
             and all(type(value) is int for value in observed)
         ):
             phase = "copied_state"
-            changed = [field for field, old, new in zip(fields, expected, observed) if old != new]
+            changed = [
+                field
+                for field, old, new in zip(fields, expected, observed)
+                if old != new
+            ]
             if count != expected[2] and "size" not in changed:
                 changed.append("size")
     if not changed:
         return None  # Reuse/final-source checks have no retained unequal pair.
     return {
         "member": "main" if suffix == "" else "wal",
-        "phase": phase, "changed_fields": changed,
+        "phase": phase,
+        "changed_fields": changed,
     }
 
 
@@ -392,14 +424,23 @@ def observe_capture_review(path: Path) -> Callable[[], None]:
     """Observe capture checkpoints and bounded metadata changes, never source bytes."""
     import hashlib
 
-    from tldw_chatbook.Backup_Recovery import capture, capture_service, inventory
-    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery import (
+        capture,
+        capture_service,
+        inventory,
+        storage_sqlite_copies,
+    )
+    from tldw_chatbook.Backup_Recovery import (
+        storage_admission as storage,
+    )
 
     originals = [
         (module, module.discover) for module in (inventory, capture, capture_service)
     ]
     original_capture = capture_service.capture
     original_snapshot = storage._PreviewScope.sqlite_target
+    original_snapshot_code = original_snapshot.__code__
+    snapshot_body_code = storage_sqlite_copies._preview_sqlite_target.__code__
     records, failures = [], []
     previous = None
 
@@ -465,10 +506,15 @@ def observe_capture_review(path: Path) -> Callable[[], None]:
                 "dependencies": item.dependencies,
                 "shared_group": item.shared_group,
                 "deletion_validated": item.deletion_validated,
-                "metadata": None if item.metadata is None else (
-                    item.metadata.version, item.metadata.root_id,
-                    item.metadata.relative_path, item.metadata.parent_id,
-                    item.metadata.kind, item.metadata.policy,
+                "metadata": None
+                if item.metadata is None
+                else (
+                    item.metadata.version,
+                    item.metadata.root_id,
+                    item.metadata.relative_path,
+                    item.metadata.parent_id,
+                    item.metadata.kind,
+                    item.metadata.policy,
                 ),
             }
         delta = []
@@ -526,17 +572,25 @@ def observe_capture_review(path: Path) -> Callable[[], None]:
                     type(error) in (ValueError, OSError)
                     and len(error.args) == 1
                     and type(error.args[0]) is str
-                    and error.args[0] in {
-                        "preview_sqlite_changed", "preview_sqlite_unavailable",
-                        "preview_sqlite_limit", "preview_sqlite_write_failed",
+                    and error.args[0]
+                    in {
+                        "preview_sqlite_changed",
+                        "preview_sqlite_unavailable",
+                        "preview_sqlite_limit",
+                        "preview_sqlite_write_failed",
                     }
                 ):
                     reason = error.args[0]
-                records.append({
-                    "event": "preview_sqlite_failure",
-                    "error": _error_metadata(error), "reason": reason,
-                    "source_change": _snapshot_change(error, original_snapshot.__code__),
-                })
+                records.append(
+                    {
+                        "event": "preview_sqlite_failure",
+                        "error": _error_metadata(error),
+                        "reason": reason,
+                        "source_change": _snapshot_change(
+                            error, original_snapshot_code, snapshot_body_code, scope
+                        ),
+                    }
+                )
                 del records[:-8]
                 _write(Path(path), records)
             except BaseException:  # noqa: BLE001, S110 - diagnostic failure must not replace the source error.  # nosec B110

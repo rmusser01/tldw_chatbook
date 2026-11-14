@@ -1,8 +1,8 @@
 """Historical fleet detail and status colors on the real painted Console."""
 
 import pytest
-from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
 from Tests.UI.test_console_fleet_budget_history import _bridge, _painted_text
 from Tests.UI.test_console_fleet_panel import _scroll_into_view, _setup_console
@@ -14,7 +14,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
 from tldw_chatbook.UI.Console_Modules.agent import _fleet_row_from_record
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
@@ -30,7 +30,7 @@ class _StyledConsoleHarness(ConsoleHarness):
 async def test_historical_child_detail_elapsed_and_status_color_are_painted(
     tmp_path, size
 ):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     try:
         parent = db.create_run(conversation_id="conv-A", agent_kind="primary")
         db.append_steps(

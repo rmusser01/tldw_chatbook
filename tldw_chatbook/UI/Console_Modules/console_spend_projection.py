@@ -229,6 +229,15 @@ class _TokenizerSlot:
     asked: bool = True
 
 
+@dataclass(eq=False, repr=False, slots=True)
+class _DisplayReadAttempt:
+    key: tuple
+    reader: Callable[[], Any]
+    runtime: Any
+    entered: threading.Event | None
+    busy: bool = False
+
+
 class ConsoleReadinessConfigProjection:
     """Own finite config reads shared only by synchronous presentation work."""
 
@@ -247,6 +256,7 @@ class ConsoleReadinessConfigProjection:
         self._display_proof = None
         self._read_request = None
         self._handoff_read = None
+        self._admission: _DisplayReadAttempt | None = None
         self._reads = set()
         self._runtime_owner = None
         self._tokenizers: dict[tuple[str, str], _TokenizerSlot] = {}
@@ -279,6 +289,16 @@ class ConsoleReadinessConfigProjection:
                 from ..Screens import chat_screen
 
                 request = projection._read_request
+                attempt = projection._admission
+                entered = attempt.entered if attempt is not None else None
+                if attempt is not None and (
+                    request is None
+                    or attempt.key is not request[2]
+                    or attempt.reader is not read_current
+                ):
+                    if entered is not None:
+                        raise _CheckedDisplayRefused()
+                    attempt = None
                 loader = chat_screen.load_settings
                 aliases = (
                     config.current_config_identity,
@@ -287,7 +307,28 @@ class ConsoleReadinessConfigProjection:
                     raw.participant_identity,
                     loader,
                 )
-                with participants.operation(config) as active:
+                stock = (
+                    type(projection) is ConsoleReadinessConfigProjection
+                    and projection in _standard_readiness_projections
+                    and projection.read_current is read_current
+                    and request is not None
+                    and loader is config.load_settings
+                )
+                if entered is not None and not stock:
+                    raise _CheckedDisplayRefused()
+                with ExitStack() as admission:
+                    if stock and entered is None:
+                        # Passive reads must not park FULL before native entry.
+                        for lock in (
+                            config._settings_rebuild_lock(),
+                            config._config_file_lock(),
+                        ):
+                            if not lock.acquire(blocking=False):
+                                raise _DisplayConfigBusy(attempt)
+                            admission.callback(lock.release)
+                    active = admission.enter_context(participants.operation(config))
+                    if entered is not None:
+                        entered.set()
                     before = participants.checked_config_identity(config, active)
                     value = copy.deepcopy(loader())
                     # Match live get_cli_setting's sparse CLI lookup, rather
@@ -415,7 +456,13 @@ class ConsoleReadinessConfigProjection:
             getattr(app, "app_config", None),
         )
 
-    def run(self, body: Callable[[], Any], *, life: float | None = None) -> bool:
+    def run(
+        self,
+        body: Callable[[], Any],
+        *,
+        life: float | None = None,
+        _wait_for_config: bool = False,
+    ) -> bool:
         """Defer a cold owner; use only its own last mapping during expiry.
 
         ``life`` re-reads a display younger than ``max_age`` (``warm()``).
@@ -443,6 +490,12 @@ class ConsoleReadinessConfigProjection:
             not current or time.monotonic() - self.at >= life or tokenizer_due
         ) and not self.pending:
             self.pending = True
+            self._admission = _DisplayReadAttempt(
+                key,
+                self.read_current,
+                runtime,
+                threading.Event() if _wait_for_config else None,
+            )
             self._settled.clear()
             from .config_sync import _bind_identity_config_read
 
@@ -465,6 +518,7 @@ class ConsoleReadinessConfigProjection:
                 # presentation read remains retryable; cancellation propagates.
                 refresh.close()
                 self.pending = False
+                self._admission = None
                 self._settled.set()
                 if not isinstance(error, Exception):
                     raise
@@ -513,7 +567,18 @@ class ConsoleReadinessConfigProjection:
             and _tokenizer_display.preparation_current(slot.request)
         )
 
-    async def warm(self) -> bool:
+    async def _wait_for_refresh(
+        self, *, wait_unadmitted: bool = False
+    ) -> _DisplayReadAttempt | None:
+        attempt = self._admission
+        entered = attempt.entered if attempt is not None else None
+        if self.pending and (wait_unadmitted or entered is None or entered.is_set()):
+            await self._settled.wait()
+        return attempt
+
+    async def warm(
+        self, *, retry_busy_if_current: Callable[[], bool] | None = None
+    ) -> bool:
         """Wait for the same checked owner when a modal needs cold display data."""
         if getattr(self.screen, "_closing", False) or getattr(
             _readiness_runtime(self.screen), "_disposed", False
@@ -526,8 +591,45 @@ class ConsoleReadinessConfigProjection:
         # Not while reads fail: each failure arms a retry sync of its own.
         ahead = None if self._retry_delay else self.max_age * REFRESH_AHEAD_SHARE
         self.run(lambda: None, life=ahead)
-        if self.pending:
-            await self._settled.wait()
+        def explicit_owner_current(attempt: _DisplayReadAttempt) -> bool:
+            return (
+                retry_busy_if_current is not None
+                and attempt.reader is self.read_current
+                and attempt.runtime is _readiness_runtime(self.screen)
+                and _same_readiness_key(key, self._key())
+                and retry_busy_if_current()
+            )
+
+        pending = self._admission
+        attempt = await self._wait_for_refresh(
+            wait_unadmitted=(
+                pending is not None
+                and pending.entered is not None
+                and _same_readiness_key(pending.key, key)
+                and explicit_owner_current(pending)
+            ),
+        )
+        if (
+            attempt is not None
+            and self._admission is not attempt
+            and not _same_readiness_key(attempt.key, key)
+            and explicit_owner_current(attempt)
+        ):
+            # The older read retired without publishing for this Settings owner.
+            self.run(lambda: None, life=ahead)
+            pending = self._admission
+            if pending is not None and _same_readiness_key(pending.key, key):
+                attempt = await self._wait_for_refresh()
+        if (
+            attempt is not None
+            and attempt.busy
+            and not self.pending
+            and _same_readiness_key(attempt.key, key)
+            and explicit_owner_current(attempt)
+        ):
+            # Only the explicit owner may continue an authentic busy read.
+            self.run(lambda: None, life=ahead, _wait_for_config=True)
+            await self._wait_for_refresh(wait_unadmitted=True)
         return (
             _same_readiness_key(key, self._key())
             and _same_readiness_key(key, self.key)
@@ -553,8 +655,15 @@ class ConsoleReadinessConfigProjection:
         retry = True
         installed = False
         handoff_read = _handoff_read  # Captured before the original worker enqueue.
+        attempt = self._admission
         try:
             reader = self.read_current
+            if (
+                attempt is not None
+                and attempt.entered is not None
+                and reader is not attempt.reader
+            ):
+                return
             # Only slots asked for before this read may be marked by it; an
             # ask that arrives while it runs is kept for the next refresh.
             tokenizers = [item for item in self._tokenizers.items() if item[1].asked]
@@ -585,14 +694,19 @@ class ConsoleReadinessConfigProjection:
                 runtime, "_disposed", False
             ):
                 return
-            result = await run_preparation_read(
-                reader,
-                creator=self,
-                session_id=key[5],
-                reads=self._reads,
-                observers=observers,
-                require_current=lambda: None,
-            )
+            try:
+                result = await run_preparation_read(
+                    reader,
+                    creator=self,
+                    session_id=key[5],
+                    reads=self._reads,
+                    observers=observers,
+                    require_current=lambda: None,
+                )
+            except _DisplayConfigBusy as error:
+                if attempt is not None and error.attempt is attempt:
+                    attempt.busy = True
+                return
             read_at = time.monotonic()
             for slot_key, slot in tokenizers:
                 if (
@@ -703,6 +817,7 @@ class ConsoleReadinessConfigProjection:
         finally:
             self._read_request = None
             self.pending = False
+            self._admission = None
             from .config_sync import _finish_identity_config_read
 
             try:
@@ -943,6 +1058,14 @@ def _checked_display_status(projection: Any) -> bool | None:
 
 class _CheckedDisplayRefused(Exception):
     """Display ownership changed or its coordinator is busy; request a retry."""
+
+
+class _DisplayConfigBusy(_CheckedDisplayRefused):
+    """The exact stock read refused a native lock before admission."""
+
+    def __init__(self, attempt: _DisplayReadAttempt | None) -> None:
+        super().__init__()
+        self.attempt = attempt
 
 
 def _original_capacity_method(owner: Any, module: Any, entry: tuple) -> Any:
@@ -1552,15 +1675,36 @@ class ConsoleContextReadSnapshot:
             return None
         return (*owner, projection.context_policy)
 
-    async def warm(self, controller: Any, session_id: str) -> bool:
+    async def warm(
+        self,
+        controller: Any,
+        session_id: str,
+        *,
+        retry_busy_if_current: Callable[[], bool] | None = None,
+    ) -> bool:
         """Publish only a result whose captured owner survived the await."""
         async with self.lock:
-            return await self._warm(controller, session_id)
+            return await self._warm(
+                controller, session_id, retry_busy_if_current=retry_busy_if_current
+            )
 
-    async def _warm(self, controller: Any, session_id: str) -> bool:
+    async def _warm(
+        self,
+        controller: Any,
+        session_id: str,
+        *,
+        retry_busy_if_current: Callable[[], bool] | None = None,
+    ) -> bool:
         projection = self.config_projection
-        if projection is not None and not await projection.warm():
-            return False
+        if projection is not None:
+            ready = (
+                await projection.warm(retry_busy_if_current=retry_busy_if_current)
+                if retry_busy_if_current is not None
+                and type(projection) is ConsoleReadinessConfigProjection
+                else await projection.warm()
+            )
+            if not ready:
+                return False
         key = self._cache_key(controller, session_id)
         if key is None:
             return False
@@ -1731,8 +1875,14 @@ async def prepare_console_settings_context(
         raise
     if not current():
         return None
-    if (reader is not None) and (not await reader.warm(controller, session_id) or not current()):
-        return None
+    if reader is not None:
+        ready = (
+            await reader.warm(controller, session_id, retry_busy_if_current=current)
+            if type(reader) is ConsoleContextReadSnapshot
+            else await reader.warm(controller, session_id)
+        )
+        if not ready or not current():
+            return None
     return policy, current
 
 

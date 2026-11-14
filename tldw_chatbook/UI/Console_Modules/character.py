@@ -32,10 +32,9 @@ from ...Chat.console_image_view import (
     resolve_react_character_expressions,
     resolve_show_character_avatar,
 )
-from ...Widgets.Console.console_character_picker_modal import (
-    ConsoleCharacterChoice,
-    ConsoleCharacterOption,
-)
+from ...Widgets import Console as console_widgets
+
+__getattr__ = console_widgets.__getattr__
 from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from .session import (
     _canonical_card_character_id,
@@ -142,8 +141,10 @@ class ConsoleCharacterController:
 
     def _console_character_picker_options(
         self,
-    ) -> tuple[ConsoleCharacterOption, ...]:
+    ) -> tuple[console_widgets.ConsoleCharacterOption, ...]:
         """Read selectable character cards (worker thread; never raises)."""
+        from .character import ConsoleCharacterOption
+
         db = self._character_db_accessor()
         if db is None:
             return ()
@@ -152,7 +153,7 @@ class ConsoleCharacterController:
         except Exception:
             logger.opt(exception=True).warning("Character picker: list failed.")
             return ()
-        options: list[ConsoleCharacterOption] = []
+        options: list[console_widgets.ConsoleCharacterOption] = []
         for card in cards or ():
             card_id = _canonical_card_character_id(card.get("id"))
             name = str(card.get("name") or "").strip()
@@ -207,7 +208,7 @@ class ConsoleCharacterController:
 
     async def _apply_console_character_choice_async(
         self,
-        choice: ConsoleCharacterChoice,
+        choice: console_widgets.ConsoleCharacterChoice,
         *,
         expected_key: Any = None,
         required_database: Any = None,
@@ -931,3 +932,6 @@ class ConsoleCharacterController:
             manual_label=manual_label,
             generation=refresh_generation,
         )
+
+
+__getattr__ = console_widgets.__getattr__

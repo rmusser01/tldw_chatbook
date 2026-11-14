@@ -272,9 +272,8 @@ _SNAPSHOT_URL_TEXT_LIMIT = 2048
 _SNAPSHOT_PRIVATE_TEXT_LIMIT = 100_000
 _SNAPSHOT_PROVIDER_DRAFT_LIMIT = 256
 _SNAPSHOT_SCROLL_ANCHOR_LIMIT = 1_000_000
-# The pair is the snapshot's settings: Chat settings changes it only through
-# Switch model's pick mode, so no raw provider or model control remains
-# (TASK-33006.4).
+# The pair is the snapshot's settings: Chat settings changes it only through Switch
+# model's pick mode, so no raw provider or model control remains (TASK-33006.4).
 _SNAPSHOT_RAW_VALUE_IDS = frozenset(
     {
         "console-settings-base-url",
@@ -431,15 +430,13 @@ def _snapshot_text(
 def _snapshot_provider(value: object) -> str | None:
     """Return one already-normalized bounded provider identifier, or ``None``.
 
-    Registry entry ids (``custom-ep:<slug>``) are provider IDENTITY values
-    (CE-001): the config-key normalizer would rewrite their dashes to
-    underscores, so they validate against the dashed canonical spelling
-    instead of the plain-key idempotence check below. The suffix must also
-    satisfy the registry's :data:`SLUG_PATTERN` -- canonical-spelling
-    idempotence alone accepted any printable ``custom-ep:`` value, so a
-    malformed restored payload survived fail-closed deserialization and
-    crashed the provider ``Select`` with an illegal value on restore
-    (PR-2668 review).
+    Registry entry ids (``custom-ep:<slug>``) are provider IDENTITY values (CE-001): the
+    config-key normalizer would rewrite their dashes to underscores, so they validate
+    against the dashed canonical spelling instead of the plain-key idempotence check
+    below. The suffix must also satisfy the registry's :data:`SLUG_PATTERN` --
+    canonical-spelling idempotence alone accepted any printable ``custom-ep:`` value, so
+    a malformed restored payload survived fail-closed deserialization and crashed the
+    provider ``Select`` with an illegal value on restore (PR-2668 review).
     """
     if not _snapshot_text(value, limit=128, allow_blank=False):
         return None
@@ -802,10 +799,9 @@ class ConsoleModelDiscoveryIdentity:
             request began. Any later draft transition advances it, fencing
             the result as stale.
         entry_id: Registry entry the draft addresses (TASK-32566). Entry
-            drafts carry the dashed ``custom-ep:<slug>`` id so switching
-            entries (or editing one's URL) invalidates results even when
-            two drafts share a family execution key; provider-level drafts
-            leave it None.
+            drafts carry the dashed ``custom-ep:<slug>`` id so switching entries (or
+            editing one's URL) invalidates results even when two drafts share a family
+            execution key; provider-level drafts leave it None.
     """
 
     provider_key: str
@@ -1369,7 +1365,6 @@ class ConsoleSettingsModal(
         overrides: ConsoleContextPolicyOverrides,
     ) -> ConsoleContextControlState:
         """Apply transferred policy intent without dropping live context metadata."""
-
         if state is None:
             return build_console_context_control_state(
                 settings=settings,
@@ -1434,7 +1429,6 @@ class ConsoleSettingsModal(
         settings: ConsoleSessionSettings,
     ) -> ConsoleSettingsDraftState:
         """Build a full-field draft for transitional callers without a transfer."""
-
         fields = tuple(
             ConsoleSettingsFieldDraft(
                 name=name,
@@ -1465,7 +1459,6 @@ class ConsoleSettingsModal(
         effective_value: object | None,
     ) -> ConsoleSettingsFieldDraft:
         """Merge one mounted value without erasing inherited/carried intent."""
-
         prior = self._draft_field(name)
         # Textual may deliver a model Select change before a previously queued
         # Input.Changed notification. Comparing the mounted effective value to
@@ -1568,7 +1561,6 @@ class ConsoleSettingsModal(
             app_config=self._app_config,
             active_run=self._active_run,
         )
-
         with Vertical(id="console-settings-modal"):
             yield Static(
                 chat_settings_title(self._chat_title, 0),
@@ -1603,7 +1595,6 @@ class ConsoleSettingsModal(
             )
             error_summary.display = False
             yield error_summary
-
             body = ScrollableContainer(
                 id="console-settings-body",
                 classes="console-settings-body",
@@ -1804,10 +1795,8 @@ class ConsoleSettingsModal(
                         )
                         generation_status.display = False
                         yield generation_status
-
                 yield self._request_estimate_disclosure()
                 yield self._name_disclosure()
-
                 context_view = Vertical(
                     id="console-settings-context-view",
                     classes="console-settings-context-view",
@@ -1854,7 +1843,6 @@ class ConsoleSettingsModal(
                             classes="console-settings-modal-row",
                             markup=False,
                         )
-
                     with Vertical(classes="console-settings-modal-section"):
                         yield Static(
                             "Conversation budget", classes="destination-section"
@@ -4550,10 +4538,9 @@ class ConsoleSettingsModal(
     def _run_pending_entry_discovery(self, provider: str) -> None:
         """Fire endpoint creation's follow-up probe once the switch landed.
 
-        The probe resolves its identities from the mounted draft, so it must
-        run only after ``_active_provider`` addresses the new entry (the
-        pick's rebase landed on it). A pending record for a
-        different provider stays armed for its own switch.
+        The probe resolves its identities from the mounted draft, so it must run only
+        after ``_active_provider`` addresses the new entry (the pick's rebase landed on
+        it). A pending record for a different provider stays armed for its own switch.
         """
         pending = self._pending_entry_discovery
         if pending is None or pending[0] != provider:
@@ -4567,14 +4554,13 @@ class ConsoleSettingsModal(
     def _base_url_changed(self, event: Input.Changed) -> None:
         """Bind the typed endpoint and invalidate request evidence on change.
 
-        CE-003: this method was defined twice on the class; the later
-        definition shadowed the draft-dirtying handler, so a typed Base URL
-        never became a live-bound endpoint draft. "Use for this
-        conversation" then stripped the endpoint and the controller rebase
-        reset ``base_url`` to the configured provider URL, so sends kept
-        targeting the stale provider-level endpoint. One handler now owns
-        both jobs: dirty the live-bound endpoint draft (outside
-        compose-time echoes), then invalidate probe/discovery evidence.
+        CE-003: this method was defined twice on the class; the later definition
+        shadowed the draft-dirtying handler, so a typed Base URL never became a
+        live-bound endpoint draft. "Use for this conversation" then stripped the
+        endpoint and the controller rebase reset ``base_url`` to the configured provider
+        URL, so sends kept targeting the stale provider-level endpoint. One handler now
+        owns both jobs: dirty the live-bound endpoint draft (outside compose-time
+        echoes), then invalidate probe/discovery evidence.
         """
         if (
             self._restoring_suspended_draft
@@ -5742,12 +5728,11 @@ class ConsoleSettingsModal(
         if self._custom_endpoint_entry_for(provider) is not None:
             return True
         provider_key = provider_config_key(provider)
-        # ADR-179: databricks has no shipped base URL (the workspace host
-        # is per-account), so no [api_settings] endpoint alias will ever
-        # appear for a fresh install -- yet readiness blocks with
-        # workspace-URL copy until api_base_url is configured. The modal
-        # must collect exactly what readiness requires, or the user would
-        # face a blocker the visible form cannot resolve.
+        # ADR-179: databricks has no shipped base URL (the workspace host is
+        # per-account), so no [api_settings] endpoint alias will ever appear for a fresh
+        # install -- yet readiness blocks with workspace-URL copy until api_base_url is
+        # configured. The modal must collect exactly what readiness requires, or the
+        # user would face a blocker the visible form cannot resolve.
         if provider_key in PROVIDERS_REQUIRING_BASE_URL_KEYS:
             return True
         provider_settings = self._provider_settings(provider_key)

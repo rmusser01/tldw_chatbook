@@ -25,6 +25,26 @@ _STATISTICS = {
 }
 
 
+_CATALOG_LIMIT = 10_000
+_CATALOG_BYTES = 8 * 1024**2
+
+
+def _read_bounded_catalog(
+    connection, *, row_limit=_CATALOG_LIMIT, byte_limit=_CATALOG_BYTES
+):
+    """Read the exact ordered SQLite catalog under fixed materialization bounds."""
+    rows = []
+    size = 0
+    for row in connection.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
+    ):
+        size += sum(len(value.encode("utf-8")) for value in row if value is not None)
+        if len(rows) >= row_limit or size > byte_limit:
+            raise ValueError("sqlite_resource_limit")
+        rows.append(tuple(row))
+    return tuple(rows)
+
+
 def _split_statistics(rows):
     """Separate only SQLite's exact engine-produced statistics table forms."""
     stats = tuple(row for row in rows if row in _STATISTICS)
@@ -53,42 +73,16 @@ def _validate_sqlite(
     allow_statistics: bool = False,
 ) -> tuple[str, ...]:
     from tldw_chatbook.Backup_Recovery.sqlite_validation import (
-        _canvas_payload_issues,
-        _canvas_schema_access,
-        _catalog,
-        _current_restrictions,
-        _restrict_connection,
+        _validate_sqlite as validate,
     )
 
-    restrictions = _current_restrictions(connection)
-    if any(
-        "canvas_revision_payload_valid" in sql
-        for _, schema in schemas
-        for sql in schema
-    ):
-        if restrictions is None:
-            restrictions = _restrict_connection(connection)
-    else:
-        connection.execute("PRAGMA trusted_schema=OFF")
-    catalog = _catalog(connection)
-    if allow_statistics:
-        catalog, _stats = _split_statistics(catalog)
-    actual = tuple(row[3] for row in catalog if row[3] is not None)
-    matched = tuple(known for known, schema in schemas if actual == schema)
-    if not matched:
-        return ("unsupported_schema",)
-    version = connection.execute(version_query).fetchone()[0]
-    if version not in versions or version not in matched:
-        return ("unsupported_schema_version",)
-    with _canvas_schema_access(connection, actual, restrictions):
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            return ("invalid_domain_reference",)
-        payload_issues = _canvas_payload_issues(connection, restrictions)
-        if payload_issues:
-            return payload_issues
-        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            return ("invalid_sqlite_integrity",)
-        return ()
+    return validate(
+        connection,
+        versions,
+        schemas,
+        version_query=version_query,
+        allow_statistics=allow_statistics,
+    )
 
 
 @contextmanager

@@ -497,7 +497,7 @@ the entire Console P0 matrix to succeed. Each job uses the existing long-lane
 35-minute budget, below the 45-minute controller deadline. Dreams/Guardian
 also uses 35 minutes after reaching 91% of its final test group at its 20-minute
 cap. Per-test 180/300-second deadlines and test selection are unchanged.
-This adds one eligible job and follows ADR-359's disposable runner boundary.
+This adds one eligible job and follows ADR-360's disposable runner boundary.
 
 
 Follow-up in the same task: run 43496035687 passed Dreams in 21m08s and P0
@@ -506,3 +506,55 @@ response-rule restore selectors alone completed in 25m46s before Canvas tests.
 Those unchanged selectors now run as a third P0 profile with the same 180-second
 per-test deadline and 35-minute job limit. This adds one more eligible job;
 all existing selectors remain exactly once across the three required profiles.
+
+## Application (2026-11-04, TASK-36769): conserve the row-menu P0 sweep in existing UI capacity
+
+Run 41799814461/job 126501087681 exhausted the Console P0 job's unchanged
+20-minute cap: setup 54 s, sandboxed 7m16s (249 passed), admission 12m04s at 98%,
+with three cases and the active case's remainder still outstanding. The old
+median 11.6/max 13.9-minute forecast no longer describes this roster. The complete
+conversation-row sweep occupied 145.26 s (21 cases, including its coverage guard).
+
+Move only its two existing selectors, the declared-action coverage guard and
+`test_conversation_row_action_never_ends_the_app` with all derived parameter
+cases, to the existing UI census. Append them after all 1,374 prior selectors,
+leaving every prior shard position unchanged; they reach shards 31/32. Preserve
+the original inherited roster in the CI contract, account explicitly for this
+relocation, and reject missing, commented or duplicate census enrollment. The
+coverage floor becomes 1,376, a stricter coverage requirement rather than a
+larger resource ceiling. The unscheduled workspace-row sibling is not added.
+
+Both original P0 pytest commands remain serial with the remaining argument
+order, profile split, conditions and 180/300-second command timeouts intact.
+Moved cases adopt the UI lane's stricter 180-second per-case limit. UI remains
+32 shards, max-parallel 17, the same dependencies and 20-minute job cap. The
+required aggregate, eligible runner count and peak concurrency are unchanged.
+No new job, runner, status substitute, filter, skip or timeout exception is
+introduced; this applies the existing bounded-lane policy.
+
+The retained current-head metadata records full UI job 31 at 577 s and job 32
+at 603 s, including setup and all existing test work; both completed with
+assertion failures, not timeout. Conservatively charging the entire 145.26 s
+sweep to each recipient projects 722.26 s and 748.26 s, below the unchanged 1,200 s
+cap. Existing replay plus exact roster conservation checks qualify this
+placement as a forecast. Original P0 commands and recipient shards still need
+current-source execution, and hosted final-head results remain required;
+these projections do not turn the retained assertion failures into passes.
+
+## 2026-11-05: retain complete MCP coverage within existing job budgets
+
+PR #3345 head `19fec5614b` automatic Derived job `127394826830` exceeded the unchanged 35-minute Fast Lane limit at 93% of 3,983 collected cases, confirmed by GitHub's annotation. Logs show advancing MCP progress, without an identified individual hang. The unchanged MCP workbench file passed 357 cases locally in 485.33 seconds. Its 279 unique function selectors move into the existing 32 UI shards; actual pytest collection proves all 357 parameter cases remain covered exactly once. The original 1,666-entry census prefix and positions stay intact, and floor 1,945 protects enrollment. A permanent membership Counter guard and missing, duplicate, whole-file and second-owner controls prevent a removed rider from becoming a coverage hole. Each relocated group also passes in isolation.
+
+Dependency installs, sandbox/profile rules, required aggregation and conditions are unchanged. The same 32 shards, maximum parallelism 17, 20-minute UI jobs and 180-second MCP/UI cases apply; Fast Lane remains 35 minutes and admission remains 35 minutes/300 seconds per case. Placement uses measured total setup/call/teardown costs. Local replay and isolation do not qualify hosted capacity: genuine new-head checks still decide landing. This redistributes required coverage under the existing decision, with no new runtime or ownership boundary.
+
+## 2026-11-05: conserve enrollment across the dev2959 rebase
+
+The next integration preserves the reviewed 1,945-entry prefix and every position,
+then appends all 22 unique incoming Settings, Agents and resend entries. The
+union is exactly 1,967 unique entries and the coverage floor tightens to 1,967.
+The 279 MCP selectors retain their positions and complete 357-case membership.
+Incoming entries receive new placements; their qualification is measured afresh,
+not inferred from the former dev positions. The same 32 shards/max-parallel 17,
+20-minute UI jobs,180-second cases and required aggregation remain unchanged.
+No new job or runner capacity is added. Perf retains its pre-rebase 15-minute
+cap with all incoming compact-setup controls; real new-head results remain gates.

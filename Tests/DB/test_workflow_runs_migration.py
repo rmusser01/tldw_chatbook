@@ -1,12 +1,24 @@
 """Actual v24 histories upgrade/reopen without changing shipped catalogs."""
 
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import pytest
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+@contextmanager
+def _open_workflow_db(path):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+
+    with (
+        ConsoleExecutionOwner.acquire(path) as execution_owner,
+        closing(AgentRunsDB(path, execution_owner=execution_owner)) as db,
+    ):
+        yield db
 
 
 def v24(path):
@@ -43,14 +55,15 @@ def test_v24_upgrade_reopen_and_repeat_preserves_history(tmp_path, standalone):
         with closing(sqlite3.connect(path)) as conn:
             conn.executescript(sql)
             conn.executescript(sql)
-    AgentRunsDB(path).close()
-    AgentRunsDB(path).close()
+    for _ in range(2):
+        with _open_workflow_db(path):
+            pass
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT id,result FROM agent_runs").fetchall() == [
             ("legacy", "preserved result")
         ]
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         actual = tuple(
@@ -60,13 +73,13 @@ def test_v24_upgrade_reopen_and_repeat_preserves_history(tmp_path, standalone):
             )
         )
         assert actual in [
-            schema for version, schema in _AGENT_RUNS_SCHEMA if version == 31
+            schema
+            for version, schema in _AGENT_RUNS_SCHEMA
+            if version == AgentRunsDB._CURRENT_SCHEMA_VERSION
         ]
 
 
 def test_standalone_and_constructor_workflow_catalogs_match_exactly(tmp_path):
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
     paths = [tmp_path / "runtime.db", tmp_path / "standalone.db"]
     for path in paths:
         v24(path)
@@ -99,13 +112,21 @@ def test_standalone_and_constructor_workflow_catalogs_match_exactly(tmp_path):
                 "tldw_chatbook/DB/migrations/agent_runs_v29_to_v30_workflow_repair_input.sql"
             ).read_text()
         )
-    AgentRunsDB(paths[0]).close()
+    with _open_workflow_db(paths[0]):
+        pass
     with closing(sqlite3.connect(paths[1])) as conn:
         conn.executescript(
             Path(
                 "tldw_chatbook/DB/migrations/agent_runs_v30_to_v31_workflow_recovery_review.sql"
             ).read_text()
         )
+        for migration in (
+            "agent_runs_v31_to_v32_console_command_receipts.sql",
+            "agent_runs_v32_to_v33_mobile_consolidation.sql",
+        ):
+            conn.executescript(
+                (Path("tldw_chatbook/DB/migrations") / migration).read_text()
+            )
     catalogs = []
     for path in paths:
         with closing(sqlite3.connect(path)) as conn:
@@ -125,7 +146,6 @@ def test_real_v24_goal_and_fleet_rows_survive_workflow_upgrade(tmp_path, standal
 
     from Tests.Agents.test_goal_models import request
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     path = tmp_path / "old-goals.db"
     v24(path)
@@ -169,7 +189,8 @@ def test_real_v24_goal_and_fleet_rows_survive_workflow_upgrade(tmp_path, standal
                     "tldw_chatbook/DB/migrations/agent_runs_v25_to_v26_workflow_runs.sql"
                 ).read_text()
             )
-    AgentRunsDB(path).close()
+    with _open_workflow_db(path):
+        pass
     with closing(sqlite3.connect(path)) as conn:
         assert {
             table: conn.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
@@ -203,14 +224,15 @@ def test_v28_repair_metadata_upgrade_preserves_existing_history(tmp_path, standa
                     "tldw_chatbook/DB/migrations/agent_runs_v29_to_v30_workflow_repair_input.sql"
                 ).read_text()
             )
-    AgentRunsDB(path).close()
-    AgentRunsDB(path).close()
+    for _ in range(2):
+        with _open_workflow_db(path):
+            pass
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute(
             "SELECT result FROM agent_runs WHERE id='old'"
         ).fetchone() == ("unchanged",)
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert "repair_instruction_sha256" in {
             row[1] for row in conn.execute("PRAGMA table_info(workflow_phase_attempts)")
@@ -248,8 +270,8 @@ def test_v29_recovery_marker_is_additive_and_failure_rolls_back(
                 "WORKFLOW_RECOVERY_REVIEW_MIGRATION",
                 (*migration[:-1], "invalid installed SQL"),
             )
-            with pytest.raises(sqlite3.Error):
-                AgentRunsDB(path)
+            with pytest.raises(sqlite3.Error), _open_workflow_db(path):
+                pass
         with closing(sqlite3.connect(path)) as conn:
             assert conn.execute(
                 "SELECT MAX(version) FROM schema_version"
@@ -257,11 +279,12 @@ def test_v29_recovery_marker_is_additive_and_failure_rolls_back(
             assert "recovery_reviewed_revision" not in {
                 r[1] for r in conn.execute("PRAGMA table_info(workflow_runs)")
             }
-    AgentRunsDB(path).close()
-    AgentRunsDB(path).close()
+    for _ in range(2):
+        with _open_workflow_db(path):
+            pass
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert conn.execute(
             "SELECT result FROM agent_runs WHERE id='old'"
@@ -356,6 +379,10 @@ def test_shipped_dev25_review_rows_survive_native_workflow_upgrade(
     owner = next(
         item for item in recovery_adapters() if item.owner_id == "db.agent_runs"
     )
+    # The standalone arm stops after the native workflow SQL chain.
+    expected_version = (
+        31 if upgrade == "standalone" else AgentRunsDB._CURRENT_SCHEMA_VERSION
+    )
     if upgrade == "recovery":
         assert validate_candidate(owner, path, Event(), migrate=True) == ()
     elif upgrade == "standalone":
@@ -373,10 +400,11 @@ def test_shipped_dev25_review_rows_survive_native_workflow_upgrade(
             with closing(sqlite3.connect(path)) as conn:
                 conn.executescript(sql)
     else:
-        AgentRunsDB(path).close()
+        with _open_workflow_db(path):
+            pass
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            expected_version,
         )
         assert {
             table: conn.execute(
@@ -392,9 +420,11 @@ def test_shipped_dev25_review_rows_survive_native_workflow_upgrade(
             )
         )
         assert actual in [
-            catalog for version, catalog in _AGENT_RUNS_SCHEMA if version == 31
+            catalog
+            for version, catalog in _AGENT_RUNS_SCHEMA
+            if version == expected_version
         ]
-    with closing(AgentRunsDB(path)) as db:
+    with _open_workflow_db(path) as db:
         workflow = db.workflow_runs.create(
             make_workflow_request(tmp_path), launch_id="after-review-upgrade"
         )
@@ -407,8 +437,9 @@ def test_shipped_dev25_review_rows_survive_native_workflow_upgrade(
 
 @pytest.mark.parametrize("version", range(25, 31))
 @pytest.mark.parametrize("upgrade", ["constructor", "recovery"])
+@pytest.mark.parametrize("analyzed", [False, True])
 def test_standalone_legacy_workflow_history_remains_unreviewed_after_integration(
-    tmp_path, version, upgrade
+    tmp_path, version, upgrade, analyzed
 ):
     from threading import Event
 
@@ -416,13 +447,21 @@ def test_standalone_legacy_workflow_history_remains_unreviewed_after_integration
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     path, before, owner = _legacy_workflow_fixture(tmp_path, version)
+    if analyzed:
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("ANALYZE")
+            conn.commit()
+            assert conn.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"
+            ).fetchone()
     if upgrade == "recovery":
         assert validate_candidate(owner, path, Event(), migrate=True) == ()
     else:
-        AgentRunsDB(path).close()
+        with _open_workflow_db(path):
+            pass
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert (
             conn.execute(
@@ -441,11 +480,30 @@ def test_standalone_legacy_workflow_history_remains_unreviewed_after_integration
             v for (v,) in conn.execute("SELECT version FROM schema_version")
         } >= set(range(4, 32))
     assert validate_candidate(owner, path, Event(), migrate=False) == ()
-    with closing(AgentRunsDB(path)) as db:
+    with _open_workflow_db(path) as db:
         assert db.workflow_runs.get("legacy").status == "closed"
 
 
-def _legacy_workflow_fixture(tmp_path, version):
+
+def test_analyzed_standalone_workflow_validates_payload_read_only(tmp_path):
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+
+    path, _before, owner = _legacy_workflow_fixture(
+        tmp_path, 25, invalid_payload=True
+    )
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("ANALYZE")
+        conn.commit()
+    before = path.read_bytes()
+    assert validate_candidate(owner, path, Event(), migrate=False) == (
+        "invalid_workflow_payload",
+    )
+    assert path.read_bytes() == before
+
+
+def _legacy_workflow_fixture(tmp_path, version, *, invalid_payload=False):
     import hashlib
     import json
     from dataclasses import asdict
@@ -487,7 +545,7 @@ def _legacy_workflow_fixture(tmp_path, version):
         conn.execute(
             "INSERT INTO workflow_runs(id,launch_id,payload_hash,request_json,conversation_id,chain_id,status,created_at,updated_at) VALUES ('legacy','legacy-launch',?,?,?,'legacy-chain','closed',1,1)",
             (
-                hashlib.sha256(payload.encode()).hexdigest(),
+                "0" * 64 if invalid_payload else hashlib.sha256(payload.encode()).hexdigest(),
                 payload,
                 request.conversation_id,
             ),
@@ -525,7 +583,6 @@ def test_legacy_workflow_bridge_refusal_preserves_exact_catalog_and_rows(
     from threading import Event
 
     from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB import recovery_operations
 
     path, _before, owner = _legacy_workflow_fixture(tmp_path, version)
@@ -538,8 +595,8 @@ def test_legacy_workflow_bridge_refusal_preserves_exact_catalog_and_rows(
     before = _legacy_sql_state(path)
     original = recovery_operations._legacy_workflow_upgrade
 
-    def invalid_after_real_ddl(connection):
-        end, statements = original(connection)
+    def invalid_after_real_ddl(connection, **kwargs):
+        end, statements = original(connection, **kwargs)
         return end, (*statements, "invalid installed SQL")
 
     with monkeypatch.context() as patch:
@@ -548,8 +605,8 @@ def test_legacy_workflow_bridge_refusal_preserves_exact_catalog_and_rows(
                 recovery_operations, "_legacy_workflow_upgrade", invalid_after_real_ddl
             )
         if route == "constructor":
-            with pytest.raises(sqlite3.Error):
-                AgentRunsDB(path)
+            with pytest.raises(sqlite3.Error), _open_workflow_db(path):
+                pass
         else:
             assert validate_candidate(owner, path, Event(), migrate=True) == (
                 "unsupported_schema"
@@ -574,8 +631,8 @@ def test_legacy_workflow_bridge_cancellation_rolls_back_real_first_ddl(
     original = recovery_operations._legacy_workflow_upgrade
     first_ddl_returned = []
 
-    def interrupted(connection):
-        end, statements = original(connection)
+    def interrupted(connection, **kwargs):
+        end, statements = original(connection, **kwargs)
 
         def actual_statements():
             for index, statement in enumerate(statements):
@@ -606,6 +663,7 @@ def test_concurrent_workflow_upgrade_rechecks_after_the_writer_lock(
     from threading import Event, current_thread
 
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
     from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA
 
     if lineage == "shipped-v25":
@@ -635,22 +693,28 @@ def test_concurrent_workflow_upgrade_rechecks_after_the_writer_lock(
             conn.set_trace_callback(pause_before_lock)
         return conn
 
-    def open_agent_runs():
-        db = AgentRunsDB(path, reconcile_on_init=False)
-        db.close()
+    def open_agent_runs(execution_owner):
+        AgentRunsDB(
+            path, reconcile_on_init=False, execution_owner=execution_owner
+        ).close()
 
     monkeypatch.setattr(AgentRunsDB, "_configure_connection", configure)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        first = pool.submit(open_agent_runs)
+    with (
+        ConsoleExecutionOwner.acquire(path) as execution_owner,
+        ThreadPoolExecutor(max_workers=1) as pool,
+    ):
+        first = pool.submit(open_agent_runs, execution_owner)
         try:
             assert before_begin.wait(timeout=10)
-            open_agent_runs()
+            open_agent_runs(execution_owner)
         finally:
             release_begin.set()
         first.result(timeout=10)
 
     with closing(sqlite3.connect(path)) as conn:
-        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (31,)
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
+        )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         catalog = tuple(
             row[0]
@@ -659,7 +723,9 @@ def test_concurrent_workflow_upgrade_rechecks_after_the_writer_lock(
             )
         )
         assert catalog in [
-            installed for version, installed in _AGENT_RUNS_SCHEMA if version == 31
+            installed
+            for version, installed in _AGENT_RUNS_SCHEMA
+            if version == AgentRunsDB._CURRENT_SCHEMA_VERSION
         ]
         if lineage == "shipped-v25":
             assert conn.execute("SELECT id,result FROM agent_runs").fetchall() == [

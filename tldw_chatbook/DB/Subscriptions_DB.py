@@ -28,7 +28,6 @@ import threading
 import time
 import weakref
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
@@ -45,7 +44,6 @@ from typing import (
     Union,
 )
 from urllib.parse import urlparse, urlunparse
-from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party Libraries
 from loguru import logger
@@ -65,8 +63,11 @@ from tldw_chatbook.Backup_Recovery.participants import (
 
 from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
+from .subscriptions_provenance import (
+    _sanitize_provenance_url,
+    BriefingProvenanceRow,
+)
 from .sql_validation import get_safe_order_by_clause, validate_identifier
-from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..Utils.fts5_match_forms import quote_fts5_token
 
@@ -102,42 +103,6 @@ _SUBSCRIPTIONS_V1_TO_V2_MIGRATION_PATH = (
 def _briefing_items_v2_ddl() -> str:
     """Read the shipped subscriptions v1-to-v2 schema artifact."""
     return _SUBSCRIPTIONS_V1_TO_V2_MIGRATION_PATH.read_text(encoding="utf-8")
-
-
-def _sanitize_provenance_url(value: object) -> str | None:
-    """Strip credentials, query, and fragment from one HTTP(S) snapshot URL."""
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = urlsplit(value)
-        hostname = parsed.hostname
-        if parsed.scheme.casefold() not in {"http", "https"} or not hostname:
-            return None
-        host = f"[{hostname}]" if ":" in hostname else hostname
-        netloc = host if parsed.port is None else f"{host}:{parsed.port}"
-        return urlunsplit((parsed.scheme.casefold(), netloc, parsed.path, "", ""))
-    except ValueError:
-        return None
-
-
-@dataclass(frozen=True)
-class BriefingProvenanceRow:
-    """One selected item's immutable snapshot at briefing publication."""
-
-    item_id: int
-    selection_position: int
-    citation_position: int | None
-    featured: bool
-    cited: bool
-    item_title: str | None
-    item_url: str | None
-    item_published_date: str | None
-    item_created_at: str | None
-    item_effective_date: str | None
-    source_id: int | None
-    source_name: str | None
-    source_type: str | None
-    source_url: str | None
 
 
 #: Fallback `auto_pause_threshold` when the config value is missing or
@@ -313,6 +278,13 @@ def _checkpoint_open_databases_at_exit() -> None:
 def _sqlite_unicode_casefold(value: Any) -> str:
     """Casefold SQLite text without raising on NULL or malformed values."""
     return value.casefold() if isinstance(value, str) else ""
+
+
+def get_cli_setting(*args: Any, **kwargs: Any) -> Any:
+    """Read actual settings lazily while preserving the compatibility name."""
+    from ..config import get_cli_setting as native_get_cli_setting
+
+    return native_get_cli_setting(*args, **kwargs)
 
 
 def _default_auto_pause_threshold() -> int:

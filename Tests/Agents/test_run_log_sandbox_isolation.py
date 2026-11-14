@@ -50,6 +50,9 @@ import asyncio
 import json
 from pathlib import Path
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     SPAWN_TOOL_NAME,
@@ -59,10 +62,6 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
-from Tests.Agents.test_agent_service import FleetChat, verbatim
-from Tests.Agents.conftest import join_fleet_children
 from tldw_chatbook.Tools.file_operation_tools import GrepFiles
 
 
@@ -300,7 +299,7 @@ def test_spawned_subagent_cannot_read_parents_log_via_grep_files(tmp_path, monke
 
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider(gate=_AllowGate()))
 

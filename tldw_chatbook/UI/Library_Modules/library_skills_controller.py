@@ -1565,36 +1565,11 @@ class LibrarySkillsController:
         return pending
 
     def _library_skill_text_fields_match_state(self) -> bool:
-        """True when every live text field equals the editor state's value.
+        """True when every live text field equals the editor state's value."""
+        from . import library_skills_state
 
-        task-417: a recompose (e.g. the post-create snapshot refresh)
-        remounts the editor's Inputs/TextArea, whose spurious mount-time
-        ``Changed`` events can arrive AFTER any ``call_after_refresh``
-        re-arm -- the armed-flag dance alone cannot win that race. A mount
-        echo always carries the state's own values, so value equality is
-        the reliable spurious-vs-real discriminator.
-        """
-        state = self._library_skill_editor_state
-        if state is None:
-            return False
-        fields = self._read_library_skill_editor_fields()
-        if fields is None:
-            return False
-        (
-            raw_name,
-            raw_description,
-            raw_argument_hint,
-            raw_allowed_tools_csv,
-            raw_model,
-            raw_body,
-        ) = fields
-        return (
-            raw_name == (state.name or "")
-            and raw_description == (state.description or "")
-            and raw_argument_hint == (state.argument_hint or "")
-            and raw_allowed_tools_csv == (state.allowed_tools_csv or "")
-            and raw_model == (state.model or "")
-            and raw_body == (state.body or "")
+        return library_skills_state._library_skill_text_fields_match_state(
+            self,
         )
 
     def _library_skill_on_disk_path(self) -> str:
@@ -2440,41 +2415,11 @@ class LibrarySkillsController:
         self._arm_library_list_entry_focus_fn()
 
     def _snapshot_library_skill_live_fields(self) -> None:
-        """Fold the editor's live (possibly unsaved) field values back into
-        ``_library_skill_editor_state`` so a state-driven recompose renders
-        exactly what the user had typed (task-415's confirm step).
-        """
-        state = self._library_skill_editor_state
-        if state is None:
-            return
-        fields = self._read_library_skill_editor_fields()
-        if fields is None:
-            return
-        (
-            raw_name,
-            raw_description,
-            raw_argument_hint,
-            raw_allowed_tools_csv,
-            raw_model,
-            raw_body,
-        ) = fields
-        self._library_skill_editor_state = dataclasses.replace(
-            state,
-            # Rename is unsupported; existing skills keep their name (the
-            # Name Input is disabled there anyway), create mode keeps the
-            # typed name.
-            name=raw_name if not self._selected_skill_name else state.name,
-            description=raw_description,
-            # A typed description is no longer "derived from the body", so a
-            # state-driven recompose must not re-show the "No description
-            # set" hint next to the populated field (review finding). Stays
-            # derived only while the field is still empty.
-            description_derived=state.description_derived
-            and not raw_description.strip(),
-            argument_hint=raw_argument_hint,
-            allowed_tools_csv=raw_allowed_tools_csv,
-            model=raw_model,
-            body=raw_body,
+        """Fold the editor's live (possibly unsaved) field values back into"""
+        from . import library_skills_state
+
+        return library_skills_state._snapshot_library_skill_live_fields(
+            self,
         )
 
     async def _run_library_skill_delete(

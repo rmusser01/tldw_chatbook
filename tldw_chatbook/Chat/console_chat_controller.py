@@ -1286,6 +1286,8 @@ def _validate_project_instruction_binding(
         The admitted selection, or ``None`` when the binding is not
         admittable.
     """
+    if getattr(binding, "import_review_required", False):
+        return None
     if binding is None or str(getattr(binding, "workspace_id", "")) != str(
         session.workspace_id
     ):
@@ -5921,6 +5923,7 @@ class ConsoleChatController:
         checkpoint = recovery.checkpoint if recovery is not None else None
         if (
             checkpoint is None
+            or recovery.error_code == "imported_history"
             or checkpoint.origin != "queued"
             or checkpoint.queue_entry_id is None
         ):
@@ -6208,6 +6211,7 @@ class ConsoleChatController:
         expected_revision: int,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
         _before_admission: Callable[[], None] | None = None,
+        _command_inputs: Any = None,
     ) -> PromptQueueMutationResult:
         """Attempt atomic text-only admission behind queue-owned work."""
 
@@ -6261,16 +6265,30 @@ class ConsoleChatController:
                 )
             if _before_admission is not None:
                 _before_admission()
-            one_shot_prefill, one_shot_prefill_revision = (
-                self.store.session_one_shot_prefill_snapshot(session_id)
-            )
+            if _command_inputs is not None:
+                if (
+                    _command_inputs.session_id != session_id
+                    or _command_inputs.input_origin != "command"
+                    or not self.store.session_inputs_are_current(_command_inputs)
+                ):
+                    raise RuntimeError("Console command input changed.")
+                one_shot_prefill, one_shot_prefill_revision = None, None
+            else:
+                one_shot_prefill, one_shot_prefill_revision = (
+                    self.store.session_one_shot_prefill_snapshot(session_id)
+                )
             request = ConsoleTurnCustodyRequest(
-                turn_id=str(uuid4()),
+                turn_id=(
+                    str(uuid4()) if _command_inputs is None else _command_inputs.command_id
+                ),
                 session_id=session_id,
                 draft=clean_text,
                 configuration=configuration,
                 one_shot_prefill=one_shot_prefill,
                 one_shot_prefill_revision=one_shot_prefill_revision,
+                input_origin="composer" if _command_inputs is None else "command",
+                command_id=None if _command_inputs is None else _command_inputs.command_id,
+                command_inputs=_command_inputs,
             )
             if mixin_current is not None:
                 mixin_current()
@@ -7553,6 +7571,15 @@ class ConsoleChatController:
             or continuation.trace_request is not None
         ):
             return None
+        missing_request_failure = self._trace_call_boundaries_by_preparation.get(
+            preparation_id
+        )
+        if (
+            type(missing_request_failure) is not TraceCallPersistenceError
+            or missing_request_failure.reservation_status != "not_established"
+            or missing_request_failure.boundary is not None
+        ):
+            return self._prepared_action_refusal(preparation)
         try:
             trace_request = self._rebuild_continuation_trace_request(
                 preparation, continuation, resolution
@@ -7568,10 +7595,15 @@ class ConsoleChatController:
                 trace_request is not None
                 and self._durable_postcommit_continuations.get(preparation_id)
                 is continuation
+                and self._trace_call_boundaries_by_preparation.get(preparation_id)
+                is missing_request_failure
             ):
                 self._durable_postcommit_continuations[preparation_id] = replace(
                     continuation, trace_request=trace_request
                 )
+                # This marker predates gateway binding/reservation. It is not
+                # an owned gateway boundary to recover on the rebuilt request.
+                self._trace_call_boundaries_by_preparation.pop(preparation_id)
                 return None
         return self._prepared_action_refusal(
             preparation,
@@ -8106,6 +8138,7 @@ class ConsoleChatController:
             return self._prepared_action_refusal(
                 self._preparation_by_id(preparation.preparation_id)
             )
+        continuation = self._prepared_send_continuations.get(preparation.preparation_id)
         self._drop_preparation(
             preparation.preparation_id,
             expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
@@ -8113,6 +8146,7 @@ class ConsoleChatController:
         self._compaction_hold_answered.discard(preparation.preparation_id)
         if (
             preparation.input_draft_revision is None
+            and not (continuation is not None and continuation.preserve_composer)
             and not self.store.session_draft(preparation.session_id).strip()
         ):
             self.store.set_session_draft(
@@ -8334,6 +8368,7 @@ class ConsoleChatController:
             preparation.session_id,
             preparation.preparation_id,
             expected_state=ConsoleTurnPreparationState.PAUSED,
+            restore_draft=not continuation.prepared.preserve_composer,
         )
         if cancelled is not None:
             self._drop_preparation(
@@ -8568,7 +8603,9 @@ class ConsoleChatController:
 
         return await _controller_settle_cancelled_native_commit(self, owner, continuation)
 
-    def _abandon_preparation(self, preparation_id: str) -> None:
+    def _abandon_preparation(
+        self, preparation_id: str, *, restore_draft: bool = True
+    ) -> None:
         """Cancel and remove one exact preaccept preparation without a wedge."""
 
         if self._ordinary_native_commit_owner(preparation_id) is not None:
@@ -8580,6 +8617,7 @@ class ConsoleChatController:
             preparation.session_id,
             preparation.preparation_id,
             expected_state=preparation.state,
+            restore_draft=restore_draft,
         )
         if cancelled is not None:
             self._drop_preparation(
@@ -8693,11 +8731,35 @@ class ConsoleChatController:
 
         with self._active_submit_tasks_lock:
             claim = received_turn_claim_for(self.store, preparation.session_id)
-            begun = (
-                self.store.promote_received_turn(claim, preparation)
-                if claim is not None
-                else self.store.begin_preparation(preparation)
+            runtime = getattr(self, "_hooks_v2_runtime", None)
+            record = (
+                runtime._turn_custody.get(claim.request_id)
+                if runtime is not None and claim is not None
+                else None
             )
+            inputs = (
+                record.received_intent.inputs
+                if record is not None and record.received_intent is not None
+                else record.request.command_inputs
+                if record is not None and record.request is not None
+                else None
+            )
+            with (
+                self.store._preparation_lock
+                if inputs is not None and inputs.input_origin == "command"
+                else nullcontext()
+            ):
+                if (
+                    inputs is not None
+                    and inputs.input_origin == "command"
+                    and not self.store.session_inputs_are_current(inputs)
+                ):
+                    return None
+                begun = (
+                    self.store.promote_received_turn(claim, preparation)
+                    if claim is not None
+                    else self.store.begin_preparation(preparation)
+                )
             if begun is not None and task in self._active_submit_tasks:
                 self._active_submit_preparations[task] = begun.preparation_id
             return begun
@@ -9800,10 +9862,20 @@ class ConsoleChatController:
         )
         if prepared_continuation is not None:
             preserve_composer = prepared_continuation.preserve_composer
+        chain = self.prompt_queue_coordinator._chains.get(target_id)
+        command_input = bool(
+            preserve_composer
+            and chain is not None
+            and chain.request is not None
+            and chain.request.input_origin == "command"
+            and chain.request.command_id is not None
+        )
         if preserve_composer and not session_id:
             return ConsoleSubmitResult(False, False, "Choose an explicit conversation.")
-        if preserve_composer and str(draft).lstrip().startswith(
-            (COMMAND_PREFIX, MENTION_SIGIL)
+        if (
+            preserve_composer
+            and not command_input
+            and str(draft).lstrip().startswith((COMMAND_PREFIX, MENTION_SIGIL))
         ):
             return ConsoleSubmitResult(
                 False,
@@ -9948,10 +10020,14 @@ class ConsoleChatController:
                 self._bind_submit_preparation(
                     active_task, resumed_preparation.preparation_id
                 )
-        if preserve_composer and (
-            self.store.pending_attachments(session.id)
-            or self.store.session_one_shot_prefill(session.id)
-            or self._has_explicit_staged_evidence(session.id) is not False
+        if (
+            preserve_composer
+            and not command_input
+            and (
+                self.store.pending_attachments(session.id)
+                or self.store.session_one_shot_prefill(session.id)
+                or self._has_explicit_staged_evidence(session.id) is not False
+            )
         ):
             return ConsoleSubmitResult(
                 False,
@@ -16752,6 +16828,7 @@ class ConsoleChatController:
         )
 
         token = payload.get("_creation_token")
+        saved_producer = None
         try:
             validate_new_chat_arguments(payload)
             record = self._chat_creation_record(payload)
@@ -16809,8 +16886,23 @@ class ConsoleChatController:
                 or not record["approved"]
             ):
                 raise PermissionError("source_unavailable")
+            saved_producer = self.app.call_from_thread(
+                self.store.reserve_saved_creation, conversation_id
+            )
+            # The new owning-loop hop can observe a committed source Close.
+            # Reserve identity before SQL without extending the exact approval.
+            if (
+                self._chat_creation_record(payload) is not record
+                or not record["approved"]
+            ):
+                raise PermissionError("source_unavailable")
+            from .console_project_instructions import encode_project_context_json
+
             self.store.persistence.persist_console_conversation_with_policy(
                 conversation_id=conversation_id,
+                project_context_json=encode_project_context_json(
+                    ProjectInstructionControlState.new_session()
+                ),
                 policy_candidate=ConsoleLibraryPolicyCandidate(
                     defaults.auto_retrieve, defaults.assistant_access
                 ),
@@ -16842,16 +16934,16 @@ class ConsoleChatController:
             target = None
             try:
 
-                def restore():
+                async def restore():
                     if not self._chat_create_source_is_open(approved["session_id"]):
                         return None
-                    created_session = self.store.restore_persisted_session(
+                    created_session = await self.store.restore_persisted_session_owned(
+                        producer=saved_producer,
                         title=title,
                         workspace_id=approved["workspace_id"]
                         or CONSOLE_GLOBAL_WORKSPACE_ID,
                         persisted_conversation_id=conversation_id,
                         all_nodes=[],
-                        activate=False,
                         settings=startup.settings,
                         generation_durable_snapshot=snapshot,
                         generation_metadata_status=(
@@ -16866,7 +16958,6 @@ class ConsoleChatController:
                         initial_project_instruction_state=(
                             ProjectInstructionControlState.new_session()
                         ),
-                        prepare_progress=False,
                     )
                     self.store._project_workspace_membership_after_commit(
                         created_session
@@ -16877,14 +16968,6 @@ class ConsoleChatController:
                 if target is None:
                     result["reason"] = "source_unavailable"
                 else:
-                    from tldw_chatbook.Agents.fleet_messages import MessageError
-
-                    try:
-                        self.store.prepare_progress_inbox(
-                            target.id, expected_owner_id=target._progress_owner_id
-                        )
-                    except MessageError:
-                        pass  # Saved chat remains available for a later explicit read.
                     if approved["mode"] == "start":
                         result.update(self._start_created_chat(approved, target))
             except Exception:
@@ -16949,6 +17032,12 @@ class ConsoleChatController:
                 "error": "creation validation failed",
             }
         finally:
+            if saved_producer is not None and not saved_producer.ready:
+                self.app.call_from_thread(
+                    self.store.abort_saved_creation,
+                    saved_producer,
+                    RuntimeError("Native chat creation did not publish."),
+                )
             if isinstance(token, _ChatCreationToken):
                 token.close()
 
@@ -16981,442 +17070,13 @@ class ConsoleChatController:
         return self._interrupt_host.pending_chat_create_ids()
 
     def execute_agent_chat_create(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """WORKER THREAD: create the confirmed chat and marshal UI completion.
+        """WORKER THREAD: create the confirmed chat and marshal UI completion."""
+        from . import console_chat_create
 
-        TASK-32482 Task 7. Runs ONLY after ``request_chat_create_confirm``
-        returned an allow (the bridge closure enforces that ordering), so
-        refusal before creation makes no chat; the outcome's ``kind``
-        tells the model (and the run log) why. A source retired during I/O
-        refuses UI placement. Legacy forks discard their orphan row; prepared
-        new chats retain their successfully saved draft before launch.
-
-        For ``fork_chat`` the new conversation copies the source's active
-        path verbatim (``ChatConversationService.copy_conversation_active_
-        path``) and records fork lineage (``parent_conversation_id`` +
-        ``forked_from_message_id`` -- both FK-enforced, so only real
-        persisted ids are ever passed). For ``new_chat`` a fresh
-        conversation is created in the owning session's workspace scope.
-        Both stamp the ``console_agent_handoff`` metadata key (``draft``/
-        ``created_via``/``source_run_id``) Task 8 rehydrates from.
-
-        On success the UI-thread completion (``complete_agent_chat_create``)
-        is marshaled via ``app.call_from_thread`` with the new session's
-        placement inputs; the executor itself returns the outcome dict the
-        bridge closure renders into the ToolResult.
-
-        Args:
-            payload: ``{"tool" ("fork_chat"|"new_chat"), "session_id",
-                "run_id", "title", "opening_prompt", "instructions"}``.
-
-        Returns:
-            ``{"ok": True, "title", "conversation_id", "workspace_id",
-            "copied_messages", "draft_set"}`` on success, else
-            ``{"ok": False, "kind", "error"}`` with ``kind`` one of
-            ``session_gone``, ``payload_too_large``,
-            ``source_not_persisted``, ``character_conflict``,
-            ``empty_history``, ``execution_failed``.
-        """
-        from tldw_chatbook.Agents.agent_models import (
-            CHAT_CREATE_PAYLOAD_MAX,
-            CHAT_CREATE_TITLE_MAX,
+        return console_chat_create.execute_agent_chat_create(
+            self,
+            payload,
         )
-        from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
-
-        tool = str(payload.get("tool") or "")
-        session_id = str(payload.get("session_id") or "")
-        # A committed Close retains its source during drain; an earlier Allow
-        # cannot authorize a new durable chat once that Close has committed.
-        if session_id in self._session_close_generations:
-            return {
-                "ok": False,
-                "kind": _CHAT_CREATE_SESSION_GONE,
-                "error": "source session is closing",
-            }
-        if tool == "new_chat":
-            return self._execute_prepared_chat_create(payload)
-
-        session = next((s for s in self.store.sessions() if s.id == session_id), None)
-        if session is None:
-            return {
-                "ok": False,
-                "kind": _CHAT_CREATE_SESSION_GONE,
-                "error": "source session not found",
-            }
-        title = str(payload.get("title") or "").strip()
-        opening_prompt = str(payload.get("opening_prompt") or "")
-        instructions = str(payload.get("instructions") or "")
-        # Qodo round finding 4: same strict-type contract as the bridge
-        # closures -- the executor is reachable from callers other than the
-        # closures, so a non-string routing input is a clear refusal here
-        # too, never a str() coercion.
-        for _name in ("provider", "model", "preset"):
-            _value = payload.get(_name, "")
-            if not isinstance(_value, str):
-                return {
-                    "ok": False,
-                    "kind": "invalid_args",
-                    "error": f"{_name} must be a string, got {type(_value).__name__}",
-                }
-        req_provider = str(payload.get("provider") or "").strip()
-        req_model = str(payload.get("model") or "").strip()
-        req_preset = str(payload.get("preset") or "").strip()
-        # Mirrors the bridge closures' cap (CHAT_CREATE_PAYLOAD_MAX in
-        # agent_models -- the single shared constant, PR review #5);
-        # duplicated here so the executor stays safe even if wired to a
-        # caller other than the closures.
-        if (
-            len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX
-            or len(instructions) > CHAT_CREATE_PAYLOAD_MAX
-        ):
-            return {
-                "ok": False,
-                "kind": "payload_too_large",
-                "error": f"payload exceeds {CHAT_CREATE_PAYLOAD_MAX} chars",
-            }
-        persistence = self.store.persistence
-        db = getattr(persistence, "db", None)
-        if persistence is None or db is None:
-            return {
-                "ok": False,
-                "kind": "execution_failed",
-                "error": "persistence unavailable",
-            }
-
-        # TASK-32874: optional routing for the CREATED chat. Resolved
-        # BEFORE anything is created; every RoutingError surfaces as the
-        # outcome's kind with nothing created (ADR-344 vocabulary).
-        routed_settings: Any = None
-        if req_provider or req_model or req_preset:
-            from dataclasses import replace as _dc_replace
-
-            from tldw_chatbook.Agents.agent_models import definition_from_row
-            from tldw_chatbook.Agents.agent_routing import (
-                RoutingError as _RoutingError,
-            )
-            from tldw_chatbook.Agents.agent_routing import (
-                load_agents_routing_config as _load_routing,
-            )
-            from tldw_chatbook.Agents.agent_routing import (
-                resolve_spawn_target as _resolve_target,
-            )
-            from tldw_chatbook.Chat.console_session_settings import (
-                build_default_console_session_settings as _build_settings,
-            )
-            from tldw_chatbook.config import load_settings as _load_app_config
-
-            app_config = _load_app_config()
-            routing_cfg = _load_routing()
-            preset_def = None
-            if req_preset:
-                agent_db = getattr(self._agent_bridge, "agent_runs_db", None)
-                rows = (
-                    agent_db.list_agent_definitions(enabled_only=True)
-                    if agent_db is not None
-                    else []
-                )
-                match = next(
-                    (r for r in rows if str(r.get("name") or "") == req_preset), None
-                )
-                if match is None:
-                    return {
-                        "ok": False,
-                        "kind": "unknown_preset",
-                        "error": f"no enabled agent preset named '{req_preset}'",
-                    }
-                preset_def = definition_from_row(match)
-                if not (preset_def.provider or preset_def.model):
-                    return {
-                        "ok": False,
-                        "kind": "preset_unrouted",
-                        "error": f"preset '{req_preset}' sets no provider/model",
-                    }
-            try:
-                # The [agents] SUB-AGENT default level does not apply to
-                # chat creation (this is not a spawn): clear it so the
-                # levels are exactly ad-hoc -> preset -> parent-fill.
-                target = _resolve_target(
-                    app_config,
-                    parent_provider=(
-                        session.settings.provider if session.settings else ""
-                    ),
-                    parent_model=(session.settings.model if session.settings else ""),
-                    preset=preset_def,
-                    override_provider=req_provider,
-                    override_model=req_model,
-                    # The [agents] sub-agent default level never applies
-                    # here (uniformly cleared for every chat-create
-                    # request): levels are ad-hoc -> preset -> parent-fill.
-                    routing=_dc_replace(
-                        routing_cfg,
-                        subagent_default_provider="",
-                        subagent_default_model="",
-                    ),
-                )
-            except _RoutingError as exc:
-                return {"ok": False, "kind": str(exc.code), "error": str(exc)}
-            # Qodo round finding 2: the resolver's merged params (preset
-            # params above registry-entry params above defaults) ride the
-            # ADR-344 extra_sources seam so a routed chat keeps the
-            # preset/endpoint tuning, not just provider/model.
-            routed_settings = _build_settings(
-                app_config,
-                provider=target.provider,
-                model=target.model or None,
-                extra_sources=(
-                    (dict(getattr(target, "params", None) or ()),)
-                    if getattr(target, "params", None)
-                    else ()
-                ),
-            )
-
-        source_conv: str | None = None
-        source_row: dict[str, Any] | None = None
-        new_conv: str | None = None
-        copied = 0
-        if tool == "fork_chat":
-            source_conv = session.persisted_conversation_id
-            if session.ephemeral or not source_conv:
-                return {
-                    "ok": False,
-                    "kind": "source_not_persisted",
-                    "error": "the current chat is temporary; nothing to fork",
-                }
-        elif not title:
-            title = "New Chat"
-
-        def _handoff_metadata(
-            source_metadata: str | None, settings_snapshot: Any = None
-        ) -> dict[str, Any]:
-            """PR review #9: MERGE the handoff key into the source's own
-            metadata (speech/roleplay/canvas prefs ride along) instead of
-            replacing it with a handoff-only mapping."""
-            merged: dict[str, Any] = {}
-            if source_metadata:
-                try:
-                    parsed = json.loads(source_metadata)
-                    if isinstance(parsed, dict):
-                        merged.update(parsed)
-                except ValueError:
-                    logger.debug("chat_create: source metadata unparseable; replaced")
-            # Qodo 2761 finding 5: stamp the TRUE owning run id (the
-            # executor runs inside the run context; the closure's payload
-            # carries the originating assistant-message id placeholder).
-            from tldw_chatbook.Agents.run_context import current_run_id as _cur_run
-
-            merged["console_agent_handoff"] = {
-                "draft": opening_prompt,
-                "created_via": tool,
-                "source_run_id": str(_cur_run() or payload.get("run_id") or ""),
-            }
-            if settings_snapshot is not None:
-                # Qodo round finding 3: the routed generation snapshot is
-                # DURABLE -- merged under the same generation-settings
-                # metadata key every reopened conversation reads, so the
-                # routing survives a failed completion or a later reopen,
-                # not just the in-memory restore.
-                from tldw_chatbook.Chat.console_generation_settings_metadata import (
-                    merge_console_generation_settings as _merge_gen,
-                )
-                from tldw_chatbook.Chat.console_generation_settings_metadata import (
-                    snapshot_from_session_settings as _snap,
-                )
-
-                merged = _merge_gen(merged, _snap(settings_snapshot))
-            return merged
-
-        try:
-            if tool == "fork_chat":
-                tree = ChatConversationService(db).get_conversation_tree(
-                    str(source_conv), root_limit=10_000, depth_cap=10_000
-                )
-                source_row = dict(tree.get("conversation") or {})
-                if not title:
-                    title = f"Fork of {source_row.get('title') or 'chat'}"[
-                        :CHAT_CREATE_TITLE_MAX
-                    ]
-                if instructions and source_row.get("character_id"):
-                    return {
-                        "ok": False,
-                        "kind": "character_conflict",
-                        "error": "character chats keep their persona; "
-                        "fork without instructions",
-                    }
-                conversation_service = ChatConversationService(db)
-                # PR review #3: resolve the EFFECTIVE leaf (pointer, else
-                # latest -- always a live row) through the same resolver the
-                # copy uses, so the FK-enforced lineage column can never
-                # receive a stale/dangling pointer.
-                source_leaf = conversation_service.effective_active_leaf(
-                    str(source_conv)
-                )
-                if source_leaf is None:
-                    return {
-                        "ok": False,
-                        "kind": "empty_history",
-                        "error": "nothing to fork yet; use new_chat",
-                    }
-                new_conv = persistence.create_conversation(
-                    conversation_title=title,
-                    scope_type=source_row.get("scope_type") or "global",
-                    workspace_id=source_row.get("workspace_id"),
-                    system_prompt=instructions or source_row.get("system_prompt"),
-                    character_id=source_row.get("character_id"),
-                    assistant_kind=source_row.get("assistant_kind"),
-                    assistant_id=source_row.get("assistant_id"),
-                    assistant_authority_id=source_row.get("assistant_authority_id"),
-                    metadata=_handoff_metadata(
-                        source_row.get("metadata"),
-                        settings_snapshot=routed_settings,
-                    ),
-                    parent_conversation_id=source_conv,
-                    forked_from_message_id=source_leaf,
-                )
-                copy_outcome = conversation_service.copy_conversation_active_path(
-                    str(source_conv), new_conv
-                )
-                copied = int(copy_outcome["copied"])
-            else:
-                workspace_id = session.workspace_id
-                scope = (
-                    "global"
-                    if workspace_id in (None, CONSOLE_GLOBAL_WORKSPACE_ID)
-                    else "workspace"
-                )
-                new_conv = persistence.create_conversation(
-                    conversation_title=title,
-                    scope_type=scope,
-                    workspace_id=None if scope == "global" else workspace_id,
-                    system_prompt=instructions or None,
-                    metadata=_handoff_metadata(None, routed_settings),
-                )
-        except ValueError as exc:
-            if new_conv is not None:
-                self._discard_chat_create_orphan(db, new_conv)
-            if "empty_history" in str(exc):
-                return {
-                    "ok": False,
-                    "kind": "empty_history",
-                    "error": "nothing to fork yet; use new_chat",
-                }
-            return {"ok": False, "kind": "execution_failed", "error": str(exc)}
-        except Exception as exc:  # noqa: BLE001
-            if new_conv is not None:
-                self._discard_chat_create_orphan(db, new_conv)
-            return {"ok": False, "kind": "execution_failed", "error": str(exc)}
-
-        # PR reviews #6/#10: hydrate the new session's transcript nodes on
-        # THIS worker thread -- the UI-thread completion must not run the
-        # fork's DB reads (a large fork would freeze the chat UI). A
-        # hydration failure degrades to an empty transcript (the durable
-        # messages are safe); it never strands the created chat.
-        nodes: list[Any] = []
-        new_leaf: str | None = None
-        try:
-            from tldw_chatbook.Chat.console_conversation_hydration import (
-                console_messages_from_conversation_tree,
-            )
-
-            new_tree = ChatConversationService(db).get_conversation_tree(
-                new_conv, root_limit=10_000, depth_cap=10_000
-            )
-            nodes = list(console_messages_from_conversation_tree(new_tree, db=db))
-            new_leaf = db.get_conversation_active_leaf(new_conv)
-        except Exception:  # noqa: BLE001 -- hydration is best-effort here
-            logger.opt(exception=True).warning(
-                "chat_create: new-chat hydration failed; restoring empty transcript"
-            )
-
-        # PR review #8: a globally scoped fork carries workspace_id None;
-        # the session restore path expects the Console's GLOBAL workspace
-        # id, not None (None is replaced by create_session's default).
-        completion_workspace_id = (
-            (source_row or {}).get("workspace_id")
-            if tool == "fork_chat"
-            else session.workspace_id
-        ) or CONSOLE_GLOBAL_WORKSPACE_ID
-        # PR review #1: pass the conversation's identity through so the
-        # restored session keeps the fork's assistant/character identity
-        # instead of generic Console defaults (settings themselves stay
-        # None: the restore path rebuilds provider defaults from the
-        # durable generation snapshot like any reopened conversation).
-        identity = {
-            "assistant_kind": (source_row or {}).get("assistant_kind"),
-            "assistant_id": (source_row or {}).get("assistant_id"),
-            "assistant_authority_id": (source_row or {}).get("assistant_authority_id"),
-            "persona_memory_mode": (source_row or {}).get("persona_memory_mode"),
-            "character_id": (source_row or {}).get("character_id"),
-            "character_name": (source_row or {}).get("character_name"),
-        }
-        if tool != "fork_chat":
-            identity = {
-                "assistant_kind": session.assistant_kind,
-                "assistant_id": session.assistant_id,
-                "assistant_authority_id": session.assistant_authority_id,
-                "persona_memory_mode": None,
-                "character_id": session.local_character_id(),
-                "character_name": session.character_name
-                if session.local_character_id() is not None
-                else None,
-            }
-
-        completion_admitted = False
-
-        def complete_if_source_open(**kwargs: Any) -> bool:
-            """UI THREAD: qualify the source before using the current view sink.
-
-            Args:
-                kwargs: Created-chat placement inputs resolved by this worker.
-
-            Returns:
-                False if Close/disposal retired the source; True otherwise,
-                including a live source whose view is currently detached.
-            """
-            nonlocal completion_admitted
-            if not self._chat_create_source_is_open(session_id):
-                return False
-            completion_admitted = True
-            complete = self.complete_agent_chat_create
-            if complete is not None:
-                complete(session_id=session_id, **kwargs)
-            return True
-
-        completion_allowed = self._chat_create_source_is_open(session_id)
-        app = self.app
-        if completion_allowed and app is not None:
-            try:
-                completion_allowed = app.call_from_thread(
-                    complete_if_source_open,
-                    conversation_id=new_conv,
-                    title=title,
-                    tool=tool,
-                    opening_prompt=opening_prompt,
-                    workspace_id=completion_workspace_id,
-                    nodes=nodes,
-                    active_leaf_persisted_id=new_leaf,
-                    settings=routed_settings,
-                    **identity,
-                )
-            except Exception:
-                # A retiring app can refuse the UI hop before running its gate.
-                # Keep unrelated completion failures on their existing path.
-                if completion_admitted or self._chat_create_source_is_open(session_id):
-                    raise
-                completion_allowed = False
-        if not completion_allowed:
-            self._discard_chat_create_orphan(db, new_conv)
-            return {
-                "ok": False,
-                "kind": _CHAT_CREATE_SESSION_GONE,
-                "error": "source session closed before chat completion",
-            }
-        return {
-            "ok": True,
-            "title": title,
-            "conversation_id": new_conv,
-            "workspace_id": completion_workspace_id,
-            "copied_messages": copied,
-            "draft_set": bool(opening_prompt),
-        }
 
     def _chat_create_source_is_open(self, session_id: str) -> bool:
         """Check the existing lifetime fence and live source ownership.
@@ -17522,8 +17182,33 @@ class ConsoleChatController:
             finished, empty text, over the steering cap).
         """
         session_id = self.store.active_session_id
-        steer = self._active_steer_hooks.get(session_id) if session_id else None
-        if steer is None:
+        run_id = self._current_primary_run_id(session_id) if session_id else None
+        if run_id is None:
+            return "no active run to steer — plain messages queue for the next turn"
+        return self.steer_run(session_id, text, expected_run_id=run_id)
+
+    def _current_primary_run_id(self, session_id: str) -> str | None:
+        """Resolve only this session's in-process primary, never historical rows."""
+        session = next(
+            (row for row in self.store.sessions() if row.id == session_id), None
+        )
+        if session is None or not session.persisted_conversation_id:
+            return None
+        find = getattr(self._agent_bridge, "current_primary_run_id", None)
+        return find(session.persisted_conversation_id) if callable(find) else None
+
+    def steer_run(
+        self, session_id: str, text: str, *, expected_run_id: str
+    ) -> str | None:
+        """Queue guidance for the exact existing native primary mailbox."""
+        steer = self._active_steer_hooks.get(session_id)
+        if (
+            self._disposed
+            or self._shutdown_requested.is_set()
+            or not expected_run_id
+            or (self._current_primary_run_id(session_id) != expected_run_id)
+            or steer is None
+        ):
             return "no active run to steer — plain messages queue for the next turn"
         return steer(text)
 
@@ -17549,8 +17234,23 @@ class ConsoleChatController:
             None when delivered; a human-readable refusal otherwise.
         """
         session_id = self.store.active_session_id
-        redirect = self._active_redirect_hooks.get(session_id) if session_id else None
-        if redirect is None:
+        run_id = self._current_primary_run_id(session_id) if session_id else None
+        if run_id is None:
+            return "no active run to redirect — plain messages queue for the next turn"
+        return self.redirect_run(session_id, text, expected_run_id=run_id)
+
+    def redirect_run(
+        self, session_id: str, text: str, *, expected_run_id: str
+    ) -> str | None:
+        """Redirect only the expected native primary, retaining native refusal text."""
+        redirect = self._active_redirect_hooks.get(session_id)
+        if (
+            self._disposed
+            or self._shutdown_requested.is_set()
+            or not expected_run_id
+            or (self._current_primary_run_id(session_id) != expected_run_id)
+            or redirect is None
+        ):
             return "no active run to redirect — plain messages queue for the next turn"
         return redirect(text)
 
@@ -17609,28 +17309,69 @@ class ConsoleChatController:
             )
         )
 
+    def _current_control_turn_id(self, session_id: str) -> str | None:
+        """Return the currently owned turn/preparation identity for exact Stop."""
+        received = self.store.received_turn_for_session(session_id)
+        if received is not None:
+            return received.request_id
+        preparation = self.store.preparation_for_session(session_id)
+        chain = self.prompt_queue_coordinator._chains.get(session_id)
+        if chain is not None and chain.request is not None:
+            return chain.request.turn_id
+        if preparation is not None:
+            return preparation.preparation_id
+        if self.response_rules is not None:
+            source = getattr(self.response_rules, "_sources", {}).get(session_id)
+            if source is not None:
+                return source.parent_turn_id
+        return self._active_assistant_message_ids.get(session_id)
+
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
-        """Request the ACTIVE (viewed) session's stream to stop at the next
-        safe boundary.
+        """Stop the viewed session through the same native explicit-session owner."""
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return False
+        run_id = self._current_primary_run_id(session_id)
+        turn_id = self._current_control_turn_id(session_id)
+        # Legacy preparations (including response-rule work) may predate turn custody.
+        if run_id is None and turn_id is None:
+            return self._stop_session_run(session_id, record_user_stop=record_user_stop)
+        return self.stop_run(
+            session_id,
+            expected_run_id=run_id,
+            expected_turn_id=turn_id,
+            record_user_stop=record_user_stop,
+        )
 
-        Task 3b requirement 2: name and public semantics are unchanged --
-        this is the Stop button's contract, and it only ever targets
-        whatever session ``self.store.active_session_id`` currently is,
-        never a background run in another tab. A background run is
-        completely unaffected by this call (its own entries in the
-        per-session maps below are untouched); see ``shutdown`` for the
-        teardown path that stops every session at once.
+    def stop_run(
+        self,
+        session_id: str,
+        *,
+        expected_run_id: str | None,
+        expected_turn_id: str | None,
+        record_user_stop: bool = True,
+    ) -> bool:
+        """Stop one exact existing turn/run; a successor never inherits the press."""
+        if self._disposed or not any(
+            row.id == session_id for row in self.store.sessions()
+        ):
+            return False
+        if expected_run_id is None and expected_turn_id is None:
+            return False
+        if (
+            expected_run_id is not None
+            and self._current_primary_run_id(session_id) != expected_run_id
+        ):
+            return False
+        if (
+            expected_turn_id is not None
+            and self._current_control_turn_id(session_id) != expected_turn_id
+        ):
+            return False
+        return self._stop_session_run(session_id, record_user_stop=record_user_stop)
 
-        Args:
-            record_user_stop: Append the explicit "stopped by user"
-                transcript record (TASK-337 AC3). ``shutdown`` passes
-                ``False`` — a teardown stop is not a user action.
-
-        Returns:
-            True when the viewed session had an active run and it was
-            stopped; False (a no-op) when it did not.
-        """
-        session_id = self.store.active_session_id or ""
+    def _stop_session_run(self, session_id: str, *, record_user_stop: bool) -> bool:
+        """Retain every native preparation, queue, cancellation and settlement path."""
         if self.response_rules is not None and self.response_rules.state(
             session_id
         ).phase in {"drafting", "testing", "checking"}:
@@ -17642,6 +17383,7 @@ class ConsoleChatController:
         runtime = getattr(self, "_hooks_v2_runtime", None)
         library_search = self._library_search_tasks.get(session_id)  # TASK-33621.20
         searching = library_search is not None and not library_search.done()
+        review_stopped = self._interrupt_host.pending_round_count(session_id, kind="hook_review") > 0
         received_cancelled = bool(
             not searching  # its send is in custody: Stop pauses only the search
             and runtime is not None
@@ -17657,7 +17399,6 @@ class ConsoleChatController:
             for task in self._submit_tasks_for_session(session_id):
                 if task is not asyncio.current_task():
                     self._cancel_task_on_owner_loop(task)
-        review_stopped = self._interrupt_host.pending_round_count(session_id, kind="hook_review") > 0
         review_stopped = review_stopped or received_stopped or received_cancelled
         if review_stopped:
             self._signal_stop(session_id=session_id)
@@ -17729,15 +17470,14 @@ class ConsoleChatController:
                 task.cancel()
             return True
 
-        if self.run_state.status is not ConsoleRunStatus.STREAMING:
-            assistant_message_id = self._active_streaming_assistant_message_id()
+        if self.run_state_for(session_id).status is not ConsoleRunStatus.STREAMING:
+            assistant_message_id = self._streaming_assistant_message_id(session_id)
             if assistant_message_id is None:
                 return review_stopped
         else:
-            assistant_message_id = (
-                self._active_assistant_message_ids.get(session_id)
-                or self._active_streaming_assistant_message_id()
-            )
+            assistant_message_id = self._active_assistant_message_ids.get(
+                session_id
+            ) or self._streaming_assistant_message_id(session_id)
         if assistant_message_id is None:
             return review_stopped
         self.prompt_queue_coordinator.pause_for_stop(session_id)
@@ -17916,7 +17656,6 @@ class ConsoleChatController:
         if recovery_cancelled:
             raise asyncio.CancelledError
 
-
     def begin_shutdown(self) -> None:
         """Synchronously fence work and marshal teardown to the owner loop.
 
@@ -18079,7 +17818,10 @@ class ConsoleChatController:
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
-        session_id = self.store.active_session_id
+        return self._streaming_assistant_message_id(self.store.active_session_id)
+
+    def _streaming_assistant_message_id(self, session_id: str | None) -> str | None:
+        """Find a streaming message in the explicitly owned session."""
         if session_id is None:
             return None
         try:
@@ -21188,7 +20930,6 @@ class ConsoleChatController:
         )
 
         return await _controller_capture_turn_configuration_snapshot(self, session_id, context_provider=context_provider, selection=selection, _prepared_skills=_prepared_skills)
-
 
     def resolve_turn_configuration_snapshot(
         self, session_id: str
@@ -28590,9 +28331,6 @@ class ConsoleChatController:
         )
 
 
-
-
-
 _HOOK_AUTHORITY_VALUES_ORIGINAL = (
     ConsoleChatController,
     '_hook_authority_values',
@@ -28609,9 +28347,21 @@ _CONSOLE_RECEIVED_QUEUE_METHOD = (
 # Stock sharing narrows only these directly consumed wrappers. A custom binding
 # keeps the preceding composition route; a captured change refuses publication.
 _CONSOLE_TOOL_COMPOSITION_METHODS = tuple(
-    (name, method, method.__code__, method.__globals__, method.__defaults__, method.__kwdefaults__,
-     tuple((method.__kwdefaults__ or {}).items()), method.__closure__)
-    for name in ("_compose_mcp_provider", "_compose_local_provider", "_publish_mcp_inspector_counts")
+    (
+        name,
+        method,
+        method.__code__,
+        method.__globals__,
+        method.__defaults__,
+        method.__kwdefaults__,
+        tuple((method.__kwdefaults__ or {}).items()),
+        method.__closure__,
+    )
+    for name in (
+        "_compose_mcp_provider",
+        "_compose_local_provider",
+        "_publish_mcp_inspector_counts",
+    )
     for method in (vars(ConsoleChatController)[name],)
 )
 
@@ -28673,12 +28423,22 @@ _CONSOLE_PENDING_FACTS_CALLBACK_CODES = {
 }
 
 
-
 # Direct callback definitions for optional manual Preparing display selection.
 _CONSOLE_PREPARING_CONTROLLER_READERS = tuple(
-    (name, method, method.__code__, method.__defaults__, method.__kwdefaults__,
-     tuple((method.__kwdefaults__ or {}).items()))
-    for name in ('_provider_selection', 'in_flight_run_count', '_live_busy_session_ids', 'activity_for')
+    (
+        name,
+        method,
+        method.__code__,
+        method.__defaults__,
+        method.__kwdefaults__,
+        tuple((method.__kwdefaults__ or {}).items()),
+    )
+    for name in (
+        "_provider_selection",
+        "in_flight_run_count",
+        "_live_busy_session_ids",
+        "activity_for",
+    )
     for method in (getattr(ConsoleChatController, name),)
 )
 

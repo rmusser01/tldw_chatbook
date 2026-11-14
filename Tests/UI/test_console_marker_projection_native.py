@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.private_profile import private_profile_test
 
 
@@ -33,7 +34,7 @@ async def test_original_marker_read_leaves_shared_loop_responsive(request):
         ChangeReviewPublicationSignal,
     )
 
-    database = AgentRunsDB(config.get_user_data_dir() / "marker-loop.sqlite")
+    database = owned_agent_runs_db(config.get_user_data_dir() / "marker-loop.sqlite")
     database.create_run(
         run_id="run",
         conversation_id="chat",
@@ -211,11 +212,14 @@ async def test_original_marker_read_leaves_shared_loop_responsive(request):
 async def test_marker_read_keeps_native_custody_and_current_publication(
     request, action, monkeypatch
 ):
+    from contextlib import ExitStack
+
     from tldw_chatbook import config
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
     from tldw_chatbook.Backup_Recovery.participants import repository_participant
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_change_review_read import _MarkerRead
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.UI.Console_Modules.transcript import (
@@ -225,7 +229,7 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
         ChangeReviewPublicationSignal,
     )
 
-    database = AgentRunsDB(config.get_user_data_dir() / "marker-custody.sqlite")
+    database = owned_agent_runs_db(config.get_user_data_dir() / "marker-custody.sqlite")
     database.create_run(
         run_id="run",
         conversation_id="chat",
@@ -257,6 +261,9 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
         runtime_accessor=lambda: runtime, conversation_id_accessor=lambda: selected[0]
     )
     code = AgentRunsDB.list_change_review_run_anchors.__code__
+    read_code = _MarkerRead.read.__code__
+    execution_owner = database._execution_owner
+    held_entry_users, close_entry_users = [], []
     entered, release = threading.Event(), threading.Event()
     captured = {}
     calls = []
@@ -290,6 +297,20 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
             foreign.execute("BEGIN")
             database._thread_local.conn = foreign
             captured["foreign"] = foreign
+
+    def observe_custody(observed_code, _offset, callback, first_argument):
+        if observed_code is not read_code:
+            return
+        receiver = getattr(callback, "__self__", first_argument)
+        if (
+            getattr(callback, "__name__", None) == "_held_connection"
+            and receiver is database
+        ):
+            held_entry_users.append(execution_owner._users)
+        elif getattr(
+            callback, "__name__", None
+        ) == "close" and receiver is captured.get("connection"):
+            close_entry_users.append(execution_owner._users)
 
     async def held():
         while not entered.is_set():
@@ -344,6 +365,8 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
                 borrowed = await loop.run_in_executor(executor, borrow)
             monitoring.register_callback(tool, monitoring.events.PY_RETURN, hold_return)
             monitoring.set_local_events(tool, code, monitoring.events.PY_RETURN)
+            monitoring.register_callback(tool, monitoring.events.CALL, observe_custody)
+            monitoring.set_local_events(tool, read_code, monitoring.events.CALL)
             before_tasks = set(asyncio.all_tasks())
             task = asyncio.create_task(projection.prepare())
             await asyncio.wait_for(held(), 12)
@@ -394,20 +417,36 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
             assert projection._marker_blocks == []
         finally:
             release.set()
-            outcomes = await asyncio.gather(
-                *(value for value in (task, other, dispose) if value is not None),
-                return_exceptions=True,
-            )
-            after = (
-                await loop.run_in_executor(executor, after_read) if captured else None
-            )
-            original_reader.__defaults__ = original_defaults
-            if replacement_db is not None:
-                replacement_db.close()
-            monitoring.set_local_events(tool, code, 0)
-            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
-            monitoring.free_tool_id(tool)
-            database.close()
+            try:
+                outcomes = await asyncio.gather(
+                    *(value for value in (task, other, dispose) if value is not None),
+                    return_exceptions=True,
+                )
+                after = (
+                    await loop.run_in_executor(executor, after_read)
+                    if captured
+                    else None
+                )
+            finally:
+                with ExitStack() as cleanup:
+                    cleanup.callback(database.close)
+                    if replacement_db is not None:
+                        cleanup.callback(replacement_db.close)
+                    cleanup.callback(monitoring.free_tool_id, tool)
+                    cleanup.callback(
+                        monitoring.register_callback,
+                        tool,
+                        monitoring.events.PY_RETURN,
+                        None,
+                    )
+                    cleanup.callback(
+                        monitoring.register_callback, tool, monitoring.events.CALL, None
+                    )
+                    cleanup.callback(monitoring.set_local_events, tool, code, 0)
+                    cleanup.callback(monitoring.set_local_events, tool, read_code, 0)
+                    cleanup.callback(
+                        setattr, original_reader, "__defaults__", original_defaults
+                    )
     assert not runtime._preparation_reads and not projection._preparation_reads
     assert after == (
         (False, True, True, True)
@@ -415,6 +454,13 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
         else (True, None, False, False)
     )
     assert len(calls) == 1
+    assert held_entry_users and all(users > 0 for users in held_entry_users)
+    assert (
+        close_entry_users == []
+        if action == "borrowed"
+        else close_entry_users and all(users > 0 for users in close_entry_users)
+    )
+    assert execution_owner._users == 0
     if action in {"cancel", "repeated_cancel", "all_created_cancel"}:
         assert task.cancelled() and projection._key is None
     elif action in {

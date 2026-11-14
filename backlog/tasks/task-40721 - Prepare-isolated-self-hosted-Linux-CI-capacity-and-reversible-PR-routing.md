@@ -27,7 +27,7 @@ Reduce multi-hour GitHub runner waits using the owner's Linux server while prese
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/359-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
 Reason: New CI execution and credential/isolation boundary; preserve ADR-103's required gate and test selection.
 
 1. Record measured queue delay, host resources, isolated worker design and rollback.
@@ -40,7 +40,7 @@ Reason: New CI execution and credential/isolation boundary; preserve ADR-103's r
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Prepared reversible PR/control runner routing while preserving test selections, required names, job graph, fork fallback and bulk hosted execution. ADR-359 records the credential/isolation boundary. Eight 2-vCPU/6-GiB test VMs plus one control VM run under a 64-GiB/12-logical-CPU cgroup and bounded 100-GiB storage. The repository-only GitHub App key stays root-owned outside guests. The pinned controller plus checked-in tested patch reclaims deregistered/offline guests and bounds busy execution; systemd KillMode=mixed preserves draining.
+Prepared reversible PR/control runner routing while preserving test selections, required names, job graph, fork fallback and bulk hosted execution. ADR-360 records the credential/isolation boundary. Eight 2-vCPU/6-GiB test VMs plus one control VM run under a 64-GiB/12-logical-CPU cgroup and bounded 100-GiB storage. The repository-only GitHub App key stays root-owned outside guests. The pinned controller plus checked-in tested patch reclaims deregistered/offline guests and bounds busy execution; systemd KillMode=mixed preserves draining.
 
 Evidence: 586 focused CI cases passed plus the harness-dependent storage lease case separately; independent routing review passed. Actual guest public HTTPS/private-SSH boundary checks passed. Existing UI shard 36/36 at dev 1455ceeb: 116 passed, 1 existing Darwin-only skip, 714.60s, 619888 KiB maximum test-process RSS. GitHub qualification 43478237685 passed normal renewal; 43480488554 passed after intentionally disabling guest poweroff, with host reclamation logged and a new control job 23 seconds later. Race-enabled pool/config/controller/GitHub/QEMU tests, Go vet, systemd validation, and backlog/ADR checks passed. Deployed patched binary SHA256 is documented in scripts/ci/self_hosted/README.md.
 

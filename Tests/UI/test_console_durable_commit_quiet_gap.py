@@ -30,7 +30,7 @@ import contextlib
 
 import pytest
 
-from Tests.UI.test_console_config_sync_cadence import _held_run
+from Tests.UI.test_console_config_sync_cadence import _held_run, _replay_pending
 from Tests.UI.test_console_send_acknowledgement import (
     build,
     eager_tasks,
@@ -104,7 +104,13 @@ async def test_a_durable_commit_runs_its_first_sync_then_holds_until_the_next_ti
             syncs = _Syncs(monkeypatch, console)
 
             async def settled() -> None:
-                await until(lambda: not console._console_sync_in_progress, timeout=30)
+                await until(
+                    lambda: (
+                        not console._console_sync_in_progress
+                        and not _replay_pending(console)
+                    ),
+                    timeout=30,
+                )
 
             async def tick() -> None:
                 await settled()
@@ -117,10 +123,11 @@ async def test_a_durable_commit_runs_its_first_sync_then_holds_until_the_next_ti
             try:
                 await tick()
                 assert syncs.count == 1, "the poll's tick ran no sync"
-                await _quiet(console)
+                # Retire pending publication before opening the test's window.
+                await settled()
                 with _commit_window(console._console_chat_store):
                     # The commit's first sync runs (the base painted it too).
-                    await tick()
+                    await timer._callback()
                     assert syncs.count == 2, "the commit's first tick was held"
 
                     # Until the poll's next tick, an explicit sync waits.
@@ -161,6 +168,10 @@ async def test_a_durable_commit_runs_its_first_sync_then_holds_until_the_next_ti
             finally:
                 gateway.validation_release.set()
                 timer.resume()
+                await until(
+                    lambda: not console._console_runtime().has_custodied_turns(),
+                    timeout=30,
+                )
 
 
 @pytest.mark.asyncio
@@ -185,6 +196,10 @@ async def test_without_a_run_poll_a_durable_commit_holds_no_sync(monkeypatch):
                         assert syncs.count == expected
             finally:
                 gateway.validation_release.set()
+                await until(
+                    lambda: not console._console_runtime().has_custodied_turns(),
+                    timeout=30,
+                )
 
 
 @pytest.mark.asyncio
@@ -228,6 +243,10 @@ async def test_a_real_sends_commit_opens_the_window_on_the_store_the_screen_read
                 assert started_at(store) is None, "the commit window stayed open"
             finally:
                 gateway.validation_release.set()
+                await until(
+                    lambda: not console._console_runtime().has_custodied_turns(),
+                    timeout=30,
+                )
 
 
 def test_each_commit_holds_once_until_the_next_tick_and_never_two_ticks():

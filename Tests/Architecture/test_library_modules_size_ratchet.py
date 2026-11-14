@@ -167,7 +167,7 @@ _BUDGETS: dict[str, int] = {
     # recheck_settled_load, so a load a list read found in flight is re-checked.
     # 967 -> 983 (2026-11-06, TASK-38981 review; owner size waiver): a
     # conversation picked from the list holding the narrow stage takes it back.
-    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 983,
+    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 967,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
     # 2026-10-21, TASK-34000.22 fix round 1 (owner decision 2026-10-04: raise
     # the row to the measured value): 1453 -> 1492. Dev itself was already
@@ -177,7 +177,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-38989 (owner size waiver): 1492 -> 1501. The export
     # body gains the local-content lifetime span that only the screen's
     # stale duplicate carried; library_screen.py drops 79 lines with it.
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1501,
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1492,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
@@ -471,7 +471,7 @@ _BUDGETS: dict[str, int] = {
     # immediate select (``]``/``[`` and the review-set walk too) hands it back.
     # 2026-11-06, TASK-38981 re-review 4 (same waiver): 5260 -> 5275 (+15):
     # the viewer sync lands a pending stage pick once its item has loaded.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5275,
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5246,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -735,7 +735,7 @@ _BUDGETS: dict[str, int] = {
     # PR3346: submission joins its existing save/ack owner; no ceiling increase.
     # 2026-11-06, TASK-38981 re-review 4 (owner size waiver): 5065 -> 5068
     # (+3): the detail sync's ``arm_editor`` lands a pending stage pick.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5068,
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5065,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
@@ -842,7 +842,7 @@ _BUDGETS: dict[str, int] = {
     # (refresh blocked Skills rows after a trust Retry, +3) and c7b80bbf5a
     # (keep the pending Skills filter when that Retry completes, +3). No lane
     # ran this row, so dev carried the red. 3142 -> 3171.
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3171,
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3116,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
@@ -901,9 +901,9 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 # standing "Watchlists" button while the items pane offers the empty-state
 # one; plus the reused schedule's name handed to the consent copy (F3).
 # Measured with `len(read_text().splitlines())`.
-# 2026-11-06, TASK-38981 review (owner size waiver): 1057 -> 1063 (+6): the
-# Artifacts profile opts into the list taking the stage beside an open item.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1063
+# TASK-38981 keeps its list-stage preference under the original 1057 pin.
+# The upstream six-line increase is not adopted; prose reflow retains behavior.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1057
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in

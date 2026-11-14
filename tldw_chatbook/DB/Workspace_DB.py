@@ -6,6 +6,7 @@ import inspect
 import sqlite3
 import sys
 import time
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Union
@@ -27,7 +28,7 @@ class WorkspaceDB(SQLiteStoreKernel, BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 10
+    _CURRENT_SCHEMA_VERSION = 11
     _MIGRATE_V8_TO_V9_STATEMENTS = (
         "CREATE TABLE workspace_binding_authority (binding_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision > 0))",
         'CREATE TRIGGER workspace_binding_authority_insert AFTER INSERT ON workspace_runtime_bindings BEGIN INSERT INTO workspace_binding_authority(binding_id,revision) VALUES(NEW.binding_id,1) ON CONFLICT(binding_id) DO UPDATE SET revision=revision+1; END',
@@ -431,6 +432,7 @@ COMMIT;
 
     def _initialize_schema(self) -> None:
         """Initialize the local workspace registry schema."""
+        reject_incompatible_preview(self.db_path_str)
 
         with self.connection() as conn:
             conn.executescript(
@@ -627,6 +629,8 @@ COMMIT;
                 self._migrate_v8_to_v9()
             if needs_v10:
                 self._migrate_v9_to_v10()
+            if version < 11:
+                self._migrate_v10_to_v11()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -692,6 +696,41 @@ COMMIT;
             self._migrate_v8_to_v9()
         if needs_v10:
             self._migrate_v9_to_v10()
+
+        if version < 11:
+            self._migrate_v10_to_v11()
+
+    def _migrate_v10_to_v11(self) -> None:
+        from .mobile_import_authority import WORKSPACE_MIGRATION
+
+        with self.transaction() as conn:
+            for statement in WORKSPACE_MIGRATION:
+                conn.execute(statement)
+
+    def hold_imported_bindings(
+        self,
+        cursor: sqlite3.Connection | sqlite3.Cursor,
+        operation_id: str,
+        binding_ids: Sequence[str],
+    ) -> None:
+        """Hold exact runtime bindings atomically with their imported rows."""
+        from .mobile_import_authority import hold_authorities
+
+        with self.connection() as conn:
+            hold_authorities(
+                conn,
+                cursor,
+                operation_id,
+                (("binding", identity) for identity in binding_ids),
+                workspace=True,
+            )
+
+    def imported_binding_allowed(self, binding_id: str) -> bool:
+        """A saved binding and a live folder do not constitute import review."""
+        from .mobile_import_authority import authority_allowed
+
+        with self.connection() as conn:
+            return authority_allowed(conn, "binding", binding_id)
 
     def _migrate_v2_to_v3(self) -> None:
         """Add durable Research source-operation intent and stage receipts."""
@@ -923,3 +962,34 @@ _RUN_LOG_PROBE_SOURCE = (
         )
     ),
 )
+
+
+def reject_incompatible_preview(db_path: str | Path) -> None:
+    """Refuse unmerged preview metadata before any schema-ready writer access."""
+    import time
+
+    from .mobile_preview_lineage import (
+        _existing_preview_target,
+        _reject_preview_connection,
+    )
+    from .private_sqlite import connect_private_sqlite
+
+    target = _existing_preview_target(db_path)
+    if target is None:
+        return
+    selected, identity = target
+    deadline = time.monotonic() + 5.0
+    connection = connect_private_sqlite(
+        "db.workspaces.preflight",
+        selected,
+        read_only=True,
+        must_exist=True,
+        immutable=False,
+        expected_identity=identity,
+        operation_deadline=deadline,
+        timeout=5.0,
+    )
+    try:
+        _reject_preview_connection(connection, "workspaces", deadline)
+    finally:
+        connection.close()

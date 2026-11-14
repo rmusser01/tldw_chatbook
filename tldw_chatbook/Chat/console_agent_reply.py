@@ -693,41 +693,15 @@ async def _run_agent_reply(
                 ),
             )
             profile_provider = await prepare(self, profile_preparation)
-        canvas_provider = None
-        canvas_authority = None
-        canvas_controller = getattr(self.store, "canvas_turn_controller", None)
-        try:
-            canvas_enabled = self._canvas_enabled_reader() is True
-        except Exception:  # noqa: BLE001 - Canvas tool advertising fails closed
-            canvas_enabled = False
-        if canvas_enabled and canvas_controller is not None and session is not None:
-            from tldw_chatbook.Agents.canvas_tool_provider import CanvasToolProvider
-            from tldw_chatbook.Canvas.models import CanvasScope
+        from .console_agent_canvas import register_canvas_turn
 
-            canvas_run_id = str(host.uuid4())
-            canvas_scope = CanvasScope(
-                session_id=session_id,
-                conversation_id=conversation_id,
-                active_message_ids=self.store.canvas_active_path_message_ids(
-                    session_id
-                ),
-                selected_canvas_id=None,
-                selected_revision_id=None,
-                run_id=canvas_run_id,
-            )
-            canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
-            canvas_run = canvas_controller.register_run(
-                canvas_scope,
-                assistant_message_id=assistant_message_id,
-                temporary=session.ephemeral,
-            )
-            canvas_provider = CanvasToolProvider(
-                canvas_run,
-                scope=canvas_scope,
-                enabled_reader=self._canvas_enabled_reader,
-                disabled_reader=self._canvas_disabled_reader,
-            )
-            canvas_authority = canvas_provider.issue_registration_authority()
+        canvas_provider, canvas_authority = register_canvas_turn(
+            self,
+            session_id=session_id,
+            conversation_id=conversation_id,
+            assistant_message_id=assistant_message_id,
+            session=session,
+        )
     if setup_stop.stopped:  # TASK-33621.22: Stop while "Connecting tools…"
         return await setup_stop.settle(session_id)
     recovery_runtime = getattr(self, "_archive_recovery_runtime", None)

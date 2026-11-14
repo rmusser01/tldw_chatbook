@@ -258,12 +258,13 @@ def _tldw_serve(monkeypatch, tmp_path):
 
 
 def _mobile_service(monkeypatch, tmp_path):
-    from tldw_chatbook.Web_Server import mobile_service
+    from tldw_chatbook.Web_Server import serve
 
-    service = mobile_service.MobileChatService.__new__(mobile_service.MobileChatService)
-    service._data_dir = tmp_path
-    monkeypatch.setattr(mobile_service, "open_profile_storage", _stop)
-    return service._build_engine
+    # Served mobile writes now use the normal served Console runtime.
+    monkeypatch.setattr(serve, "check_web_server_available", lambda: True)
+    monkeypatch.setattr(serve, "get_cli_setting", lambda *_args, default: default)
+    monkeypatch.setattr(serve, "create_server", _stop)
+    return serve.run_web_server
 
 
 def _mcp_server(monkeypatch, tmp_path):

@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "pass_added_modules": 556,
-  "pass_added_loc": 427617,
+  "pass_added_modules": 555,
+  "pass_added_loc": 427032,
   "routes": {
     "acp": {
       "loc": 535,
@@ -11,7 +11,7 @@
       ]
     },
     "ccp": {
-      "loc": 61090,
+      "loc": 60539,
       "modules": [
         "tldw_chatbook.Backup_Recovery.persona_visual_participants",
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",
@@ -22,8 +22,6 @@
         "tldw_chatbook.Character_Chat.local_chat_dictionary_service",
         "tldw_chatbook.Character_Chat.persona_list_paging",
         "tldw_chatbook.Character_Chat.world_book_import",
-        "tldw_chatbook.Media_Creation",
-        "tldw_chatbook.Media_Creation.generation_templates",
         "tldw_chatbook.Persona_Buddy.controller",
         "tldw_chatbook.Persona_Buddy.preferences",
         "tldw_chatbook.Persona_Buddy.rendering",
@@ -82,6 +80,7 @@
         "tldw_chatbook.Widgets.Persona_Widgets.roleplay_item_list",
         "tldw_chatbook.Widgets.Persona_Widgets.tag_filter_picker",
         "tldw_chatbook.Widgets.Persona_Widgets.world_book_picker",
+        "tldw_chatbook.Widgets.status_line",
         "tldw_chatbook.tldw_api.character_persona_schemas"
       ]
     },
@@ -192,7 +191,7 @@
       ]
     },
     "library": {
-      "loc": 132542,
+      "loc": 132662,
       "modules": [
         "tldw_chatbook.Audio.meeting_session",
         "tldw_chatbook.Chunking",
@@ -490,7 +489,7 @@
       ]
     },
     "settings": {
-      "loc": 78526,
+      "loc": 78369,
       "modules": [
         "tldw_chatbook.Audio.voice_process_types",
         "tldw_chatbook.Backup_Recovery.rag_definition_participant",
@@ -588,7 +587,7 @@
       ]
     },
     "study": {
-      "loc": 5559,
+      "loc": 5562,
       "modules": [
         "tldw_chatbook.UI.Screens.notes_scope_models",
         "tldw_chatbook.UI.Screens.study_screen",

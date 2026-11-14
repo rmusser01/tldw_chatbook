@@ -220,7 +220,7 @@ from .config import (
     get_subscriptions_db_path,
     get_tts_profiles_db_path,
     get_user_data_dir,
-    save_setting_to_cli_config,
+    save_setting_to_cli_config,  # noqa: F401 -- live profile-stamp namespace dependency
 )
 from .Logging_Config import (
     configure_application_logging,
@@ -739,10 +739,13 @@ def _build_notes_scope_service(
 def _open_profile_chachanotes(app_config: Mapping[str, Any]) -> Any:
     """Open the profile ChaChaNotes DB through the shared opener, seeded; None on failure."""
     from .app_services import open_chachanotes_db
+    from .config import preflight_selected_console_stores
 
+    database_path = get_chachanotes_db_path()
+    preflight_selected_console_stores(chat_path=database_path)
     try:
         return open_chachanotes_db(
-            get_chachanotes_db_path(),
+            database_path,
             client_id=CLI_APP_CLIENT_ID,
             check_integrity=app_config.get("database", {}).get("check_integrity_on_startup", False),
             seed_builtin_content=True,
@@ -880,46 +883,13 @@ class TldwCli(
     ]
 
     def _stamp_new_profile_library_lifecycle(self) -> None:
-        """Persist the Library lifecycle at profile CREATION (task-32059).
+        """Persist the Library lifecycle at profile CREATION (task-32059)."""
+        from . import app_profile_startup
 
-        ``coerce_library_lifecycle`` reads an absent
-        ``[library.rail_state] lifecycle`` as ``expanded`` for any profile the
-        current run did not create -- so a user who completed first-run setup,
-        quit, and relaunched before ever opening Library never saw the
-        documented compact "Get started" rail. Writing ``unknown`` here (the
-        same value the screen would have derived on a first visit in THIS run)
-        makes the second launch read the fact instead of inferring it from a
-        missing key. A profile that already carries a lifecycle is untouched.
-        """
-        library_config = self.app_config.get("library")
-        if not isinstance(library_config, dict):
-            library_config = {}
-            self.app_config["library"] = library_config
-        rail_state = library_config.get("rail_state")
-        if not isinstance(rail_state, dict):
-            rail_state = {}
-            library_config["rail_state"] = rail_state
-        if "lifecycle" in rail_state:
-            return
-        # One name for the value both the in-memory state and the file get:
-        # "unknown" is LibraryLifecycle.UNKNOWN.value, spelled out rather than
-        # imported: pulling the Library package in here would put its modules
-        # on every boot for one string (see the module-census ratchet).
-        lifecycle = "unknown"
-        rail_state["lifecycle"] = lifecycle
-        try:
-            # `save_setting_to_cli_config` REPORTS a write failure rather than
-            # raising it, and an unstamped profile reads back as `expanded` on
-            # the next launch -- so the return value is the failure signal.
-            saved = save_setting_to_cli_config(
-                "library.rail_state", "lifecycle", lifecycle
-            )
-        except Exception:
-            saved = False
-        if not saved:
-            # A profile whose config cannot be written still gets the correct
-            # in-memory lifecycle for this run; boot must not fail over it.
-            logger.warning("Could not stamp the Library lifecycle for a new profile.")
+        return app_profile_startup._stamp_new_profile_library_lifecycle(
+            self,
+            source_globals=globals(),
+        )
 
     def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
         """Add the two consolidated widget-defaults stylesheets as CSS sources.
@@ -1070,6 +1040,14 @@ class TldwCli(
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
 
+    def get_driver_class(self):
+        """Use the retained-terminal driver only for a served child."""
+        if os.environ.get("CHATBOOK_SERVED_CHILD") == "1":
+            from .Web_Server.console_web_driver import ConsoleWebDriver
+
+            return ConsoleWebDriver
+        return super().get_driver_class()
+
     def __init__(self):
         # Track startup timing
         self._startup_start_time = time.perf_counter()
@@ -1144,7 +1122,7 @@ class TldwCli(
                     runtime_snapshot_id=runtime_snapshot_id(
                         self._canvas_profile_snapshot
                     ),
-                    handler=self.served_canvas_handler.handle,
+                    handler=self._handle_served_control_request,
                 )
             except ControlProtocolError:
                 loguru_logger.warning(
@@ -3641,26 +3619,37 @@ class TldwCli(
     def _start_served_canvas_control(self) -> None:
         """Attach this authoritative child to its parent transport."""
         from .app_served import _start_served_canvas_control
+
         return _start_served_canvas_control(self, app_globals=globals())
+
+    async def _handle_served_control_request(self, request):
+        """Route independent Console control before Canvas scope lookup."""
+        from .app_served import _handle_served_control_request
+
+        return await _handle_served_control_request(self, request)
 
     def _served_relay_run_states(self):
         """Current ``{session_id: run state}`` for the relay poller, if built."""
         from .app_served import _served_relay_run_states
+
         return _served_relay_run_states(self)
 
     def served_relay_wrap_pending_approval(self, original):
         """Wrap one ``set_pending_approval`` binding for the relay (served only)."""
         from .app_served import _served_relay_wrap_pending_approval
+
         return _served_relay_wrap_pending_approval(self, original)
 
     def _served_relay_decide(self, round_id, decisions):
         """Apply one phone decision on this child's Console controller."""
         from .app_served import _served_relay_decide
+
         return _served_relay_decide(self, round_id, decisions)
 
     async def _stop_served_canvas_control(self) -> None:
         """Close the private child channel without affecting terminal exit."""
         from .app_served import _stop_served_canvas_control
+
         return await _stop_served_canvas_control(self, app_globals=globals())
 
     @on(ModelCatalogRefreshed)
@@ -4371,6 +4360,11 @@ class TldwCli(
 
     async def _run_no_splash_post_mount_setup(self) -> None:
         """Run screen startup and post-mount setup when the splash screen is disabled."""
+        from .app_served import _await_served_control_start
+
+        if not await _await_served_control_start(self):
+            return
+
         try:
             await self._push_initial_screen()
             await self._post_mount_setup()
@@ -5375,44 +5369,22 @@ class TldwCli(
             return None
 
     def _schedule_initial_screen_preimport(self) -> None:
-        """Warm the initial screen's module while the splash is still up.
+        """Warm the initial screen's module on a worker while the splash is up.
 
-        task-21110. Boot with the splash enabled (the default) is strictly
-        serial: the splash owns the event loop for its full duration, and only
-        when it closes does ``_push_initial_screen`` synchronously
-        ``import_module`` the initial route's module on that same loop --
-        measured at 0.31s warm and 0.94s on a first boot after an upgrade,
-        for the 306 in-package modules chat_screen adds on top of the
-        636-module boot closure. The existing pre-importer cannot
-        help: it is armed by ``_schedule_deferred_startup_work`` at the tail of
-        ``_post_mount_setup``, which itself only runs *after* that push.
+        TASK-21110: boot otherwise pays the initial import synchronously after
+        the splash, before the whole-registry pass can start. The original
+        measurement was 0.31 s warm and 0.94 s cold for the Console route.
 
-        This moves a start time, not machinery: the work is the exact
-        ``_preimport_screens`` body the whole-registry pass already uses, with
-        its per-module-lock race semantics (a real navigation racing this
-        thread blocks on CPython's own import lock and then finds the finished
-        module in ``sys.modules``; a failed import is never cached, so the real
-        push fails identically to today). Worst case if the user skips the
-        splash mid-import, the push blocks on that same lock -- no worse than
-        the synchronous import it replaces.
+        Reuse _preimport_screens and CPython's import lock. Navigation racing
+        the worker waits for the same import, and failures are still retried
+        by the real push. Skipping the splash mid-import has the same worst
+        case as the original synchronous import.
 
-        Gated on ``_screen_preimport_enabled()`` so the pre-import feature has
-        exactly one on/off switch (``TLDW_SCREEN_PREIMPORT``, default off under
-        pytest), and re-checked against ``splash_screen_active`` because a
-        keypress can close the splash inside the scheduling delay -- past that
-        point the push either already happened or is imminent, and a second
-        thread would only contend with it.
-
-        Deliberately NOT gated on core count (TASK-21113). The two
-        pre-importers share ``_preimport_screens`` and one enable switch, but
-        the core-count question has opposite answers for them: the
-        whole-registry pass is speculative work for screens the user may
-        never open, so a slow machine should be throttled; this one is the
-        initial screen's own import, which the boot pays either way, and
-        moving it off the event loop is worth *more* on a slow machine
-        (task-21110 measured close-to-usable -46% on a cold first boot).
-        Throttling it would put a certain cost back on the loop to dodge a
-        speculative one. See ``_screen_preimport_pacing``.
+        Use the shared TLDW_SCREEN_PREIMPORT switch (off under pytest by
+        default). Recheck splash state because a keypress can close it during
+        the scheduling delay. Keep the initial route independent of the
+        whole-registry core-count throttle (TASK-21113): boot pays this
+        import on every machine, and moving it off-loop helps slower ones.
         """
         if not self._screen_preimport_enabled():
             return
@@ -5593,6 +5565,11 @@ class TldwCli(
     @on(SplashScreen.Closed)
     async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:
         """Handle splash screen closing."""
+        from .app_served import _await_served_control_start
+
+        if not await _await_served_control_start(self):
+            return
+
         self.splash_screen_active = False
         logger.debug("Splash screen closed, mounting main UI")
 

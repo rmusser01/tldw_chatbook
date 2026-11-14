@@ -652,6 +652,45 @@ def test_unowned_or_unsafe_sqlite_sidecars_block_capture(
     assert after.scope_digest != before.scope_digest
 
 
+def test_agent_runs_execution_lock_is_local_and_unsafe_aliases_are_blocked(tmp_path):
+    from tldw_chatbook.Backup_Recovery.inventory import _sqlite_sidecars
+    from tldw_chatbook.Backup_Recovery.models import StorageItem
+    from tldw_chatbook.Backup_Recovery.sqlite_adapters import recovery_adapters
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+
+    main = tmp_path / "agent_runs.db"
+    main.touch(mode=0o600)
+    item = StorageItem("db.agent_runs", "runs", main, "included", ())
+    lock = main.with_name(".agent_runs.db.execution.lock")
+
+    def recorded():
+        rows = _sqlite_sidecars((item,), recovery_adapters())
+        control, = (row for row in rows if row.path == lock)
+        return control
+
+    before = recorded()
+    with ConsoleExecutionOwner.acquire(main):
+        assert recorded() == before
+    assert before.owner == "recovery.control"
+    assert before.status == "intentionally_excluded"
+    assert before.dependencies == ("runs",)
+    legacy = StorageItem(
+        "db.agent_runs",
+        "profile:test:db.agent_runs:legacy-mobile-execution-lock",
+        lock,
+        "intentionally_excluded",
+        (),
+    )
+    assert not any(
+        row.path == lock for row in _sqlite_sidecars((item, legacy), recovery_adapters())
+    )
+    retained = lock.with_name("retained-execution-lock")
+    lock.rename(retained)
+    lock.symlink_to(retained)
+    assert recorded().status == "unsupported"
+    assert retained.is_file()
+
+
 def test_mixed_recovered_owner_does_not_claim_payload_sidecars(tmp_path):
     from tldw_chatbook.Backup_Recovery.inventory import _sqlite_sidecars
     from tldw_chatbook.Backup_Recovery.recovered_media import recovery_adapters
@@ -770,3 +809,103 @@ def test_held_capacity_refuses_an_ancestor_that_is_no_longer_the_pinned_one(tmp_
 
     with pytest.raises(ValueError, match="capacity_volume_unavailable"):
         check(0)
+
+
+def test_legacy_mobile_capture_preserves_wal_and_referenced_artifact(
+    tmp_path, monkeypatch
+):
+    import sqlite3
+    from contextlib import closing
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import seed_legacy_mobile
+    from Tests.Backup_Recovery.test_core_owners import application_authority
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import mobile_inventory
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+    )
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+    from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+
+    root = tmp_path / "source"
+    source = root / "user" / "mobile"
+    expected = seed_legacy_mobile(source)
+    config_path = root / "selected.toml"
+    config_path.write_text(
+        f'[general]\nusers_name="user"\n[paths]\ndata_dir="{root}"\n'
+    )
+    config = {
+        "general": {"users_name": "user"},
+        "paths": {"data_dir": str(root)},
+        DISCOVERY_CONTEXT_KEY: DiscoveryContext(config_path, "test"),
+    }
+    adapters = {adapter.owner_id: adapter for adapter in install_adapters()}
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700)
+    authority = application_authority(tmp_path, root, monkeypatch)
+    with closing(sqlite3.connect(source / "runs.db")) as writer:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute(
+            "UPDATE agent_runs SET result='committed WAL result' WHERE id=?",
+            (expected["child_run_id"],),
+        )
+        writer.commit()
+        before = {
+            suffix: Path(str(source / "runs.db") + suffix).read_bytes()
+            for suffix in ("", "-wal")
+        }
+        with _preview_reads():
+            items = mobile_inventory(config)
+        assert not [
+            item
+            for item in items
+            if item.status in {"unsupported", "unavailable", "missing_required"}
+        ]
+        selected = [item for item in items if item.status == "included"]
+        captured = {}
+        with (
+            authority.maintenance(("core", "bootstrap.unbound"), 2) as session,
+            session.capture_scope(tuple(item.path for item in selected), stage),
+        ):
+            for index, item in enumerate(selected):
+                destination = stage / str(index)
+                adapters[item.owner].capture(item, destination, Event())
+                captured[item.path] = destination
+                if item.path.name in {"chat.db", "workspaces.db", "runs.db"}:
+                    assert (
+                        validate_candidate(
+                            adapters[item.owner],
+                            destination,
+                            Event(),
+                            migrate=False,
+                        )
+                        == ()
+                    )
+            chat_item = next(item for item in selected if item.path.name == "chat.db")
+            assert (
+                adapters[chat_item.owner].validate_dependencies(
+                    chat_item,
+                    captured[chat_item.path],
+                    {item.logical_id: captured[item.path] for item in selected},
+                )
+                == ()
+            )
+        assert {
+            suffix: Path(str(source / "runs.db") + suffix).read_bytes()
+            for suffix in ("", "-wal")
+        } == before
+        with closing(sqlite3.connect(captured[source / "runs.db"])) as connection:
+            assert connection.execute(
+                "SELECT result,wake_delivered_at FROM agent_runs WHERE id=?",
+                (expected["child_run_id"],),
+            ).fetchone() == ("committed WAL result", None)
+            assert connection.execute(
+                "SELECT state FROM automatic_wake_attempts"
+            ).fetchall() == [("prepared",)]
+        assert (
+            captured[expected["artifact_file"]].read_bytes()
+            == expected["artifact_file"].read_bytes()
+        )

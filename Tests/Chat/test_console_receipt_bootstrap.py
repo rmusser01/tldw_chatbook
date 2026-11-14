@@ -8,16 +8,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.console_activity_receipts import ConsoleActivityReceiptService
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 from tldw_chatbook.UI.Navigation.buddy_workspace import BuddyWorkspaceCoordinator
 
 
 def _seed_result(path, conversation_id="saved"):
-    database = AgentRunsDB(path)
+    database = owned_agent_runs_db(path)
     try:
         activity_id = ConsoleActivityReceiptService(database, None).publish_ordinary(
             logical_outcome_id="previous-run",

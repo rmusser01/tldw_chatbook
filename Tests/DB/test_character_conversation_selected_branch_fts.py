@@ -79,8 +79,10 @@ def _thinking_canary() -> str:
 
 def test_projector_emits_only_selected_visible_user_and_assistant_path(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     db = CharactersRAGDB(tmp_path / "eligible.sqlite", client_id="projector")
+    request.addfinalizer(db.close_connection)
     conversation_id = _conversation(db)
     _message(db, "m1", conversation_id, None, "user", "SELECTED_USER_CANARY")
     _message(db, "m2", conversation_id, "m1", "assistant", "SELECTED_ASSISTANT_CANARY")
@@ -152,9 +154,11 @@ def test_projector_emits_only_selected_visible_user_and_assistant_path(
 @pytest.mark.parametrize("defect", ["cycle", "dangling", "cross_conversation"])
 def test_projector_fails_closed_for_cycle_dangling_parent_and_cross_conversation_parent(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
     defect: str,
 ) -> None:
     db = CharactersRAGDB(tmp_path / f"invalid-{defect}.sqlite", client_id="projector")
+    request.addfinalizer(db.close_connection)
     conversation_id = _conversation(db)
     _message(db, "m1", conversation_id, None, "user", "root")
     _message(db, "m2", conversation_id, "m1", "assistant", "leaf")
@@ -196,8 +200,10 @@ def test_projector_fails_closed_for_cycle_dangling_parent_and_cross_conversation
 
 def test_projector_uses_unique_leaf_only_for_legacy_linear_conversation(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     db = CharactersRAGDB(tmp_path / "legacy.sqlite", client_id="projector")
+    request.addfinalizer(db.close_connection)
     conversation_id = _conversation(db)
     _message(db, "m1", conversation_id, None, "user", "root")
     _message(db, "m2", conversation_id, "m1", "assistant", "unique leaf")
@@ -211,8 +217,10 @@ def test_projector_uses_unique_leaf_only_for_legacy_linear_conversation(
 
 def test_projector_digest_changes_when_selected_eligible_content_changes(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     db = CharactersRAGDB(tmp_path / "digest.sqlite", client_id="projector")
+    request.addfinalizer(db.close_connection)
     conversation_id = _conversation(db)
     _message(db, "m1", conversation_id, None, "user", "before")
     db.set_conversation_active_leaf(conversation_id, "m1")
@@ -232,8 +240,10 @@ def test_projector_digest_changes_when_selected_eligible_content_changes(
 
 def test_projector_fails_closed_when_variant_group_has_multiple_live_selections(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     db = CharactersRAGDB(tmp_path / "variant-selection.sqlite", client_id="projector")
+    request.addfinalizer(db.close_connection)
     conversation_id = _conversation(db)
     _message(db, "root", conversation_id, None, "user", "root")
     _message(db, "base", conversation_id, "root", "assistant", "base")
@@ -254,8 +264,10 @@ def test_projector_fails_closed_when_variant_group_has_multiple_live_selections(
 
 def test_projector_excludes_conversation_with_deleted_character_card(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     db = CharactersRAGDB(tmp_path / "deleted-card.sqlite", client_id="projector")
+    request.addfinalizer(db.close_connection)
     conversation_id = _conversation(db)
     _message(db, "root", conversation_id, None, "user", "visible")
     db.set_conversation_active_leaf(conversation_id, "root")
@@ -268,8 +280,10 @@ def test_projector_excludes_conversation_with_deleted_character_card(
 
 def test_projector_validates_large_branched_snapshot_in_linear_time(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     db = CharactersRAGDB(tmp_path / "large-branch.sqlite", client_id="projector")
+    request.addfinalizer(db.close_connection)
     conversation_id = _conversation(db)
     chain_size = 2_500
     timestamp = "2026-09-03T10:00:00Z"

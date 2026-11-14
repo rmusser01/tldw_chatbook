@@ -12,6 +12,7 @@ from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
     _READS_LOCK as _READS_LOCK,
     _current_task as _current_task,
     _observe_locked as _observe_locked,
+    _preparation_handoffs as _preparation_handoffs,
     _retire as _retire,
     _source_binding as _source_binding,
     await_finite_read as await_finite_read,

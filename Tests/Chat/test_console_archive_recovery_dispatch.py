@@ -59,6 +59,7 @@ async def test_unknown_fields_and_foreign_cursor_refused(recovery_stores):
 from dataclasses import replace
 from types import SimpleNamespace
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_turn_library_authority import (
     _allowed_candidate,
     _execution_configuration,
@@ -73,7 +74,6 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
 from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
 from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
 
@@ -184,7 +184,7 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
     )
     await store.hydrate_session_library_policy(source.id)
     gateway = RecoveryGateway()
-    runs_db = AgentRunsDB(tmp_path / "runs.sqlite", "test")
+    runs_db = owned_agent_runs_db(tmp_path / "runs.sqlite", "test")
     bridge = ConsoleAgentBridge(
         agent_runs_db=runs_db,
         store=store,
@@ -873,7 +873,7 @@ async def test_console_dispose_joins_recovery_before_closing_native_database(
     app, _, _ = recovery_stores
     owner = ConsoleRuntime(app)
     runtime = owner.ensure_archive_recovery()
-    runs = AgentRunsDB(tmp_path / "dispose-runs.sqlite", "test")
+    runs = owned_agent_runs_db(tmp_path / "dispose-runs.sqlite", "test")
     owner._agent_runs_db = runs
     started = threading.Event()
     release = threading.Event()

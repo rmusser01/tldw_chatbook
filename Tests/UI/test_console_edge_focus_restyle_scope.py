@@ -24,6 +24,8 @@ import pytest
 from textual.css.model import CombinatorType, SelectorType
 from textual.scrollbar import ScrollBar, ScrollBarCorner
 
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_console_shell_regions import make_console_pilot
 from tldw_chatbook.UI.Console_Modules.frame import sync_console_focus_paint
 
@@ -42,6 +44,13 @@ _REGIONS = (
     ("console-right-rail", "console-inspector-rail-collapse"),
     ("console-inspector-rail-handle", "console-inspector-rail-open"),
 )
+
+
+@pytest.fixture
+def ready_console_app():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    return app
 
 
 @contextmanager
@@ -71,14 +80,18 @@ def _subject_start(selectors: list[Any]) -> int:
 
 
 @pytest.mark.asyncio
-async def test_an_edge_focus_cue_restyles_only_its_region_and_control() -> None:
+async def test_an_edge_focus_cue_restyles_only_its_region_and_control(
+    ready_console_app,
+) -> None:
     """Moving a cue onto and off a region restyles two nodes, not its subtree.
 
     On origin/dev each toggle restyled the whole region: 160 nodes in the
     Inspect rail and 136 in the Context rail at 160x45, and each collapsed
     handle's badge.
     """
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with make_console_pilot(
+        size=(160, 45), app=ready_console_app, hide_setup_overlay=False
+    ) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-inspector-rail-open")
         await pilot.pause()
@@ -145,7 +158,9 @@ async def test_an_edge_focus_cue_restyles_only_its_region_and_control() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_rule_styles_another_node_by_an_edge_regions_focus() -> None:
+async def test_no_rule_styles_another_node_by_an_edge_regions_focus(
+    ready_console_app,
+) -> None:
     """Fidelity pin for the scoped restyle above.
 
     Restyling only the region and its control is exact only while no loaded
@@ -153,7 +168,9 @@ async def test_no_rule_styles_another_node_by_an_edge_regions_focus() -> None:
     Checked two ways: every loaded rule, and the computed style of every
     node in each region after a full subtree restyle.
     """
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with make_console_pilot(
+        size=(160, 45), app=ready_console_app, hide_setup_overlay=False
+    ) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-inspector-rail-open")
         await pilot.pause()

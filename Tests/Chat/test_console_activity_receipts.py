@@ -5,11 +5,11 @@ from __future__ import annotations
 import sqlite3
 import threading
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Chat.console_activity_receipts import (
     ConsoleActivityReceiptService,
 )
 from tldw_chatbook.Chat.console_agent_bridge import FleetDrained, SettledChild
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def test_unseen_snapshot_does_not_initialize_lazy_receipts(monkeypatch):
@@ -74,7 +74,7 @@ def _child(
 
 
 def test_fleet_drain_maps_statuses_and_is_idempotent(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     event = FleetDrained(
@@ -104,7 +104,7 @@ def test_fleet_drain_maps_statuses_and_is_idempotent(tmp_path):
 
 
 def test_null_run_children_use_drain_identity_without_cross_drain_collision(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     service = ConsoleActivityReceiptService(database, RecordingMarks())
 
     first = service.publish_fleet_drain(
@@ -136,7 +136,7 @@ def test_null_run_children_use_drain_identity_without_cross_drain_collision(tmp_
 
 def test_unknown_fleet_status_fails_closed_and_degrades(tmp_path):
     service = ConsoleActivityReceiptService(
-        AgentRunsDB(tmp_path / "runs.db"), RecordingMarks()
+        owned_agent_runs_db(tmp_path / "runs.db"), RecordingMarks()
     )
 
     published = service.publish_fleet_drain(
@@ -155,7 +155,7 @@ def test_unknown_fleet_status_fails_closed_and_degrades(tmp_path):
 
 def test_cold_hydration_rebuilds_snapshot_and_reconciles_marks(tmp_path):
     path = tmp_path / "runs.db"
-    database = AgentRunsDB(path)
+    database = owned_agent_runs_db(path)
     activity_id, _ = database.publish_console_activity(
         origin="fleet_survivor",
         logical_outcome_id="fleet-run:hydrated",
@@ -178,7 +178,7 @@ def test_cold_hydration_rebuilds_snapshot_and_reconciles_marks(tmp_path):
 
 
 def test_unseen_receipt_reads_are_bounded_and_expose_continuation(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     for index in range(201):
         database.publish_console_activity(
             origin="ordinary",
@@ -201,7 +201,7 @@ def test_unseen_receipt_reads_are_bounded_and_expose_continuation(tmp_path):
 
 
 def test_cold_or_degraded_clear_request_preserves_coarse_mark(tmp_path, monkeypatch):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     marks.marked.add("conversation-1")
     service = ConsoleActivityReceiptService(database, marks)
@@ -221,7 +221,7 @@ def test_cold_or_degraded_clear_request_preserves_coarse_mark(tmp_path, monkeypa
 
 
 def test_ready_clear_request_respects_receipts_and_viewless_set(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     receipts = service.publish_fleet_drain(
@@ -244,7 +244,7 @@ def test_ready_clear_request_respects_receipts_and_viewless_set(tmp_path):
 
 
 def test_acknowledge_reconciles_badge_without_clearing_newer_receipt(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     first = service.publish_fleet_drain(
@@ -273,7 +273,7 @@ def test_acknowledge_reconciles_badge_without_clearing_newer_receipt(tmp_path):
 
 
 def test_publication_and_acknowledgement_share_one_lock(tmp_path, monkeypatch):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     original = service.publish_fleet_drain(
@@ -325,7 +325,7 @@ def test_publication_and_acknowledgement_share_one_lock(tmp_path, monkeypatch):
 def test_all_failed_fleet_publication_keeps_coarse_mark_and_degraded_state(
     tmp_path, monkeypatch
 ):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     monkeypatch.setattr(
@@ -351,7 +351,7 @@ def test_all_failed_fleet_publication_keeps_coarse_mark_and_degraded_state(
 def test_partial_fleet_publication_keeps_coarse_mark_and_reports_incomplete(
     tmp_path, monkeypatch
 ):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     real_publish = database.publish_console_activity
@@ -385,7 +385,7 @@ def test_partial_fleet_publication_keeps_coarse_mark_and_reports_incomplete(
 def test_fleet_reload_failure_keeps_coarse_mark_and_reports_incomplete(
     tmp_path, monkeypatch
 ):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     monkeypatch.setattr(
@@ -411,7 +411,7 @@ def test_fleet_reload_failure_keeps_coarse_mark_and_reports_incomplete(
 def test_failed_fleet_publication_debt_survives_recovery_until_explicit_visit(
     tmp_path, monkeypatch
 ):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     real_publish = database.publish_console_activity
@@ -454,7 +454,7 @@ def test_failed_fleet_publication_debt_survives_recovery_until_explicit_visit(
 def test_acknowledge_retry_confirms_ids_absent_after_post_write_reload_failure(
     tmp_path, monkeypatch
 ):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     service = ConsoleActivityReceiptService(database, RecordingMarks())
     publication = service.publish_fleet_drain(
         FleetDrained(
@@ -484,7 +484,7 @@ def test_acknowledge_retry_confirms_ids_absent_after_post_write_reload_failure(
 def test_complete_fleet_replay_replaces_fallback_debt_with_exact_receipt(
     tmp_path, monkeypatch
 ):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     event = FleetDrained(
@@ -514,7 +514,7 @@ def test_complete_fleet_replay_replaces_fallback_debt_with_exact_receipt(
 def test_transient_fallback_mark_failure_is_repaired_before_ready_and_restart(
     tmp_path, monkeypatch
 ):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     marks = RecordingMarks()
     service = ConsoleActivityReceiptService(database, marks)
     real_set_mark = marks.set_mark
@@ -561,7 +561,7 @@ def test_transient_fallback_mark_failure_is_repaired_before_ready_and_restart(
 
 
 def test_storage_failure_is_content_free_degradation_with_retry(tmp_path, monkeypatch):
-    database = AgentRunsDB(tmp_path / "runs.db")
+    database = owned_agent_runs_db(tmp_path / "runs.db")
     service = ConsoleActivityReceiptService(database, RecordingMarks())
     real_list = database.list_unseen_console_activity
     calls = {"count": 0}

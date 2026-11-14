@@ -12,7 +12,15 @@ from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader as reader
 from .admission import Admission
-from .bootstrap import _key, _overlap, _read, _records, _registry, identity_view, inode_token
+from .bootstrap import (
+    _key,
+    _overlap,
+    _read,
+    _records,
+    _registry,
+    identity_view,
+    inode_token,
+)
 from .capture import _item_validator
 from .journal import (
     _CandidateReceipt,
@@ -824,8 +832,8 @@ def _pending(
             ):
                 raise ValueError("publication_scope_uncovered")
     if durable:
-        from .control_records import _ANCESTRY_RECORD, _require_settled_ancestry
         from .bootstrap import _validate_ancestry_record
+        from .control_records import _ANCESTRY_RECORD, _require_settled_ancestry
 
         root = Path(context.bootstrap_root)
         _require_settled_ancestry(root)
@@ -1018,8 +1026,9 @@ def _check_parents(item):
         raise ValueError("publication_parent_changed") from None
 
 
-def _directory_state(path):
-    with pinned_directory(Path(path)) as fd:
+def _directory_state(path, *, _custody=None):
+    pin = pinned_directory if _custody is None else _custody.pinned_directory
+    with pin(Path(path)) as fd:
         info = os.fstat(fd)
         if info.st_uid != os.geteuid():
             raise ValueError("directory_metadata_changed")
@@ -1038,7 +1047,12 @@ def _observe_safety_source(path):
     path = Path(path)
     if not stat.S_ISDIR(os.stat(path, follow_symlinks=False).st_mode):
         return observe_artifact(path, metadata=True)
-    state = _directory_state(path)
+    return _observe_safety_directory(path)
+
+
+def _observe_safety_directory(path, *, _custody=None):
+    """Observe only a pinned directory; substitutions never trigger payload reads."""
+    state = _directory_state(path, _custody=_custody)
     return _Object(
         path=state.path,
         device=state.device,
@@ -1056,7 +1070,12 @@ def _observe_safety_source(path):
 def _safety_source_matches(source):
     """Check the finite safety witness; ordinary artifact semantics stay intact."""
     try:
-        return _observe_safety_source(source.path) == source.model_dump()
+        actual = (
+            _observe_safety_directory(source.path)
+            if source.kind == "directory"
+            else _observe_safety_source(source.path)
+        )
+        return actual == source.model_dump()
     except (OSError, ValueError, RecursionError):
         return False
 
@@ -1320,7 +1339,25 @@ def _prepare(
     *,
     replacement_profiles=(),
     incoming_credentials=None,
+    _source_archive=None,
+    _source_read_budget=None,
+    _source_journal=None,
+    _source_session=None,
+    _source_cancel=None,
 ):
+    from .mobile_empty_history import _publication_source_context
+
+    mobile_source = _publication_source_context(
+        journal,
+        plan,
+        bootstrap_root,
+        namespaces,
+        _source_archive,
+        _source_read_budget,
+        _source_journal,
+        _source_session,
+        _source_cancel,
+    )
     with journal._locked(exclusive=True) as parent:
         records = journal._records(parent)
         if len(records) != 1 or records[0].event != "candidate_staged":
@@ -1722,8 +1759,14 @@ def _prepare(
         target_by_id = (
             {item.logical_id: item for item in plan.target.items} if plan.target else {}
         )
+        history_candidates = []
         for key in plan.safety_scope:
             item = target_by_id[key]
+            history_candidate = (
+                mobile_source
+                and item.owner == "agents.history"
+                and item.status == "included_directory"
+            )
             adapter = owners.get(item.owner)
             policy = _item_validator(adapter, item).schema_policy() if adapter else None
             if (
@@ -1731,6 +1774,7 @@ def _prepare(
                 or item.status == "included_directory"
                 and item.owner
                 not in {"persona.visual_identity_builtin", "persona.assets"}
+                and not history_candidate
                 or adapter is None
                 or policy is None
                 or policy.schema_sql
@@ -1743,12 +1787,23 @@ def _prepare(
                 )
             ):
                 raise ValueError("safety_scope_capability_unavailable")
+            if history_candidate:
+                from .mobile_empty_history import _publication_history_observation
+
+                _source_read_budget.container(len(history_candidates) + 1)
+                history_candidates.append(item)
+                observation = _publication_history_observation(
+                    item,
+                    plan,
+                    context,
+                    _source_session,
+                    _source_read_budget,
+                    _source_cancel,
+                )
+            else:
+                observation = _observe_safety_source(item.path)
             safety_sources.append(
-                {
-                    "logical_id": key,
-                    "owner_id": item.owner,
-                    "source": _observe_safety_source(item.path),
-                }
+                {"logical_id": key, "owner_id": item.owner, "source": observation}
             )
         if tokenizer_directories:
             recheck_targets(plan)
@@ -1769,30 +1824,47 @@ def _prepare(
         )
         if required_events >= MAX_EVENTS:
             raise ValueError("recovery_event_budget")
-        journal._append(
-            parent,
-            "prepared",
-            {
-                "generation": generation,
-                "mode": plan.mode,
-                "isolated_profiles": [row.model_dump() for row in isolated_profiles],
-                "retained_credentials": retained_credentials,
-                "replacement_profiles": [
-                    row.model_dump() for row in replacement_profiles
-                ],
-                "safety_sources": safety_sources,
-                "incoming_credentials": incoming_credentials,
-                "credential_scopes": document.get("credential_scopes", {})
-                if plan.mode == "replace"
-                else {},
-                "credential_material": credential_material,
-                "artifacts": artifacts,
-                "publication": context.model_dump(),
-                "installed_paths": installed_paths,
-                "rollback_sources": _rollback_sources(plan, artifacts, owners),
-                "directory_metadata": directory_metadata,
-            },
-        )
+        evidence = {
+            "generation": generation,
+            "mode": plan.mode,
+            "isolated_profiles": [row.model_dump() for row in isolated_profiles],
+            "retained_credentials": retained_credentials,
+            "replacement_profiles": [row.model_dump() for row in replacement_profiles],
+            "safety_sources": safety_sources,
+            "incoming_credentials": incoming_credentials,
+            "credential_scopes": document.get("credential_scopes", {})
+            if plan.mode == "replace"
+            else {},
+            "credential_material": credential_material,
+            "artifacts": artifacts,
+            "publication": context.model_dump(),
+            "installed_paths": installed_paths,
+            "rollback_sources": _rollback_sources(plan, artifacts, owners),
+            "directory_metadata": directory_metadata,
+        }
+        if history_candidates:
+            from .mobile_builtin_preservation import _mobile_safety_members
+
+            # Price the extra validated clone before constructing it. The ordinary
+            # journal evidence already exists; no replacement allowance is issued.
+            _source_read_budget.value(evidence, text_copies=2)
+            _source_read_budget.value(evidence)
+            proposed = _Prepared.model_validate(evidence)
+            members = _mobile_safety_members(
+                plan,
+                journal,
+                parent,
+                proposed,
+                receipt,
+                _source_session,
+                _source_archive,
+                _source_journal,
+                _source_read_budget,
+                _source_cancel,
+            )
+            if any(members.get(item.logical_id) != item for item in history_candidates):
+                raise ValueError("mobile_safety_source_binding_unverified")
+        journal._append(parent, "prepared", evidence)
 
 
 def _archive_object(document, logical_id, *, metadata=False):
@@ -2149,6 +2221,371 @@ def _check_preserved_settings(plan, session, candidate, descriptor_record):
         raise ValueError("candidate_receipt_changed")
 
 
+def _installed_history_preservation(
+    plan,
+    document,
+    manifest_digest,
+    work,
+    session,
+    candidates,
+    source,
+    prepared,
+    receipt,
+    descriptor,
+    records,
+):
+    """Bind private config bytes while the installed native owner holds its EX.
+
+    Current publication evidence stays here. Only exact configuration bytes reach
+    the fixed mapper; they grant neither source admission nor publication proof.
+    """
+    from .later_rollback import _preserved_builtin_validation
+    from .mobile_canonical_copy import _CanonicalCopy
+
+    needed = False
+    if type(source) is _CanonicalCopy and plan.target is not None:
+        for item in plan.target.items:
+            if (
+                item.owner != "agents.history"
+                or item.status != "included_directory"
+                or item.logical_id not in plan.safety_scope
+            ):
+                continue
+            for key, _path in plan.restore:
+                if key in item.dependencies:
+                    needed = True
+                    break
+            if needed:
+                break
+    if not needed:
+        return _preserved_builtin_validation(
+            plan, document, manifest_digest, work, session, Event()
+        )
+
+    from .bootstrap import MAX_RECORD
+    from .control_records import UNBOUND_NAMESPACE
+    from .mobile_builtin_preservation import _preservation_budget
+    from .mobile_consolidation import _selector_observation
+    from .mobile_preview_budget import path_cost
+    from .storage_admission import MaintenanceSession, _CaptureFileDescriptors
+
+    if type(session) is not MaintenanceSession:
+        raise ValueError("maintenance_session_required")
+    session._check()
+    # This is the one existing private-preservation allowance/custodian, moved
+    # outwards so added selector/copy representations are paid before reading.
+    budget = _preservation_budget()
+    budget.reserve(4096)
+    budget.container(len(session._scopes) + 1)
+    budget.reserve(512)
+    custody = _CaptureFileDescriptors(None)
+    session._scopes.append(custody)
+    try:
+        if (
+            type(prepared) is not _Prepared
+            or type(receipt) is not _CandidateReceipt
+            or type(plan) is not RestorePlan
+            or plan.mode != "replace"
+            or plan.local_snapshot is None
+            or prepared.publication is None
+            or receipt.manifest_digest != manifest_digest
+            or source.manifest_digest != manifest_digest
+            or source.evidence_digest != plan.local_snapshot.rollback_digest
+            or receipt.archive_digest != plan.archive_digest
+            or prepared.publication.archive_digest != receipt.archive_digest
+            or prepared.publication.plan_digest != receipt.plan_digest
+            or prepared.publication.descriptor != receipt.descriptor
+            or descriptor.get("archive_digest") != receipt.archive_digest
+            or descriptor.get("target_fingerprint") != plan.target_fingerprint
+            or session._control
+            != Path(prepared.publication.bootstrap_root) / "admission"
+            or UNBOUND_NAMESPACE not in session._names
+            or any(
+                name not in session._names for name in prepared.publication.namespaces
+            )
+        ):
+            raise ValueError("mobile_installed_config_context_changed")
+        budget.container(2 * len(records))
+        staged = [row for row in records if row.event == "candidate_staged"]
+        prepared_rows = [row for row in records if row.event == "prepared"]
+        if (
+            len(staged) != 1
+            or len(prepared_rows) != 1
+            or records[0].operation_id == plan.local_snapshot.operation_id
+            or not any(row.event == "publication_started" for row in records)
+            or any(
+                row.event
+                in {"rollback_started", "rolled_back", "prepublication_aborted"}
+                for row in records
+            )
+        ):
+            raise ValueError("mobile_installed_config_context_changed")
+        budget.value(staged[0].evidence, text_copies=4)
+        budget.value(prepared_rows[0].evidence, text_copies=4)
+        if (
+            receipt.model_dump() != staged[0].evidence
+            or prepared.model_dump() != prepared_rows[0].evidence
+        ):
+            raise ValueError("mobile_installed_config_context_changed")
+        budget.container(8 * len(plan.target.items) + 2 * len(plan.restore))
+        current = {item.logical_id: item for item in plan.target.items}
+        restored = dict(plan.restore)
+        if len(current) != len(plan.target.items) or len(restored) != len(plan.restore):
+            raise ValueError("mobile_installed_config_context_changed")
+        required = set()
+        for item in plan.target.items:
+            if (
+                item.owner != "agents.history"
+                or item.status != "included_directory"
+                or item.logical_id not in plan.safety_scope
+            ):
+                continue
+            budget.reserve(4096 + 16 * len(item.logical_id))
+            key = ":".join(item.logical_id.split(":")[:2]) + ":config"
+            if key not in restored:
+                continue
+            if (
+                item.metadata is None
+                or item.metadata.root_id != item.logical_id
+                or item.metadata.parent_id is not None
+                or item.metadata.relative_path != ""
+                or item.dependencies != (key,)
+                or item.logical_id not in plan.safety_scope
+                or not any(
+                    k == item.logical_id and path == item.path
+                    for k, path in plan.preserve
+                )
+            ):
+                raise ValueError("mobile_installed_config_context_changed")
+            required.add(key)
+        if not required:
+            raise ValueError("mobile_installed_config_context_changed")
+        budget.reserve(4096 + path_cost(work, copies=4))
+        with custody.pinned_directory(work) as work_fd:
+            work_info = os.fstat(work_fd)
+            work_identity = (
+                work_info.st_dev,
+                work_info.st_ino,
+                work_info.st_mode,
+                work_info.st_uid,
+            )
+            if work_info.st_uid != os.geteuid() or work_info.st_mode & 0o077:
+                raise ValueError("mobile_installed_config_copy_changed")
+        budget.container(6 * len(required))
+        config_data, checks = [], []
+        for key in sorted(required):
+            session._check()
+            config = current.get(key)
+            budget.container(
+                len(source.prepared.selector_review)
+                + len(descriptor["artifacts"])
+                + len(prepared.artifacts)
+                + len(prepared.installed_paths)
+                + len(records)
+            )
+            if (
+                config is None
+                or config.owner != "config"
+                or config.status != "included"
+                or config.path is None
+                or restored[key] != config.path
+                or str(config.path)
+                not in (
+                    source.prepared.source_selector,
+                    source.prepared.target_selector,
+                )
+            ):
+                raise ValueError("mobile_installed_config_context_changed")
+            reviewed = [
+                row
+                for row in source.prepared.selector_review
+                if row.selector == str(config.path)
+            ]
+            rows = [row for row in descriptor["artifacts"] if row["logical_id"] == key]
+            artifacts = [row for row in prepared.artifacts if row.logical_id == key]
+            installed = [
+                row for row in prepared.installed_paths if row.path == str(config.path)
+            ]
+            published = [
+                row
+                for row in records
+                if row.event == "artifact_published"
+                and row.evidence["logical_id"] == key
+            ]
+            if any(
+                len(group) != 1
+                for group in (reviewed, rows, artifacts, installed, published)
+            ):
+                raise ValueError("mobile_installed_config_context_changed")
+            review, row, artifact, identity = (
+                reviewed[0],
+                rows[0],
+                artifacts[0],
+                installed[0],
+            )
+            progress = published[0].evidence["observed"]
+            if (
+                not review.witnesses
+                or review.fingerprint is None
+                or row["destination"] != str(config.path)
+                or row["kind"] != "file"
+                or row["sha256"] != review.fingerprint
+                or artifact.action != "publish"
+                or artifact.target != str(config.path)
+                or artifact.candidate is None
+                or artifact.candidate.path != row["candidate"]
+                or (identity.device, identity.inode)
+                != (artifact.candidate.device, artifact.candidate.inode)
+                or tuple(row["identity"][:2]) != (identity.device, identity.inode)
+                or progress["path"] != str(config.path)
+                or progress["kind"] != "file"
+                or (progress["device"], progress["inode"])
+                != (identity.device, identity.inode)
+                or progress["sha256"] != artifact.candidate.sha256
+                or progress["size"] != row["size"]
+                or not 0 <= row["size"] <= MAX_RECORD
+            ):
+                raise ValueError("mobile_installed_config_context_changed")
+            budget.reserve(4096 + path_cost(config.path, copies=8))
+            budget.container(3 * len(review.witnesses) + len(records))
+            old_witnesses = tuple(
+                (w.path, w.device, w.inode, w.mode) for w in review.witnesses
+            )
+            before = _selector_observation(
+                config.path, _budget=budget, _custody=custody
+            )
+            prior = [r for r in records if r.event == "installed_validated"]
+            applied = row["applied_metadata"]["mode"]
+            if (
+                before[0] != review.fingerprint
+                or before[1][:-1] != old_witnesses[:-1]
+                or before[1][-1][:3]
+                != (str(config.path), identity.device, identity.inode)
+                or before[1][-1][3]
+                not in (stat.S_IFREG | 0o600, stat.S_IFREG | applied)
+                or len(prior) > 1
+            ):
+                raise ValueError("mobile_canonical_selector_review_required")
+            prior_object = None
+            if prior:
+                budget.container(len(prior[0].evidence["artifacts"]))
+                prior_objects = [
+                    r
+                    for r in prior[0].evidence["artifacts"]
+                    if r["path"] == str(config.path)
+                ]
+                if (
+                    len(prior_objects) != 1
+                    or before[1][-1][3] != stat.S_IFREG | applied
+                ):
+                    raise ValueError("mobile_canonical_selector_review_required")
+                budget.value(prior_objects[0], text_copies=4)
+                prior_object = _Object.model_validate(prior_objects[0])
+                if not _matches(
+                    prior_object,
+                    str(config.path),
+                    metadata=True,
+                    _read_budget=budget,
+                    _custody=custody,
+                ):
+                    raise ValueError("mobile_canonical_selector_review_required")
+            private = candidates.get(key)
+            if not isinstance(private, Path):
+                # Native publication refusal codes intentionally use ValueError.
+                raise ValueError("mobile_installed_config_copy_changed")  # noqa: TRY004
+            from .admission import _price_paths
+
+            budget.reserve(4096 + path_cost(private, copies=8))
+            _price_paths((work, private), budget)
+            if work not in private.parents or private == config.path:
+                raise ValueError("mobile_installed_config_copy_changed")
+            raw, private_identity = _installed_config_bytes(
+                private, row, budget, custody
+            )
+            if (
+                _selector_observation(config.path, _budget=budget, _custody=custody)
+                != before
+            ):
+                raise ValueError("mobile_canonical_selector_review_required")
+            config_data.append((key, raw))
+            checks.append(
+                (config.path, before, private, row, private_identity, prior_object)
+            )
+        budget.container(len(config_data))
+        result = _preserved_builtin_validation(
+            plan,
+            document,
+            manifest_digest,
+            work,
+            session,
+            Event(),
+            _config_data=tuple(config_data),
+            _read_budget=budget,
+            _custody=custody,
+        )
+        for path, before, private, row, private_identity, prior_object in checks:
+            session._check()
+            if _selector_observation(path, _budget=budget, _custody=custody) != before:
+                raise ValueError("mobile_canonical_selector_review_required")
+            _, after_private = _installed_config_bytes(private, row, budget, custody)
+            if after_private != private_identity:
+                raise ValueError("mobile_installed_config_copy_changed")
+            if _selector_observation(path, _budget=budget, _custody=custody) != before:
+                raise ValueError("mobile_canonical_selector_review_required")
+            if prior_object is not None and not _matches(
+                prior_object,
+                str(path),
+                metadata=True,
+                _read_budget=budget,
+                _custody=custody,
+            ):
+                raise ValueError("mobile_canonical_selector_review_required")
+        with custody.pinned_directory(work) as work_fd:
+            info = os.fstat(work_fd)
+            if (info.st_dev, info.st_ino, info.st_mode, info.st_uid) != work_identity:
+                raise ValueError("mobile_installed_config_copy_changed")
+        return result
+    finally:
+        custody.retire()
+        session._scopes.remove(custody)
+
+
+def _installed_config_bytes(path, row, budget, custody):
+    """Read only the native installed owner's exact disposable config copy."""
+    with reader._regular(path, _custody=custody) as stream:
+        before = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or before.st_nlink != 1
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_size != row["size"]
+        ):
+            raise ValueError("mobile_installed_config_copy_changed")
+        budget.reserve(1024 + before.st_size + 1)
+        raw = stream.read(before.st_size + 1)
+        identity = (
+            reader._identity(before),
+            before.st_mode,
+            before.st_uid,
+            before.st_nlink,
+        )
+        for info in (os.fstat(stream.fileno()), os.stat(path, follow_symlinks=False)):
+            if (
+                reader._identity(info),
+                info.st_mode,
+                info.st_uid,
+                info.st_nlink,
+            ) != identity:
+                raise ValueError("mobile_installed_config_copy_changed")
+        if (
+            len(raw) != before.st_size
+            or hashlib.sha256(raw).hexdigest() != row["sha256"]
+        ):
+            raise ValueError("mobile_installed_config_copy_changed")
+        return raw, identity
+
+
 def _validate_installed(journal, candidate, plan, *, session=None):
     """Recheck published objects, validate disposable copies, then persist proof."""
     import shutil
@@ -2208,11 +2645,12 @@ def _validate_installed(journal, candidate, plan, *, session=None):
         doc = reader._manifest(manifest, ArchiveLimits(), True)
         config_scopes = _recorded_config_scopes(journal, records, plan=plan)
         raw_configs = {}
+        snapshot_source = None
         if plan.local_snapshot is not None:
             from .later_rollback import verify_snapshot_source
 
-            _, source = verify_snapshot_source(plan)
-            if source.manifest_digest != receipt.manifest_digest:
+            _, snapshot_source = verify_snapshot_source(plan)
+            if snapshot_source.manifest_digest != receipt.manifest_digest:
                 raise ValueError("local_snapshot_source_changed")
             raw_configs = {
                 row.logical_id: row
@@ -2392,15 +2830,18 @@ def _validate_installed(journal, candidate, plan, *, session=None):
                 candidates[record.logical_id] = destination
                 physical_candidates[physical_key] = destination
             if plan.local_snapshot is not None:
-                from .later_rollback import _preserved_builtin_validation
-
-                retained_items, retained_candidates = _preserved_builtin_validation(
+                retained_items, retained_candidates = _installed_history_preservation(
                     plan,
                     doc,
                     receipt.manifest_digest,
                     work,
                     session,
-                    Event(),
+                    candidates,
+                    snapshot_source,
+                    prepared,
+                    receipt,
+                    descriptor,
+                    records,
                 )
                 items.update(retained_items)
                 candidates.update(retained_candidates)
@@ -2447,7 +2888,8 @@ def _validate_installed(journal, candidate, plan, *, session=None):
                     plan,
                     receipt.manifest_digest,
                 ).result()
-            verify()
+            if plan.mode != "isolated":
+                verify()
             _check_preserved_settings(plan, session, candidate, receipt.descriptor)
             verify()
             for row in sorted(

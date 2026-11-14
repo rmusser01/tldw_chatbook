@@ -82,7 +82,7 @@ concurrency:
 permissions:
   contents: read
 
-# ADR-359: opt-in single runner labels; clearing either variable restores hosted
+# ADR-360: opt-in single runner labels; clearing either variable restores hosted
 # capacity. Forks stay hosted; only same-repository PRs use CI_TEST_RUNNER.
 jobs:
   preflight:
@@ -255,6 +255,8 @@ jobs:
     # step alone (plus the ~0.8 min of setup) the same 90 runs replay at
     # median 16.1 / max 20.8 min, 14 min under the cap. Add a job (a shard),
     # not minutes, when either nears its cap again.
+    # PR #3345 (2026-11-05): job127394826830 reached this unchanged cap.
+    # MCP workbench cases now run once across the existing UI shards.
     timeout-minutes: 35  # B1 (TASK-33910.2): owner decision 2026-10-09, raised 30 -> 35 to fit B1's mounted Roleplay suites (27m46s worst case at the merge-time re-read: worst run 23m40s + B1's files 4m06s)
 
     steps:
@@ -305,7 +307,6 @@ jobs:
             Tests/DB/test_automatic_wake_attempts.py \
             Tests/Model_Artifacts/test_operation_leases.py \
             Tests/Model_Artifacts/test_operation_leases_process.py \
-            Tests/UI/test_mcp_workbench.py \
             Tests/UI/test_mcp_tools_mode.py \
             Tests/Widgets/test_detach_safe_text_area.py \
             Tests/Web_Server/test_served_tab_isolation.py \
@@ -449,6 +450,10 @@ jobs:
             Tests/MCP/test_control_plane_permissions.py::test_remember_exact_inputs_writer_failure_preserves_error_and_stale_rule \
             Tests/MCP/test_unified_control_plane_service.py::test_remember_exact_inputs_persistence_failure_keeps_current_call \
             Tests/Canvas/test_canvas_kill_switch.py \
+            Tests/TTS/test_audio_player.py \
+            Tests/DB/test_base_db_connection_lifecycle.py \
+            Tests/MCP/test_stdio_request_timeout.py \
+            Tests/MCP/test_stdio_settlement_hardening.py \
             --timeout=180 \
             --tb=short
 
@@ -953,6 +958,10 @@ jobs:
     # finished. In the two runs cancelled at the cap they alone took ~17.5
     # (a failing run) and ~16.1 min with setup: about 4 min of headroom at
     # worst, not 6.
+    # 2026-11-04 (TASK-36769): job126501087681 exhausted this unchanged
+    # 20-minute cap at 98% after 7m16 sandboxed + 12m04 admission. Its
+    # 21 conversation-row sweep cases (145.26 s) now run exactly once in
+    # existing UI census, under its stricter 180 s per-case ceiling.
     # TASK-40724: run 43487945840 exhausted 20min in the first invocation.
     # Separate the existing profiles; each retains its own test deadlines.
     name: Console P0 regression gate (${{ matrix.profile }})
@@ -972,9 +981,9 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      # Native save-worker assertions use the declared pytest-mock spy plugin.
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+        run: python -m pip install -e . pytest pytest-asyncio pytest-mock pytest-timeout packaging aiohttp-jinja2
 
       - name: Run the sandboxed Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'sandboxed' }}
@@ -1041,8 +1050,6 @@ jobs:
             Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compaction_records_reason_and_discloses_spend \
             Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_says_nothing_changed \
             Tests/Chat/test_console_compaction_live_session.py::test_live_failure_is_not_rebilled_until_the_policy_changes \
-            Tests/UI/test_console_row_menu_action_sweep.py::test_the_sweep_covers_every_declared_action_constant \
-            Tests/UI/test_console_row_menu_action_sweep.py::test_conversation_row_action_never_ends_the_app \
             Tests/Wizards/test_first_run_provider_catalog.py::test_wizard_provider_list_is_the_settings_picker_set \
             Tests/Wizards/test_first_run_provider_catalog.py::test_arrowing_through_every_listed_row_keeps_the_step_live \
             Tests/Wizards/test_first_run_provider_catalog.py::test_a_raising_step_handler_keeps_the_step_and_the_keyboard \
@@ -1284,6 +1291,9 @@ jobs:
             Tests/Architecture/test_profile_owned_path_inventory.py::test_base_data_dir_census_detects_qualified_and_aliased_consumers \
             Tests/Architecture/test_profile_owned_path_inventory.py::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners \
             Tests/Architecture/test_profile_owned_path_inventory.py::test_python_outside_the_package_and_tests_parses \
+            Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_source_population_keeps_tooling_and_ignores_nonruntime_evidence \
+            Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_constant_guard_rejects_new_runtime_owners \
+            Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_constant_guard_does_not_swallow_runtime_parse_failure \
             Tests/Architecture/test_progress_widget_clock_guard.py \
             Tests/Architecture/test_recovery_entrypoints.py \
             Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py \
@@ -1304,12 +1314,10 @@ jobs:
 
   pr-fast-lane-arch:
     needs: [preflight]
-    # The 2026-10-25 architecture-review program's 14 tests, which ran in no
-    # pull-request lane. A first attempt appended them to pr-fast-lane, whose
-    # run then hit its 35-min cap (PR #3399); the job's own note says to add
-    # a job, not minutes. Their own job, so no existing lane moves toward its
-    # cap: one invocation, same minimal dependency set and serial pytest as
-    # the other lanes. Those 14 ran in about 2.5 min locally.
+    # The architecture-review program's 14 selectors have their own job after
+    # PR #3399 hit the unchanged Fast Lane cap. Use one serial invocation and
+    # the existing dependency set. Normal per-node profiles apply: the native
+    # note-service selector uses bootstrap_profile.
     # TASK-37173: PR #3494 reached the 35-minute fast-lane cap at 99%.
     # Run the four package-wide AST censuses here, where the same attempt
     # took 2m28s against this job's 20-minute cap.
@@ -1365,6 +1373,7 @@ jobs:
             Tests/test_config_load_settings_table_guard.py \
             Tests/Performance/test_boot_css_byte_budget.py \
             Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet \
+            Tests/Chat/test_served_startup_authentication.py \
             Tests/DB/test_private_sqlite.py \
             Tests/DB/test_private_sqlite_inventory.py \
             --timeout=180 \

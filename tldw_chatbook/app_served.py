@@ -9,39 +9,69 @@ from typing import Any
 
 def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> None:
     """Attach this authoritative child to its parent transport."""
-
-    client = self.served_canvas_control
-    # ADR-236: the relay publisher rides the same loop/lifetime as the
-    # control client. Run statuses are read from the app-owned Console
-    # controller's run-state map — the same read seam the TUI polls for
-    # terminal transitions — through the lazy `chat_controller` handle,
-    # so the poller tolerates the controller not existing yet.
-    # `getattr`: the start/stop pair is driven on partially-specified
-    # app doubles in tests (see test_canvas_control_spawn).
-    publisher = getattr(self, "served_relay_publisher", None)
-    if publisher is not None and client is not None:
-        publisher.attach(run_state_source=self._served_relay_run_states)
-    if client is None or self._served_canvas_control_start_task is not None:
+    if self.served_canvas_control is None and not getattr(
+        self, "_served_canvas_mode", False
+    ):
         return
-    task = app_globals["asyncio"].create_task(
-        client.start(), name="start_served_canvas_control"
+    from .Web_Server import served_console_app
+
+    return served_console_app._start_served_canvas_control(
+        self,
+        app_globals=app_globals,
     )
-    self._served_canvas_control_start_task = task
 
-    def observe(
-        completed: app_globals["asyncio"].Task[None],  # noqa: F821 -- eager runtime namespace lookup
-    ) -> None:
-        try:
-            completed.result()
-        except app_globals["asyncio"].CancelledError:
-            pass
-        except Exception as error:  # noqa: BLE001 -- preserve optional transport recovery
-            self.loguru_logger.warning(  # noqa: PLE1205 -- App owns a brace-format Loguru logger
-                "Served Canvas control unavailable type={} code=connection_failed",
-                type(error).__name__,
-            )
 
-    task.add_done_callback(observe)
+async def _await_served_control_start(self: Any) -> bool:
+    """Authenticate the owned transport before cold UI work can starve it."""
+    if getattr(self, "_shutting_down", False) or getattr(self, "_exit", False):
+        return False
+    client = getattr(self, "served_canvas_control", None)
+    task = getattr(self, "_served_canvas_control_start_task", None)
+    if client is None:
+        return task is None and not getattr(self, "_served_canvas_mode", False)
+    if task is None:
+        return False
+
+    import asyncio
+
+    # The existing start observer owns logging and fail-closed retirement.
+    (outcome,) = await asyncio.gather(asyncio.shield(task), return_exceptions=True)
+    if isinstance(outcome, BaseException):
+        return False
+    return (
+        self._served_canvas_control_start_task is task
+        and self.served_canvas_control is client
+        and not self._shutting_down
+        and not self._exit
+    )
+
+
+async def _retire_after_control_loss(self: Any) -> None:
+    """Close native admission and retain execution ownership through retirement."""
+    from .Web_Server import served_console_app
+
+    return await served_console_app._retire_after_control_loss(
+        self,
+    )
+
+
+async def _watch_served_control(self: Any) -> None:
+    """App-owned served control startup, transport loss, and request handling."""
+    from .Web_Server import served_console_app
+
+    return await served_console_app._watch_served_control(
+        self,
+    )
+
+
+async def _handle_served_control_request(self: Any, request: Any) -> Any:
+    """Keep Console control independent of Canvas feature/scope availability."""
+    from .Web_Server import served_console_app
+
+    return await served_console_app._handle_served_control_request(
+        self,
+        request,
+    )
 
 
 def _served_relay_run_states(self: Any) -> Any:
@@ -58,19 +88,9 @@ def _served_relay_run_states(self: Any) -> Any:
 
 
 def _served_relay_wrap_pending_approval(self: Any, original: Any) -> Any:
-    """Wrap one ``set_pending_approval`` binding for the relay (served only).
+    """Preserve the native binding; retained runtime state owns served projections."""
 
-    The Console screen routes its approval hook value through here at
-    the binding site (``console_view_hooks``). Native runs have no
-    publisher and get the original callable back untouched — including
-    identity — so nothing outside served mode changes behavior.
-    """
-
-    if self.served_relay_publisher is None:
-        return original
-    from .Web_Server.served_relay_publisher import wrap_pending_approval_hook
-
-    return wrap_pending_approval_hook(self.served_relay_publisher, original)
+    return original
 
 
 def _served_relay_decide(self: Any, round_id: Any, decisions: Any) -> bool:
@@ -112,6 +132,11 @@ async def _stop_served_canvas_control(
 ) -> None:
     """Close the private child channel without affecting terminal exit."""
 
+    lifetime = getattr(self, "_served_control_lifetime_task", None)
+    self._served_control_lifetime_task = None
+    if lifetime is not None and not lifetime.done():
+        lifetime.cancel()
+        await app_globals["asyncio"].gather(lifetime, return_exceptions=True)
     task = self._served_canvas_control_start_task
     self._served_canvas_control_start_task = None
     if task is not None and not task.done():

@@ -51,9 +51,6 @@ _MCP_PROTOCOL_VERSION = "2025-03-26"
 _REQUEST_TIMEOUT_SECONDS = 10.0
 _TOOL_CALL_TIMEOUT_SETTING_DEFAULT_SECONDS = 60.0
 _TERMINATE_TIMEOUT_SECONDS = 2.0
-# TASK-38611: after teardown, wait at most this long for the child's actual
-# exit before giving up (an unreapable child must not hang callers forever).
-_SETTLE_EXIT_GRACE_SECONDS = 2.0
 CONNECT_TIMEOUT_SECONDS = 30.0
 CATALOG_TIMEOUT_SECONDS = 10.0
 CLEANUP_TIMEOUT_SECONDS = 5.0
@@ -586,13 +583,6 @@ class _StdioJSONRPCConnection:
             return transport_failure("mcp_rpc_error", observation)
         except ValueError:
             return transport_failure("mcp_result_invalid", observation)
-        except TimeoutError:
-            # TASK-38582: a wire deadline with a live transport is a bounded
-            # refuse (same kind the control plane's outer timeout reports),
-            # never a transport failure -- the session stays connected. The
-            # dispatch observation keeps its "uncertain" state: the request
-            # was sent, so the server may still have executed the tool.
-            return transport_failure("mcp_tool_timeout", observation)
         except Exception:  # noqa: BLE001 -- sanitized transport boundary
             return transport_failure("mcp_transport_unavailable", observation)
         finally:
@@ -665,7 +655,7 @@ class _StdioJSONRPCConnection:
         if isinstance(token, str) and token in getattr(self, "_progress_observers", {}):
             progress_tokens[request_id] = token
 
-        sent = False
+        observation = _dispatch if _dispatch is not None else MCPDispatchObservation()
         try:
             await self._send_message(
                 {
@@ -674,9 +664,8 @@ class _StdioJSONRPCConnection:
                     "method": method,
                     "params": self.profile.params(params or {}, self.client_name),
                 },
-                **({"_dispatch": _dispatch} if _dispatch is not None else {}),
+                _dispatch=observation,
             )
-            sent = True
             return await asyncio.wait_for(
                 asyncio.shield(future),
                 timeout=(
@@ -689,8 +678,9 @@ class _StdioJSONRPCConnection:
             # A valid server error completes this request like a result.
             raise
         except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
-            shared = sent and self._shared_owned_request()
-            if sent and method != "initialize" and self.process.stdin is not None:
+            dispatched = observation.state != "not_started"
+            shared = dispatched and self._shared_owned_request()
+            if dispatched and method != "initialize" and self.process.stdin is not None:
                 try:
                     async with asyncio.timeout(1.0):
                         await self.notify(
@@ -700,24 +690,15 @@ class _StdioJSONRPCConnection:
                     logger.debug("MCP cancellation notification could not be sent")
             if shared:
                 return await self._retain_shared_request(future)
-            if isinstance(exc, asyncio.TimeoutError) and self._deadline_transport_healthy():
-                # TASK-38582: a deadline with a provably live transport fails
-                # only THIS request; teardown is reserved for transport
-                # uncertainty (reader dead, write errors).
+            await self._settle_failed_request()
+            if isinstance(exc, asyncio.TimeoutError):
                 raise TimeoutError(
                     f"Timed out waiting for MCP response to '{method}'"
                 ) from exc
-            await self._settle_failed_request()
-            if isinstance(exc, asyncio.TimeoutError):
-                raise TimeoutError(f"Timed out waiting for MCP response to '{method}'") from exc
             raise
         except (OSError, RuntimeError, ValueError):
-            # TASK-38611: only requests that actually reached the wire may
-            # settle/teardown. Failures before the send completed (profile
-            # params validation, the embedded-newline guard, an already
-            # closed connection) leave the transport's health untouched, so
-            # the session stays up for the next request.
-            if sent:
+            # Pre-write refusals are unsent; failed drains still own native work.
+            if observation.state != "not_started":
                 await self._settle_failed_request()
             raise
         finally:
@@ -729,13 +710,7 @@ class _StdioJSONRPCConnection:
                 future.cancel()
 
     def _deadline_transport_healthy(self) -> bool:
-        """Prove the transport is alive before keeping it after a deadline.
-
-        TASK-38582: a request deadline alone must not tear the session down.
-        Only positive liveness counts: the reader is still up, cleanup has not
-        started, the child has not exited, and its stdin is still writable.
-        Anything less certain keeps the teardown path (transport uncertainty).
-        """
+        """Observe liveness; it does not prove an admitted request settled."""
         if self._reader_unavailable or self._cleanup_complete:
             return False
         process = getattr(self, "process", None)
@@ -781,19 +756,7 @@ class _StdioJSONRPCConnection:
                     break
             except Exception:  # noqa: BLE001 -- transport failure is not exit
                 break
-        exit_deadline: float | None = None
         while self.process.returncode is None:
-            # TASK-38611: bound the custody wait. An unreapable child must
-            # surface the transport failure instead of hanging the caller.
-            if exit_deadline is None:
-                exit_deadline = _monotonic() + _SETTLE_EXIT_GRACE_SECONDS
-            elif _monotonic() >= exit_deadline:
-                logger.warning(
-                    "MCP subprocess did not exit within {}s of a failed"
-                    " shared request; giving up the custody wait",
-                    _SETTLE_EXIT_GRACE_SECONDS,
-                )
-                break
             try:
                 await asyncio.sleep(0.05)
             except asyncio.CancelledError:
@@ -805,11 +768,7 @@ class _StdioJSONRPCConnection:
 
         Pending-future failure and cancelled callers do not settle native work.
         Reuse existing teardown once for concurrent requests. If termination
-        fails, wait for actual exit rather than release their source leases --
-        but only up to ``_SETTLE_EXIT_GRACE_SECONDS`` past teardown: an
-        unreapable child returns control to the caller with the ORIGINAL
-        failure instead of hanging (TASK-38611; the call_tool contract says
-        settlement never waits unbounded).
+        fails, wait for actual exit rather than release their source leases.
         """
         process = getattr(self, "process", None)
         if process is None:
@@ -819,58 +778,26 @@ class _StdioJSONRPCConnection:
             self._reader_unavailable = True
 
             async def stop_and_settle() -> None:
-                try:
-                    cleanup = getattr(self, "_on_transport_failure", None)
-                    if cleanup is not None:
-                        await cleanup()
-                    else:
-                        await self.close()
-                finally:
-                    # asyncio's child watcher sets returncode on actual exit.
-                    # Teardown can fail or lose its waiter; neither is exit.
-                    exit_deadline: float | None = None
-                    while process.returncode is None:
-                        if exit_deadline is None:
-                            exit_deadline = (
-                                _monotonic() + _SETTLE_EXIT_GRACE_SECONDS
-                            )
-                        elif _monotonic() >= exit_deadline:
-                            logger.warning(
-                                "MCP subprocess did not exit within {}s of"
-                                " settlement teardown; leaving it to the OS",
-                                _SETTLE_EXIT_GRACE_SECONDS,
-                            )
-                            return
-                        await asyncio.sleep(0.05)
+                cleanup = getattr(self, "_on_transport_failure", None)
+                if cleanup is not None:
+                    await cleanup()
+                else:
+                    await self.close()
 
             settlement = asyncio.create_task(stop_and_settle())
             self._request_settlement = settlement
         cancelled = False
-        exit_deadline: float | None = None
         while not settlement.done() or process.returncode is None:
             try:
                 if settlement.done():
                     # Normal loop shutdown can cancel settlement itself. Each
                     # request still owns its leases until the child exits.
-                    if process.returncode is None:
-                        # TASK-38611: the settlement finished (or failed) and
-                        # the child still has not exited -- bound that wait.
-                        if exit_deadline is None:
-                            exit_deadline = (
-                                _monotonic() + _SETTLE_EXIT_GRACE_SECONDS
-                            )
-                        elif _monotonic() >= exit_deadline:
-                            logger.warning(
-                                "MCP subprocess never reported exit after"
-                                " settlement; returning the original failure",
-                            )
-                            break
                     await asyncio.sleep(0.05)
                 else:
                     await asyncio.shield(settlement)
             except asyncio.CancelledError:
                 cancelled = True
-            except (OSError, RuntimeError):
+            except Exception:
                 # A failed settlement cannot release a live native child.
                 if process.returncode is not None:
                     break
