@@ -842,4 +842,17 @@ allocation probes also missed the loop limit. See the
 [QA report](../../Docs/QA/task-34661/stability-candidates-2026-11-11.md#rebased-scale-reopen-and-repeat-results-on-november-14).
 ADR-120, ADR-198 and ADR-365 continue to govern the work. TASK-31966
 remains In Progress and the PR still awaits passing repeats.
+
+### Viewport-first screening on 2026-11-14
+
+Three paired Terminal repetitions tested the existing ADR-365 window
+with a one-viewport initial budget and an eight-line buffer. Initial
+mounts fell from 51 to 31 rows on Active and 47 to 31 on cold open.
+Median first usable improved 1.0% for first Active and 27.7% for warm,
+while cold open slowed 5.6%. All nine extended gaps on each arm missed
+50 ms. The candidate also missed the cold scroll and ordinary-quit
+screening checks documented in the
+[QA receipt](../../Docs/QA/task-34661/stability-candidates-2026-11-11.md#viewport-first-screening-on-november-14).
+The experiment stopped at screening and the production code reverted
+to the frozen baseline. TASK-31966 remains In Progress.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
