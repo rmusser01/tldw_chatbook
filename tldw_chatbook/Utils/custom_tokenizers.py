@@ -53,12 +53,24 @@ class CustomTokenizerManager:
         self._tokenizers: Dict[str, Any] = {}
         self._model_mappings: Dict[str, str] = {}
 
-        # Create directory if it doesn't exist
-        with acquire_storage(Path(self.tokenizers_dir)):
-            os.makedirs(self.tokenizers_dir, exist_ok=True)
+        # TASK-34100.16.1: reading creates nothing. An empty folder made here
+        # (Console builds this manager) put a tokenizers root in every backup
+        # that isolated restore on a new machine could not place. The first
+        # write creates it, owner-only (_create_directory).
 
         # Load tokenizer mappings if available
         self._load_mappings()
+
+    def _create_directory(self) -> None:
+        """Create the tokenizer folder, owner-only, under the caller's lease."""
+        os.makedirs(self.tokenizers_dir, mode=0o700, exist_ok=True)
+
+    def _tokenizer_files(self) -> List[str]:
+        """List the folder's entries; a folder never written to has none."""
+        try:
+            return os.listdir(self.tokenizers_dir)
+        except FileNotFoundError:
+            return []
 
     def _load_mappings(self) -> None:
         """Load model to tokenizer mappings from config file."""
@@ -102,6 +114,7 @@ class CustomTokenizerManager:
         mappings_file = os.path.join(self.tokenizers_dir, "mappings.json")
         with self._mapping_write():
             try:
+                self._create_directory()
                 with open(mappings_file, "w") as f:
                     json.dump(self._model_mappings, f, indent=2)
                 logger.debug("Saved tokenizer mappings")
@@ -201,7 +214,7 @@ class CustomTokenizerManager:
             for pattern in provider_patterns[provider]:
                 if pattern in model.lower():
                     # Try to find a tokenizer with this pattern
-                    for tokenizer_name in os.listdir(self.tokenizers_dir):
+                    for tokenizer_name in self._tokenizer_files():
                         if (
                             tokenizer_name.endswith(".json")
                             and pattern in tokenizer_name.lower()
@@ -211,7 +224,7 @@ class CustomTokenizerManager:
 
         # Try to find by model name patterns
         model_lower = model.lower()
-        for tokenizer_file in os.listdir(self.tokenizers_dir):
+        for tokenizer_file in self._tokenizer_files():
             if tokenizer_file.endswith(".json"):
                 name = tokenizer_file[:-5]  # Remove .json
                 if any(part in model_lower for part in name.lower().split("-")):
@@ -373,7 +386,7 @@ class CustomTokenizerManager:
     def list_available_tokenizers(self) -> List[str]:
         """List all available tokenizer names."""
         tokenizers = []
-        for file in os.listdir(self.tokenizers_dir):
+        for file in self._tokenizer_files():
             if file.endswith(".json"):
                 tokenizers.append(file[:-5])  # Remove .json
         return sorted(tokenizers)
@@ -418,6 +431,8 @@ class CustomTokenizerManager:
             # Copy the file
             import shutil
 
+            with acquire_storage(Path(self.tokenizers_dir)):
+                self._create_directory()
             shutil.copy2(source, dest_path)
             logger.info(f"Installed tokenizer: {name}")
 

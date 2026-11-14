@@ -703,7 +703,18 @@ class _LocalSQLite:
             for suffix in ("", "-wal", "-shm", "-journal")
         )
         if self.excluded:
-            return items
+            # TASK-34100.16.1: such a store opens and closes with its feature,
+            # and SQLite creates and removes its sidecars with each connection.
+            # Never captured, so whether a file exists is not backup scope:
+            # file metadata here made a Review taken while it was open fail at
+            # Create with scope_changed. A wrong-kind path still reports
+            # unsupported.
+            return tuple(
+                replace(item, metadata=None)
+                if item.status == "intentionally_excluded"
+                else item
+                for item in items
+            )
         return tuple(
             replace(item, status="unsupported" if item.metadata else "unused")
             if item.status == "intentionally_excluded"

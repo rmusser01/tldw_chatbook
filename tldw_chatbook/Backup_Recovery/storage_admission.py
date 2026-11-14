@@ -1537,6 +1537,40 @@ def admit_startup() -> None:
         attempt.close()
 
 
+def _startup_refusal(error: bootstrap.RecoveryRequired) -> str:
+    """Say which registered location is gone when that is why storage refused.
+
+    TASK-34100.16.1 review v5r2: a folder a backup had registered, removed
+    later, refused every start as a bare ``storage_admission_unavailable``.
+    ADR-126 still refuses it (TASK-34100.16.1.4); this only names it.
+    """
+    text = "Recovery required: " + str(error)
+    if str(error) != "storage_admission_unavailable":
+        return text
+    try:
+        from .effective_roots import absent_strict_roots
+
+        registry = bootstrap._registry(bootstrap.default_bootstrap_root())
+        missing = absent_strict_roots(registry.values()) if registry else ()
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+        return text
+    if not missing:
+        return text
+    return "\n".join(
+        (
+            text,
+            "Chatbook registered these locations for its storage (a backup "
+            "registers what it copies), and they no longer exist:"
+            if len(missing) > 1
+            else "Chatbook registered this location for its storage (a backup "
+            "registers what it copies), and it no longer exists:",
+            *("  " + str(path) for path in missing),
+            "If it was a folder, create it again (an empty folder is enough), "
+            "then start Chatbook again.",
+        )
+    )
+
+
 def _admit_startup(attempt: _Acquisition) -> None:
     bootstrap.require_startup_permission()
     key = (os.getpid(), str(bootstrap.default_bootstrap_root()))
@@ -1547,7 +1581,7 @@ def _admit_startup(attempt: _Acquisition) -> None:
     try:
         lease = acquire_storage()
     except bootstrap.RecoveryRequired as error:
-        raise SystemExit("Recovery required: " + str(error)) from None
+        raise SystemExit(_startup_refusal(error)) from None
     try:
         with _lock:
             attempt.check()

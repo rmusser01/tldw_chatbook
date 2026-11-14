@@ -131,6 +131,18 @@ _ISSUE_MESSAGES = {
         "The before-replacement copy needs these preserved files to recover your current data."
     ),
     "admission_timeout": "The application could not pause background work in time. Review the recovery status, let active work finish, then retry.",
+    "capture_source_outside_scope": (
+        "The backup stopped: a configuration or data file it selected is outside "
+        "the storage Chatbook registered for this backup, so it could not be "
+        "copied. To move your data now, carry config.toml and the data folder by "
+        "hand, as the User Guide's \"Setting up another machine\" describes."
+    ),
+    "registered_storage_missing": (
+        "The location shown above no longer exists, but Chatbook registered it "
+        "for its storage (a backup registers what it copies). Backups and the "
+        "next start stop until it is back. If it was a folder, create it again "
+        "(an empty folder is enough), then review and create the backup again."
+    ),
     "restore_setup_parent_required": "Choose an existing private Files needing setup directory outside profile and recovery storage. Restored files will remain inactive there.",
     "isolated_destination_parent_overlaps_control": "Choose a folder beneath a separate private restore directory, outside recovery control storage.",
     "private_destination_parent_required": "Choose a restore folder beneath a private directory owned by your user, with access limited to you.",
@@ -188,11 +200,23 @@ def issue_message(code: str) -> str:
 def issue_code(error: Exception, *, kind: str = "") -> str:
     """Only fixed local codes cross into a view; arbitrary exception text stays out."""
     from .admission import AdmissionTimeout
+    from .bootstrap import RecoveryRequired
     from .capture import CaptureReviewRequired
     from .crypto import CryptoError
 
     if isinstance(error, AdmissionTimeout):
         return "admission_timeout"
+    if isinstance(error, RecoveryRequired) and error.args == (
+        "capture_source_outside_scope",
+    ):
+        # TASK-34100.16.1: its own code, not the generic failure. Its copy
+        # claims no cause: five raise sites and no live reproduction.
+        return "capture_source_outside_scope"
+    if isinstance(error, RecoveryRequired) and error.args == (
+        "registered_storage_missing",
+    ):
+        # TASK-34100.16.1 review v5r2: a removed registered folder, named.
+        return "registered_storage_missing"
     if isinstance(error, InterruptedError):
         return "cancelled"
     if isinstance(error, CaptureReviewRequired):
@@ -1284,14 +1308,19 @@ class RecoveryService:
             if not available:
                 raise ValueError(reason)
             self._update(operation, phase="capturing")
-            captured = capture_service.capture(
-                config_paths,
-                approved_scope,
-                destination,
-                options=settings,
-                cancel=cancel,
-                include_known_profiles=include_known_profiles,
-            )
+            try:
+                captured = capture_service.capture(
+                    config_paths,
+                    approved_scope,
+                    destination,
+                    options=settings,
+                    cancel=cancel,
+                    include_known_profiles=include_known_profiles,
+                )
+            except capture_service.RegisteredStorageMissing as error:
+                # The screen shows result["path"] above the issue message.
+                self._update(operation, result={"path": str(error.path)})
+                raise
             info = os.stat(captured.root, follow_symlinks=False)
             identity = info.st_dev, info.st_ino
             try:

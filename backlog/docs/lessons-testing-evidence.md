@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## Two Backup_Recovery runs at once filled the disk and left no result (TASK-34100.16.1, 2026-11-13)
+
+**Incident.** A head run and a base run over the same 99 `Tests/Backup_Recovery` and `Tests/Notes` files, each `-n 4`, wrote 8.1 GB and 8.9 GB of pytest temp in about 25 minutes. The volume reached 179 MB free. Both runs died with `OSError: [Errno 28]` and printed no summary, so neither comparison existed. The Bash tool failed too: it could not open its own output file until space was freed. Pytest keeps its last three basetemps, and backup fixtures leave read-only directories its cleanup cannot delete.
+
+**What to do.** Check `df -h` first. Run one backup suite at a time with `--basetemp=<scratch dir>`, then delete that directory afterwards with `chmod -R u+w` before `rm -rf`. For the base comparison, rerun only the head's failing test ids on base, not the whole list.
+
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
 **Incident.** `test_migration_immutable_failure_retains_complete_destination[True]` monkeypatched `os.close` and expected 6 closes after a failed view close, "Admission also owns two directory pins for a file-backed view." It failed `assert 4 == 6` on dev. A first-parent bisect over 905 commits (a `git archive` tree per step, one 4 s node) named 5a915a43e5, a test-only commit that moved `Tests/DB` to the bootstrap profile. Stacks recorded in the spy showed the two missing closes came from the `chatbook-storage-admission` hold thread (`admission._lock` and `native_files.pinned_directory`), which a per-test profile's admission happened to run in that window. The cleanup under test closed the same 4 descriptors under both profiles.

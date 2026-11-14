@@ -22,6 +22,20 @@ from .profile_paths import default_config_path, effective_config_path, lexical_p
 from .storage_admission import _preview_reads
 
 
+class RegisteredStorageMissing(bootstrap.RecoveryRequired):
+    """A root the admission registry lists no longer exists (TASK-34100.16.1).
+
+    ADR-126 keeps an absent root without already-owned coverage strict, so
+    capture and the next start refuse until it is back (TASK-34100.16.1.4 holds
+    the owner decision on treating it as absent). The text stays the bounded
+    code; ``path`` lets the service name the location in its own result row.
+    """
+
+    def __init__(self, path: Path):
+        super().__init__("registered_storage_missing")
+        self.path = path
+
+
 def _selectors(config_paths, *, include_known_profiles=False):
     """Use checked local selectors as source locators, never saved root authority."""
     if type(config_paths) is not tuple or type(include_known_profiles) is not bool:
@@ -140,7 +154,12 @@ def _capture_names(authority, inventory, *, include_absent_sqlite=False):
             for raw in entry["roots"]:
                 if Path(raw) in omitted:
                     continue
-                registered = Path(raw).resolve(strict=True)
+                try:
+                    registered = Path(raw).resolve(strict=True)
+                except FileNotFoundError:
+                    # Name the location instead of backup_operation_failed;
+                    # admission refuses it the same way (ADR-126).
+                    raise RegisteredStorageMissing(Path(raw)) from None
                 if registered == root or registered in root.parents:
                     names.add(name)
                     covered = True

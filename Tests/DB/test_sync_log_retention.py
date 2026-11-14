@@ -476,14 +476,16 @@ def test_app_unmount_retires_a_worker_thread_handle_of_each_store(
 ):
     """TASK-39047: a handle media, Dreams or Guardian opened on a pool thread
     (the scope picker's tag lister, an ``asyncio.to_thread`` read) outlived
-    the quit with its storage lease, and kept a backup pause from draining."""
-    from concurrent.futures import ThreadPoolExecutor
+    the quit with its storage lease, and kept a backup pause from draining.
 
-    from tldw_chatbook.Chat.scope_picker_listers import build_keyword_tag_lister
+    TASK-34100.16.1 review v5r2: the tag lister now retires its own handle, so
+    a bare read of the same store opens the pool-thread handle this quit test
+    needs."""
+    from concurrent.futures import ThreadPoolExecutor
 
     db = request.getfixturevalue(f"{store}_db")
     opens_on_a_pool_thread = {
-        "media": lambda: build_keyword_tag_lister(SimpleNamespace(media_db=db))(""),
+        "media": lambda: asyncio.to_thread(db.get_keyword_usage_stats),
         "dreams": lambda: asyncio.to_thread(db.list_profile),
         "guardian": lambda: asyncio.to_thread(db.get_meta, "quit"),
     }[store]

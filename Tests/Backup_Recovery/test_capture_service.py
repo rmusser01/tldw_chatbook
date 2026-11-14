@@ -244,3 +244,364 @@ def test_budget_change_requires_preview_before_control_creation(tmp_path, monkey
             cancel=Event(),
         )
     assert not root.exists()
+
+
+def test_unenrolled_default_profile_backs_up_through_the_known_profiles_selection(
+    tmp_path, monkeypatch
+):
+    """Pin for TASK-34100.16.1: a fresh profile's own config stays in capture scope.
+
+    Backup & Restore asks for "all known local profiles" plus the running
+    config. Builds from 2026-10-05 refused that capture on a fresh, unenrolled
+    profile with ``capture_source_outside_scope``: the selected config path was
+    outside the maintenance session's roots. It no longer reproduces live
+    (4de437a5c5, and again on the dev 26b2e677dd rebase: g161v5-a/05). This is
+    a non-reproduction pin, not a RED test: it passes on that base, and fails
+    when a mutation drops the config from the capture roots. It keeps the UI's
+    selection shape, the default config location under a scratch HOME and real
+    stores, through a verified archive. Should the refusal return, it now
+    reaches the user as its own actionable code (``test_group_issues``).
+    """
+    import json
+
+    from tldw_chatbook.Backup_Recovery import capture_service
+    from tldw_chatbook.Backup_Recovery.archive_reader import acquire
+    from tldw_chatbook.Backup_Recovery.archive_writer import write_archive
+    from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+
+    home = tmp_path / "home"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    root = source.parent / "recovery-bootstrap"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    # The running profile is the default one: both locators name this file.
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+    _populate_required_dependencies(preview)
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+    destination = tmp_path / "fresh.tldw-backup.zip"
+
+    result = capture(
+        (source,),
+        preview.scope_digest,
+        destination,
+        options=options,
+        cancel=Event(),
+        include_known_profiles=True,
+    )
+
+    assert bootstrap._records(root) == ([], []), "capture must not enroll the profile"
+    manifest = json.loads(result.manifest_bytes)
+    owners = {file["owner_id"] for file in manifest["files"]}
+    assert {"config", "db.chachanotes.primary"} <= owners
+    sealed = write_archive(result, destination, password=None, cancel=Event())
+    verified = acquire(
+        sealed.path, tmp_path / "inspect", ArchiveLimits(), None, Event()
+    )
+    assert verified.digest == sealed.digest
+
+
+def test_device_state_store_lifecycle_does_not_void_a_reviewed_scope(
+    tmp_path, monkeypatch
+):
+    """The excluded Notes device-state store may open and close between steps.
+
+    TASK-34100.16.1: Library opens ``tldw_chatbook_notes_sync_state.db`` in WAL
+    mode. A Review taken while it was open recorded its ``-wal``/``-shm`` files
+    with file metadata; a backup's pause then closed the store, SQLite removed
+    both, and Create rediscovered them without metadata. The reviewed digest no
+    longer matched and the backup ended in ``scope_changed`` (live inventory
+    diff: only those two items' metadata). The store is device-local and never
+    captured, so its files coming and going is not a change of backup scope.
+    """
+    from pathlib import Path
+
+    from tldw_chatbook.Backup_Recovery import capture_service
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    home = tmp_path / "home"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    root = source.parent / "recovery-bootstrap"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+
+    def review():
+        return preview_capture((source,), options=options, include_known_profiles=True)
+
+    first = review()
+    database = next(
+        item.path
+        for item in first.items
+        if item.owner == "notes.sync_state"
+        and item.logical_id.endswith(":notes.sync_state")
+    )
+    sidecars = [Path(f"{database}{suffix}") for suffix in ("-wal", "-shm")]
+    # A started profile whose Library has not opened the device-state store yet.
+    _populate_required_dependencies(first)
+    assert not database.exists()
+    before = review().scope_digest
+    store = NotesDeviceStateStore(database)
+    try:
+        store.initialize()
+        with store.transaction() as connection:  # a held WAL read, as Library's
+            connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        assert database.exists() and all(path.exists() for path in sidecars)
+        while_open = review().scope_digest
+    finally:
+        store.close()
+    assert not any(path.exists() for path in sidecars), "SQLite kept its sidecars"
+    after_close = review().scope_digest
+
+    assert after_close == while_open, "closing the store voided the review"
+    assert before == while_open, "opening the store voided the review"
+
+
+@pytest.mark.parametrize(
+    "owner",
+    [
+        "notes.sync_state",
+        "personal_context.interview_drafts",
+        pytest.param(
+            "personal_context.repository",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "TASK-34100.16.1.1: its present files stay explicit "
+                    "unsupported rows (owner decision 2026-11-06), and a "
+                    "present row's path is reviewed scope"
+                ),
+            ),
+        ),
+    ],
+)
+def test_local_sqlite_wal_lifecycle_does_not_void_a_reviewed_scope(
+    tmp_path, monkeypatch, owner
+):
+    """No uncaptured local SQLite store's WAL open/close changes the scope.
+
+    TASK-34100.16.1 review: the excluded stores (the Notes device state and
+    the Personal Context interview drafts) share the fixed code path; Create
+    runs with the digest reviewed while the store was open.
+    ``personal_context.repository`` is declared but not excluded: its
+    ``-wal``/``-shm`` rows flip between unsupported (present, path in scope)
+    and unused (absent) as Personal Context opens and closes per-operation
+    WAL connections, so a Review taken during one fails at Create with
+    ``scope_changed``. That case is held for TASK-34100.16.1.1.
+    """
+    import sqlite3
+    from contextlib import closing
+    from pathlib import Path
+
+    from tldw_chatbook.Backup_Recovery import capture_service
+
+    home = tmp_path / "home"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    root = source.parent / "recovery-bootstrap"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+
+    def review():
+        return preview_capture((source,), options=options, include_known_profiles=True)
+
+    first = review()
+    database = next(
+        item.path
+        for item in first.items
+        if item.owner == owner and item.logical_id.endswith(":" + owner)
+    )
+    sidecars = [Path(f"{database}{suffix}") for suffix in ("-wal", "-shm")]
+    _populate_required_dependencies(first)
+    database.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(database)) as connection:  # a store in use before
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE IF NOT EXISTS t (x)")
+        connection.commit()
+    assert not any(path.exists() for path in sidecars)
+    before = review().scope_digest
+    held = sqlite3.connect(database)
+    try:
+        held.execute("BEGIN")
+        held.execute("SELECT count(*) FROM t").fetchone()  # a held WAL read
+        assert all(path.exists() for path in sidecars)
+        while_open = review().scope_digest
+    finally:
+        held.close()
+    assert not any(path.exists() for path in sidecars), "SQLite kept its sidecars"
+    after_close = review().scope_digest
+
+    assert after_close == while_open, "closing the store voided the review"
+    assert before == while_open, "opening the store voided the review"
+    result = capture(
+        (source,),
+        while_open,
+        tmp_path / "after-close.tldw-backup.zip",
+        options=options,
+        cancel=Event(),
+        include_known_profiles=True,
+    )
+    assert result.manifest_bytes
+
+
+def test_console_tokenizer_lookup_leaves_no_tokenizers_root_to_restore(
+    tmp_path, monkeypatch
+):
+    """A profile that only used Console carries no custom-tokenizers root.
+
+    TASK-34100.16.1 review (AC#3): opening Console constructed the tokenizer
+    manager, which created an empty ``~/.config/tldw_cli/tokenizers`` (0755).
+    Every later archive then carried ``tokenizers.custom`` as an included
+    root, and isolated restore on a new machine (where that shared folder does
+    not exist as an empty owner-only container) refused every folder with
+    ``isolated_destination_parent_overlaps_control``. Only a write creates
+    the folder now, owner-only.
+    """
+    from tldw_chatbook.Backup_Recovery import capture_service
+    from tldw_chatbook.Utils.custom_tokenizers import CustomTokenizerManager
+
+    home = tmp_path / "home"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    monkeypatch.setenv("HOME", str(home))
+    root = source.parent / "recovery-bootstrap"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+    tokenizers = source.parent / "tokenizers"
+
+    manager = CustomTokenizerManager()  # what Console's token display builds
+    assert manager.get_tokenizer_for_model("gpt-4o", "openai") is None
+    assert manager.list_available_tokenizers() == []
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+
+    assert not tokenizers.exists(), "a read created the tokenizers folder"
+    assert {
+        item.status for item in preview.items if item.owner == "tokenizers.custom"
+    } == {"unused"}
+    manager.add_mapping("model", "tokenizer")  # the first write creates it
+    assert tokenizers.is_dir() and tokenizers.stat().st_mode & 0o077 == 0
+
+
+@pytest.mark.parametrize("legacy_folder", [False, True], ids=["console_read", "legacy_folder"])
+def test_console_opened_profile_archive_passes_isolated_review_on_a_fresh_home(
+    tmp_path, monkeypatch, legacy_folder
+):
+    """AC#3's real failure, automated: isolated Review restore on a new machine.
+
+    TASK-34100.16.1 review v5r2 (R2-5). Live, every archive from a profile that
+    had opened Console carried ``tokenizers.custom``, and Review restore of it
+    as an isolated profile on a fresh HOME refused every folder with
+    ``isolated_destination_parent_overlaps_control`` (g161v5-rt/05-07). The
+    ``legacy_folder`` case is the negative control: an archive made while the
+    empty 0755 folder earlier builds created exists is still refused
+    (TASK-34100.16.1.2), which proves this check can see the failure.
+    """
+    from tldw_chatbook.Backup_Recovery import capture_service
+    from tldw_chatbook.Backup_Recovery.archive_writer import write_archive
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Utils.custom_tokenizers import CustomTokenizerManager
+
+    home = tmp_path / "old"
+    source = home / ".config" / "tldw_cli" / "config.toml"
+    source.parent.mkdir(parents=True, mode=0o700)
+    data = home / ".local" / "share" / "tldw_cli"
+    source.write_text(
+        f'[general]\nusers_name="default_user"\n[paths]\ndata_dir="{data}"\n'
+    )
+    source.chmod(0o600)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        bootstrap, "default_bootstrap_root", lambda: source.parent / "recovery-bootstrap"
+    )
+    monkeypatch.setattr(owner_registry, "_adapters", {})
+    monkeypatch.setattr(capture_service, "effective_config_path", lambda: source)
+    monkeypatch.setattr(capture_service, "default_config_path", lambda: source)
+    options = {"allow_partial": True, "staging_parent": tmp_path}
+    if legacy_folder:
+        (source.parent / "tokenizers").mkdir(mode=0o755)
+    CustomTokenizerManager().get_tokenizer_for_model("gpt-4o", "openai")  # Console
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+    _populate_required_dependencies(preview)
+    preview = preview_capture((source,), options=options, include_known_profiles=True)
+    archive = tmp_path / "console.tldw-backup.zip"
+    captured = capture(
+        (source,),
+        preview.scope_digest,
+        archive,
+        options=options,
+        cancel=Event(),
+        include_known_profiles=True,
+    )
+    sealed = write_archive(captured, archive, password=None, cancel=Event())
+
+    # The new machine: a fresh HOME where setup has made only its config folder.
+    config = tmp_path / "new" / ".config" / "tldw_cli"
+    config.mkdir(parents=True, mode=0o700)
+    monkeypatch.setenv("HOME", str(tmp_path / "new"))
+    monkeypatch.setattr(
+        bootstrap, "default_bootstrap_root", lambda: config / "recovery-bootstrap"
+    )
+    restores = tmp_path / "new" / "restores"
+    restores.mkdir(mode=0o700)
+    service = RecoveryService(config / "recovery" / "control")
+    try:
+        inspection = service.start_inspection(sealed.path, password=None)
+        assert service.wait(inspection, timeout=120)["state"] == "succeeded"
+        slots = [
+            slot["logical_id"]
+            for slot in service.summary(inspection)["destination_slots"]
+            if slot["kind"] == "profile_base"
+        ]
+        assert len(slots) == 1
+
+        def review():
+            return service.preview_restore(
+                inspection,
+                mode="isolated",
+                profile_bases={slots[0]: restores / "g161"},
+                external_destinations={},
+                target=None,
+                profile_names={slots[0]: "Restored"},
+            )
+
+        if legacy_folder:
+            with pytest.raises(
+                ValueError, match="isolated_destination_parent_overlaps_control"
+            ):
+                review()
+        else:
+            assert review().mode == "isolated"
+    finally:
+        service.close()

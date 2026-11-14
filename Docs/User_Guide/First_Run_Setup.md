@@ -582,8 +582,7 @@ A second computer does not need setup again. There are three routes:
 carry your config.toml, export the same environment keys, or restore a
 backup. The first two carry settings only; to bring your chats, notes and
 documents with them, also copy the data folder (below). A backup can carry
-both, but Create backup does not yet work on every profile; see "Restore a
-backup" below before relying on it.
+both; see "Restore a backup" below for what restoring one needs today.
 
 ### Carry your config.toml
 
@@ -635,7 +634,7 @@ To bring them, quit chatbook on both machines and copy that whole folder,
 every file in it, to the same place on the new machine. If chatbook has
 already run there, move its folder aside first rather than copying into it;
 the copy replaces anything chatbook saved there. A backup (below) carries
-them too, once Create backup works on your profile. Paths written in the
+them too. Paths written in the
 file are used as written: `~/...` paths follow the new machine's home
 folder, while an absolute path (a notes sync folder, a custom database
 location) must exist there. `--config` and `TLDW_CONFIG_PATH` choose the
@@ -676,11 +675,36 @@ marked `unsupported` (on some profiles that includes the config and the main
 databases) is not in the archive. Until the Review shows what you need as
 included, carry config.toml and the data folder as described above.
 
-**Known problem:** on some profiles Create backup currently stops with
-"Failed: capturing …" (ending in `backup_operation_failed` or
-`admission_timeout`) and writes no file, even after a successful Review. If
-that happens, carry config.toml and the data folder as described above
-instead.
+On the new machine, restore the archive as an isolated profile. First make
+a private folder for restores, for example `mkdir -m 700 ~/chatbook-restores`:
+the destination must be a new folder inside a folder that you own and only
+you can open. Then choose **Restore as isolated profile** with a new folder
+inside it, such as `~/chatbook-restores/old-laptop`. The restored data is a
+separate profile: open it from Backup & Restore ▸ **Restored profiles** ▸
+**Open in new process**. A plain `tldw-cli` launch still opens the new
+machine's own default profile.
+
+**Known problems:**
+
+- Restoring as an isolated profile stops at **Review restore** with
+  "Choose a folder beneath a separate private restore directory, outside
+  recovery control storage." (`isolated_destination_parent_overlaps_control`),
+  whichever folder you choose, when the backup carries custom tokenizers.
+  A backup carries them when the old profile has a
+  `~/.config/tldw_cli/tokenizers` folder: tokenizers you added, or an empty
+  folder that earlier versions created the first time Console opened. Carry
+  config.toml and the data folder as described above instead.
+- Do not remove a folder that a backup has included, such as that tokenizers
+  folder. Each backup registers what it copies, so once such a folder is gone
+  **Create backup** stops with "The location shown above no longer exists…"
+  (`registered_storage_missing`) under its path, and chatbook will not start
+  ("Recovery required: storage_admission_unavailable", then the missing
+  path). Create the folder again, empty, and both work again.
+- **Replace selected stored data** has stopped at `recovery_required`
+  (`credential_unreadable`) after a Review that listed no credential
+  problems, and the next launch opened only recovery mode. **Abort untouched
+  replacement** under **Recovery copies** leaves the profile as it was;
+  restore as an isolated profile instead.
 
 In the Create backup form, the line just above the buttons says why
 **Create backup** is disabled: "Create backup unlocks after a successful

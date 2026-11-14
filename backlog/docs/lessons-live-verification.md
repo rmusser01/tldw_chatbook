@@ -1,5 +1,11 @@
 # Lessons: verifying against the real thing
 
+## Reproduce an admission_timeout on the same saved state, and dump the pause's residue instead of bisecting (TASK-34100.16.1, 2026-11-13)
+
+**Incident.** Review round v5r3 fixed the Console scope picker's listers with RED lease tests, then live, on a profile that had chatted, the first idle Create backup after opening the picker still ended in `admission_timeout`. Four bisecting Creates on the relaunched profile all passed, because the relaunch opened a new unsaved "Chat 1": the picker's opener reads the saved conversation's scope only for a persisted chat, so the leaking read never ran. A probe launcher recorded each SQLite lease's creation stack and dumped the leases left when `_LocalPause.drain` returned False. In one run it named the lease: `tldw_chatbook_ChaChaNotes.db` on `asyncio_12`, created in `rag_scope.read_conversation_scope`, which a bare `asyncio.to_thread` ran.
+
+**What to do.** Reproduce on the state that failed: the same persisted conversation, opened the same way. Run the real app through the probe (`.worktrees/setup-wizard-ux-qa/evidence/g161v5-r3/tools/probe_launch.py`, launched by `relaunch_probe.sh <profile> probe`) and read `$HOME/lease-residue.txt`, instead of guessing from which surfaces were touched. Confirm the final result in a plain launch.
+
 ## On Windows, bind the interpreter rather than the venv launcher; separate startup from fixture work (TASK-34569, 2026-11-08)
 
 **Incident.** A private Console approval probe treated the PID returned by the venv launcher as the Python interpreter PID. The interpreter was an actual child of that launcher. A guarded bootstrap with a held, authenticated interpreter handle and a nonce/PID acknowledgment reached normal closure. In the first App attempt with that ownership, workspace binding began with about 16 seconds left on a shared startup deadline and was censored there. Under a separate fixture phase, a later binding completed in about 27 seconds and exposed a real config identity refusal. Another launch hit its original startup deadline before the mounted-context marker, even though it had logged "on_mount completed in". That log is emitted before the end of the App's mount body.

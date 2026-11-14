@@ -1148,6 +1148,10 @@ def test_excluded_notes_device_authority_still_refuses_unsafe_entries(tmp_path, 
     adapter = next(a for a in recovery_adapters() if a.owner_id == "notes.sync_state")
     main = next(item for item in adapter.discover(config) if item.path == database)
     assert main.status not in {"included", "intentionally_excluded", "unused"}
+    if kind == "directory":
+        # TASK-34100.16.1 drops file metadata only from excluded rows: a
+        # wrong-kind path keeps its evidence (inventory gives aliases none).
+        assert main.metadata is not None and main.metadata.kind == "directory"
     assert outside.read_bytes() == b"keep"
 
 
