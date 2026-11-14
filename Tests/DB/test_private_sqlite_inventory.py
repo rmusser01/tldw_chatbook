@@ -1829,11 +1829,6 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
                 "_EventsAdapter.capture",
                 "copy_private_sqlite",
             ): 1,
-            (
-                "tldw_chatbook/Plugins/backup",
-                "_Plugins.capture",
-                "copy_private_sqlite",
-            ): 1,
         }
     )
     actual_calls: Counter[tuple[str, str, str]] = Counter()

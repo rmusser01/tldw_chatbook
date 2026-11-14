@@ -648,16 +648,12 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             assert case.console._console_config_snapshot_is_disk_loaded(
                 case.host.app_config
             )
-            seed_answer(case)
-            case.helper_entered, case.helper_release = asyncio.Event(), asyncio.Event()
-            complaint = "/omfg Include evidence in the answer"
-            case.composer.load_draft(complaint)
-            case.console.query_one("#console-send-message", Button).press()
-            async with asyncio.timeout(5):
-                await case.helper_entered.wait()
-            await case.pilot.pause()
+            # Establish the mounted state before sending; startup and post-send
+            # control-bar settling share the original two-second allowance.
+            loop = asyncio.get_running_loop()
+            readiness_deadline = loop.time() + 2
             try:
-                async with asyncio.timeout(2):
+                async with asyncio.timeout_at(readiness_deadline):
                     # The attach flag can precede its startup worker dispatch.
                     while (
                         not case.console._console_attach_reconciled
@@ -673,6 +669,20 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                     f"startup_sync_dispatched={case.console in startup_sync_dispatched}"
                 )
                 raise
+            remaining = readiness_deadline - loop.time()
+            seed_answer(case)
+            case.helper_entered, case.helper_release = asyncio.Event(), asyncio.Event()
+            complaint = "/omfg Include evidence in the answer"
+            case.composer.load_draft(complaint)
+            case.console.query_one("#console-send-message", Button).press()
+            async with asyncio.timeout(5):
+                await case.helper_entered.wait()
+            await case.pilot.pause()
+            await _until(
+                lambda: not case.console._console_control_bar_sync_scheduled,
+                "Console control-bar sync settling before the rebuild hold",
+                timeout=remaining,
+            )
             assert case.console._console_credential_poll_timer is not None
             source = case.rules._sources[case.session_id]
             assert case.rules.acceptance_current(source)
