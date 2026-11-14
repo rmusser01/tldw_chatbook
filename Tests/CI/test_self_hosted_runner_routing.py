@@ -122,10 +122,19 @@ def test_p0_profiles_each_run_once_without_fail_fast(workflows):
     )
 
 
-def test_fast_lane_provisions_node_before_executable_ci_contracts(workflows):
-    steps = workflows["derived-artifacts.yml"]["jobs"]["pr-fast-lane"]["steps"]
+@pytest.mark.parametrize(
+    "job,contract_name",
+    [
+        ("pr-fast-lane", "Run fast PR contract"),
+        ("dev-light", "Run CI contracts and selected smoke tests"),
+    ],
+)
+def test_fast_lane_provisions_node_before_executable_ci_contracts(
+    workflows, job, contract_name
+):
+    steps = workflows["derived-artifacts.yml"]["jobs"][job]["steps"]
     contract = next(
-        i for i, step in enumerate(steps) if step.get("name") == "Run fast PR contract"
+        i for i, step in enumerate(steps) if step.get("name") == contract_name
     )
     assert any(
         step.get("uses", "").startswith("actions/setup-node@")

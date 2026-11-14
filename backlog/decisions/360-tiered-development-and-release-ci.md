@@ -2,7 +2,7 @@
 
 Status: Proposed; activation requires live qualification
 Date: 2026-11-13
-Task: TASK-40727
+Task: TASK-40998
 Amends: ADR-103; preserves ADR-359 runner isolation
 
 ## Context
@@ -21,7 +21,7 @@ Use the existing hosted bulk runners for overnight and comprehensive jobs: their
 
 ## Rollout and rollback
 
-Keep the opt-in unset while #3529 establishes its baseline. Merge this policy only after focused contracts and review; install the identical nightly dispatcher on default-branch main independently of unrelated product changes. Qualify one nightly and a promotion candidate, require the stable context on main with strict protection, then enable the opt-in. Unset it to restore broad dev PR gating. Never weaken protection to qualify the rollout.
+Keep the opt-in unset while #3529 establishes its baseline. Merge this policy only after focused contracts and review; install the identical nightly dispatcher on default-branch main independently of unrelated product changes. Qualify one nightly and an exact release candidate through a safe PR or reusable qualification without publishing or merging a product release merely to test. Require the stable context on main with strict protection and admin enforcement. Repeat the live routing, evidence, schedule, protection and runner checks before enabling the opt-in, then verify mapped PR selection, broad fallback and post-merge smoke. Unset it to restore broad dev PR gating. Never weaken protection to qualify the rollout.
 
 ## Alternatives and limits
 
