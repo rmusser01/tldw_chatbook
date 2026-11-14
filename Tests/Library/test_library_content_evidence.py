@@ -1,5 +1,9 @@
 """Pure Library content evidence and lifecycle transition contracts."""
 
+import asyncio
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from tldw_chatbook.Library.library_content_evidence import (
@@ -179,6 +183,64 @@ def artifact_owners(tmp_path):
     finally:
         subscriptions.close()
         kept.close_connection()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("owner_name", ["subscriptions_db", "chachanotes_db"])
+@pytest.mark.parametrize("borrowed", [False, True], ids=["cold", "warm-borrower"])
+@pytest.mark.parametrize("fail_sql", [False, True], ids=["success", "sql-error"])
+def test_artifact_read_retires_only_new_worker_handles(
+    artifact_owners, monkeypatch, owner_name, borrowed, fail_sql
+):
+    from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+    from tldw_chatbook.Library.library_content_evidence import (
+        get_library_artifact_content_evidence,
+    )
+
+    database = artifact_owners[owner_name]
+    subscriptions = owner_name == "subscriptions_db"
+    method_name = "list_recent_briefings" if subscriptions else "list_kept_briefings"
+    original_read = getattr(database, method_name)
+    captured = []
+
+    def native():
+        return database.conn if subscriptions else database.get_connection()
+
+    def observed_read(*args, **kwargs):
+        captured.append(native())
+        if fail_sql:
+            captured[-1].execute("SELECT * FROM missing_artifact_evidence_table")
+        return original_read(*args, **kwargs)
+
+    def read():
+        previous = native() if borrowed else None
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(database, method_name, observed_read)
+                result = run_finite_local_worker(
+                    asyncio.run,
+                    get_library_artifact_content_evidence(**{owner_name: database}),
+                )
+            assert result is (
+                LibraryContentEvidence.UNKNOWN
+                if fail_sql
+                else LibraryContentEvidence.EMPTY
+            )
+            assert captured
+            if previous is not None:
+                assert captured == [previous]
+                assert previous.execute("SELECT 1").fetchone()[0] == 1
+            else:
+                for connection in captured:
+                    with pytest.raises(
+                        sqlite3.ProgrammingError, match="closed database"
+                    ):
+                        connection.execute("SELECT 1")
+        finally:
+            database.close()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(read).result(timeout=10)
 
 
 @pytest.mark.asyncio

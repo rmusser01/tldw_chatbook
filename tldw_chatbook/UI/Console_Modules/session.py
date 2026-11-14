@@ -252,6 +252,7 @@ from ...Workspaces.display_state import (
 )
 from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from .reaction_preview import ConsoleReactionPreviewCoordinator
+from .transcript import project_tab_before_scope
 
 if TYPE_CHECKING:
     from textual.timer import Timer
@@ -3262,6 +3263,8 @@ class ConsoleSessionController:
             # DB (`_build_console_retrieval_scope_state`'s own contract).
             new_session = self._active_native_console_session()
             if new_session is not None:
+                if activate_if is None and not await project_tab_before_scope(self, session_id):
+                    return
                 try:
                     if activate_if is None:
                         await self._refresh_console_effective_scope_and_sync(
@@ -5563,7 +5566,9 @@ class ConsoleSessionController:
         """
         store = self._ensure_console_chat_store()
         creating_blank_session = store.active_session_id is None
-        defaults = self._blank_console_session_settings()
+        defaults = (
+            self._blank_console_session_settings() if creating_blank_session else None
+        )
         # TASK-26839 / task-32804.6: `ensure_session` uses `title` only when
         # it CREATES a session; with one active the argument is discarded. The
         # workspace title is a synchronous registry `get_workspace` SQLite

@@ -3,6 +3,7 @@
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import contextmanager
+from contextvars import copy_context
 from dataclasses import dataclass, field, replace
 import asyncio
 import contextlib
@@ -178,7 +179,6 @@ from ..Console_Modules.retrieval import (
 from ..Console_Modules.transcript import (
     _ConsoleTranscriptReadingState,
     note_console_conversation_painted,
-    prepare_change_review_projection,
     request_console_heap_refreeze,
     request_transcript_sync as _request_transcript_sync,
 )
@@ -187,6 +187,7 @@ from ..Console_Modules import inspector_data
 from ..Console_Modules import skill as skill_controller
 from ..Console_Modules.wiring import (
     _commit_captured_console_draft,
+    _console_widget_or_none,
     build_console_controllers,
     environment_scope_stamp,
     console_view_hooks as _console_view_hooks,
@@ -568,6 +569,15 @@ from ...Widgets.Console import (
     WorkspaceTreeStarRequested,
     WorkspaceTreeWorkspaceSelected,
 )
+from ...Widgets.Console.console_background_effect import (
+    acknowledge_console_transcript,
+    active_console_transcript,
+    sync_console_transcript,
+)
+from ...Widgets.Console.console_transcript_input import (
+    guard_transcript_action,
+    transcript_focus,
+)
 from ...Widgets.Console.console_transcript import (
     derive_console_memory_banner_presentation,
 )
@@ -768,6 +778,7 @@ CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
 _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK = threading.Lock()
 _RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH = 256
+_CONSOLE_SYNC_PHASE_YIELD_SECONDS = 0.001
 # Statuses during which the 0.2s transcript poll is actively ticking
 # (see `_start_console_transcript_sync_timer`) -- also used by the
 # sub-agent badge-count cache (Finding A) to decide whether a live run
@@ -2828,10 +2839,9 @@ class ChatScreen(BaseAppScreen):
         *args: object,
         **kwargs: object,
     ) -> tuple[object, bool]:
-        """Await a mutating worker to completion before exposing cancellation."""
-
-        worker = asyncio.create_task(
-            asyncio.to_thread(partial(callback, *args, **kwargs))
+        """Keep mutating work outside all-Task cancellation until it settles."""
+        worker = asyncio.get_running_loop().run_in_executor(
+            None, partial(copy_context().run, callback, *args, **kwargs)
         )
         cancelled = False
         while True:
@@ -2839,6 +2849,8 @@ class ChatScreen(BaseAppScreen):
                 return await asyncio.shield(worker), cancelled
             except asyncio.CancelledError:
                 cancelled = True
+                if worker.done():
+                    return worker.result(), cancelled
 
     async def _publish_console_default_outcome_off_event_loop(
         self,
@@ -4485,12 +4497,7 @@ class ChatScreen(BaseAppScreen):
         self._last_native_transcript_refresh_key = None
         self._last_native_transcript_session_id = None
         if self.is_mounted:
-            try:
-                transcript = self.query_one(
-                    "#console-native-transcript", ConsoleTranscript
-                )
-            except QueryError:
-                transcript = None
+            transcript = active_console_transcript(self)
             if transcript is not None:
                 # Appearance only changes message presentation. Updating the
                 # transcript context avoids queueing behind the much broader
@@ -4549,6 +4556,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     @on(WorkbenchActionRequested)
+    @guard_transcript_action
     async def on_console_workbench_action_requested(
         self,
         event: WorkbenchActionRequested,
@@ -4774,9 +4782,8 @@ class ChatScreen(BaseAppScreen):
 
     def _is_console_widget_displayed(self, widget_id: str) -> bool:
         """Return True when a Console focus target and its parents are visible."""
-        try:
-            current = self.query_one(f"#{widget_id}")
-        except QueryError:
+        current = _console_widget_or_none(self, f"#{widget_id}")
+        if current is None:
             return False
         while current is not None:
             if current.display is False or current.styles.display == "none":
@@ -4840,12 +4847,11 @@ class ChatScreen(BaseAppScreen):
         for target_id in self._console_workbench_focus_targets(widget_id):
             if not self._is_console_widget_displayed(target_id):
                 continue
-            try:
-                widget = self.query_one(f"#{target_id}")
-            except QueryError:
+            widget = _console_widget_or_none(self, f"#{target_id}")
+            if widget is None:
                 continue
             widget.can_focus = True
-            widget.focus()
+            transcript_focus(widget, widget)
             self._last_console_workbench_focus_id = widget_id
             return
 
@@ -4903,10 +4909,9 @@ class ChatScreen(BaseAppScreen):
             for widget_id in self._console_workbench_focus_targets(pane_id):
                 if not self._is_console_widget_displayed(widget_id):
                     continue
-                try:
-                    self.query_one(f"#{widget_id}").can_focus = True
-                except QueryError:
-                    continue
+                widget = _console_widget_or_none(self, f"#{widget_id}")
+                if widget is not None:
+                    widget.can_focus = True
 
     def _restore_console_workbench_focus(self) -> None:
         """Retain visible control focus, including a collapsed rail handle."""
@@ -10630,7 +10635,7 @@ class ChatScreen(BaseAppScreen):
             # exactly -- status() reports a credential's time-based expiry with no
             # revision bump, so gating on the revision alone would leave the send
             # controls stale; both signals stay in the snapshot.
-            with self._console_derivation_scope():
+            with _workspace_build_scope(self), self._console_derivation_scope():
                 # TASK-33005.2/.5: a test settled on any surface refreshes once. Read
                 # before the build: a switcher probe settles off-thread mid-build.
                 _settings, readiness = self._active_console_settings_readiness()
@@ -13418,9 +13423,8 @@ class ChatScreen(BaseAppScreen):
 
     def _selected_console_message_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
         """Return inspector guidance for the currently selected transcript message."""
-        try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
+        transcript = active_console_transcript(self)
+        if transcript is None:
             return ()
         message_id = transcript.selected_message_id
         if message_id is None:
@@ -16523,6 +16527,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     @on(Button.Pressed, ".console-transcript-citation-sources")
+    @guard_transcript_action
     def handle_console_citation_sources(self, event: Button.Pressed) -> None:
         """Open one lazy Sources modal for a current persisted assistant."""
 
@@ -16941,28 +16946,16 @@ class ChatScreen(BaseAppScreen):
             rendered.append((conversation_id, receipt_id))
         return tuple(rendered)
 
-    async def _sync_native_console_transcript(
-        self, *, force: bool = False
-    ) -> bool | None:
-        """Render native Console messages in the native transcript.
+    _sync_native_console_transcript = sync_console_transcript
 
-        Args:
-            force: Skip the TASK-34958 tick gate entirely. Direct callers
-                that mutate transcript presentation while the app is idle
-                (no run active, so no 0.2s tick is running) must pass
-                ``True`` -- the review-notes edit/delete reload otherwise
-                skips as a no-op until the user's next send.
-
-        Returns:
-            False if the transcript read was deferred or the screen closed.
-        """
-        if not await prepare_change_review_projection(self, _console_screen_is_torn_down):
-            return False
-        try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
-            transcript = None
-
+    async def _project_native_console_transcript(
+        self,
+        transcript: ConsoleTranscript | None,
+        current: Callable[[], bool] | None = None,
+        *,
+        force: bool = False,
+    ) -> Callable[[], None] | None:
+        """Build the native transcript and defer publication to its surface."""
         # TASK-34958: cheap gate BEFORE the O(session) message pipeline
         # (snapshot materialization, projections, grouping, spec walks).
         # The store's display token covers transcript-visible mutations
@@ -16973,6 +16966,7 @@ class ChatScreen(BaseAppScreen):
         # gap, and the refresh-key reconcile inside the pipeline remains
         # the final arbiter of DOM writes.
         store = self._console_chat_store
+        gate = None
         memory_inputs = None
         effective_memory = None
         live_memory_reader = False
@@ -17073,6 +17067,7 @@ class ChatScreen(BaseAppScreen):
             except Exception:  # noqa: BLE001 - no message controller: never gate
                 delete_arm = object()
             gate = (
+                id(transcript),
                 session_id,
                 token,
                 projection_key,
@@ -17097,7 +17092,6 @@ class ChatScreen(BaseAppScreen):
                 == getattr(self, "_console_transcript_sync_token", None)
             ):
                 return
-            self._console_transcript_sync_token = gate
 
         active_messages = self._message._native_console_messages()
         messages = self._change_review_projection.project(active_messages)
@@ -17286,43 +17280,28 @@ class ChatScreen(BaseAppScreen):
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
+                if current is not None and not current():
+                    return
                 active_session = getattr(store, "_sessions", {}).get(
                     store.active_session_id
                 )
-                rendered_receipts = self._rendered_console_terminal_receipts(
+                return partial(
+                    acknowledge_console_transcript,
+                    self,
                     transcript,
                     messages,
-                    conversation_id=getattr(
-                        active_session, "persisted_conversation_id", None
-                    ),
+                    getattr(active_session, "persisted_conversation_id", None),
+                    refresh_key,
+                    gate,
                 )
-                runtime_accessor = getattr(self, "_console_runtime", None)
-                runtime = runtime_accessor() if callable(runtime_accessor) else None
-                acknowledge = getattr(
-                    runtime, "acknowledge_rendered_terminal_receipts", None
-                )
-                if rendered_receipts and callable(acknowledge):
-                    acknowledge(
-                        rendered_receipts,
-                        view=self,
-                        attachment_generation=getattr(
-                            self,
-                            "_console_runtime_attachment_generation",
-                            None,
-                        ),
-                    )
-                self._last_native_transcript_refresh_key = refresh_key
-            self._sync_console_transcript_guidance()  # TASK-35444: checked display config
-            self._last_native_transcript_session_id = (
-                self._ensure_console_chat_store().active_session_id
-            )
-            return
+        if gate is not None:
+            self._console_transcript_sync_token = gate
+        return None
 
     def _clear_native_console_message_selection(self) -> None:
         """Dismiss contextual message actions when an action changes the transcript flow."""
-        try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
+        transcript = active_console_transcript(self)
+        if transcript is None:
             return
         self._pending_console_delete_message_id = None
         transcript.selected_message_id = None
@@ -17585,25 +17564,14 @@ class ChatScreen(BaseAppScreen):
     async def _sync_native_console_chat_ui(self, *, _preparing_poll: bool = False) -> bool:
         """Refresh visible Console-native state after send/stop transitions.
 
-        **A torn-down screen renders nothing** (task-15860, cross-suite
-        leak). This tick is a screen-owned `console-sync` worker, and
-        Textual workers default to ``exit_on_error=True``: anything it
-        raises reaches ``App._handle_exception`` and takes the whole TUI
-        down. It also touches the DOM (``_sync_console_native_session_
-        tabs`` -> ``ConsoleSessionSurface.sync_sessions`` ->
-        ``query_one("#console-native-tab-strip")``), which is exactly what
-        a navigation away from Console removes. Three guards here close
-        every half of that: the entry check (a tick that STARTS after
-        teardown), the teardown-scoped ``except`` (a tick that is
-        mid-flight when teardown arrives), and the ``finally``'s re-arm
-        check (a tick that would CREATE one of the first kind).
+        A torn-down screen renders nothing (task-15860). Navigation removed
+        the tab strip while a wake turn was in flight; this tick's finally
+        then re-armed a worker AFTER Textual's workers.cancel_node sweep.
+        That worker raised NoMatches on the removed DOM. With the default
+        exit_on_error=True it killed the app and all later navigation.
 
-        Measured, not assumed: with a wake turn in flight, navigating away
-        from Console had this tick's own ``finally`` re-arm (below)
-        schedule a FRESH worker on the screen Textual had already closed;
-        that worker ran a full sync against the removed surface, raised
-        ``NoMatches``, and killed the app -- after which every later
-        ``post_message`` was silently dropped and navigation was dead.
+        Phase/except/finally guards prevent teardown work and re-arming.
+        Live errors propagate; timer yields hold no config locks or snapshots.
         """
         held = config_sync.begin_console_sync(self)  # TASK-33620.15.1/.15.4 cadence.
         if _console_screen_is_torn_down(self):
@@ -17670,7 +17638,8 @@ class ChatScreen(BaseAppScreen):
             elif await self._sync_console_native_session_tabs(_preparing_record=poll_record) is False:
                 self._console_sync_requested = True
                 return False
-            if not poll_is_current():
+            await asyncio.sleep(_CONSOLE_SYNC_PHASE_YIELD_SECONDS)
+            if _console_screen_is_torn_down(self) or not poll_is_current():
                 return False
             # PR#757 review (comment 4): warm the effective-scope cache for
             # an already-active persisted session before anything below
@@ -17706,17 +17675,8 @@ class ChatScreen(BaseAppScreen):
             # raises (see `_refresh_active_character_avatar_if_scope_changed`
             # docstring, T3).
             await self._character._refresh_active_character_avatar_if_scope_changed()
-            if not poll_is_current():
-                return False
-            # TASK-31244 review: the Character browser is screen-owned and
-            # survives rail recomposition. Revalidate its complete local scope
-            # on every existing native sync seam; the stable fingerprint makes
-            # settled ticks a no-op while profile, current-character, and local
-            # conversation mutations reload and fence stale commits.
-            from ..Console_Modules.character_context import character_presentation_work
-
-            await character_presentation_work(self._character_context, self)
-            if not poll_is_current():
+            await asyncio.sleep(_CONSOLE_SYNC_PHASE_YIELD_SECONDS)
+            if _console_screen_is_torn_down(self) or not poll_is_current():
                 return False
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
@@ -17766,6 +17726,10 @@ class ChatScreen(BaseAppScreen):
                 # general sync so switches and delayed writes cannot leave
                 # the mounted recovery rows stale. This is deliberately a
                 # direct DOM sync: it starts no worker and emits no toast.
+                # Release the loop after the checked config projection.
+                await asyncio.sleep(_CONSOLE_SYNC_PHASE_YIELD_SECONDS)
+                if _console_screen_is_torn_down(self) or not poll_is_current():
+                    return False
                 self._sync_console_settings_recovery_surfaces()
                 self._sync_console_live_work_readiness_rows()
                 self._sync_console_mode_bar()
@@ -17773,8 +17737,8 @@ class ChatScreen(BaseAppScreen):
                     self._dispatch_active_console_roleplay_refresh()
                 self._sync_console_workspace_context()
                 project_instruction_ui.sync_project_instruction_status_for_screen(self)
-                await asyncio.sleep(0)  # TASK-33628.5.1: rails, transcript: 2 turns
-                if not poll_is_current():
+                await asyncio.sleep(_CONSOLE_SYNC_PHASE_YIELD_SECONDS)
+                if _console_screen_is_torn_down(self) or not poll_is_current():
                     return False
                 transcript_synced = await self._sync_native_console_transcript()
                 if not poll_is_current():
@@ -17802,6 +17766,7 @@ class ChatScreen(BaseAppScreen):
                     return False
             self._dispatch_console_rail_preference_prune()
             self._session.schedule_manual_read_acknowledgement()
+            wiring.request_console_character_context_refresh(self)
             if (
                 poll_record is None
                 and not self._console_attach_sync_complete
@@ -18445,8 +18410,9 @@ class ChatScreen(BaseAppScreen):
         await self._hooks.refresh()
 
     def _apply_console_hooks_state(self, snapshot) -> None:
-        self._console_hook_review_snapshot = snapshot
-        self._sync_console_control_bar()
+        if snapshot is not getattr(self, "_console_hook_review_snapshot", None):
+            self._console_hook_review_snapshot = snapshot
+            self._sync_console_control_bar()
         try:
             self.query_one("#console-control-hooks", Button).set_class(
                 snapshot.pending_count > 0, "hooks-attention"
@@ -19830,10 +19796,7 @@ class ChatScreen(BaseAppScreen):
             The run id to review, or ``None`` when no rendered or stored
             row with that id carries one.
         """
-        try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
-            transcript = None
+        transcript = active_console_transcript(self)
         if transcript is not None:
             row = transcript.display_message(message_id)
             run_id = (
@@ -19923,6 +19886,7 @@ class ChatScreen(BaseAppScreen):
         self._open_change_review()
 
     @on(ConsoleTurnFileCard.ReviewRequested)
+    @guard_transcript_action
     def handle_console_turn_file_card_review_requested(
         self, event: ConsoleTurnFileCard.ReviewRequested
     ) -> None:
@@ -19937,6 +19901,7 @@ class ChatScreen(BaseAppScreen):
         self._open_change_review(event.run_id)
 
     @on(ConsoleTurnFileCard.UndoAllRequested)
+    @guard_transcript_action
     async def handle_console_turn_file_card_undo_all_requested(
         self, event: ConsoleTurnFileCard.UndoAllRequested
     ) -> None:
@@ -20619,6 +20584,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     @on(ConsoleCanvasCardOpenRequested)
+    @guard_transcript_action
     async def handle_console_canvas_card_open(
         self, event: ConsoleCanvasCardOpenRequested
     ) -> None:
@@ -20891,7 +20857,7 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.config_sync import run_console_presentation_sync
 
         def sync() -> None:
-            with _workspace_build_scope(self):  # One context build, as on a tick.
+            with _workspace_build_scope(self), self._console_derivation_scope():
                 self._sync_console_control_bar_under_config(rail_state)
 
         result = run_console_presentation_sync(self, sync)
@@ -20904,7 +20870,7 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.config_sync import run_console_presentation_sync
 
         def sync() -> None:
-            with _workspace_build_scope(self):
+            with _workspace_build_scope(self), self._console_derivation_scope():
                 self._sync_console_settings_summary()
                 self._sync_console_control_bar_under_config(None)
 
@@ -21313,9 +21279,8 @@ class ChatScreen(BaseAppScreen):
         """Clear stale destructive-action confirmation when transcript selection changes."""
         if self._pending_console_delete_message_id is None:
             return
-        try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
+        transcript = active_console_transcript(self)
+        if transcript is None:
             self._pending_console_delete_message_id = None
             return
         if transcript.selected_message_id != self._pending_console_delete_message_id:
@@ -21956,11 +21921,8 @@ class ChatScreen(BaseAppScreen):
             # TASK-348: scrollback must be keyboard-reachable. The composer
             # never uses paging keys (Home/End move its caret), so route
             # them to the transcript — the standard chat-app idiom.
-            try:
-                transcript = self.query_one(
-                    "#console-native-transcript", ConsoleTranscript
-                )
-            except QueryError:
+            transcript = active_console_transcript(self)
+            if transcript is None:
                 return
             if event.key == "pageup":
                 transcript.scroll_page_up(animate=False)
@@ -22045,6 +22007,7 @@ class ChatScreen(BaseAppScreen):
             self._dismiss_console_guidance()
 
     @on(ConsoleSelectionQuoteRequested)
+    @guard_transcript_action
     def _console_selection_quote_requested(
         self, event: ConsoleSelectionQuoteRequested
     ) -> None:
@@ -22071,6 +22034,7 @@ class ChatScreen(BaseAppScreen):
         self.notify("Added selection to composer")
 
     @on(ConsoleSideChatRequested)
+    @guard_transcript_action
     def _console_side_chat_requested(self, event: ConsoleSideChatRequested) -> None:
         """Open the ephemeral side-chat modal about a transcript selection.
 
@@ -22126,11 +22090,13 @@ class ChatScreen(BaseAppScreen):
 
     @on(ConsoleTraceCopyRequested)
     @on(ConsoleSelectionNoteRequested)
+    @guard_transcript_action
     def on_console_selection_note_requested(self, event: SelectionRequest) -> None:
         event.stop()
         self._review_selection.request_selection_action(event)
 
     @on(ConsoleSelectionFeedbackRequested)
+    @guard_transcript_action
     def on_console_selection_feedback_requested(self, event: FeedbackRequested) -> None:
         event.stop()
         self._review_selection.request_selection_feedback(
@@ -22138,6 +22104,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     @on(ConsoleThinkingEditRequested)
+    @guard_transcript_action
     async def on_console_thinking_edit_requested(
         self, event: ConsoleThinkingEditRequested
     ) -> None:
@@ -22155,6 +22122,7 @@ class ChatScreen(BaseAppScreen):
         await self._message.handle_console_thinking_edit_requested(event)
 
     @on(ConsoleReviewNotesRequested)
+    @guard_transcript_action
     def on_console_review_notes_requested(
         self, event: ConsoleReviewNotesRequested
     ) -> None:
@@ -23065,13 +23033,7 @@ class ChatScreen(BaseAppScreen):
                 self._skill._refresh_console_skill_candidates(),
                 group="console-skill-discovery", exclusive=False
             )
-            from ..Console_Modules.character_context import character_view_resume_work
-
-            self.run_worker(  # The Character widget owns initial load.
-                character_view_resume_work(self._character_context, self),
-                exclusive=True,
-                group="console-character-context-refresh",
-            )
+            wiring.request_console_character_context_refresh(self, resumed=True)
         # Textual's MRO dispatch also invokes BaseAppScreen's shared reconciliation;
         # this handler extends that resume event with Console-owned replay work.
 
@@ -24209,6 +24171,7 @@ class ChatScreen(BaseAppScreen):
                 event.answers, request_id=event.request_id
             )
 
+    @guard_transcript_action
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """
         Handle button events at the screen level.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Sequence
@@ -9,6 +10,23 @@ from typing import Any, Literal, Mapping, Sequence
 from loguru import logger
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+
+async def retire_agent_runs_db(database: Any) -> bool:
+    """Close the settled receipt owner, leaving active native work intact."""
+    if database is None:
+        return True
+    stock = type(database) is AgentRunsDB and not database.is_memory_db
+    try:
+        if stock and not await asyncio.to_thread(database.close_idle_connections):
+            return False
+        database.close()
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Console runtime: AgentRunsDB close failed at dispose."
+        )
+        return not stock
+    return True
 
 
 @dataclass(frozen=True)

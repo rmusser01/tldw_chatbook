@@ -55,9 +55,9 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_console_store_continuity import (
-    _StallingWakeGateway,
     _navigate,
     _seed_console,
+    _StallingWakeGateway,
 )
 from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
@@ -170,6 +170,22 @@ async def test_a_torn_down_screen_runs_no_sync_work_and_never_re_arms(tmp_path):
         assert app.is_running, f"the app died: {app._exception!r}"
 
 
+def _console_sync_settled(chat):
+    """A native trailing timer/Worker still owns the tick even between phases."""
+    return not (
+        chat._console_sync_in_progress
+        or chat._console_sync_requested
+        or getattr(chat, "_console_control_bar_replay_whole_sync", False)
+        or getattr(chat, "_console_control_bar_sync_scheduled", False)
+        or any(
+            worker.node is chat
+            and worker.group == "console-sync"
+            and not worker.is_finished
+            for worker in chat.workers
+        )
+    )
+
+
 async def _arm_midtick_injection(app, pilot, gateway, *, navigate_away: bool):
     """Seed Console and schedule a DOM failure part-way through the next tick.
 
@@ -212,7 +228,7 @@ async def _arm_midtick_injection(app, pilot, gateway, *, navigate_away: bool):
                 await strip.remove()
 
     # A direct call would coalesce into a tick already in flight.
-    assert await _settle(lambda: not chat._console_sync_in_progress, seconds=10.0), (
+    assert await _settle(lambda: _console_sync_settled(chat), seconds=10.0), (
         "a console-sync tick never finished; the direct call would coalesce"
     )
     chat._console_sync_requested = False
@@ -312,9 +328,9 @@ async def test_a_partly_dismantled_screen_mid_tick_is_absorbed(tmp_path):
                 await strip.remove()
             chat._closing = True
 
-        assert await _settle(
-            lambda: not chat._console_sync_in_progress, seconds=10.0
-        ), "a console-sync tick never finished; the direct call would coalesce"
+        assert await _settle(lambda: _console_sync_settled(chat), seconds=10.0), (
+            "a console-sync tick never finished; the direct call would coalesce"
+        )
         chat._console_sync_requested = False
         chat._character._refresh_active_character_avatar_if_scope_changed = (
             _dismantle_mid_tick

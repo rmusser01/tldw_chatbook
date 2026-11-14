@@ -152,6 +152,73 @@ async def test_installed_owner_opens_cold_reuses_warm_and_keeps_composer_focus(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("supersede", [False, True])
+async def test_prepared_character_switcher_yields_to_due_timer_before_dismissal(
+    activation_library, monkeypatch, supersede
+):
+    owner, _, db = activation_library
+    _seed(owner, db)
+    host = ConsoleHarness(owner)
+    async with host.run_test(size=(120, 50)) as pilot:
+        chat = host.screen
+        await _until(lambda: chat.query("#console-native-composer"))
+        modal = await _open_switcher(chat, host)
+        target = modal._entries[0].target
+        workspace = chat._workspace
+        store = chat._ensure_console_chat_store()
+        prior = store.active_session_id
+        open_conversation = workspace.open_console_workspace_conversation
+        sync_transcript = chat._sync_native_console_transcript
+        preparing = None
+        observed = []
+
+        async def open_saved(conversation_id):
+            nonlocal preparing
+            opened = await open_conversation(conversation_id)
+            if opened:
+                preparing = asyncio.current_task()
+            return opened
+
+        def timer_due():
+            observed.append(
+                host.screen is modal and not modal._activation_completion_consumed
+            )
+            if supersede:
+                selected = store.active_session_id
+                store.switch_session(prior)
+                store.switch_session(selected)
+
+        async def publish_transcript():
+            nonlocal preparing
+            await sync_transcript()
+            if preparing is asyncio.current_task():
+                preparing = None
+                loop = asyncio.get_running_loop()
+                loop.call_at(loop.time(), timer_due)
+
+        monkeypatch.setattr(
+            workspace, "open_console_workspace_conversation", open_saved
+        )
+        monkeypatch.setattr(chat, "_sync_native_console_transcript", publish_transcript)
+        await pilot.press("enter")
+        await _until(
+            lambda: modal._activation_task is not None and modal._activation_task.done()
+        )
+        assert observed == [True]
+        if supersede:
+            assert host.screen is modal
+            assert not modal._activation_completion_consumed
+            assert store.active_session_id == prior
+            assert not any(
+                s.persisted_conversation_id == "exact" for s in store.sessions()
+            )
+        else:
+            assert host.screen is chat
+            assert modal._activation_completion_consumed
+            assert workspace._character_conversation_target_visible(target)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["settings", "target", "payload", "none"])
 async def test_token_preparation_is_off_loop_before_activation_and_fences_settings(
     activation_library,

@@ -1166,7 +1166,8 @@ Button.console-rail-focus-carrier:focus {
     background: transparent;
 }
 
-#console-native-transcript {
+#console-native-transcript,
+.console-transcript-viewport {
     height: $ds-height-fill;
     min-height: $ds-size-0;
     padding: $ds-space-0 $ds-space-1;
@@ -1183,7 +1184,8 @@ Button.console-rail-focus-carrier:focus {
     scrollbar-size: 1 1;
 }
 
-#console-transcript-surface #console-native-transcript {
+#console-transcript-surface #console-native-transcript,
+#console-transcript-surface .console-transcript-viewport {
     layer: console-content;
     height: $ds-height-fill;
     min-height: $ds-size-0;
@@ -1275,7 +1277,8 @@ Button.console-rail-focus-carrier:focus {
     text-style: bold underline;
 }
 
-#console-native-transcript:focus {
+#console-native-transcript:focus,
+.console-transcript-viewport:focus {
     /* TASK-17651: no border in either state (stable geometry, zero rows).
        TASK-20937.3 puts the non-color pane cue on the stable title row;
        the scrollbar recolor remains a secondary color cue.
@@ -2340,7 +2343,9 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 /* TASK-2154.1 (LY-09): keep the historical compact override explicit so
    neither focus nor compact mode can resurrect the removed transcript frame. */
 #console-shell.-console-compact #console-native-transcript,
-#console-shell.-console-compact #console-native-transcript:focus {
+#console-shell.-console-compact #console-native-transcript:focus,
+#console-shell.-console-compact .console-transcript-viewport,
+#console-shell.-console-compact .console-transcript-viewport:focus {
     border: none;
 }
 

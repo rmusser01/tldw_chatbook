@@ -2,7 +2,7 @@
 
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
-_GUIDANCE = r'''
+_GUIDANCE = r"""
 import asyncio
 import os
 from pathlib import Path
@@ -183,7 +183,9 @@ async def main():
                 loads.clear()
                 screen._sync_console_transcript_guidance()
                 counts.append(len(derives))
-                assert loads, 'full native-backed config acquisition must still run'
+                assert len(loads) == 1, (
+                    'native config reads in one derivation', len(loads)
+                )
                 assert events[-4:] == ['first_send', 'messages', 'surface', 'modal'], events
                 assert projections[0][1] == projections[1][1]
                 assert screen._console_derivation_memo is None
@@ -269,7 +271,7 @@ asyncio.run(main())
 phase('shutdown_complete')
 assert not blocked_attempts(), blocked_attempts()
 print('retired and reopened')
-'''
+"""
 
 
 def test_native_guidance_is_coherent_and_refreshes_after_real_settings_save(tmp_path):

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from textual.css.query import NoMatches
 
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     LocalCharacterConversationTarget,
@@ -631,11 +632,13 @@ def test_production_workspace_visibility_requires_settled_transcript_owner() -> 
         def app(self):
             return SimpleNamespace(screen=self)
 
-        def query_one(self, selector):
+        def query_one(self, selector, _expect_type=None):
             if selector == "#console-native-composer":
                 return composer
             if selector == "#console-native-transcript":
                 return stale_transcript
+            if selector == "#console-transcript-surface":
+                raise NoMatches(selector)
             raise AssertionError(selector)
 
     controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
@@ -645,8 +648,6 @@ def test_production_workspace_visibility_requires_settled_transcript_owner() -> 
     assert session.persisted_conversation_id == "conversation-X"
 
     assert controller._character_conversation_target_visible(request) is False
-
-    from textual.css.query import NoMatches
 
     def missing_widget(_selector):
         raise NoMatches("transcript not mounted")
@@ -673,18 +674,16 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     prior = store.create_session(title="Prior")
     composer = object()
     transcript = SimpleNamespace(_session_identity="stale-session")
-    screen = SimpleNamespace(is_mounted=True, focused=composer)
+    screen = SimpleNamespace(is_mounted=True, is_attached=True, focused=composer)
     screen.app = SimpleNamespace(screen=screen)
     screen._last_native_transcript_refresh_key = ("stale-session", 1)
     screen._sync_native_console_transcript = AsyncMock(return_value=None)
     presentation_steps = []
 
-    def query(selector):
+    def query(selector, _expect_type=None):
         presentation_steps.append(selector)
         if selector == "#console-native-composer":
             if focus_failure == "missing_composer":
-                from textual.css.query import NoMatches
-
                 raise NoMatches("composer unmounted")
             return composer
         return transcript

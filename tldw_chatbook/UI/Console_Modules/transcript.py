@@ -95,12 +95,31 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.css.query import QueryError
 from textual.widget import Widget
 
 from ...Utils.ui_responsiveness import heap_freeze_epoch, heap_refreezer
 from ...Widgets.Console import ConsoleTranscript
+from ...Widgets.Console.console_background_effect import active_console_transcript
 from .frame import frame_console_region
+
+
+async def project_tab_before_scope(controller: Any, session_id: str) -> bool:
+    """Publish the switched tab before waiting on a separate scope read."""
+    screen = controller._screen
+    if controller._resume_screen_is_torn_down():
+        return False
+    if not controller.is_attached or screen.app.screen is not screen:
+        return True
+    controller._bind_composer_to_active_session()
+    try:
+        await screen._sync_native_console_transcript()
+    except Exception:
+        if not controller._resume_screen_is_torn_down():
+            raise
+    return (
+        not controller._resume_screen_is_torn_down()
+        and controller._ensure_console_chat_store().active_session_id == session_id
+    )
 
 
 class ConsoleChangeReviewProjection:
@@ -338,19 +357,8 @@ class ConsoleTranscriptRegion(Vertical):
             yield self._session_surface_builder()
 
     def _transcript_or_none(self) -> ConsoleTranscript | None:
-        """Return the mounted transcript widget, or ``None`` when absent.
-
-        Every method below opened with this same try/query/except before the
-        move; it is factored out here rather than repeated four times.
-
-        Returns:
-            The ``#console-native-transcript`` widget inside this region, or
-            ``None`` before it is mounted (or after it is torn down).
-        """
-        try:
-            return self.query_one("#console-native-transcript", ConsoleTranscript)
-        except QueryError:
-            return None
+        """Return the region's active transcript when mounted."""
+        return active_console_transcript(self)
 
     @property
     def reading_session_id(self) -> str | None:
@@ -447,10 +455,8 @@ class ConsoleTranscriptRegion(Vertical):
         including its finding: this stays singular/view-only on purpose.
         Unlike the screen's per-session stash maps, it never carries
         session-owned DATA across a send's lifetime — it is a one-shot
-        directive consumed by whichever session's transcript happens to be
-        ``#console-native-transcript`` (a single widget instance reflecting
-        the ACTIVE session) at the next render. A background session's send
-        stamping this while a different session is viewed just requests an
+        directive consumed by the current viewport at its next render.
+        A background session's send while a different session is viewed requests an
         extra, harmless tail-follow on whatever the transcript renders next;
         there is no cross-session data to leak or clobber.
         """

@@ -1099,11 +1099,9 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
     )
     screen._console_chat_controller = None
     screen._ensure_console_chat_controller = lambda: SimpleNamespace(
-        context_control_inputs=lambda _session: (
-            None,
-            None,
-            EffectiveMemoryResult(EffectiveMemoryKind.RAW),
-        )
+        context_control_inputs=lambda _session, **_kwargs: (
+            None, None, EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+        ),
     )
     screen._console_original_attempt_previews = {}
     screen._pending_console_swipe_selection = None

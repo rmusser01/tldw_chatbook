@@ -55,16 +55,16 @@ install of this app can do, with nothing in the repo recording that we relied on
 
 ## Implementation Notes (2026-10-11, dev `a3c47c6c72`)
 
-- **Decision: CORE**, recorded as `backlog/decisions/225-beautifulsoup4-core-dependency.md`
-  (ADR-225). Rationale: markdownify's pin already puts bs4 on every base
+- **Decision: CORE**, recorded as `backlog/decisions/360-beautifulsoup4-core-dependency.md`
+  (ADR-360). Rationale: markdownify's pin already puts bs4 on every base
   install; declaring it makes that reliance explicit and testable, and a
   future markdownify dropping the pin can no longer silently change what a
   base install can do. The TASK-21104 lazy guard is kept unchanged as a
   safety net for damaged/partial installs.
 - **pyproject.toml**: `beautifulsoup4` added to `[project] dependencies` with
-  an ADR-225 comment; the four extras stopped re-declaring it. The
+  an ADR-360 comment; the four extras stopped re-declaring it. The
   `subscriptions` extras block comment updated ("bs4 ... a core dependency,
-  ADR-225"). `markdownify` re-declarations inside `ebook`/`web` extras are
+  ADR-360"). `markdownify` re-declarations inside `ebook`/`web` extras are
   likewise redundant now but are out of this task's scope.
 - **Evidence**: `Tests/Packaging/test_extras_import_closure.py` 4 passed;
   TOML parses with core = True and no extras carrying bs4. AC#2 (genuinely

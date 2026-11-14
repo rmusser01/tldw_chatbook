@@ -6736,16 +6736,14 @@ class ConsoleComposerBar(Horizontal):
         # TASK-33620.15.7: every 0.2 s run tick re-applies this label; an
         # unchanged one must not request a whole-screen reflow.
         text = escape(resolve_glyph_text(f"📎 {normalized}")) if normalized else ""
-        if indicator.content != text:
+        if type(indicator.content) is not str or indicator.content != text:
             indicator.update(text)
+        visible = bool(normalized) and not self._voice_full_width_preparing
+        indicator.styles.display = clear_button.styles.display = "block" if visible else "none"
+        self._set_actions_row_width(actions, self._actions_row_width(attachment_visible=visible))
         if normalized:
-            indicator.styles.display = "block"
             _swap_size_class(indicator, "w-", "w-auto")
             indicator.styles.max_width = 28
-            clear_button.styles.display = "block"
-            self._set_actions_row_width(
-                actions, self._actions_row_width(attachment_visible=True)
-            )
             # CN-04 (TASK-2154.13): one phrase with the compose-time tooltip
             # ("Remove the pending attachment."), not a second "Clear" verb.
             if count > 1:
@@ -6753,14 +6751,7 @@ class ConsoleComposerBar(Horizontal):
             else:
                 clear_button.tooltip = "Remove the pending attachment."
         else:
-            indicator.styles.display = "none"
             _swap_size_class(indicator, "w-", "w-0")
-            clear_button.styles.display = "none"
-            self._set_actions_row_width(
-                actions, self._actions_row_width(attachment_visible=False)
-            )
-        if self._voice_full_width_preparing:
-            self._sync_full_width_voice_presentation(True)
 
     #: TASK-24620: the voice chip's own legibility floor, mirroring
     #: `SEND_REASON_MIN_LEGIBLE_WIDTH` -- below it the chip hides (the

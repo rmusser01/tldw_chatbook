@@ -252,3 +252,16 @@ Do not reuse numbers.
 | --- | --- | --- |
 | [ADR-235](235-console-approval-interaction-and-feedback.md) | Accepted | Captured Console approval actions, supported choices, lazy Details and observed decision feedback; existing grant authority/lifetimes preserved. |
 | [ADR-354](354-served-webauthn-passkey-login.md) | Accepted | Served WebAuthn passkeys; younger decision renumbered from235 under the oldest-Date ownership rule, with authentication behavior unchanged. |
+
+## Console resource retirement and rendering decisions
+
+| Decision | Status | Scope |
+| --- | --- | --- |
+| [ADR-225](225-app-scoped-sqlite-retirement.md) — App-scoped SQLite retirement | Accepted | Retire settled app-owned native connections after their producers, preserving borrowers. |
+| [ADR-226](226-lazy-textual-strip-cache-allocation.md) — Lazy Textual Strip caches | Accepted | Defer each native FIFO allocation until first use. |
+| [ADR-360](360-beautifulsoup4-core-dependency.md) — BeautifulSoup dependency | Accepted | Declare the installed dependency directly. |
+| [ADR-361](361-owner-free-textual-background-color-cache.md) — Textual background colors | Accepted | Use color keys and detached per-owner results. |
+| [ADR-362](362-owner-local-textual-box-model-results.md) — Textual BoxModel results | Accepted | Reuse equal results on each native widget owner. |
+| [ADR-363](363-console-render-pass-backdrop-tints.md) — Console backdrop tint reuse | Accepted | Reuse color pairs within one live render pass. |
+| [ADR-364](364-finalized-style-owner-retirement-rejected.md) — Finalized Style ownership | Accepted | Preserve Textual's native finalized Style ownership. |
+| [ADR-365](365-console-transcript-viewport-ownership.md) — Console transcript viewport ownership | Accepted | Fence actions to their activation and retain one passive previous viewport. |

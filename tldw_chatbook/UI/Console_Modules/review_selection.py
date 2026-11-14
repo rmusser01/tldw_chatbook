@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from functools import partial
 from typing import Any
 
 from loguru import logger
@@ -777,7 +778,9 @@ class ConsoleReviewSelectionController:
         if database is None:
             return
         self._run_worker(
-            self._load_console_annotation_previews(database, store, conversation_id),
+            partial(
+                self._load_console_annotation_previews, database, store, conversation_id
+            ),
             exclusive=True,
             group="console-annotation-previews",
             exit_on_error=False,

@@ -6674,6 +6674,9 @@ class ConsoleRuntime:
                         name="console-dispose-controller",
                     )
                 )
+        # Shielded native calls can outlive their cancelled submit/stream task.
+        agent_workers = set(getattr(controller, "_maintenance_background", ()))
+        drain_tasks.update(agent_workers)
         drain = asyncio.create_task(
             self._bounded_wait(drain_tasks, timeout_seconds=remaining_seconds()),
             name="console-dispose-drain",
@@ -6688,7 +6691,7 @@ class ConsoleRuntime:
         if voice_cleanup in pending:
             logger.warning("Console runtime: voice cleanup remains pending at dispose.")
         for task in pending:
-            if task is voice_cleanup or task in progress_cleanups:
+            if task is voice_cleanup or task in progress_cleanups or task in agent_workers:
                 continue
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
@@ -6780,21 +6783,9 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: Change Review shutdown failed at dispose."
                 )
-        # AgentRunsDB connections are thread-local. The coordinator closes
-        # the publisher thread's connection after its last callback; this
-        # closes the runtime/UI thread's separate held connection. Even when
-        # bounded coordinator shutdown times out, neither close invalidates
-        # the other thread's connection.
-        if runs_db is not None:
-            try:
-                close_idle = getattr(runs_db, "close_idle_connections", None)
-                if callable(close_idle):  # TASK-39117: every thread's idle handle
-                    await asyncio.to_thread(close_idle)
-                runs_db.close()
-            except Exception:  # noqa: BLE001 - same
-                logger.opt(exception=True).warning(
-                    "Console runtime: AgentRunsDB close failed at dispose."
-                )
+        from .console_activity_receipts import retire_agent_runs_db
+
+        receipt_retirement_incomplete = not await retire_agent_runs_db(runs_db)
 
         async def dispose_scratch() -> None:
             try:
@@ -6863,6 +6854,8 @@ class ConsoleRuntime:
             or asyncio.current_task().cancelling()
         ):
             raise asyncio.CancelledError
+        if receipt_retirement_incomplete:
+            raise RuntimeError("sqlite_retirement_incomplete:AgentRuns")
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:
@@ -6914,10 +6907,8 @@ def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:
 def ensure_console_runtime(app: Any, *, view: Any | None = None) -> ConsoleRuntime:
     """Return `app`'s Console runtime, creating and attaching one if needed.
 
-    Mirrors `ChatScreen._h3_image_edit_registry`: the app normally builds
-    this in `__init__`, but a test app object (or one whose runtime was
-    disposed at the last unmount) has none, and the screen must still be
-    able to run.
+    The app normally builds this in `__init__`; bare test app objects may
+    need lazy construction.
 
     Args:
         app: The app object to read/attach the runtime on. `None` is
@@ -6932,6 +6923,9 @@ def ensure_console_runtime(app: Any, *, view: Any | None = None) -> ConsoleRunti
         ConsoleRuntime: The runtime `view` should use.
     """
     runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
+    retired = getattr(app, "_retired_console_runtime", None)
+    if not isinstance(runtime, ConsoleRuntime) and isinstance(retired, ConsoleRuntime):
+        return retired
     if not isinstance(runtime, ConsoleRuntime) and view is not None:
         # An app object that cannot hold the attribute (`None`, or a
         # read-only double) would otherwise hand every caller a BRAND-NEW
@@ -6982,7 +6976,7 @@ async def leave_console_runtime(
 
 
 async def dispose_console_runtime(app: Any, *, view: Any | None = None) -> None:
-    """Destroy `app`'s Console runtime and detach it. **App exit only.**
+    """Dispose `app`'s Console runtime, retaining its exit fence. **App exit only.**
 
     Registered in `TldwCli._shutdown_app_owned_lifecycles`. Ordinary
     navigation away from Console goes through `leave_console_runtime`
@@ -7001,6 +6995,8 @@ async def dispose_console_runtime(app: Any, *, view: Any | None = None) -> None:
         return
     await runtime.dispose()
     if not runtime.hooks_v2_cleanup_pending:
+        with contextlib.suppress(AttributeError, TypeError):
+            app._retired_console_runtime = runtime
         _attach(app, None)
 
 

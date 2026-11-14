@@ -428,8 +428,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "9e033a7b75184ade09a7",
+      "call_count": 2,
+      "diagnostic_digest": "24beed6a32c050b51d27",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_activity_receipts.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -750,8 +750,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 42,
-      "diagnostic_digest": "0afc845744a3ad3c075b",
+      "call_count": 41,
+      "diagnostic_digest": "f82c160669e4101b5296",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_runtime.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -5024,6 +5024,13 @@
       "diagnostic_digest": "4866ee9e46c3c1d6f060",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Writing_Interop/local_writing_service.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 3,
+      "diagnostic_digest": "f591ba026eeeb14d17f6",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/__init__.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {

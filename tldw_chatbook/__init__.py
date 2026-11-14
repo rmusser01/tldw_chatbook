@@ -100,6 +100,284 @@ if "loguru" in sys.modules:
         pass
 
 
+_strip_caches_installed = False
+
+
+def install_lazy_strip_caches() -> bool:
+    """Install the verified allocation adapter, leaving unknown native shapes alone."""
+    global _strip_caches_installed
+    if _strip_caches_installed:
+        return True
+
+    import logging
+    from functools import wraps
+    from threading import RLock
+    from types import MemberDescriptorType
+    from typing import Any
+
+    import textual
+    from textual import strip as strip_module
+    from textual.cache import FIFOCache
+    from textual.strip import Strip
+
+    _CACHE_SIZES = {
+        "_divide_cache": 4,
+        "_crop_cache": 16,
+        "_style_cache": 16,
+        "_filter_cache": 4,
+        "_line_length_cache": 4,
+        "_crop_extend_cache": 4,
+        "_offsets_cache": 4,
+    }
+
+    _allocation_lock = RLock()
+
+    def _lazy_cache(slot: MemberDescriptorType, capacity: int) -> property:
+        def get(instance: Strip) -> FIFOCache[Any, Any]:
+            cache = slot.__get__(instance, Strip)
+            if cache is None:
+                with _allocation_lock:
+                    cache = slot.__get__(instance, Strip)
+                    if cache is None:
+                        cache = FIFOCache(capacity)
+                        slot.__set__(instance, cache)
+            return cache
+
+        return property(get, slot.__set__, slot.__delete__)
+
+    slots = {name: Strip.__dict__.get(name) for name in _CACHE_SIZES}
+    constructor = Strip.__init__
+    expected_slots = {
+        *_CACHE_SIZES,
+        "_segments",
+        "_cell_length",
+        "_render_cache",
+        "_link_ids",
+        "_cell_count",
+    }
+    if (
+        textual.__version__ != "8.2.8"
+        or set(getattr(Strip, "__slots__", ())) != expected_slots
+        or any(
+            type(Strip.__dict__.get(name)) is not MemberDescriptorType
+            for name in expected_slots
+        )
+        or getattr(getattr(constructor, "__code__", None), "co_filename", None)
+        != strip_module.__file__
+    ):
+        logging.getLogger(__name__).warning(
+            "Lazy Strip caches not installed: unsupported Textual version or native shape"
+        )
+        return False
+
+    @wraps(constructor)
+    def initialize(instance, segments, cell_length=None):
+        if type(instance) is not Strip:
+            constructor(instance, segments, cell_length)
+            return
+        # Native 8.2.8 data initialization; only its seven FIFO allocations are deferred.
+        instance._segments = list(segments)
+        instance._cell_length = cell_length
+        for slot in slots.values():
+            slot.__set__(instance, None)
+        instance._render_cache = None
+        instance._link_ids = None
+        instance._cell_count = None
+
+    properties = {
+        name: _lazy_cache(slots[name], capacity)
+        for name, capacity in _CACHE_SIZES.items()
+    }
+    for name, lazy in properties.items():
+        setattr(Strip, name, lazy)
+    Strip.__init__ = initialize
+    _strip_caches_installed = True
+    return True
+
+
+_style_colors_installed = False
+
+
+def install_owner_free_style_colors() -> bool:
+    """Adapt only the verified native color calculation, otherwise leave it alone."""
+    global _style_colors_installed
+    if _style_colors_installed:
+        return True
+
+    import logging
+    from dataclasses import replace
+    from dis import get_instructions
+    from functools import lru_cache
+
+    import textual
+    from textual import _styles_cache as styles_cache_module
+    from textual._styles_cache import StylesCache
+    from textual.color import Color
+    from textual.style import Style
+
+    native = StylesCache.__dict__.get("get_inner_outer")
+    compute = getattr(native, "__wrapped__", None)
+    code = getattr(compute, "__code__", None)
+    parameters = getattr(native, "cache_parameters", None)
+    if (
+        textual.__version__ != "8.2.8"
+        or code is None
+        or code.co_filename != styles_cache_module.__file__
+        or code.co_argcount != 3
+        or code.co_varnames[:3] != ("cls", "base_background", "background")
+        or any(
+            instruction.opname.startswith("LOAD_") and instruction.argval == "cls"
+            for instruction in get_instructions(compute)
+        )
+        or not callable(parameters)
+        or parameters() != {"maxsize": 1024, "typed": False}
+    ):
+        logging.getLogger(__name__).warning(
+            "Owner-free style colors not installed: unsupported Textual version or native shape"
+        )
+        return False
+
+    @lru_cache(maxsize=1024)
+    def colors(base_background: Color, background: Color) -> tuple[Style, Style]:
+        return compute(None, base_background, background)
+
+    def detached_colors(
+        owner: StylesCache, base_background: Color, background: Color
+    ) -> tuple[Style, Style]:
+        # Frozen Textual styles still memoize mutable, color-system-specific ANSI.
+        templates = colors(base_background, background)
+        if type(owner) is StylesCache:
+            previous = getattr(owner, "_tldw_current_color_result", None)
+            if previous is not None and previous[0] is templates:
+                return previous[1]
+        inner, outer = templates
+        result = replace(inner), replace(outer)
+        if type(owner) is StylesCache:
+            owner._tldw_current_color_result = templates, result
+        return result
+
+    detached_colors.cache_parameters = colors.cache_parameters
+    detached_colors.cache_info = colors.cache_info
+    detached_colors.cache_clear = colors.cache_clear
+    StylesCache.get_inner_outer = detached_colors
+    _style_colors_installed = True
+    return True
+
+
+_box_models_installed = False
+
+
+def install_owner_local_box_models() -> bool:
+    """Adapt verified native geometry without changing its calculation or LRU."""
+    global _box_models_installed
+    if _box_models_installed:
+        return True
+
+    import hashlib
+    import inspect
+    import logging
+    from fractions import Fraction
+    from functools import wraps
+    from itertools import islice
+    from tokenize import TokenError
+
+    import textual
+    from textual import widget as widget_module
+    from textual.box_model import BoxModel
+    from textual.cache import LRUCache
+    from textual.geometry import Size, Spacing
+    from textual.widget import Widget
+
+    _NATIVE_DIGEST = "1ccca76e5161f18cde4146808f94c9e0d840a9b41c82958f313f85e1a8580f02"
+
+    def _source(method) -> str:
+        # inspect.getsource would retain entire native files in global linecache.
+        code = method.__code__
+        with open(code.co_filename, encoding="utf-8") as source:
+            return "".join(
+                inspect.getblock(list(islice(source, code.co_firstlineno - 1, None)))
+            )
+
+    def _immutable(model: object) -> bool:
+        return (
+            type(model) is BoxModel
+            and type(model.width) is Fraction
+            and type(model.height) is Fraction
+            and type(model.margin) is Spacing
+        )
+
+    native = Widget._get_box_model
+    try:
+        digest = hashlib.sha256(
+            "".join(
+                _source(method) for method in (native, LRUCache.get, LRUCache.set)
+            ).encode()
+        ).hexdigest()
+    except (AttributeError, OSError, SyntaxError, TokenError, TypeError):
+        digest = None
+    if (
+        textual.__version__ != "8.2.8"
+        or getattr(getattr(native, "__code__", None), "co_filename", None)
+        != widget_module.__file__
+        or digest != _NATIVE_DIGEST
+        or LRUCache.__setitem__ is not LRUCache.set
+        or set(LRUCache.__slots__)
+        != {"_maxsize", "_cache", "_full", "_head", "hits", "misses"}
+    ):
+        logging.getLogger(__name__).warning(
+            "Owner-local BoxModel reuse not installed: unsupported Textual version or native shape"
+        )
+        return False
+
+    @wraps(native)
+    def get_box_model(
+        self: Widget,
+        container: Size,
+        viewport: Size,
+        width_fraction: Fraction,
+        height_fraction: Fraction,
+        constrain_width: bool = False,
+        greedy: bool = True,
+    ) -> BoxModel:
+        cache = self._box_model_cache
+        eligible = (
+            type(cache) is LRUCache and type(self)._get_box_model is get_box_model
+        )
+        previous = cache._head if eligible else None
+        misses = cache.misses if eligible else 0
+        result = native(
+            self,
+            container,
+            viewport,
+            width_fraction,
+            height_fraction,
+            constrain_width,
+            greedy,
+        )
+        if eligible and self._box_model_cache is cache:
+            head = cache._head
+            if (
+                previous
+                and len(previous) == 4
+                and len(head) == 4
+                and head is not previous
+                and head[1] is previous
+                and cache.misses == misses + 1
+                and head[3] is result
+                and _immutable(result)
+                and _immutable(previous[3])
+                and result == previous[3]
+            ):
+                # A clear/replacement/reentrant cache change cannot reuse this link.
+                head[3] = previous[3]
+                return previous[3]
+        return result
+
+    Widget._get_box_model = get_box_model
+    _box_models_installed = True
+    return True
+
+
 def _install_textual_compatibility_shims() -> None:
     """Keep older Textual widget access patterns working across dependency bumps."""
     try:
@@ -181,6 +459,12 @@ def _install_zero_width_fold_guard() -> None:
     setattr(_wrap_and_format, ZERO_WIDTH_FOLD_GUARD, True)
     _wrap_and_format.__wrapped__ = upstream  # type: ignore[attr-defined]
     Content._wrap_and_format = _wrap_and_format  # type: ignore[method-assign]
+
+    install_lazy_strip_caches()
+
+    install_owner_free_style_colors()
+
+    install_owner_local_box_models()
 
 
 __version__ = "0.2.3"

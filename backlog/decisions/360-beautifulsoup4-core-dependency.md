@@ -1,4 +1,6 @@
-# ADR-225: beautifulsoup4 is a declared core dependency
+# ADR-360: beautifulsoup4 is a declared core dependency
+
+Renumbered from ADR-225 under the oldest-date rule.
 
 - Status: Accepted
 - Date: 2026-10-11

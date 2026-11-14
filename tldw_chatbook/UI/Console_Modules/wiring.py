@@ -83,11 +83,13 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
+from tldw_chatbook.Widgets.Console.console_background_effect import (
+    active_console_transcript,
+)
 from tldw_chatbook.Widgets.Console.console_character_context import (
     ConsoleCharacterContext,
 )
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_speech_controls import (
     ConsoleSpeechControls,
 )
@@ -100,6 +102,7 @@ from .character import ConsoleCharacterController
 from .character_context import (
     ConsoleCharacterContextController,
     ConsoleCharacterContextState,
+    ConsoleCharacterOperationPhase,
     ConsoleCharacterQueryHandoffCapability,
 )
 from . import console_spend_projection as spend
@@ -287,6 +290,36 @@ def _reaction_preview_coordinator(screen: Any) -> Any:
     from .reaction_preview import get_console_reaction_preview_coordinator
 
     return get_console_reaction_preview_coordinator(screen.app_instance)
+
+
+def request_console_character_context_refresh(
+    screen: "ChatScreen", *, resumed: bool = False
+) -> None:
+    """Coalesce passive reads in the screen's existing Character worker."""
+    if not screen.is_attached or screen.app._exit:
+        return
+    controller = screen._character_context
+    if controller.state.phase is not ConsoleCharacterOperationPhase.IDLE:
+        return
+    group = "console-character-context-refresh"
+    if any(
+        worker.node is screen and worker.group == group and not worker.is_finished
+        for worker in screen.workers
+    ):
+        return
+    from .character_context import character_presentation_work, character_view_resume_work
+
+    async def refresh():
+        if resumed:
+            await character_view_resume_work(controller, screen)
+        else:
+            await character_presentation_work(controller, screen)
+
+    screen.run_worker(
+        refresh,
+        group=group,
+        name="refresh_if_scope_changed",
+    )
 
 
 def _sync_character_context_presentation(
@@ -979,20 +1012,14 @@ def _sync_hands_free_after_dictation_change(screen: Any) -> None:
 
 def _project_voice_preview(screen: Any, projection: "VoicePreviewProjection") -> None:
     """Project provisional voice text only into the mounted transcript view."""
-    try:
-        transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
-    except QueryError:
-        return
-    transcript.set_voice_preview(projection)
+    if (transcript := active_console_transcript(screen)) is not None:
+        transcript.set_voice_preview(projection)
 
 
 def _clear_voice_preview(screen: Any) -> None:
     """Remove provisional voice text without touching durable messages."""
-    try:
-        transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
-    except QueryError:
-        return
-    transcript.clear_voice_preview()
+    if (transcript := active_console_transcript(screen)) is not None:
+        transcript.clear_voice_preview()
 
 
 def _query_console_owner(
@@ -1108,6 +1135,8 @@ def _console_send_start_in_progress(screen: Any) -> bool:
 
 def _console_widget_or_none(screen: Any, selector: str) -> Any | None:
     """Return one mounted Console widget without exposing query failures."""
+    if selector == "#console-native-transcript":
+        return active_console_transcript(screen)
     try:
         return screen.query_one(selector)
     except QueryError:
@@ -1847,9 +1876,7 @@ def build_console_controllers(
     screen._library_activity = ConsoleLibraryActivityController(
         app_instance=screen.app_instance,
         ensure_store=lambda: screen._ensure_console_chat_store(),
-        transcript=lambda: _console_widget_or_none(
-            screen, "#console-native-transcript"
-        ),
+        transcript=lambda: active_console_transcript(screen),
         inspector_rail=lambda: _console_widget_or_none(screen, "#console-right-rail"),
         citation_counts=lambda: screen._console_citation_counts,
         reveal_inspector=lambda: screen._reveal_console_inspector_rail(),

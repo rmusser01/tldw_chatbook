@@ -7253,7 +7253,8 @@ Button.console-rail-focus-carrier:focus {
     background: transparent;
 }
 
-#console-native-transcript {
+#console-native-transcript,
+.console-transcript-viewport {
     height: $ds-height-fill;
     min-height: $ds-size-0;
     padding: $ds-space-0 $ds-space-1;
@@ -7268,7 +7269,8 @@ Button.console-rail-focus-carrier:focus {
     scrollbar-size: 1 1;
 }
 
-#console-transcript-surface #console-native-transcript {
+#console-transcript-surface #console-native-transcript,
+#console-transcript-surface .console-transcript-viewport {
     layer: console-content;
     height: $ds-height-fill;
     min-height: $ds-size-0;
@@ -7351,7 +7353,8 @@ Button.console-rail-focus-carrier:focus {
     text-style: bold underline;
 }
 
-#console-native-transcript:focus {
+#console-native-transcript:focus,
+.console-transcript-viewport:focus {
 
     border: none;
     outline: none;
@@ -8301,7 +8304,9 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 
 #console-shell.-console-compact #console-native-transcript,
-#console-shell.-console-compact #console-native-transcript:focus {
+#console-shell.-console-compact #console-native-transcript:focus,
+#console-shell.-console-compact .console-transcript-viewport,
+#console-shell.-console-compact .console-transcript-viewport:focus {
     border: none;
 }
 

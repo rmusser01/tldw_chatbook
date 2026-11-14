@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from inspect import iscoroutine
 from types import SimpleNamespace
 import threading
 from typing import Any
@@ -118,6 +119,42 @@ def test_feedback_request_rejects_invalid_boundary_values(
     assert notifications == [
         (("Selection feedback is invalid or too large.",), {"severity": "warning"})
     ]
+
+
+@pytest.mark.asyncio
+async def test_replaced_annotation_job_does_not_create_an_unstarted_coroutine() -> None:
+    jobs = []
+    reads = []
+
+    def read_annotations(conversation_id):
+        reads.append(conversation_id)
+        return []
+
+    store = SimpleNamespace(
+        active_session_id="first",
+        _sessions={
+            session_id: SimpleNamespace(persisted_conversation_id=session_id)
+            for session_id in ("first", "second")
+        },
+        persistence=SimpleNamespace(
+            db=SimpleNamespace(get_transcript_annotations=read_annotations)
+        ),
+    )
+    controller = _controller(run_worker=lambda work, **_options: jobs.append(work))
+
+    controller._sync_console_annotation_discovery(store)
+    store.active_session_id = "second"
+    controller._sync_console_annotation_discovery(store)
+
+    try:
+        assert len(jobs) == 2
+        assert all(callable(work) for work in jobs)
+        await jobs[1]()
+        assert reads == ["second"]
+    finally:
+        for work in jobs:
+            if iscoroutine(work):
+                work.close()
 
 
 @pytest.mark.asyncio

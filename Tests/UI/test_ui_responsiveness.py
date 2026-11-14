@@ -367,6 +367,7 @@ def _make_sync_probe_screen(monitor):
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     screen = MagicMock(spec=ChatScreen)
+    screen.is_attached = False
     for slot, controller_type in _console_controller_slots().items():
         setattr(screen, slot, MagicMock(spec=controller_type))
     screen._console_chat_store = None

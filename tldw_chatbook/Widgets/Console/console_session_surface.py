@@ -14,6 +14,7 @@ from textual import events
 from textual._context import active_message_pump
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalScroll, Vertical
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Static
@@ -42,11 +43,11 @@ from tldw_chatbook.Utils.console_background_effects import (
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Console.console_background_effect import (
     ConsoleTranscriptSurface,
+    active_console_transcript,
 )
 from tldw_chatbook.Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
 )
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
@@ -594,7 +595,7 @@ class ConsoleSessionSurface(Vertical):
         if active:
             classes = f"{classes} console-session-tab-active"
         button = ConsoleSessionTabButton(
-            Text(
+            Content(
                 self._tab_label(
                     session.title,
                     marker=marker,
@@ -746,7 +747,7 @@ class ConsoleSessionSurface(Vertical):
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
                 )
-                child.label = Text(
+                child.label = Content(
                     self._tab_label(
                         session.title,
                         marker=marker,
@@ -922,42 +923,63 @@ class ConsoleSessionSurface(Vertical):
                 )
                 return
 
-            removed_count = len(tab_strip.children)
-            mounted_count = (len(sessions) * 2) + 2
-            # Each removal or mount can yield to navigation or app shutdown.
-            for child in list(tab_strip.children):
-                await finish_removal(child.remove())
-                if not self._session_strip_is_attached(tab_strip):
-                    return
-            for session in sessions:
-                is_active = session.id == active_session_id
-                marker = self._resolve_tab_marker(
-                    session.id,
+            appended = (
+                len(desired_ids) == len(existing_ids) + 2
+                and existing_ids[-2:] == desired_ids[-2:]
+                and existing_ids[:-2] == desired_ids[:-4]
+            )
+            if appended:
+                self._update_existing_tab_strip(
+                    tab_strip=tab_strip,
+                    sessions=sessions[:-1],
+                    active_session_id=active_session_id,
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
+                    queue_counts=queue_counts,
                 )
-                await tab_strip.mount(
-                    self._build_session_tab_button(
-                        session,
-                        active=is_active,
-                        marker=marker,
-                        queued_count=(queue_counts or {}).get(session.id, 0),
+                removed_count = 0
+            else:
+                removed_count = len(tab_strip.children)
+                # Each removal or mount can yield to navigation or app shutdown.
+                for child in list(tab_strip.children):
+                    await finish_removal(child.remove())
+                    if not self._session_strip_is_attached(tab_strip):
+                        return
+
+            for session in sessions[-1:] if appended else sessions:
+                tab = self._build_session_tab_button(
+                    session,
+                    active=session.id == active_session_id,
+                    marker=self._resolve_tab_marker(
+                        session.id,
+                        streaming_session_id=streaming_session_id,
+                        run_markers=run_markers,
+                    ),
+                    queued_count=(queue_counts or {}).get(session.id, 0),
+                )
+                if appended:
+                    await tab_strip.mount(
+                        tab,
+                        self._build_close_tab_button(session),
+                        before=tab_strip.children[-2],
                     )
-                )
+                else:
+                    await tab_strip.mount(tab)
+                    if not self._session_strip_is_attached(tab_strip):
+                        return
+                    await tab_strip.mount(self._build_close_tab_button(session))
                 if not self._session_strip_is_attached(tab_strip):
                     return
-                await tab_strip.mount(self._build_close_tab_button(session))
+            if not appended:
+                await tab_strip.mount(self._build_new_tab_button())
                 if not self._session_strip_is_attached(tab_strip):
                     return
-            if not self._session_strip_is_attached(tab_strip):
-                return
-            await tab_strip.mount(self._build_new_tab_button())
-            if not self._session_strip_is_attached(tab_strip):
-                return
-            await tab_strip.mount(self._build_new_temporary_tab_button())
-            if not self._session_strip_is_attached(tab_strip):
-                return
-            self._record_mount_churn(mounted=mounted_count, removed=removed_count)
+                await tab_strip.mount(self._build_new_temporary_tab_button())
+                if not self._session_strip_is_attached(tab_strip):
+                    return
+            self._record_mount_churn(
+                mounted=2 if appended else len(desired_ids), removed=removed_count
+            )
         # TASK-28028: mounted/removed tabs change what is hidden past each
         # edge even when scroll_x does not move; refresh the ‹ › hints once
         # the new children have laid out (same best-effort rationale as the
@@ -1039,7 +1061,7 @@ class ConsoleSessionSurface(Vertical):
             header = self.query_one("#console-transcript-title", Static)
             title_content = self._render_transcript_title()
             if header.content != title_content:
-                header.update(title_content)
+                header.update(title_content, layout=False)
         except Exception:
             return
 
@@ -1071,11 +1093,13 @@ class ConsoleSessionSurface(Vertical):
             return
         title_content = self._render_transcript_title()
         if title.content != title_content:
-            title.update(title_content)
+            title.update(title_content, layout=False)
 
         try:
-            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+            transcript = active_console_transcript(self)
         except Exception:
+            return
+        if transcript is None:
             return
         transcript.sync_empty_state(
             card_state,

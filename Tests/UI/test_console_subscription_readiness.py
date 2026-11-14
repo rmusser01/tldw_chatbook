@@ -10,6 +10,7 @@ import pytest
 from textual.widgets import Button, Select, Static
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_provider_apply_defaults_flow import (
     _console_app,
     _ConsoleFlowHarness,
@@ -285,7 +286,9 @@ async def test_streaming_control_responds_and_readiness_refreshes_after_slow_rea
             release.set()
             # No user action after release: completion must reach the UI itself.
             async with asyncio.timeout(3):
-                while "Ready · not tested" not in str(status.renderable):  # TASK-33005.3 AC#11
+                while "Ready · not tested" not in str(
+                    status.renderable
+                ):  # TASK-33005.3 AC#11
                     await asyncio.sleep(0.01)
             assert "private-token" not in str(status.renderable)
             assert len(readers) == 1
@@ -334,7 +337,10 @@ async def test_console_send_unblocks_when_background_credential_read_finishes(
             await console._sync_native_console_chat_ui()
             composer = console.query_one("#console-native-composer")
             composer.load_draft("hello")
-            await pilot.pause()
+            # Native config contention may defer the requested projection.
+            await _wait_for_status(
+                console.query_one("#console-send-disabled-reason"), "Checking Claude"
+            )
             assert entered.is_set()
             send = console.query_one("#console-send-message", Button)
             assert send.disabled

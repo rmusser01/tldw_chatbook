@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -11,14 +11,21 @@ from hashlib import sha1
 from typing import Any, ClassVar
 from uuid import uuid4
 
-from tldw_chatbook.Utils.input_validation import escape_markup
+import textual
+from rich.color import Color as RichColor
+from rich.console import RenderableType
+from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.events import DescendantFocus, MouseDown, MouseUp, Resize
+from textual.renderables.background_screen import BackgroundScreen
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
@@ -55,6 +62,7 @@ from tldw_chatbook.Utils.character_display_text import sanitize_character_displa
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from tldw_chatbook.Utils.input_validation import (
     CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
+    escape_markup,
     validate_console_character_query,
     validate_console_switcher_query,
 )
@@ -69,6 +77,14 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 
 _TITLE_LIMIT = 64
 _SUBTITLE_LIMIT = 120
+_ROW_BUILD_BATCH_SIZE = 5
+_RENDER_TINT_PAIR_LIMIT = 128
+_NATIVE_TEXTUAL_VERSION = textual.__version__
+_NATIVE_TEXTUAL_GETATTR = textual.__getattr__
+_NATIVE_BACKGROUND_PROCESS = getattr(
+    BackgroundScreen.process_segments, "__func__", None
+)
+_NATIVE_BACKGROUND_RENDER = getattr(BackgroundScreen, "__rich_console__", None)
 _GROUP_LABELS = {
     ActivityGroup.WAITING_FOR_YOU.value: "WAITING FOR YOU",
     ActivityGroup.WORKING.value: "WORKING",
@@ -78,6 +94,74 @@ _GROUP_LABELS = {
     "open": "OPEN AGENT TABS",
     "saved": "SAVED CHATS",
 }
+
+
+def _native_backdrop_supported() -> bool:
+    """Pin ADR363's native expression without retaining source in linecache."""
+    try:
+        filename = _NATIVE_BACKGROUND_PROCESS.__code__.co_filename
+        if (
+            textual.__dict__.get("__version__", _NATIVE_TEXTUAL_VERSION) != "8.2.8"
+            or textual.__getattr__ is not _NATIVE_TEXTUAL_GETATTR
+            or _NATIVE_BACKGROUND_RENDER.__code__.co_filename != filename
+        ):
+            return False
+        with open(filename, "rb") as source:
+            return sha1(source.read()).hexdigest() == (
+                "608089fd23fee4b22450c52876fbdf94285250af"
+            )
+    except (AttributeError, OSError, TypeError):
+        return False
+
+
+_NATIVE_BACKDROP_SUPPORTED = _native_backdrop_supported()
+
+
+class _ConsoleSwitcherBackground(BackgroundScreen):
+    """Reuse color arithmetic only within one live native render iterator."""
+
+    @classmethod
+    def process_segments(
+        cls, segments: Iterable[Segment], color: Color
+    ) -> Iterable[Segment]:
+        if type(color) is not Color or color.a == 0:
+            yield from super().process_segments(segments, color)
+            return
+        memo: dict[tuple[RichColor | None, RichColor | None], Style] = {}
+        null_style = Style()
+        from_rich_color = Color.from_rich_color
+        style_from_color = Style.from_color
+        for segment in segments:
+            text, style, control = segment
+            if control:
+                yield segment
+                continue
+            if style is not None and type(style) is not Style:
+                yield from super().process_segments((segment,), color)
+                continue
+            foreground = None if style is None else style.color
+            background = None if style is None else style.bgcolor
+            if (foreground is not None and type(foreground) is not RichColor) or (
+                background is not None and type(background) is not RichColor
+            ):
+                yield from super().process_segments((segment,), color)
+                continue
+            clean = null_style if style is None else style.clear_meta_and_links()
+            key = foreground, background
+            tint = memo.get(key)
+            if tint is None:
+                tint = style_from_color(
+                    (from_rich_color(foreground) + color).rich_color
+                    if foreground is not None
+                    else None,
+                    (from_rich_color(background) + color).rich_color
+                    if background is not None
+                    else None,
+                )
+                if len(memo) < _RENDER_TINT_PAIR_LIMIT:
+                    memo[key] = tint
+            # ADR363 preserves every native cleanup and Style-add LRU access.
+            yield Segment(text, clean + tint, control)
 
 
 def _switcher_icon_prefix(entry: ConsoleSwitcherActiveResult) -> str:
@@ -261,6 +345,21 @@ class ConsoleSessionSwitcherModal(
         Binding("pagedown", "switcher_page_down", "Next results", priority=True),
     ]
 
+    def render(self) -> RenderableType:
+        background = super().render()
+        if (
+            type(self) is ConsoleSessionSwitcherModal
+            and type(background) is BackgroundScreen
+            and _NATIVE_BACKDROP_SUPPORTED
+            and textual.__dict__.get("__version__", _NATIVE_TEXTUAL_VERSION) == "8.2.8"
+            and textual.__getattr__ is _NATIVE_TEXTUAL_GETATTR
+            and getattr(BackgroundScreen.process_segments, "__func__", None)
+            is _NATIVE_BACKGROUND_PROCESS
+            and BackgroundScreen.__rich_console__ is _NATIVE_BACKGROUND_RENDER
+        ):
+            return _ConsoleSwitcherBackground(background.screen, background.color)
+        return background
+
     def __init__(
         self,
         *,
@@ -324,6 +423,7 @@ class ConsoleSessionSwitcherModal(
         self._page_offset = 0
         self._page_total = 0
         self._request_generation = 0
+        self._result_commit_lock = asyncio.Lock()
         self._instance_token = uuid4().hex
         self._query_pending = False
         self._pending_retained_key = ""
@@ -783,29 +883,34 @@ class ConsoleSessionSwitcherModal(
                 )
             )
 
-        if not self._request_is_current(generation, captured, query):
-            return False
-        self._query_pending = False
-        self._widened_to_history = widened_to_history
-        self._character_search_error = character_error
-        if character_page is not None:
-            self._character_data_revision = character_page.data_revision
-            self._character_rows_by_key = {
-                row.row_key: row for row in character_rows if row.row_key
-            }
-        self._page_total = (
-            character_page.total
-            if character_page is not None
-            else page.total
-            if page is not None
-            else len(entries)
-        )
-        self._rendered_query = query
-        await self._commit_entries(
-            entries,
-            page=page,
-            character_page=character_page,
-        )
+        # Search, reconciliation and immediate Enter use different worker owners.
+        async with self._result_commit_lock:
+            if not self._request_is_current(generation, captured, query):
+                return False
+            self._widened_to_history = widened_to_history
+            self._character_search_error = character_error
+            if character_page is not None:
+                self._character_data_revision = character_page.data_revision
+                self._character_rows_by_key = {
+                    row.row_key: row for row in character_rows if row.row_key
+                }
+            self._page_total = (
+                character_page.total
+                if character_page is not None
+                else page.total
+                if page is not None
+                else len(entries)
+            )
+            self._rendered_query = query
+            if not await self._commit_entries(
+                entries,
+                page=page,
+                character_page=character_page,
+                generation=generation,
+                captured=captured,
+                query=query,
+            ):
+                return False
         if self._character_search_error:
             self._set_status(self._character_search_error)
             recovery = self.query_one("#console-switcher-recovery", Button)
@@ -888,7 +993,6 @@ class ConsoleSessionSwitcherModal(
         if self._authority_snapshot is not None:
             profile, token, projection = self._authority_snapshot()
             if (profile, token, projection) != current[3:]:
-                self._query_pending = False
                 self._set_status("Activity changed — refreshing…")
                 if self._active_projection_loader is not None:
                     self.call_after_refresh(self._poll_active_projection)
@@ -901,7 +1005,10 @@ class ConsoleSessionSwitcherModal(
         *,
         page: ConsoleSwitcherHistoryPage | None,
         character_page: CharacterConversationPage | None = None,
-    ) -> None:
+        generation: int,
+        captured: tuple[Any, ...],
+        query: str,
+    ) -> bool:
         self._clear_mark_seen_confirmation()
         restore_visit = (
             self._mode_visits[self._mode]
@@ -922,8 +1029,6 @@ class ConsoleSessionSwitcherModal(
             if focused_key
             else self._candidate_index
         )
-        self._pending_retained_key = ""
-        self._pending_retained_index = None
         had_previous_entries = bool(self._entries)
         self._entries = entries[:CONSOLE_SWITCHER_PAGE_LIMIT]
         retained_disappeared = bool(
@@ -932,14 +1037,11 @@ class ConsoleSessionSwitcherModal(
             and self._index_for_key(retained_key) is None
         )
         results = self.query_one("#console-switcher-results", VerticalScroll)
-        await results.remove_children()
-        self._payload_by_widget_id.clear()
-        self._committed_payload_by_widget_id.clear()
-        self._committed_result_generation += 1
-        committed_generation = self._committed_result_generation
+        payloads: dict[str, ConsoleSwitcherResult] = {}
+        widgets: list[Static | Button] = []
 
         if not self._entries:
-            await results.mount(
+            widgets.append(
                 Static(
                     self._empty_copy(page),
                     id="console-switcher-empty",
@@ -955,7 +1057,6 @@ class ConsoleSessionSwitcherModal(
                 self._candidate_index = min(previous_index, len(self._entries) - 1)
             else:
                 self._candidate_index = self._choose_candidate(retained_key)
-            widgets: list[Static | Button] = []
             previous_section = ""
             for index, entry in enumerate(self._entries):
                 section = str(getattr(entry, "section", "") or "")
@@ -980,6 +1081,7 @@ class ConsoleSessionSwitcherModal(
                     id=widget_id,
                     classes=" ".join(self._result_classes(entry)),
                     compact=True,
+                    disabled=True,
                 )
                 button.set_class(
                     bool(getattr(entry, "is_active", False)),
@@ -990,17 +1092,33 @@ class ConsoleSessionSwitcherModal(
                     "console-switcher-result-candidate",
                 )
                 button.tooltip = self._entry_tooltip(entry)
-                self._payload_by_widget_id[widget_id] = entry
-                self._committed_payload_by_widget_id[widget_id] = (
-                    _CommittedResultPayload(
-                        entry,
-                        committed_generation,
-                        self._mode,
-                        self._rendered_query,
-                    )
-                )
+                payloads[widget_id] = entry
                 widgets.append(button)
-            await results.mount_all(widgets)
+                if (index + 1) % _ROW_BUILD_BATCH_SIZE == 0:
+                    await asyncio.sleep(0)
+                    if not self._request_is_current(generation, captured, query):
+                        return False
+
+        await results.remove_children()
+        if not self._request_is_current(generation, captured, query):
+            return False
+        await results.mount_all(widgets)
+        if not self._request_is_current(generation, captured, query):
+            return False
+        self._committed_result_generation += 1
+        self._payload_by_widget_id = payloads
+        self._committed_payload_by_widget_id = {
+            widget_id: _CommittedResultPayload(
+                entry, self._committed_result_generation, self._mode, query
+            )
+            for widget_id, entry in payloads.items()
+        }
+        self._pending_retained_key = ""
+        self._pending_retained_index = None
+        self._query_pending = False
+        for widget in widgets:
+            if isinstance(widget, Button):
+                widget.disabled = False
         results.styles.visibility = "visible"
 
         self._update_mode_controls()
@@ -1048,6 +1166,7 @@ class ConsoleSessionSwitcherModal(
         self._restoring_mode = None
         self._sync_modal_max_height()
         self.call_after_refresh(self._sync_candidate_labels)
+        return True
 
     def _empty_copy(self, page: ConsoleSwitcherHistoryPage | None) -> str:
         query = self._rendered_query.strip()
@@ -1201,7 +1320,7 @@ class ConsoleSessionSwitcherModal(
         entry: ConsoleSwitcherResult,
         *,
         available_width: int | None = None,
-    ) -> Text:
+    ) -> Text | Content:
         if available_width is None:
             available_width = max(20, min(70, self.app.size.width - 4))
         marker = "▸" if index == self._candidate_index else " "
@@ -1213,17 +1332,19 @@ class ConsoleSessionSwitcherModal(
                 )
                 or "Untitled conversation"
             )
-            first = Text(f"{marker} [{state}] {title}")
-            first.truncate(available_width, overflow="ellipsis", pad=False)
+            first = Content(f"{marker} [{state}] {title}").truncate(
+                available_width, ellipsis=True
+            )
             character = (
                 sanitize_character_display_label(
                     entry.character_label, max_characters=_TITLE_LIMIT
                 )
                 or "Unavailable character"
             )
-            second = Text(f"  {character} · Local · {entry.relative_time}")
-            second.truncate(available_width, overflow="ellipsis", pad=False)
-            return Text.assemble(first, "\n", second)
+            second = Content(f"  {character} · Local · {entry.relative_time}").truncate(
+                available_width, ellipsis=True
+            )
+            return Content.assemble(first, "\n", second)
         title_limit = max(8, min(_TITLE_LIMIT, available_width - 22))
         display_title = (
             sanitize_character_display_label(entry.title, max_characters=title_limit)
@@ -1345,7 +1466,8 @@ class ConsoleSessionSwitcherModal(
                     self._restore_owned_query()
                 self._set_feedback("Previous search kept. Max 200; no controls.")
                 self.query_one("#console-switcher-selected-detail", Static).update(
-                    "Previous search kept.\nMax 200 characters; no control characters."
+                    "Previous search kept.\nMax 200 characters; no control characters.",
+                    layout=False,
                 )
                 return
             self._character_query = event.value
@@ -1389,7 +1511,7 @@ class ConsoleSessionSwitcherModal(
             if self._mode is SwitcherMode.CHARACTER_CHATS:
                 self._set_feedback(str(error))
                 self.query_one("#console-switcher-selected-detail", Static).update(
-                    str(error)
+                    str(error), layout=False
                 )
                 return None
             self._set_feedback(
@@ -2058,11 +2180,12 @@ class ConsoleSessionSwitcherModal(
             return
         degraded = self._activity_receipt_state == "degraded"
         status.display = degraded and not self._compact_layout
-        status.update(
+        self._update_static_copy(
+            status,
             "Local activity updates unavailable — retrying; switching and "
             "History still work."
             if degraded
-            else ""
+            else "",
         )
 
     def _update_selection_status(self, *, prefix: str = "") -> None:
@@ -2191,15 +2314,17 @@ class ConsoleSessionSwitcherModal(
         except NoMatches:
             return
         if self._query_pending:
-            detail.update("")
+            self._update_static_copy(detail, "", layout=False)
             return
         if self._mode is SwitcherMode.CHARACTER_CHATS and self._character_search_error:
-            detail.update(
-                f"{self._character_search_error}\nRefresh results · This profile · Local chats"
+            self._update_static_copy(
+                detail,
+                f"{self._character_search_error}\nRefresh results · This profile · Local chats",
+                layout=False,
             )
             return
         if self._mode is not SwitcherMode.CHARACTER_CHATS or not self._entries:
-            detail.update("")
+            self._update_static_copy(detail, "", layout=False)
             return
         entry = self._committed_character_result if self._activation_in_flight else None
         if entry is None:
@@ -2211,7 +2336,7 @@ class ConsoleSessionSwitcherModal(
                 else None
             )
         if entry is None:
-            detail.update("")
+            self._update_static_copy(detail, "", layout=False)
             return
         excerpt = sanitize_character_display_label(
             entry.selected_excerpt, max_characters=_SUBTITLE_LIMIT * 2
@@ -2232,7 +2357,9 @@ class ConsoleSessionSwitcherModal(
             else state
         )
         second.truncate(width, overflow="ellipsis")
-        detail.update(Text.assemble(first, "\n", second))
+        copy = Text.assemble(first, "\n", second)
+        if detail.content != copy:
+            detail.update(copy, layout=False)
 
     def _restore_owned_query(self) -> None:
         try:
@@ -2718,9 +2845,16 @@ class ConsoleSessionSwitcherModal(
             return
         self._activate_choice("rename", entry)
 
+    @staticmethod
+    def _update_static_copy(row: Static, copy: str, *, layout: bool = True) -> None:
+        if type(row.content) is not str or row.content != copy:
+            row.update(copy, layout=layout)
+
     def _set_status(self, message: str) -> None:
         try:
-            self.query_one("#console-switcher-status", Static).update(message)
+            self._update_static_copy(
+                self.query_one("#console-switcher-status", Static), message
+            )
         except NoMatches:
             pass
         try:
@@ -2728,19 +2862,23 @@ class ConsoleSessionSwitcherModal(
         except NoMatches:
             return
         if self._mode is SwitcherMode.CHARACTER_CHATS:
-            scope.update("This profile · Local chats")
-            self.query_one("#console-switcher-divider", Static).update(
+            self._update_static_copy(scope, "This profile · Local chats")
+            self._update_static_copy(
+                self.query_one("#console-switcher-divider", Static),
                 message
                 if self._query_pending
                 or self._activation_phase is not ConsoleActivationPhase.IDLE
-                else "─" * 48
+                else "─" * 48,
             )
         else:
-            self.query_one("#console-switcher-divider", Static).update("─" * 48)
-            scope.update(
+            self._update_static_copy(
+                self.query_one("#console-switcher-divider", Static), "─" * 48
+            )
+            self._update_static_copy(
+                scope,
                 f"Activity updates unavailable · {message}"
                 if self._compact_layout and self._activity_receipt_state == "degraded"
-                else message
+                else message,
             )
 
     def _set_feedback(self, message: str) -> None:

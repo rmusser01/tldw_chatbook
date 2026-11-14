@@ -159,7 +159,6 @@ async def test_refresh_console_conversation_browser_search_discards_result_when_
     screen._sync_console_workspace_context = lambda: None
     screen.call_after_refresh = lambda fn: None
     screen._workspace._filter_console_browser_rows_for_query = lambda rows, query: rows
-    screen._workspace._merge_console_browser_rows = lambda a, b: tuple(a) + tuple(b)
     screen._workspace._native_console_browser_rows = lambda: ()
     screen._workspace._membership_console_browser_rows = lambda: ()
 

@@ -27,11 +27,19 @@ async def owned_console_apps(request, monkeypatch):
 
     captured = []
     namespaces = [request.module] if hasattr(request.module, "_build_test_app") else []
-    for helper_name in ("_character_screen", "make_console_pilot"):
+    for helper_name in (
+        "_character_screen",
+        "make_console_pilot",
+        "_ready_host",
+        "_console_app",
+        "_persisted_console_app",
+        "_build_console_send_test_app",
+        "_build_navigation_app",
+    ):
         helper = getattr(request.module, helper_name, None)
         if helper is not None:
             namespace = sys.modules[helper.__module__]
-            if namespace not in namespaces:
+            if hasattr(namespace, "_build_test_app") and namespace not in namespaces:
                 namespaces.append(namespace)
 
     def tracked_factory(original):

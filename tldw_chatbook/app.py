@@ -189,9 +189,8 @@ from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
 )
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
-from tldw_chatbook.Utils.app_shutdown import (
-    register_running_app,
-)
+from tldw_chatbook.Utils.app_shutdown import register_running_app
+from tldw_chatbook.app_sqlite_retirement import capture_chat_borrower
 from tldw_chatbook.Utils.boot_worker_policy import (
     BOOT_WORKER_KEY_BY_IDENTITY,
     MAX_CONCURRENT_STAGGERED_BOOT_WORKERS,
@@ -1558,6 +1557,7 @@ class TldwCli(
             client_provider=self.server_context_provider,
         )
 
+        self._chat_sqlite_borrowed = capture_chat_borrower(self.notes_service)
         self.chachanotes_db = _select_profile_database(
             self.notes_service, self.app_config, self._startup_chachanotes_db
         )

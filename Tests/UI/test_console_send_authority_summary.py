@@ -191,7 +191,9 @@ async def test_summary_is_one_focus_stop_with_exactly_six_fixed_rows(width) -> N
 
 
 @pytest.mark.asyncio
-async def test_summary_sync_atomically_patches_rows_without_recompose() -> None:
+async def test_summary_sync_atomically_patches_rows_without_recompose(
+    monkeypatch,
+) -> None:
     before = _state()
     app = _SummaryHarness(before)
 
@@ -200,6 +202,15 @@ async def test_summary_sync_atomically_patches_rows_without_recompose() -> None:
             "#console-send-authority-summary", ConsoleSendAuthoritySummary
         )
         identities = {child.id: child for child in summary.children}
+        updates = []
+        update = Static.update
+
+        def record_update(row, content="", *, layout=True):
+            if row.parent is summary:
+                updates.append((row.id, layout))
+            return update(row, content, layout=layout)
+
+        monkeypatch.setattr(Static, "update", record_update)
         after = _state(
             rows=(
                 ConsoleDisplayRow("Workspace", "Studio"),
@@ -216,6 +227,12 @@ async def test_summary_sync_atomically_patches_rows_without_recompose() -> None:
         assert summary.last_state is after
         assert summary.recompose_count == 0
         assert {child.id: child for child in summary.children} == identities
+        assert updates == [
+            ("console-send-authority-where", False),
+            ("console-send-authority-run", False),
+            ("console-send-authority-sources", False),
+            ("console-send-authority-approvals", False),
+        ]
         rendered = "\n".join(str(child.renderable) for child in summary.children)
         assert "Studio › Draft B" in rendered
         assert "3 staged" in rendered

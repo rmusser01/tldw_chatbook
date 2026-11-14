@@ -632,6 +632,7 @@ async def test_unavailable_microphone_fails_once_with_an_actionable_remedy(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_silent_capture_tells_the_user_and_leaves_the_draft_alone(monkeypatch):
     """Nothing recognized must not smuggle whitespace into the draft.
 
@@ -648,11 +649,12 @@ async def test_a_silent_capture_tells_the_user_and_leaves_the_draft_alone(monkey
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.load_draft("hello world")
-        for _ in range(5):
-            composer.move_cursor_left()
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
+        store.set_session_draft(session_id, "hello world")
+        composer.load_draft(store.session_draft(session_id))
+        for _ in range(5):
+            composer.move_cursor_left()
         stored_before = store.session_draft(session_id)
 
         # Capture 1: the recognizer never says anything at all.
@@ -2273,6 +2275,7 @@ async def test_inline_new_paragraph_command_appends_a_break_and_counts_as_consum
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_inline_only_capture_returns_empty_and_does_not_raise(monkeypatch):
     """A capture of nothing but "Console, new paragraph." must not error.
 
@@ -2290,9 +2293,10 @@ async def test_inline_only_capture_returns_empty_and_does_not_raise(monkeypatch)
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.load_draft("keep this draft")
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
+        store.set_session_draft(session_id, "keep this draft")
+        composer.load_draft(store.session_draft(session_id))
         stored_before = store.session_draft(session_id)
 
         await pilot.click("#console-dictation")

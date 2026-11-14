@@ -8,6 +8,8 @@ import pytest
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
+from Tests.UI.test_console_provider_apply_defaults_flow import _persisted_console_app
 from Tests.UI.test_console_session_settings import ModalHarness
 from Tests.UI.test_console_settings_core_first import (
     CoreFirstHarness,
@@ -412,7 +414,6 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
 ):
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
-        _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -531,7 +532,6 @@ async def test_endpoint_command_create_lands_on_a_pair_in_pick_mode(
     though the template named none, and the pick rebases that draft."""
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
-        _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -619,7 +619,6 @@ async def test_switch_model_applies_a_saved_entry_through_the_live_rebase(
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
         _open_provider_popover,
-        _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.config import load_settings
@@ -705,7 +704,6 @@ async def test_make_default_retains_hyphenated_entry_and_endpoint_on_reload(
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
         _drain_settings_tasks,
-        _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.Chat.console_session_settings import (
@@ -930,7 +928,6 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
     retry, and one Retry after the server starts restores Ready."""
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
-        _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
 
@@ -1045,7 +1042,6 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
     through the idle poll's existing gate, in exactly one refresh."""
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
-        _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.Chat.provider_endpoint_contract import (

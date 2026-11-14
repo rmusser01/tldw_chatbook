@@ -3,7 +3,7 @@
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 
 import pytest
 
@@ -15,8 +15,78 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.UI.Console_Modules.character_context import (
     ConsoleCharacterContextController,
 )
+from tldw_chatbook.Workspaces.registry_service import (
+    LocalWorkspaceRegistryService,
+    WorkspaceRegistryServiceError,
+)
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest.mark.parametrize("borrowed", [False, True], ids=["cold", "warm-borrower"])
+@pytest.mark.parametrize("fail_sql", [False, True], ids=["success", "sql-error"])
+@pytest.mark.parametrize("reader", ["catalog", "record"])
+def test_workspace_catalog_read_retires_only_its_worker_handle(
+    tmp_path, monkeypatch, borrowed, fail_sql, reader
+):
+    db = WorkspaceDB(tmp_path / "workspace-catalog.sqlite", "catalog-read")
+    service = LocalWorkspaceRegistryService(db)
+    service.create_workspace(workspace_id="catalog-workspace", name="Catalog")
+    main_connection = db._held_connection()
+    captured = {}
+    original_connection = db.connection
+    lookup = (
+        service.list_workspaces
+        if reader == "catalog"
+        else lambda: service.get_workspace("catalog-workspace")
+    )
+
+    @contextmanager
+    def observed_connection():
+        with original_connection() as connection:
+            captured[id(connection)] = connection
+            if fail_sql:
+                connection.execute("SELECT * FROM missing_workspace_catalog_table")
+            yield connection
+
+    def read():
+        previous = db._held_connection() if borrowed else None
+        if previous is not None:
+            previous.execute("BEGIN")
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(db, "connection", observed_connection)
+                if fail_sql:
+                    with pytest.raises(WorkspaceRegistryServiceError) as error:
+                        lookup()
+                    assert isinstance(error.value.__cause__, sqlite3.OperationalError)
+                else:
+                    result = lookup()
+                    rows = result if reader == "catalog" else [result]
+                    assert [row.workspace_id for row in rows] == ["catalog-workspace"]
+            assert captured
+            if previous is not None:
+                assert db._thread_local.conn is previous
+                assert previous.in_transaction
+                assert previous.execute("SELECT 1").fetchone()[0] == 1
+            else:
+                for connection in captured.values():
+                    with pytest.raises(
+                        sqlite3.ProgrammingError, match="closed database"
+                    ):
+                        connection.execute("SELECT 1")
+                assert db._thread_local.conn is None
+        finally:
+            if previous is not None:
+                previous.rollback()
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(read).result(timeout=10)
+        assert main_connection.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize("borrowed", [False, True], ids=["cold", "warm-borrower"])

@@ -272,7 +272,7 @@ from tldw_chatbook.Utils.token_counter import get_model_token_limit
 def _retire_generation_attempt_after_reply(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
-    """Keep an agent attempt current through capture settlement, then retire it."""
+    """Retire the attempt and reply worker's new handle after settlement."""
 
     @functools.wraps(method)
     def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -291,7 +291,8 @@ def _retire_generation_attempt_after_reply(
             )
             raise asyncio.CancelledError("Generation handoff was cancelled.")
         try:
-            return method(self, *args, **kwargs)
+            with operation_owned_connection(self._db):
+                return method(self, *args, **kwargs)
         finally:
             self._store.retire_generation_attempt(
                 assistant_message_id,
@@ -8716,7 +8717,8 @@ class ConsoleAgentBridge:
         return record["id"]
 
     def subagent_count(self, conversation_id: str) -> int:
-        return self._db.count_subagent_runs(conversation_id)
+        with operation_owned_connection(self._db):
+            return self._db.count_subagent_runs(conversation_id)
 
     def subagent_counts(self, conversation_ids: list[str]) -> dict[str, int]:
         """Batched per-conversation sub-agent counts (Finding A).
@@ -8724,7 +8726,8 @@ class ConsoleAgentBridge:
         One call replaces one ``subagent_count(cid)`` call per row -- see
         ``AgentRunsDB.count_subagents_by_conversation`` for the query.
         """
-        return self._db.count_subagents_by_conversation(conversation_ids)
+        with operation_owned_connection(self._db):
+            return self._db.count_subagents_by_conversation(conversation_ids)
 
     @staticmethod
     def _change_review_marker_block(

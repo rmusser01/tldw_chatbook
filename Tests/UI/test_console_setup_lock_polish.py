@@ -121,6 +121,7 @@ async def _wait_for(predicate, pilot, attempts: int = 300) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_quiet_empty_state_with_blocker_offers_recovery_action():
     app = EmptyTranscriptActionHarness()
 
@@ -144,6 +145,7 @@ async def test_quiet_empty_state_with_blocker_offers_recovery_action():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_empty_state_hides_action_when_not_blocked_or_covered():
     app = EmptyTranscriptActionHarness()
 
@@ -275,6 +277,7 @@ async def test_setup_card_shows_plain_language_provider_subtitle():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_footer_hides_send_hint_while_setup_locks_composer(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     host = ConsoleHarness(_blocked_openai_app())
