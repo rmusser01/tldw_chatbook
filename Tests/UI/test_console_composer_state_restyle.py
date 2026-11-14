@@ -388,6 +388,8 @@ async def test_a_focus_change_restyles_the_bar_and_its_draft_text_only(monkeypat
             return check
 
         await _wait_until(pilot, moved(True), "the bar to take focus")
+        # Apply the mount-time mic state before observing focus restyles.
+        screen._sync_console_dictation_availability()
         applied = _spy_restyles(host, monkeypatch)
         for focused in (False, True, False):
             applied.clear()
