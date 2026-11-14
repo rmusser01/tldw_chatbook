@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+from contextlib import contextmanager
 
 import pytest
 
@@ -82,6 +83,31 @@ def _project(console) -> tuple[bool, _NativeOperations]:
     with _NativeOperations() as ops:
         result = console._sync_console_rail_and_controls()
     return result, ops
+
+
+@contextmanager
+def _checked_display_without_admission_contention(projection, monkeypatch, deadline):
+    """Isolate display age and render order from an unrelated coordinator holder."""
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    status = spend._checked_display_status
+    lock = storage_admission._lock
+    loop = asyncio.get_running_loop()
+
+    def check(current):
+        if current is not projection:
+            return status(current)
+        assert lock.acquire(timeout=max(0.0, deadline - loop.time())), (
+            "the storage coordinator remained busy during the freshness check"
+        )
+        try:
+            return status(current)
+        finally:
+            lock.release()
+
+    with monkeypatch.context() as checked:
+        checked.setattr(spend, "_checked_display_status", check)
+        yield
 
 
 async def _fresh_display(console):
@@ -144,30 +170,45 @@ async def test_a_projection_rereads_an_aging_display_ahead_of_its_expiry(
             # Run work: the poll's timer exists (held: this test ticks nothing).
             console._start_console_transcript_sync_timer()
             console._console_transcript_sync_timer.pause()
-            await until(lambda: not projection.pending, timeout=30)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 30
+            await until(lambda: not projection.pending, timeout=deadline - loop.time())
 
             # Past half its life: the projection renders the current display
             # and starts the next read.
             clock.now += 0.6
-            result, ops = _project(console)
+            with _checked_display_without_admission_contention(
+                projection, monkeypatch, deadline
+            ):
+                result, ops = _project(console)
             assert result is True and ops.main == 0
             assert projection.pending, "no read started ahead of the expiry"
-            await until(lambda: not projection.pending, timeout=30)
+            deadline = loop.time() + 30
+            await until(lambda: not projection.pending, timeout=deadline - loop.time())
+            assert projection.at == clock.now
 
             # 1.2 s after the first read, 0.6 s after the second: fresh.
             clock.now += 0.6
-            result, ops = _project(console)
+            with _checked_display_without_admission_contention(
+                projection, monkeypatch, deadline
+            ):
+                result, ops = _project(console)
             assert result is True
             assert ops.main == 0, (
                 f"an expired display cost {ops.main} checked config operation(s) "
                 "on the UI loop"
             )
             console._stop_console_transcript_sync_timer()
-            await until(lambda: not projection.pending, timeout=30)
+            deadline = loop.time() + 30
+            await until(lambda: not projection.pending, timeout=deadline - loop.time())
+            assert projection.at == clock.now
 
             # With no run poll the display is re-read only once it expires.
             clock.now += 0.6
-            assert _project(console)[0] is True
+            with _checked_display_without_admission_contention(
+                projection, monkeypatch, deadline
+            ):
+                assert _project(console)[0] is True
             assert not projection.pending, "an idle projection re-read ahead"
 
 
@@ -639,7 +680,7 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
             console, composer = await ready_console(host, pilot, gateway)
-            await _fresh_display(console)
+            display = await _fresh_display(console)
             console._stop_console_transcript_sync_timer()
             controller = console._ensure_console_chat_controller()
             store = controller.store
@@ -663,7 +704,16 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
                 speaker = console.query_one_optional(selector, Static)
                 return "" if speaker is None else speaker.render().plain
 
-            await until(lambda: composer.run_active and "Streaming…" in speaker_text())
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 15
+            await until(
+                lambda: composer.run_active
+                and "Streaming…" in speaker_text()
+                and not console._console_sync_in_progress
+                and not console._console_control_bar_sync_scheduled
+                and not _replay_pending(console),
+                timeout=deadline - loop.time(),
+            )
 
             ready_headers = []
             sync_action_state = composer.sync_action_state
@@ -680,22 +730,45 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
             )
             prepare = ConsoleChangeReviewProjection.prepare
             obsolete = asyncio.Event()
+            held = asyncio.Event()
+            release = asyncio.Event()
+            poll = asyncio.current_task()
 
             async def defer_once(projection):
-                if not obsolete.is_set():
-                    obsolete.set()
-                    return False
+                if projection is console._change_review_projection:
+                    if asyncio.current_task() is poll and not obsolete.is_set():
+                        obsolete.set()
+                        return False
+                    if obsolete.is_set() and not release.is_set():
+                        assert console._console_sync_in_progress
+                        assert not console._console_control_bar_replay_whole_sync
+                        held.set()
+                        await release.wait()
                 return await prepare(projection)
 
             with monkeypatch.context() as deferred:
                 deferred.setattr(ConsoleChangeReviewProjection, "prepare", defer_once)
-                await config_sync.run_periodic_console_sync(
-                    composer_run_controls.sync_poll_display_ui, console
-                )
-                await asyncio.wait_for(obsolete.wait(), timeout=15)
-                assert not ready_headers
-                assert composer.run_active
-                assert "Streaming…" in speaker_text()
+                deadline = loop.time() + 15
+                try:
+                    await config_sync.run_periodic_console_sync(
+                        composer_run_controls.sync_poll_display_ui, console
+                    )
+                    await asyncio.wait_for(
+                        obsolete.wait(), timeout=deadline - loop.time()
+                    )
+                    assert not ready_headers
+                    assert composer.run_active
+                    assert "Streaming…" in speaker_text()
+                    await asyncio.wait_for(held.wait(), timeout=deadline - loop.time())
+                    with _checked_display_without_admission_contention(
+                        display, monkeypatch, deadline
+                    ):
+                        assert console._sync_console_control_bar() is True
+                    assert not ready_headers
+                    assert composer.run_active
+                    assert "Streaming…" in speaker_text()
+                finally:
+                    release.set()
 
             # The coalesced replay reads the now-current projection.
             await until(lambda: bool(ready_headers))
