@@ -1580,7 +1580,7 @@ async def test_refused_core_pushes_stop_replaying_an_unreadable_config_and_say_s
             assert shown == [True, False]
 
 
-def _refused_warm_up(monkeypatch, console):
+def _refused_warm_up(monkeypatch, console, *, before_refusal=None):
     """Observe FULL's warm-up, replay timers and results (TASK-38696).
 
     Returns ``(refusing, warms, armed, fulls, during, delays)``: set
@@ -1603,6 +1603,8 @@ def _refused_warm_up(monkeypatch, console):
             while during:
                 during.pop(0)()
             if refusing[0]:
+                if before_refusal is not None:
+                    await before_refusal(projection)
                 return False
         return await real_warm(projection)
 
@@ -1878,34 +1880,177 @@ async def test_a_successful_readiness_read_during_a_backoff_renders_at_once(
     warm-up's backoff that full sync used to defer to the pending replay, so
     the Console stayed unrendered until the backoff ran out (up to 5 s).
     """
+    from tldw_chatbook.Chat import console_preparation_reads
+
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
             console, _composer = await ready_console(host, pilot, gateway)
             await pilot.pause(1.0)
             loop = asyncio.get_running_loop()
-            refusing, _warms, armed, fulls, _during, _delays = _refused_warm_up(
-                monkeypatch, console
-            )
-            console.run_worker(
-                console._sync_native_console_chat_ui(),
-                exclusive=True,
-                group="console-sync",
-            )
-            armed_at, delay, _timer = await _fresh_backoff(armed, 1.6)
-            refusing[0] = False
             projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-            projection.key = None  # The read lands as a change, so it publishes.
-            asked = loop.time()
-            projection.run(lambda: None)  # The projection's own read starts.
-            await until(
-                lambda: any(ok for when, ok in fulls if when >= asked), timeout=30
+            read_ready = asyncio.Event()
+            publish = asyncio.Event()
+            issuing = False
+            staged_attempt = None
+            setup_tasks = set()
+            setup_timers = []
+            setup_retired = False
+            run_preparation_read = console_preparation_reads.run_preparation_read
+
+            async def stage_read(reader, **kwargs):
+                owned = (
+                    kwargs["creator"] is projection
+                    and reader is projection.read_current
+                    and (issuing or projection._admission is staged_attempt)
+                    and projection._admission is not None
+                )
+                if owned:
+                    setup_tasks.add(asyncio.current_task())
+                result = await run_preparation_read(reader, **kwargs)
+                if owned:
+                    assert result._display_proof is not None and not projection._reads
+                    read_ready.set()
+                    await publish.wait()
+                return result
+
+            def checked_read_ready():
+                nonlocal issuing, staged_attempt
+                if read_ready.is_set():
+                    return True
+                if not projection.pending:
+                    projection.key = None  # Publish a genuinely changed read.
+                    issuing = True
+                    try:
+                        projection.run(lambda: None)
+                        staged_attempt = projection._admission
+                    finally:
+                        issuing = False
+                return False
+
+            def retire_setup_retries():
+                nonlocal setup_retired
+                setup_retired = True
+                for timer in setup_timers:
+                    timer.stop()
+
+            async def before_refusal(owner):
+                if console._console_warm_refusals != 3 or setup_retired:
+                    return
+                assert owner is projection
+                await until(checked_read_ready, timeout=20)
+                retire_setup_retries()
+
+            monkeypatch.setattr(
+                console_preparation_reads, "run_preparation_read", stage_read
             )
-            rendered = next(when for when, ok in fulls if ok and when >= asked)
-            assert rendered < armed_at + delay, (
-                f"the published read rendered {rendered - asked:.2f} s after it "
-                f"started, after its pending {delay} s backoff had run out"
+            refusing, _warms, armed, _fulls, _during, _delays = _refused_warm_up(
+                monkeypatch, console, before_refusal=before_refusal
             )
+            set_timer = console.set_timer
+
+            def observe_setup_retry(delay, callback=None, *args, **kwargs):
+                if (
+                    callback != projection._retry
+                    or asyncio.current_task() not in setup_tasks
+                ):
+                    return set_timer(delay, callback, *args, **kwargs)
+
+                # The setup poll owns these retries until the live replay is armed.
+                timer = set_timer(delay, lambda: None, *args, **kwargs)
+                setup_timers.append(timer)
+                return timer
+
+            monkeypatch.setattr(console, "set_timer", observe_setup_retry)
+            try:
+                async with asyncio.timeout(20):
+                    console.run_worker(
+                        console._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
+                    armed_at, delay, timer = await _fresh_backoff(armed, 1.6)
+                assert read_ready.is_set()
+                assert console._console_replay_backoff_timer is timer
+
+                run_worker = console.run_worker
+                after_refresh = console.call_after_refresh
+                publication_task = None
+                publication_finished = asyncio.Event()
+                replaying = False
+                render_workers = []
+                render_results = []
+                cuts = []
+                stop = timer.stop
+
+                def observe_stop():
+                    cuts.append(asyncio.current_task())
+                    return stop()
+
+                def observe_worker(work, *args, **kwargs):
+                    if kwargs.get("group") == "console-readiness-publication":
+                        sync = work
+
+                        async def publish_read():
+                            nonlocal publication_task
+                            publication_task = asyncio.current_task()
+                            try:
+                                return await sync()
+                            finally:
+                                publication_finished.set()
+
+                        work = publish_read
+                    if replaying and kwargs.get("group") == "console-sync":
+                        sync = work
+
+                        async def render():
+                            result = await sync()
+                            render_results.append((loop.time(), result))
+                            return result
+
+                        worker = run_worker(render, *args, **kwargs)
+                        render_workers.append(worker)
+                        return worker
+                    return run_worker(work, *args, **kwargs)
+
+                def observe_replay(callback, *args, **kwargs):
+                    if (
+                        asyncio.current_task() is publication_task
+                        and callback == console._run_coalesced_control_bar_sync
+                    ):
+
+                        def replay():
+                            nonlocal replaying
+                            replaying = True
+                            try:
+                                return callback(*args, **kwargs)
+                            finally:
+                                replaying = False
+
+                        return after_refresh(replay)
+                    return after_refresh(callback, *args, **kwargs)
+
+                monkeypatch.setattr(timer, "stop", observe_stop)
+                monkeypatch.setattr(console, "run_worker", observe_worker)
+                monkeypatch.setattr(console, "call_after_refresh", observe_replay)
+                refusing[0] = False
+                asked = loop.time()
+                publish.set()
+                async with asyncio.timeout_at(asked + 30):
+                    await publication_finished.wait()
+                    assert cuts == [publication_task]
+                    await until(lambda: bool(render_workers), timeout=30)
+                    assert await render_workers[0].wait() is True
+                [(rendered, result)] = render_results
+                assert result is True
+                assert rendered < armed_at + delay, (
+                    f"the published read rendered {rendered - asked:.2f} s after it "
+                    f"started, after its pending {delay} s backoff had run out"
+                )
+                assert len(render_workers) == 1
+            finally:
+                retire_setup_retries()
+                publish.set()
 
 
 @pytest.mark.asyncio
