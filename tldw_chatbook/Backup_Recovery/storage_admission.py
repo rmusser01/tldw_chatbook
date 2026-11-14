@@ -12,7 +12,6 @@ import atexit
 import copy
 import sqlite3
 import stat
-import sys
 import threading
 import time
 from collections import OrderedDict
@@ -27,7 +26,14 @@ from . import bootstrap, control_records
 from .admission import Admission, AdmissionCancelled, _local
 from .control_records import UNBOUND_NAMESPACE, admission_authority
 from .limits import _RAW_RECOVERY_LIMITS, ArchiveLimits, _read_limits
-from .profile_paths import effective_config_path, lexical_path
+from .profile_paths import (
+    _chain,
+    _nofollow_any_flag,
+    _selected_paths,
+    _verified_resolved_path,
+    effective_config_path,
+    lexical_path,
+)
 from .qualification import qualified_for
 
 _lock = threading.RLock()
@@ -90,79 +96,12 @@ def _task_identity():
         return None
 
 
-def _nofollow_any_flag() -> int:
-    """``O_NOFOLLOW_ANY`` where the running kernel is known to honour it, else 0.
-
-    macOS 11 (Darwin 20) refuses a symbolic link in any component of an open
-    with this flag. The constant comes from the build SDK, and an older kernel
-    may ignore an open flag it does not know, which would follow links.
-    """
-    if sys.platform != "darwin":
-        return 0
-    flag = getattr(os, "O_NOFOLLOW_ANY", 0)
-    if not flag:
-        return 0
-    try:
-        major = int(os.uname().release.split(".", 1)[0])
-    except (AttributeError, ValueError):
-        return 0
-    return flag if major >= 20 else 0
-
-
 _NOFOLLOW_ANY = _nofollow_any_flag()
 
 
 def _resolved(path: Path) -> Path:
-    """Return exactly ``path.resolve()``, in one kernel walk when no link is in it.
-
-    TASK-33620.15.47: ``Path.resolve`` lstat()s one component per call, and each
-    call releases the GIL. Every transaction entry resolves the participant path,
-    the config selector and the acquired source several times, so a UI-loop entry
-    waited for the scheduler dozens of times per resolution at high host load.
-
-    An absolute, normalized path that has no link in any component resolves to
-    itself. One ``O_NOFOLLOW_ANY`` open of its parent (the kernel refuses a link
-    anywhere on the way) and an lstat of its leaf prove that. A link, any error,
-    another path shape or a kernel without the flag runs ``path.resolve()``
-    unchanged, so the result, links and refusals included, never differs.
-
-    Only the parent directory is opened, never the leaf: the leaf is often a
-    SQLite database, and closing any descriptor of it would drop every POSIX
-    lock this process holds on that file.
-    """
-    if _NOFOLLOW_ANY:
-        text = str(path)
-        if (
-            text.startswith("/")
-            and not text.startswith("//")
-            and text != "/"
-            and os.path.normpath(text) == text
-        ):
-            parent, name = os.path.split(text)
-            try:
-                descriptor = os.open(
-                    parent,
-                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | _NOFOLLOW_ANY,
-                )
-            except (OSError, ValueError):
-                descriptor = -1
-            if descriptor >= 0:
-                try:
-                    leaf = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                except FileNotFoundError:
-                    leaf = None  # resolve() keeps an absent leaf as written
-                except (OSError, ValueError):
-                    leaf = False
-                finally:
-                    try:
-                        os.close(descriptor)
-                    except OSError:
-                        pass  # a read-only directory descriptor holds nothing
-                if leaf is None or (
-                    leaf is not False and not stat.S_ISLNK(leaf.st_mode)
-                ):
-                    return path
-    return path.resolve()
+    """Resolve the path using the checked parent proof when available."""
+    return _verified_resolved_path(path, _NOFOLLOW_ANY) or path.resolve()
 
 
 class _Operation:
@@ -1045,11 +984,6 @@ def _content(path: Path) -> tuple | None:
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
-def _chain(path: Path) -> tuple[Path, ...]:
-    """Every component from the filesystem root down to ``path`` itself."""
-    return (*reversed(path.parents), path)
-
-
 class _Evidence:
     """Stamps over one derivation's inputs; immutable once published on a hold."""
 
@@ -1165,17 +1099,6 @@ def _mount_read_only(path: Path) -> bool:
         return bool(statvfs(path).f_flag & getattr(os, "ST_RDONLY", 1))
     except OSError:
         return True
-
-
-def _selected_paths(path, related_paths) -> tuple[Path, ...]:
-    return tuple(
-        selected
-        for selected in (
-            (lexical_path(path) if path is not None else None),
-            *related_paths,
-        )
-        if selected is not None
-    )
 
 
 def _ordinary_hold(authority=None, lease=None):
