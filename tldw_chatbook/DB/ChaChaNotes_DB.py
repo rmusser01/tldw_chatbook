@@ -3221,14 +3221,9 @@ DELETE FROM keywords
 
         return self._connection_quiescence.connection_count()
 
-    def close_idle_connections(self) -> bool:
-        """Close every same-file handle unless one is in use; sets no barrier.
-
-        Returns:
-            Whether the handles were closed; see ``close_if_idle``.
-        """
-
-        return self._connection_quiescence.close_if_idle(self)
+    def close_idle_connections(self, *, owner_only: bool = False) -> bool:
+        """Close idle file handles, optionally limited to this repository."""
+        return self._connection_quiescence.close_if_idle(self, owner_only=owner_only)
 
     def get_console_trace_compaction_status(self) -> dict[str, object]:
         """Return content-free physical trace-maintenance status and metrics.
@@ -3450,7 +3445,7 @@ DELETE FROM keywords
             )
             return int(result.rowcount)
 
-    def close_connection(self):
+    def close_connection(self, *, checkpoint: bool = True):
         """
         Closes the current thread's database connection.
 
@@ -3461,6 +3456,10 @@ DELETE FROM keywords
         managed file work and paused borrowed transactions instead keep the handle.
         The caller must release its native borrowers before requesting close; the
         cache reference is cleared only after successful native retirement.
+
+        Args:
+            checkpoint: Request WAL truncation before native close. A finite
+                read can leave ordinary SQLite checkpointing to the database.
         """
         local = self._local
         conn = getattr(local, "conn", None)
@@ -3472,9 +3471,9 @@ DELETE FROM keywords
             local.semantic_mutation_authorization = None
             local.voice_trace_import_authorization = None
         elif conn is not None:
-            self._close_connection_handle(conn, local, self._connection_quiescence)
+            self._close_connection_handle(conn, local, self._connection_quiescence, checkpoint=checkpoint)
 
-    def _close_connection_handle(self, conn, local, registry, *, strict=False):
+    def _close_connection_handle(self, conn, local, registry, *, strict=False, checkpoint=True):
         """Apply the current close policy to this exact captured native handle."""
         with core_closing(self, conn) as allowed:
             if not allowed:
@@ -3501,7 +3500,7 @@ DELETE FROM keywords
                             # Still in a transaction: skip the checkpoint, still close.
 
                     # Checkpoint a WAL only outside a transaction (rolled back above).
-                    if not conn.in_transaction:  # Re-check after potential rollback
+                    if checkpoint and not conn.in_transaction:
                         mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
                         if mode_row and mode_row[0].lower() == "wal":
                             try:

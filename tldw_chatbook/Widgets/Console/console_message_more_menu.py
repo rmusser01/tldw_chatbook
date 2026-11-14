@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 from weakref import WeakSet
 
@@ -16,9 +16,18 @@ from textual.widget import Widget
 from textual.widgets import Button
 
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction
+from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
+
+from .console_transcript_input import (
+    guard_transcript_action,
+    transcript_callback,
+    transcript_focus,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from textual.screen import Screen
+
+    from .console_transcript import ConsoleTranscript
 
 
 _LIVE_MORE_MENUS: "WeakSet[ConsoleMessageMoreMenu]" = WeakSet()
@@ -46,6 +55,110 @@ def dismiss_message_more_menus(
     """Dismiss overflow menus and restore focus to each captured opener."""
     for menu in menus:
         menu.dismiss_menu()
+
+
+def restore_message_action_focus(
+    owner: ConsoleTranscript, opener_button_id: str
+) -> None:
+    if opener_button_id:
+        for opener in owner.query(f"#{opener_button_id}"):
+            if opener.is_mounted:
+                transcript_focus(owner, opener, scroll_visible=False)
+                return
+    if owner.selected_message_id:
+        for row in owner.query(f"#console-message-{owner.selected_message_id}"):
+            if row.is_mounted:
+                row.scroll_visible(animate=False)
+                transcript_focus(owner, owner, scroll_visible=False)
+                return
+    for composer in owner.screen.query("#console-native-composer"):
+        transcript_focus(owner, composer, scroll_visible=False)
+        return
+
+
+async def dismiss_message_more_menu(
+    owner: ConsoleTranscript, *, restore_focus: bool = True
+) -> Callable[[], None] | None:
+    """Detach overflow UI and return its guarded deferred focus restore."""
+    menus = (
+        [menu for menu in message_more_menus_on_screen(owner.screen) if menu.owner is owner]
+        if owner.is_mounted else []
+    )
+    opener_id = menus[0].opener_button_id if menus else ""
+    restore = transcript_callback(owner, restore_message_action_focus, owner, opener_id)
+    for menu in menus:
+        await finish_removal(menu.remove())
+    if restore_focus:
+        restore()
+        return None
+    return restore if menus else None
+
+
+async def open_message_more_menu(
+    owner: ConsoleTranscript, message_id: str, opener: Button
+) -> None:
+    """Mount overflow UI bound to the opener's captured target and visit."""
+    message = owner._message_by_id(message_id)
+    if message is None or owner.selected_message_id != message_id:
+        return
+
+    def mount() -> None:
+        actions = owner._action_groups(message).overflow
+        if not actions:
+            return
+        region = opener.region
+        width = ConsoleMessageMoreMenu.MENU_WIDTH
+        height = len(actions) + 2
+        owner.screen.mount(
+            ConsoleMessageMoreMenu(
+                message_id=message_id,
+                actions=actions,
+                owner=owner,
+                opener_button_id=opener.id or "",
+                screen_x=max(owner.region.x, min(region.x, owner.region.right - width)),
+                screen_y=max(
+                    owner.region.y, min(region.bottom, owner.region.bottom - height)
+                ),
+            )
+        )
+
+    show = transcript_callback(owner, mount)
+    await dismiss_message_more_menu(owner, restore_focus=False)
+    show()
+
+
+def dispatch_captured_message_action(
+    owner: ConsoleTranscript, message_id: str, action_id: str, *,
+    opener_button_id: str, source_session_id: str | None = None,
+) -> None:
+    """Post one controller-compatible action after the menu detached."""
+    restore_message_action_focus(owner, opener_button_id)
+    if action_id == "copy-all":
+        from .console_selection_menu import ConsoleTraceCopyRequested
+
+        if source_session_id is not None and source_session_id == owner._session_identity and owner._message_by_id(message_id) is not None:
+            owner.post_message(ConsoleTraceCopyRequested(source_session_id, message_id=message_id))
+        return
+    button = Button("", id=f"console-message-action-{action_id}-{message_id}")
+    button.console_action_id = action_id
+    button.console_message_id = message_id
+    owner.post_message(Button.Pressed(button).set_sender(owner))
+
+
+async def choose_captured_message_more_action(
+    owner: ConsoleTranscript, message_id: str, action_id: str, *, opener_button_id: str
+) -> None:
+    """Detach More in a separate message turn, then dispatch its capture."""
+    dispatch = transcript_callback(
+        owner,
+        owner.dispatch_captured_message_action,
+        message_id,
+        action_id,
+        opener_button_id=opener_button_id,
+        source_session_id=owner._session_identity,
+    )
+    await dismiss_message_more_menu(owner, restore_focus=False)
+    owner.call_later(dispatch)
 
 
 class ConsoleMessageMoreMenu(Vertical):
@@ -96,6 +209,7 @@ class ConsoleMessageMoreMenu(Vertical):
         self._action_ids = tuple(action.action_id for action in self._actions)
         self._opener_button_id = opener_button_id
         self._owner = owner
+        self._transcript_input_owner = owner
         self._anchor = (screen_x, screen_y)
         self._claimed = False
         self._layout_refresh_signal = None
@@ -142,7 +256,7 @@ class ConsoleMessageMoreMenu(Vertical):
         self.call_after_refresh(self._clamp_within_owner)
         buttons = [button for button in self.query(Button) if not button.disabled]
         if buttons:
-            buttons[0].focus(scroll_visible=False)
+            transcript_focus(self, buttons[0], scroll_visible=False)
 
     def on_resize(self, _event: Resize) -> None:
         self.call_after_refresh(self._clamp_within_owner)
@@ -201,6 +315,7 @@ class ConsoleMessageMoreMenu(Vertical):
             self._owner._restore_message_action_focus(self._opener_button_id)
         self.remove()
 
+    @guard_transcript_action
     def on_key(self, event: Key) -> None:
         if event.key == "escape":
             event.stop()
@@ -220,9 +335,10 @@ class ConsoleMessageMoreMenu(Vertical):
             return
         focused = next((button for button in buttons if button.has_focus), buttons[0])
         step = 1 if event.key in {"down", "tab"} else -1
-        buttons[(buttons.index(focused) + step) % len(buttons)].focus()
+        transcript_focus(self, buttons[(buttons.index(focused) + step) % len(buttons)])
 
     @on(Button.Pressed)
+    @guard_transcript_action
     def _choose(self, event: Button.Pressed) -> None:
         event.stop()
         action_id = getattr(event.button, "console_action_id", None)
@@ -235,12 +351,14 @@ class ConsoleMessageMoreMenu(Vertical):
         self._claimed = True
         for button in self.query(Button):
             button.disabled = True
-        self._owner.call_later(
+        dispatch = transcript_callback(
+            self,
             self._owner.choose_captured_message_more_action,
             self.message_id,
             action_id,
             opener_button_id=self.opener_button_id,
         )
+        self._owner.call_later(dispatch)
 
     def _on_click(self, event: Click) -> None:
         event.stop()

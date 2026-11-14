@@ -29,20 +29,39 @@ from tldw_chatbook.Widgets.Console.console_character_context import (
 
 
 @pytest.mark.asyncio
-async def test_removed_browser_rejects_late_presentation():
+async def test_removed_browser_rejects_late_presentation(monkeypatch):
     controller = _controller()
     state = ConsoleCharacterContextState(groups=_groups())
     app = _CharacterApp(controller, state)
+    capture = controller._capture_scope
+    entered, release = asyncio.Event(), asyncio.Event()
+    operation = None
+
+    async def held_capture():
+        nonlocal operation
+        operation = asyncio.current_task()
+        entered.set()
+        await release.wait()
+        return await capture()
+
+    monkeypatch.setattr(controller, "_capture_scope", held_capture)
     async with app.run_test() as pilot:
         widget = app.screen.query_one(ConsoleCharacterContext)
-        await widget.remove()
-        widget.sync_state(replace(state, data_revision=999))
-        await pilot.pause()
-        assert widget.state is state
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            assert widget.task is not operation
+            await widget.remove()
+            widget.sync_state(replace(state, data_revision=999))
+            await pilot.pause()
+            assert widget.state is state
+        finally:
+            release.set()
+            if operation is not None:
+                await asyncio.wait_for(asyncio.gather(operation, return_exceptions=True), 2)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("churn", ["before", "during", "none"])
+@pytest.mark.parametrize("churn", ["before", "during", "none", "passive-refresh"])
 async def test_start_keeps_exact_profile_through_picker_fetch(tmp_path, churn):
     from Tests.UI.test_console_character_controller import (
         _controller as picker_controller,
@@ -89,15 +108,18 @@ async def test_start_keeps_exact_profile_through_picker_fetch(tmp_path, churn):
 
         if churn == "before":
             active[0] = second
-        if churn == "during":
+        if churn in {"during", "passive-refresh"}:
             first.get_character_card_by_id = delayed
         pending = asyncio.create_task(controller.start_current(group))
-        if churn == "during":
+        if churn in {"during", "passive-refresh"}:
             assert await asyncio.to_thread(entered.wait, 2)
-            active[0] = second
+            if churn == "during":
+                active[0] = second
+            else:
+                assert await controller.refresh_if_scope_changed()
             release.set()
         await pending
-        if churn != "none":
+        if churn in {"before", "during"}:
             assert store.active_session_id is None
         else:
             session = store.switch_session(store.active_session_id)
@@ -107,6 +129,59 @@ async def test_start_keeps_exact_profile_through_picker_fetch(tmp_path, churn):
         release.set()
         first.close()
         second.close()
+
+
+@pytest.mark.asyncio
+async def test_passive_refresh_preflight_cannot_supersede_explicit_search(monkeypatch):
+    current = [(1, "Ada")]
+    controller = _controller(current_character_accessor=lambda: current[0])
+    capture = controller._capture_scope
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold_preflight():
+        snapshot = await capture()
+        if asyncio.current_task() is pending:
+            entered.set()
+            await release.wait()
+        return snapshot
+
+    monkeypatch.setattr(controller, "_capture_scope", hold_preflight)
+    pending = asyncio.create_task(controller.refresh_if_scope_changed())
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        current[0] = (2, "Bea")
+        await controller.search("new")
+        newer = controller.state
+    finally:
+        release.set()
+        await asyncio.wait_for(pending, 2)
+    assert pending.result() is False
+    assert controller.state is newer
+
+
+@pytest.mark.asyncio
+async def test_invalidating_in_flight_scope_allows_next_refresh(monkeypatch):
+    controller = _controller()
+    validate = controller._scope_is_current
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold_old_validation(snapshot):
+        if asyncio.current_task() is old:
+            entered.set()
+            await release.wait()
+        return await validate(snapshot)
+
+    monkeypatch.setattr(controller, "_scope_is_current", hold_old_validation)
+    old = asyncio.create_task(controller.refresh_if_scope_changed())
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        controller.invalidate_scope()
+    finally:
+        release.set()
+        await asyncio.wait_for(old, 2)
+    assert await controller.refresh_if_scope_changed()
+    assert controller.state.scope_fingerprint is not None
+    assert not controller.state.loading
 
 
 @pytest.mark.asyncio

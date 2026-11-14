@@ -31,6 +31,7 @@ import time
 
 import pytest
 
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
@@ -38,6 +39,7 @@ from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryServ
 pytestmark = pytest.mark.bootstrap_profile
 
 APP_SIZE = (140, 42)
+pytestmark = pytest.mark.bootstrap_profile
 
 #: Enough ticks that per-tick work cannot hide in warmup noise; at the real
 #: cadence this window is one second of streaming.

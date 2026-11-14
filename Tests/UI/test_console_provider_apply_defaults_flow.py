@@ -24,18 +24,26 @@ from textual.widgets import Button, Collapsible, Input, Select, Static
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
 from Tests.console_provider_doubles import provider_resolution
 from Tests.private_profile import private_profile_test
-from Tests.UI.background_signals import (
-    await_background_task,
-    wait_for_background_signal,
-    wait_for_signal,
-)
 from Tests.UI.app_factory import (
     _build_test_app,
     attach_chachanotes_db,
     persist_seeded_config,
 )
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+    wait_for_signal,
+)
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
 from Tests.UI.test_destination_shells import _wait_for_selector
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleSettingsComponent,
+    ConsoleSettingsPolicyFailureLabel,
+)
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ConsoleContextPolicyOverrides,
@@ -45,21 +53,9 @@ from tldw_chatbook.Chat.console_context_policy import (
 from tldw_chatbook.Chat.console_conversation_hydration import (
     hydrate_console_generation_settings,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_chat_store import (
-    ConsoleChatStore,
-    ConsoleSettingsComponent,
-    ConsoleSettingsPolicyFailureLabel,
-)
 from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
 from tldw_chatbook.Chat.console_project_instructions import encode_project_context_json
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
-from tldw_chatbook.Chat.console_settings_defaults import (
-    ConsoleDefaultDurabilityState,
-    ConsoleDefaultMutationIntent,
-    ConsoleDefaultSavePhase,
-    ConsoleEndpointPatch,
-)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     blank_console_session_settings,
@@ -79,6 +75,13 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Settings_Modules.category_panels import PROVIDERS_MODELS_PANEL
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Chat.console_settings_defaults import (
+    ConsoleDefaultDurabilityState,
+    ConsoleDefaultMutationIntent,
+    ConsoleDefaultSavePhase,
+    ConsoleEndpointPatch,
+)
+from tldw_chatbook.config import load_settings
 from tldw_chatbook.UI.Console_Modules.left_rail import (
     CONSOLE_DISCARD_DEFAULT_RETRY_ID,
     CONSOLE_DISMISS_DEFAULT_REFRESH_ID,
@@ -91,7 +94,8 @@ from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopo
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
 )
-from tldw_chatbook.config import load_settings
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.fixture(autouse=True)
@@ -702,12 +706,14 @@ async def test_normal_sync_projects_delayed_first_persist_failure_for_switched_s
         assert context_row.display is False
 
         await console._session._activate_native_console_session(failed_session.id)
+        await _wait_for_production_console_ready(harness, pilot)
         context_retry = console.query_one("#console-retry-context-settings", Button)
         assert context_row.display is True
         assert context_retry.console_settings_session_id == failed_session.id
         assert context_retry.console_settings_revision == failure.revision
 
         await console._session._activate_native_console_session(clean_session.id)
+        await _wait_for_production_console_ready(harness, pilot)
         assert context_row.display is False
         assert context_retry.disabled is True
 
@@ -1012,11 +1018,11 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
         conversations_toggle = console.query_one(
             "#console-rail-section-toggle-conversations", Button
         )
-        conversations_toggle.scroll_visible(animate=False, force=True)
-        await pilot.pause()
         if console._current_console_rail_state().conversations_open:
             console._toggle_console_rail_section("conversations", next_open=False)
             await pilot.pause()
+        conversations_toggle.scroll_visible(animate=False, force=True)
+        await pilot.pause()
         assert await pilot.click(conversations_toggle) is True
         await pilot.pause()
         await console._sync_console_legacy_workspace_context_aliases()
@@ -1930,6 +1936,9 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
 ) -> None:
     """A concurrent SQLite winner survives while the adopted session fails closed."""
 
+    from tldw_chatbook.Chat.console_session_endpoint_policy import (
+        ConsoleEndpointPolicyState,
+    )
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
 
@@ -1938,9 +1947,23 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
     harness = _ConsoleFlowHarness(app)
 
     async with harness.run_test(size=(120, 42)) as pilot:
-        console = harness.screen_stack[-1]
+        console = await _wait_for_production_console_ready(harness, pilot)
         assert isinstance(console, ChatScreen)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
+        # Drain real startup retries before staging a deliberately failed handoff.
+        pending = []
+        for timer in tuple(console._timers):
+            scheduled = getattr(getattr(timer, "_callback", None), "args", ())
+            scheduled_callback = scheduled[0] if scheduled else None
+            if (
+                getattr(scheduled_callback, "__self__", None) is console._session
+                and getattr(scheduled_callback, "__func__", None)
+                is type(console._session).consume_pending_vllm_console_intent
+                and timer._task is not None
+            ):
+                pending.append(timer._task)
+        for task in pending:
+            await asyncio.wait_for(asyncio.shield(task), 10)
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         conversation_id = store.persist_session_if_needed(session.id)
@@ -1999,6 +2022,10 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
         )
         controller.provider_gateway = gateway
         try:
+            assert (
+                store.session_ephemeral_endpoint_policy(session.id).state
+                is ConsoleEndpointPolicyState.BLOCKED
+            )
             detached = controller.resolve_turn_configuration_snapshot(session.id)
             assert (
                 detached.provider_selection.configured_endpoint_fallback_allowed
@@ -2006,6 +2033,10 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
             )
             resolution = await gateway.resolve_for_send(detached.provider_selection)
             assert resolution.ready is False
+            assert (
+                store.session_ephemeral_endpoint_policy(session.id).state
+                is ConsoleEndpointPolicyState.BLOCKED
+            )
             result = await controller.submit_draft(
                 "Must never reach the configured vLLM endpoint.",
                 session_id=session.id,
@@ -2434,6 +2465,7 @@ async def test_vllm_default_shortcuts_are_fenced_until_late_ack_rollback(
         await pilot.pause()
 
         assert config_path.read_bytes() == config_before
+
         assert harness.screen is screen
         assert screen._provider_test_result != "Staged provider test ran."
         assert screen._vllm_default_claim is not None
@@ -2478,11 +2510,11 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
 ):
     """Late compensation restores authoritative draft and every staged widget."""
 
-    from tldw_chatbook.config import get_cli_config_path
     from tldw_chatbook.Chat.provider_test_evidence import (
         ProviderProbeResult,
         provider_connection_evidence,
     )
+    from tldw_chatbook.config import get_cli_config_path
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
@@ -2921,3 +2953,122 @@ async def test_vllm_default_unscheduled_ack_cleanup_survives_screen_replacement(
         assert replacement_draft is not None
         assert replacement_draft.values.get("endpoint") == target.api_url
         assert config_path.read_bytes() == config_before
+
+
+@pytest.mark.parametrize("mode", ["scope-cancel", "callback-cancel"])
+def test_default_worker_settlement_survives_owned_scope_shutdown(mode):
+    """A cancelled inner Task must not spin forever during Runner teardown."""
+    import subprocess
+    import sys
+    from textwrap import dedent
+
+    script = dedent("""
+        import asyncio
+        import contextvars
+        import os
+        import sys
+        import threading
+
+        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+        finished = threading.Event()
+        started = threading.Event()
+        release = threading.Event()
+        value = contextvars.ContextVar("default-worker-test", default="missing")
+        loop_thread = threading.get_ident()
+
+        def watchdog():
+            if not finished.wait(3):
+                print("SETTLEMENT_DID_NOT_FINISH", flush=True)
+                os._exit(3)
+
+        threading.Thread(target=watchdog, daemon=True).start()
+
+        def mutate():
+            started.set()
+            release.wait()
+            assert threading.get_ident() != loop_thread
+            return value.get()
+
+        def cancel_inside():
+            raise asyncio.CancelledError("callback cancelled")
+
+        async def run():
+            if sys.argv[1] == "callback-cancel":
+                try:
+                    await ChatScreen._run_console_default_worker_settled(None, cancel_inside)
+                except asyncio.CancelledError:
+                    return
+                raise AssertionError("Callback cancellation was swallowed")
+            value.set("captured context")
+            before = set(asyncio.all_tasks())
+            owner = asyncio.create_task(
+                ChatScreen._run_console_default_worker_settled(None, mutate)
+            )
+            while not started.is_set():
+                await asyncio.sleep(0)
+            owned = set(asyncio.all_tasks()) - before
+            assert owner in owned
+            for task in owned:
+                task.cancel()
+            release.set()
+            result, cancelled = await owner
+            assert result == "captured context"
+            assert cancelled is True
+
+        asyncio.run(run())
+        finished.set()
+        print("SETTLEMENT_FINISHED", flush=True)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script, mode],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "SETTLEMENT_FINISHED"
+
+
+@pytest.mark.asyncio
+async def test_default_worker_repeated_cancel_settles_and_preserves_callback_error():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    watchdog = threading.Timer(3, release.set)
+    watchdog.start()
+
+    def mutate(*, value):
+        started.set()
+        release.wait()
+        finished.set()
+        return value
+
+    owner = asyncio.create_task(
+        ChatScreen._run_console_default_worker_settled(None, mutate, value=42)
+    )
+    try:
+        while not started.is_set():
+            await asyncio.sleep(0)
+        for _ in range(3):
+            owner.cancel()
+            await asyncio.sleep(0)
+            assert not owner.done()
+            assert not finished.is_set()
+    finally:
+        release.set()
+        result, cancelled = await owner
+        watchdog.cancel()
+        watchdog.join()
+    assert (result, cancelled) == (42, True)
+    failure = ValueError("synthetic callback failure")
+
+    def fail():
+        raise failure
+
+    with pytest.raises(ValueError) as caught:
+        await ChatScreen._run_console_default_worker_settled(None, fail)
+    assert caught.value is failure

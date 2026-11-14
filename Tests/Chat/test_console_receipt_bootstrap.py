@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.console_activity_receipts import ConsoleActivityReceiptService
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_runtime import (
+    ConsoleRuntime,
+    dispose_console_runtime,
+    ensure_console_runtime,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 from tldw_chatbook.UI.Navigation.buddy_workspace import BuddyWorkspaceCoordinator
 
@@ -42,6 +51,7 @@ def _runtime(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_receipt_bootstrap_reuses_hydrated_owner_when_bridge_is_built(tmp_path):
     activity_id = _seed_result(tmp_path / "agent_runs.db")
     _, runtime = _runtime(tmp_path)
@@ -63,6 +73,160 @@ async def test_receipt_bootstrap_reuses_hydrated_owner_when_bridge_is_built(tmp_
         assert [row.activity_id for row in service.unseen_snapshot()] == [activity_id]
     finally:
         await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_app_exit_keeps_receipt_owner_fenced_for_late_runtime_access(tmp_path):
+    app, runtime = _runtime(tmp_path)
+    service = runtime.ensure_activity_receipt_service()
+    database = runtime._agent_runs_db
+    connection = database._thread_local.conn
+    late_runtime = runtime
+    try:
+        await dispose_console_runtime(app)
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connection.execute("SELECT 1")
+        late_runtime = ensure_console_runtime(app)
+        late_service = late_runtime.ensure_activity_receipt_service()
+        assert late_service is None, "App exit admitted a fresh AgentRuns owner"
+        assert late_runtime is runtime
+        assert runtime.activity_receipts is service
+        assert runtime._agent_runs_db is database
+        assert database._thread_local.conn is None
+    finally:
+        # Native assertions precede cleanup; a RED's resurrected owner is test-owned.
+        await late_runtime.dispose()
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("batched", [False, True], ids=["single", "batch"])
+@pytest.mark.parametrize("borrowed", [False, True], ids=["cold", "warm-borrower"])
+async def test_late_bridge_counts_retire_only_the_handle_they_open(
+    tmp_path, monkeypatch, batched, borrowed
+):
+    _, runtime = _runtime(tmp_path)
+    bridge = runtime.ensure_agent_bridge(
+        store_factory=ConsoleChatStore, provider_gateway_factory=object
+    )
+    database = runtime._agent_runs_db
+    await runtime.dispose()
+    opened = []
+    original_get = database._get_connection
+
+    def capture_native():
+        connection = original_get()
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(database, "_get_connection", capture_native)
+    previous = database._held_connection() if borrowed else None
+    if previous is not None:
+        previous.execute("BEGIN")
+    try:
+        result = (
+            bridge.subagent_counts(["saved"])
+            if batched
+            else bridge.subagent_count("saved")
+        )
+        assert result == ({} if batched else 0)
+        assert len(opened) == 1
+        connection = opened[0]
+        if borrowed:
+            assert connection is previous
+            assert database._thread_local.conn is previous
+            assert connection.in_transaction
+            assert connection.execute("SELECT 1").fetchone()[0] == 1
+        else:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 1")
+            assert database._thread_local.conn is None
+    finally:
+        if previous is not None:
+            previous.rollback()
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "busy", ["raw-transaction", "managed-operation", "close-failure"]
+)
+async def test_receipt_dispose_retains_busy_or_failed_native_owner(
+    tmp_path, monkeypatch, busy
+):
+    from tldw_chatbook.Backup_Recovery.participants import _core_operation
+
+    app, runtime = _runtime(tmp_path)
+    runtime.ensure_activity_receipt_service()
+    database = runtime._agent_runs_db
+    connection = database._thread_local.conn
+
+    def fail_close(_connection):
+        raise sqlite3.OperationalError("controlled_native_close_failure")
+
+    scope = _core_operation(database) if busy == "managed-operation" else nullcontext()
+    try:
+        if busy == "raw-transaction":
+            connection.execute("BEGIN")
+        with scope, monkeypatch.context() as patch:
+            if busy == "close-failure":
+                patch.setattr(type(connection), "close", fail_close)
+            with pytest.raises(
+                RuntimeError, match="sqlite_retirement_incomplete:AgentRuns"
+            ):
+                await dispose_console_runtime(app)
+        assert app.console_runtime is runtime
+        assert runtime._agent_runs_db is database
+        assert database._thread_local.conn is connection
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+        if busy == "raw-transaction":
+            assert connection.in_transaction
+            connection.rollback()
+        await dispose_console_runtime(app)
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connection.execute("SELECT 1")
+    finally:
+        try:
+            connection.rollback()
+        except sqlite3.ProgrammingError:
+            pass
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_receipt_dispose_does_not_revoke_a_foreign_managed_borrower(tmp_path):
+    app, runtime = _runtime(tmp_path)
+    runtime.ensure_activity_receipt_service()
+    database = runtime._agent_runs_db
+    connection = database._thread_local.conn
+    entered, release = threading.Event(), threading.Event()
+
+    def borrow():
+        try:
+            with database.connection() as foreign:
+                entered.set()
+                assert release.wait(5)
+                return foreign.execute("SELECT 1").fetchone()[0]
+        finally:
+            database.close()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(borrow)
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            with pytest.raises(
+                RuntimeError, match="sqlite_retirement_incomplete:AgentRuns"
+            ):
+                await dispose_console_runtime(app)
+            assert database._thread_local.conn is connection
+            assert connection.execute("SELECT 1").fetchone()[0] == 1
+        finally:
+            release.set()
+            assert await asyncio.wrap_future(future) == 1
+    await dispose_console_runtime(app)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.execute("SELECT 1")
 
 
 @pytest.mark.asyncio
@@ -93,6 +257,123 @@ async def test_receipt_bootstrap_closes_constructor_and_hydration_worker_connect
         assert closed.is_set()
     finally:
         await runtime.dispose()
+
+
+@pytest.mark.parametrize("reconcile", ["empty", "clear-stale", "restore-fallback"])
+def test_receipt_hydration_retires_chat_handles_after_physical_join(
+    tmp_path, monkeypatch, reconcile
+):
+    from tldw_chatbook.Chat.conversation_local_marks_service import (
+        ConversationLocalMarksService,
+    )
+
+    database = CharactersRAGDB(tmp_path / "chat.db", "receipt-marks-owner")
+    marks = ConversationLocalMarksService(database)
+    if reconcile != "empty":
+        marks.set_mark(
+            "saved",
+            marks.FLEET_UNSEEN
+            if reconcile == "clear-stale"
+            else marks.FLEET_RECEIPT_FALLBACK,
+        )
+    database.close_connection()
+    captured = {}
+    loop_thread = threading.current_thread()
+    original_connection = database.get_connection
+
+    def capture():
+        connection = original_connection()
+        if threading.current_thread() is not loop_thread:
+            captured[id(connection)] = (connection, threading.current_thread())
+        return connection
+
+    monkeypatch.setattr(database, "get_connection", capture)
+
+    async def hydrate():
+        app = SimpleNamespace(
+            chachanotes_db=database, conversation_local_marks_service=marks
+        )
+        runtime = ConsoleRuntime(app, canvas_enabled_reader=lambda: False)
+        try:
+            service = await asyncio.to_thread(runtime.ensure_activity_receipt_service)
+            await runtime.ensure_activity_hydration()
+            assert service.hydration_state() == "ready"
+        finally:
+            await runtime.dispose()
+
+    try:
+        # asyncio.run joins the actual default executor before the native census.
+        asyncio.run(hydrate())
+        assert captured
+        assert all(not thread.is_alive() for _, thread in captured.values())
+        assert all(
+            not database._connection_quiescence.is_registered(connection)
+            for connection, _ in captured.values()
+        )
+        for connection, _ in captured.values():
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                _ = connection.in_transaction  # Native property, no foreign SQL.
+    finally:
+        # Cleanup of this exact test file is not production retirement evidence.
+        with database.quiesce_connections(timeout_seconds=5):
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_sql", [False, True])
+async def test_receipt_hydration_preserves_its_worker_chat_borrower(tmp_path, fail_sql):
+    from tldw_chatbook.Chat.conversation_local_marks_service import (
+        ConversationLocalMarksService,
+    )
+
+    database = CharactersRAGDB(tmp_path / "chat.db", "receipt-borrower")
+    marks = ConversationLocalMarksService(database)
+    app = SimpleNamespace(
+        chachanotes_db=database, conversation_local_marks_service=marks
+    )
+    runtime = ConsoleRuntime(app, canvas_enabled_reader=lambda: False)
+    pool = ThreadPoolExecutor(max_workers=1)
+    loop = asyncio.get_running_loop()
+    previous = None
+
+    def prepare():
+        connection = database.get_connection()
+        connection.execute("BEGIN")
+        if fail_sql:
+            connection.execute("DROP TABLE conversation_local_marks")
+        return connection
+
+    def finish():
+        try:
+            assert database.get_connection() is previous
+            assert previous.in_transaction
+            assert previous.execute("SELECT 1").fetchone()[0] == 1
+        finally:
+            previous.rollback()
+            database.close_connection()
+
+    try:
+        service = await loop.run_in_executor(
+            pool, runtime.ensure_activity_receipt_service
+        )
+        previous = await loop.run_in_executor(pool, prepare)
+        # Route the actual hydration to the same already-borrowing worker.
+        original_executor = loop._default_executor
+        loop.set_default_executor(pool)
+        try:
+            await runtime.ensure_activity_hydration()
+        finally:
+            loop._default_executor = original_executor
+        assert service.hydration_state() == ("degraded" if fail_sql else "ready")
+    finally:
+        try:
+            if previous is not None:
+                await loop.run_in_executor(pool, finish)
+        finally:
+            pool.shutdown(wait=True)
+            await runtime.dispose()
+            with database.quiesce_connections(timeout_seconds=5):
+                pass
 
 
 @pytest.mark.asyncio
@@ -240,23 +521,26 @@ async def test_inbox_reports_loading_until_saved_receipts_have_been_read(
 
 @pytest.mark.asyncio
 @pytest.mark.ui
+@private_profile_test
 async def test_fresh_home_inbox_reads_saved_ordinary_result_without_console(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, request
 ):
-    import os
     from pathlib import Path
 
-    from Tests.UI.test_console_screen_reuse import _boot_settled, _scratch_env
+    from Tests.UI.test_console_screen_reuse import _boot_settled
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.config import save_settings_to_cli_config
     from tldw_chatbook.UI.Navigation.buddy_workspace import open_buddy_workspace
     from tldw_chatbook.Widgets.Persona_Widgets.buddy_workspace_modal import (
         BuddyWorkspaceModal,
     )
 
-    _scratch_env(monkeypatch, tmp_path)
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
-    config_path.write_text(
-        config_path.read_text() + '\n[general]\ndefault_tab = "home"\n'
+    assert save_settings_to_cli_config(
+        {
+            "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
+            "general": {"default_tab": "home"},
+        }
     )
     app = TldwCli()
     async with app.run_test(size=(120, 35)) as pilot:

@@ -46,6 +46,7 @@ async def test_unchanged_speech_recovery_does_not_restyle_the_bar(
         app.bar.sync_auto_speak(enabled=True, paused=paused, retry_available=paused)
         await pilot.pause()
         original = app.bar.update_node_styles
+        layout_generation = app.bar._layout_updates
         restyles = []
 
         def observe_restyle() -> None:
@@ -55,7 +56,9 @@ async def test_unchanged_speech_recovery_does_not_restyle_the_bar(
         monkeypatch.setattr(app.bar, "update_node_styles", observe_restyle)
         for _ in range(5):
             app.bar.sync_auto_speak(enabled=True, paused=paused, retry_available=paused)
+        await pilot.pause()
         assert restyles == []
+        assert app.bar._layout_updates == layout_generation
         assert app.bar.has_class("retained-class")
         assert (
             app.bar.query_one("#console-auto-speak-row", Horizontal).display is paused

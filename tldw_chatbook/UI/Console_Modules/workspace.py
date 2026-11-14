@@ -82,6 +82,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.Console.console_background_effect import active_console_transcript
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
@@ -147,6 +148,7 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="ChatScreen")
 
+_CHARACTER_PRESENTATION_YIELD_SECONDS = 0.001
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 10.0
 # PR #2480 review (#7): keep the appearance map cache short so changes
 # made elsewhere show up promptly, while the several merges inside one
@@ -900,6 +902,7 @@ class ConsoleWorkspaceController:
         self._console_persisted_rows_cache = None
         self._console_persisted_rows_cache_key = None
         self._console_persisted_rows_cache_at = 0.0
+        self._console_persisted_rows_archive_ids: set[str] = set()
         self._console_persisted_rows_cache_token = 0
         self._console_persisted_rows_refresh_key = None
         self._console_conversation_browser_query = ""
@@ -3719,7 +3722,7 @@ class ConsoleWorkspaceController:
             elif bool(getattr(db, "is_memory_db", False)):
                 payload = list_conversations(**kwargs)
             else:
-                payload = await asyncio.to_thread(list_conversations, **kwargs)
+                payload = await run_owned_db_call(db, list_conversations, **kwargs)
             if inspect.isawaitable(payload):
                 payload = await payload
         except Exception as exc:  # noqa: BLE001 - History degrades independently
@@ -3940,9 +3943,6 @@ class ConsoleWorkspaceController:
             total_count = 0
             saw_total = False
             saw_result = False
-            current_conversation = (
-                current_conversation_id or self._current_console_conversation_id()
-            )
             starred_ids = self._starred_console_conversation_ids()
             stock_results = None
             if stock_read is not None:
@@ -4005,14 +4005,13 @@ class ConsoleWorkspaceController:
                                 owner=service,
                                 database=db,
                             ):
-                                try:
+                                with (
+                                    operation_owned_connection(database, read_only=True)
+                                    if type(owner) is ChatConversationService
+                                    and type(database) is CharactersRAGDB
+                                    else nullcontext()
+                                ):
                                     return method(**kwargs)
-                                finally:
-                                    if (
-                                        type(owner) is ChatConversationService
-                                        and type(database) is CharactersRAGDB
-                                    ):
-                                        database.close_connection()
 
                             result = await asyncio.to_thread(read_in_worker)
                     if inspect.isawaitable(result):
@@ -4086,10 +4085,7 @@ class ConsoleWorkspaceController:
                             labels,
                         ),
                         status=self._saved_handoff_status(item),
-                        selected=bool(
-                            current_conversation
-                            and current_conversation == conversation_id
-                        ),
+                        selected=current_conversation_id == conversation_id,
                         source_kind="persisted",
                         updated_sort=console_persisted_row_updated_sort(item),
                         run_marker=self._console_browser_unseen_marker(conversation_id),
@@ -4111,26 +4107,28 @@ class ConsoleWorkspaceController:
         self._console_persisted_rows_cache = None
         self._console_persisted_rows_cache_key = None
         self._console_persisted_rows_cache_at = 0.0
+        self._console_persisted_rows_archive_ids.clear()
         self._console_persisted_rows_cache_token += 1
         self._console_persisted_rows_refresh_key = None
 
     def _sync_persisted_console_browser_rows(
         self,
         query: str = "",
-        current_conversation_id: str | None = None,
     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Return cached persisted rows without service or database access."""
-        result = self._compute_persisted_console_browser_rows(
-            query,
-            current_conversation_id,
-        )
-        if result is not None:
+        """Return cached rows; the live projection overlays the current selection."""
+        store = self._console_chat_store
+        result = self._compute_persisted_console_browser_rows(query)
+        if result is not None and (
+            store is None
+            or all(
+                not session.persisted_conversation_id
+                or str(session.persisted_conversation_id)
+                in self._console_persisted_rows_archive_ids
+                for session in store.sessions()
+            )
+        ):
             return result
-        refresh_key = (
-            query,
-            current_conversation_id,
-            self._console_persisted_rows_cache_token,
-        )
+        refresh_key = (query, self._console_persisted_rows_cache_token)
         if self._console_persisted_rows_refresh_key != refresh_key:
             # task-15791: this sync derivation is called from state BUILDERS,
             # which the suite's bare-screen convention runs on an unmounted
@@ -4150,7 +4148,6 @@ class ConsoleWorkspaceController:
                     partial(
                         self._refresh_console_persisted_rows_cache,
                         query,
-                        current_conversation_id=current_conversation_id,
                         refresh_key=refresh_key,
                     ),
                     # task-24460: `run_worker` derives the worker name from
@@ -4166,13 +4163,12 @@ class ConsoleWorkspaceController:
                     exclusive=True,
                 )
         # TTL expiry schedules a refresh; it does not mean the rows vanished.
-        # Keep the same query/selection visible while that worker runs so the
+        # Keep the same query visible while that worker runs so the
         # rail does not collapse and restore its scroll position on every refresh.
         # Explicit invalidation clears this entry; another key never reuses it.
         if (
             self._console_persisted_rows_cache is not None
-            and self._console_persisted_rows_cache_key
-            == (query, current_conversation_id)
+            and self._console_persisted_rows_cache_key == query
         ):
             return self._console_persisted_rows_cache
         return [], None, ""
@@ -4180,23 +4176,11 @@ class ConsoleWorkspaceController:
     async def _refresh_console_persisted_rows_cache(
         self,
         query: str = "",
-        current_conversation_id: str | None = None,
         *,
-        refresh_key: tuple[str, str | None, int] | None = None,
+        refresh_key: tuple[str, int] | None = None,
     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Refresh persisted rows asynchronously when the TTL cache is stale."""
-        cached = self._compute_persisted_console_browser_rows(
-            query,
-            current_conversation_id,
-        )
-        if cached is not None:
-            if (
-                refresh_key is not None
-                and self._console_persisted_rows_refresh_key == refresh_key
-            ):
-                self._console_persisted_rows_refresh_key = None
-                self._sync_console_workspace_context()
-            return cached
+        """Refresh the query page and reconcile saved open tabs' archive state."""
+        cached = self._compute_persisted_console_browser_rows(query)
         membership_revision = self._canonical_membership_revision
         cache_token = self._console_persisted_rows_cache_token
         archive_states_before = dict(
@@ -4206,9 +4190,10 @@ class ConsoleWorkspaceController:
             getattr(self.app_instance, "_conversation_archive_inflight", ())
         )
         try:
-            result = await self._persisted_console_browser_rows(
-                query,
-                current_conversation_id=current_conversation_id,
+            result = (
+                cached
+                if cached is not None
+                else await self._persisted_console_browser_rows(query)
             )
         except asyncio.CancelledError:
             if self._console_persisted_rows_refresh_key == refresh_key:
@@ -4228,16 +4213,21 @@ class ConsoleWorkspaceController:
                 self._sync_console_workspace_context()
             return result
         rows, _total, error = result
-        if not error:
+        if cached is None and not error:
             self._record_canonical_owner_rows(rows)
         store = self._console_chat_store
-        native_ids = [
+        native_ids = {
             str(session.persisted_conversation_id)
             for session in (store.sessions() if store is not None else ())
             if session.persisted_conversation_id
-        ]
+        }
+        archive_ids = (
+            native_ids
+            if cached is None
+            else native_ids - self._console_persisted_rows_archive_ids
+        )
         states = {}
-        if native_ids:
+        if archive_ids:
             from ...Chat.conversation_archive_actions import (
                 local_conversation_service,
                 storage_call,
@@ -4247,13 +4237,18 @@ class ConsoleWorkspaceController:
                 states = await storage_call(
                     local_conversation_service(self.app_instance),
                     "get_conversation_archive_states",
-                    native_ids,
+                    sorted(archive_ids),
                 )
+            except asyncio.CancelledError:
+                if self._console_persisted_rows_refresh_key == refresh_key:
+                    self._console_persisted_rows_refresh_key = None
+                raise
             except Exception:  # noqa: BLE001 - keep current rows when recovery reads fail
                 logger.debug("Archive state refresh unavailable")
                 states = {}
-        # Both database reads await: retain ownership through the last one,
-        # including any archive receipt that settled while its snapshot loaded.
+        # Keep the query and archive fences across both reads. A new tab
+        # requires its own lookup; changing selection does not change the set.
+        current_store = self._console_chat_store
         if (
             (
                 refresh_key is not None
@@ -4265,6 +4260,14 @@ class ConsoleWorkspaceController:
             or getattr(self.app_instance, "_conversation_archive_inflight", ())
             or archive_states_before
             != getattr(self.app_instance, "_conversation_archive_states", {})
+            or current_store is not store
+            or any(
+                session.persisted_conversation_id
+                and str(session.persisted_conversation_id) not in native_ids
+                for session in (
+                    current_store.sessions() if current_store is not None else ()
+                )
+            )
         ):
             if (
                 refresh_key is not None
@@ -4276,24 +4279,23 @@ class ConsoleWorkspaceController:
         cached_states = getattr(self.app_instance, "_conversation_archive_states", {})
         cached_states.update(states)
         self.app_instance._conversation_archive_states = cached_states
-        self._console_persisted_rows_cache = result
-        self._console_persisted_rows_cache_key = (query, current_conversation_id)
-        self._console_persisted_rows_cache_at = time.monotonic()
+        # Missing/deleted rows are omitted by the archive API. Remember the
+        # attempted set until the page expires so they do not trigger a loop.
+        self._console_persisted_rows_archive_ids = native_ids
+        if cached is None:
+            self._console_persisted_rows_cache = result
+            self._console_persisted_rows_cache_key = query
+            self._console_persisted_rows_cache_at = time.monotonic()
         if refresh_key is not None:
             self._console_persisted_rows_refresh_key = None
             self._sync_console_workspace_context()
         return result
 
-    def _compute_persisted_console_browser_rows(
-        self,
-        query: str = "",
-        current_conversation_id: str | None = None,
-    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str] | None:
+    def _compute_persisted_console_browser_rows(self, query: str = ""):
         """Return a fresh matching cache entry without performing I/O."""
-        cache_key = (query, current_conversation_id)
         if (
             self._console_persisted_rows_cache is not None
-            and self._console_persisted_rows_cache_key == cache_key
+            and self._console_persisted_rows_cache_key == query
             and (time.monotonic() - self._console_persisted_rows_cache_at)
             < CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS
         ):
@@ -4370,10 +4372,7 @@ class ConsoleWorkspaceController:
             *self._workspace_membership_rows.values(),
         )
         persisted_rows, persisted_total, sync_error = (
-            self._sync_persisted_console_browser_rows(
-                query,
-                current_conversation_id=current_conversation_id,
-            )
+            self._sync_persisted_console_browser_rows(query)
         )
         cached_rows = self._console_conversation_browser_rows
         rows = self._merge_console_browser_rows(local_rows, persisted_rows, cached_rows)
@@ -6544,9 +6543,16 @@ class ConsoleWorkspaceController:
             # boundary must establish focus before the immediate exact-visible
             # proof, including when activation began in a Context row.
             try:
-                # A whole-Console sync may coalesce into an already-running
-                # pass. Publish this target before the exact-ready proof.
-                await self._screen._sync_native_console_transcript()
+                epoch = store.active_session_epoch()
+                projected = await self._screen._sync_native_console_transcript()
+                await asyncio.sleep(_CHARACTER_PRESENTATION_YIELD_SECONDS)
+                if (
+                    projected is False
+                    or not self._screen_running_accessor()
+                    or self._ensure_console_chat_store() is not store
+                    or store.active_session_epoch() != epoch
+                ):
+                    return ConsoleActivationCommit(opened=False, owned_runtime_token=owned)
                 self._screen.set_focus(
                     self._screen.query_one("#console-native-composer")
                 )
@@ -6632,7 +6638,7 @@ class ConsoleWorkspaceController:
             return False
         try:
             composer = self._screen.query_one("#console-native-composer")
-            transcript = self._screen.query_one("#console-native-transcript")
+            transcript = active_console_transcript(self._screen)
             focused = self._screen.focused
             transcript_owner = getattr(transcript, "_session_identity", None)
             transcript_settled = bool(
@@ -6642,7 +6648,8 @@ class ConsoleWorkspaceController:
                 == active.id
             )
             return (
-                bool(getattr(transcript, "display", True))
+                transcript is not None
+                and bool(getattr(transcript, "display", True))
                 and transcript_owner == active.id
                 and transcript_settled
                 and (

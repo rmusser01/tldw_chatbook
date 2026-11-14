@@ -41,6 +41,12 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from .console_transcript_input import (
+    guard_transcript_action,
+    transcript_callback,
+    transcript_focus,
+)
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from textual.screen import Screen
     from textual.signal import Signal
@@ -394,6 +400,8 @@ class ConsoleSelectionMenu(Vertical):
         super().__init__(id="console-selection-menu")
         self._anchor = (screen_x, screen_y)
         self._owner = owner
+        self._transcript_input_owner = owner
+        self._restore_focus = transcript_callback(self, self._restore_previous_focus)
         self._has_add_to_chat = has_add_to_chat
         self._feedback_available = feedback_available
         self._run_active = run_active
@@ -517,9 +525,9 @@ class ConsoleSelectionMenu(Vertical):
             # scroll_visible=False: focusing must not scroll the screen to
             # the menu (it shifted the transcript out from under the
             # selection when the menu mounted).
-            buttons[0].focus(scroll_visible=False)
+            transcript_focus(self, buttons[0], scroll_visible=False)
         else:
-            self.focus(scroll_visible=False)
+            transcript_focus(self, self, scroll_visible=False)
 
     def on_resize(self, _event: Resize) -> None:
         """Re-clamp after late CSS measurement changes the menu's extent.
@@ -631,6 +639,7 @@ class ConsoleSelectionMenu(Vertical):
             # absolute_offset is not reactive; update painting and hit tests.
             self.refresh(layout=True)
 
+    @guard_transcript_action
     def on_key(self, event: Key) -> None:
         """Keyboard navigation: arrows cycle actions; Escape closes.
 
@@ -659,13 +668,14 @@ class ConsoleSelectionMenu(Vertical):
             focused = next((b for b in buttons if b.has_focus), buttons[0])
             index = buttons.index(focused)
             step = 1 if event.key == "down" else -1
-            buttons[(index + step) % len(buttons)].focus()
+            transcript_focus(self, buttons[(index + step) % len(buttons)])
 
     def _post(self, message: Message) -> None:
         (self._owner if self._owner is not None else self).post_message(message)
 
     @on(Button.Pressed, "#console-selection-copy")
-    def _copy_selection(self) -> None:
+    @guard_transcript_action
+    def _copy_selection(self, _event: Button.Pressed) -> None:
         self._post(self.CopySelection())
 
     @on(Button.Pressed, "#console-selection-copy-all")
@@ -693,19 +703,23 @@ class ConsoleSelectionMenu(Vertical):
         )
 
     @on(Button.Pressed, "#console-selection-add-to-chat")
-    def _add_to_chat(self) -> None:
+    @guard_transcript_action
+    def _add_to_chat(self, _event: Button.Pressed) -> None:
         self._post(self.AddToChat())
 
     @on(Button.Pressed, "#console-selection-more-details")
-    def _more_details(self) -> None:
+    @guard_transcript_action
+    def _more_details(self, _event: Button.Pressed) -> None:
         self._post(self.MoreDetails())
 
     @on(Button.Pressed, "#console-selection-ask-side-chat")
-    def _ask_side_chat(self) -> None:
+    @guard_transcript_action
+    def _ask_side_chat(self, _event: Button.Pressed) -> None:
         self._post(self.AskInSideChat())
 
     @on(Button.Pressed, "#console-selection-create-note")
-    def _create_note(self) -> None:
+    @guard_transcript_action
+    def _create_note(self, _event: Button.Pressed) -> None:
         self._post(
             self.CreateNote(
                 row_id=self._selection_row_id, session_id=self._source_session_id
@@ -713,7 +727,8 @@ class ConsoleSelectionMenu(Vertical):
         )
 
     @on(Button.Pressed, "#console-selection-create-note-go")
-    def _create_note_go(self) -> None:
+    @guard_transcript_action
+    def _create_note_go(self, _event: Button.Pressed) -> None:
         self._post(
             self.CreateNote(
                 row_id=self._selection_row_id,
@@ -723,15 +738,18 @@ class ConsoleSelectionMenu(Vertical):
         )
 
     @on(Button.Pressed, "#console-selection-request-changes")
-    def _request_changes(self) -> None:
+    @guard_transcript_action
+    def _request_changes(self, _event: Button.Pressed) -> None:
         self._post(self.RequestChanges())
 
     @on(Button.Pressed, "#console-selection-lgm")
-    def _lgm(self) -> None:
+    @guard_transcript_action
+    def _lgm(self, _event: Button.Pressed) -> None:
         self._post(self.Lgm())
 
     @on(Button.Pressed, "#console-selection-comment")
-    def _comment(self) -> None:
+    @guard_transcript_action
+    def _comment(self, _event: Button.Pressed) -> None:
         self._post(self.Comment())
 
     class Dismissed(Message):
@@ -755,6 +773,7 @@ class ConsoleSelectionMenu(Vertical):
         self._post(self.Dismissed())
         self.remove()
 
+    @guard_transcript_action
     def _on_click(self, event: Click) -> None:
         event.stop()  # clicks inside the menu must not clear anything
         # A click on the menu that did NOT land on one of its action
@@ -778,7 +797,7 @@ class ConsoleSelectionMenu(Vertical):
         # reference expires on its own if this hook is skipped in teardown.
         _LIVE_SELECTION_MENUS.discard(self)
         if self._restore_focus_on_unmount:
-            self._restore_previous_focus()
+            self._restore_focus()
 
     def _restore_previous_focus(self) -> None:
         """Return focus to the widget that held it before the menu mounted.
@@ -802,10 +821,10 @@ class ConsoleSelectionMenu(Vertical):
         if previous is not None and previous is not self and previous.is_mounted:
             try:
                 if previous.screen is screen:
-                    previous.focus(scroll_visible=False)
+                    transcript_focus(self, previous, scroll_visible=False)
                     return
             except Exception:  # noqa: BLE001, S110 - previous detached during teardown
                 pass
         for composer in screen.query("#console-native-composer"):
-            composer.focus(scroll_visible=False)
+            transcript_focus(self, composer, scroll_visible=False)
             return

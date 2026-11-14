@@ -285,26 +285,74 @@ async def test_workspace_projection_retry_retires_new_registry_worker_handle(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "factory_name",
+    [
+        "_build_test_app",
+        "_ready_host",
+        "_console_app",
+        "_persisted_console_app",
+        "_build_console_send_test_app",
+        "resend_harness",
+        "_build_navigation_app",
+    ],
+)
 async def test_fixture_retires_captured_databases_not_replaced_attributes(
     monkeypatch,
+    factory_name,
+    tmp_path,
 ) -> None:
     """Retained constructor handles must close even after public owner replacement.
 
     Args:
         monkeypatch: Scope the fixture's factory replacement to this private module.
     """
+    from Tests.conftest import _close_database_instance
     from Tests.UI.console_fixture_ownership import owned_console_apps
+    from Tests.UI.test_console_dictation import _ready_host
+    from Tests.UI.test_console_native_chat_flow import _build_console_send_test_app
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _console_app,
+        _persisted_console_app,
+    )
+    from Tests.UI.test_console_turn_navigation_continuity import _build_navigation_app
+    from Tests.UI.test_console_turn_resend_ui import _console_app as resend_harness
 
-    module = SimpleNamespace(_build_test_app=_build_test_app)
+    factories = {
+        "_build_test_app": _build_test_app,
+        "_ready_host": _ready_host,
+        "_console_app": _console_app,
+        "_persisted_console_app": _persisted_console_app,
+        "_build_console_send_test_app": _build_console_send_test_app,
+        "resend_harness": resend_harness,
+        "_build_navigation_app": _build_navigation_app,
+    }
+    module = SimpleNamespace(**{factory_name: factories[factory_name]})
+    if factory_name == "resend_harness":
+        module._console_app = resend_harness
+        module._build_console_send_test_app = _build_console_send_test_app
     fixture = owned_console_apps.__wrapped__(
         SimpleNamespace(module=module), monkeypatch
     )
     await anext(fixture)
     try:
-        owner = module._build_test_app()
+        if factory_name == "_build_navigation_app":
+            owner = module._build_navigation_app(tmp_path)[0]
+        elif factory_name == "resend_harness":
+            from Tests.UI.test_console_native_chat_flow import FailThenRecoverGateway
+
+            owner = module._console_app(FailThenRecoverGateway()).app_instance
+        else:
+            owner = (
+                module._ready_host()[0]
+                if factory_name == "_ready_host"
+                else getattr(module, factory_name)()
+            )
+        runtime = owner.console_runtime
         collections = owner.local_library_collections_db
         evals = owner.evaluation_orchestrator.db
         workspaces = owner.local_workspace_db
+        subscriptions = owner.subscriptions_db
         instance_lock = owner._instance_lock_status.handle
         handles = [
             collections._held_connection(),
@@ -324,6 +372,92 @@ async def test_fixture_retires_captured_databases_not_replaced_attributes(
         assert instance_lock.closed
     finally:
         await fixture.aclose()
+        await runtime.dispose()
+        for database in (collections, evals, workspaces, subscriptions):
+            _close_database_instance(database)
+        if factory_name == "_build_navigation_app":
+            _close_database_instance(owner.chachanotes_db)
+        if instance_lock is not None:
+            instance_lock.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["cold", "error", "borrowed"])
+async def test_hook_context_retires_only_its_new_workspace_worker_handle(
+    tmp_path, mode
+):
+    """The actual finite context reader must not leave a native thread cache."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    database = WorkspaceDB(tmp_path / "hook-workspace.sqlite")
+    service = LocalWorkspaceRegistryService(database)
+    database.close()
+    store = ConsoleChatStore()
+    store.create_session(
+        session_id="hooks",
+        title="Hooks",
+        workspace_id="workspace-hooks",
+        ephemeral=True,
+    )
+    app = SimpleNamespace(workspace_registry_service=service)
+    runtime = ConsoleRuntime(app)
+    runtime._chat_store = store
+    captured = []
+    failure = ValueError("synthetic authority failure")
+
+    def authority(_session_id):
+        # Real consent SQL opens the worker's real native Workspace connection.
+        service.read_change_review_consent("workspace-hooks")
+        captured.append(database._thread_local.conn)
+        if mode == "error":
+            raise failure
+        return {"workspace_roots": (), "project_authority": None}
+
+    runtime._chat_controller = SimpleNamespace(
+        app=app, _hook_authority_values=authority
+    )
+
+    def probe():
+        try:
+            if mode == "borrowed":
+                with database.transaction() as borrowed:
+                    assert runtime._hooks_v2_context_key("hooks") == (
+                        "workspace-hooks",
+                        (),
+                        None,
+                    )
+                    assert captured[-1] is borrowed
+                    assert borrowed.in_transaction
+                    assert borrowed.execute("SELECT 1").fetchone()[0] == 1
+                assert database._thread_local.conn is borrowed
+                return
+            if mode == "error":
+                with pytest.raises(ValueError) as caught:
+                    runtime._hooks_v2_context_key("hooks")
+                assert caught.value is failure
+            else:
+                assert runtime._hooks_v2_context_key("hooks") == (
+                    "workspace-hooks",
+                    (),
+                    None,
+                )
+            assert len(captured) == 1
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                _ = captured[-1].in_transaction
+            assert database._thread_local.conn is None
+        finally:
+            # Test-owned safety cleanup is after every retirement assertion.
+            database.close()
+
+    try:
+        await asyncio.to_thread(probe)
+    finally:
+        runtime._chat_controller = None
+        await runtime.dispose()
+        database.close()
 
 
 @pytest.mark.asyncio

@@ -36,12 +36,14 @@ wrong:
    the delegation table works.
 """
 
+import asyncio
 import inspect
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches
+from textual.errors import NoWidget
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, BUNDLED_STYLESHEET
@@ -54,13 +56,24 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Widgets.Console import ConsoleTranscript
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleMarkdownMessage
 from tldw_chatbook.UI.Console_Modules.frame import frame_console_region
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     ProviderContinuationTranscriptRegion,
 )
 from tldw_chatbook.UI.Console_Modules.transcript import ConsoleTranscriptRegion
+from tldw_chatbook.Utils.console_background_effects import (
+    ConsoleBackgroundEffectSettings,
+)
+from tldw_chatbook.Widgets.Console import (
+    ConsoleBackgroundEffect,
+    ConsoleTranscript,
+    ConsoleTranscriptSurface,
+)
+from tldw_chatbook.Widgets.Console.console_selection_menu import (
+    ConsoleSelectionQuoteRequested,
+)
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleMarkdownMessage
+from tldw_chatbook.Widgets.Console.console_transcript_input import transcript_callback
 
 
 class _SpeechHeaderHarness(App):
@@ -205,9 +218,9 @@ def test_frame_helper_keeps_legacy_side_edges_when_top_and_bottom_are_false():
     region = frame_console_region(Vertical(), top=False, bottom=False)
 
     assert region.styles.border_top[0] in {"", "none"}
-    assert region.styles.border_right[0] == "solid"
+    assert region.has_class("console-frame-solid", "console-frame-right")
     assert region.styles.border_bottom[0] in {"", "none"}
-    assert region.styles.border_left[0] == "solid"
+    assert region.has_class("console-frame-left")
 
 
 @pytest.mark.parametrize(
@@ -263,6 +276,308 @@ async def test_transcript_region_composes_its_ids_in_the_documented_nesting():
 
         # `console-region` is what the shell's own styling keys off.
         assert transcript_region.has_class("console-region")
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_console_reads_and_focuses_surface_owned_transcript():
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        surface = console.query_one(
+            "#console-transcript-surface", ConsoleTranscriptSurface
+        )
+        original = surface.transcript
+        active = ConsoleTranscript(id="test-replacement-transcript")
+        active.background_effect_factory = surface._make_background_effect
+        await surface.mount(active)
+        await pilot.pause()
+        original.display = False
+        original.selected_message_id = "old-message"
+        active.selected_message_id = "current-message"
+        surface.transcript = active
+        assert console.query_one("#console-native-transcript") is original
+
+        reading = console._capture_console_transcript_reading_state()
+        assert reading is not None
+        assert reading.selected_message_id == "current-message"
+        store = console._ensure_console_chat_store()
+        message = store.append_message(
+            store.ensure_session().id,
+            role=ConsoleMessageRole.USER,
+            content="Current viewport only",
+        )
+        await console._sync_native_console_transcript()
+        assert message.id in active.mounted_message_content_ids()
+        assert original.display_message(message.id) is None
+
+        previous_effect = original.query_one(ConsoleBackgroundEffect)
+        current_effect = active.query_one(ConsoleBackgroundEffect)
+        settings = ConsoleBackgroundEffectSettings(effect="matrix")
+        surface.update_settings(settings)
+        assert current_effect.settings is settings
+        assert previous_effect.settings is not settings
+
+        console._focus_console_workbench_target("console-transcript-surface")
+        await pilot.pause()
+        assert console.focused is active
+        active.display = False
+        assert console._capture_console_transcript_reading_state() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_queued_transcript_quote_expires_even_when_original_chat_returns():
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Other", activate=False)
+        store.append_message(first.id, role=ConsoleMessageRole.USER, content="First")
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        surface = console.query_one(ConsoleTranscriptSurface)
+        transcript = surface.transcript
+        composer = console._console_composer_or_none()
+        composer.load_draft("draft")
+
+        assert console.post_message(
+            ConsoleSelectionQuoteRequested("older quote").set_sender(transcript)
+        )
+        store.switch_session(second.id)
+        store.switch_session(first.id)
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        assert surface.transcript is transcript
+        assert composer.draft_text() == "draft"
+
+        assert transcript.post_message(
+            ConsoleSelectionQuoteRequested("current quote").set_sender(transcript)
+        )
+        await pilot.pause()
+        assert "current quote" in composer.draft_text()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_active_switch_reuses_previous_rows_and_reprojects_background_edit(
+    monkeypatch,
+):
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Other", activate=False)
+        first_message = store.append_message(
+            first.id, role=ConsoleMessageRole.USER, content="First"
+        )
+        second_message = store.append_message(
+            second.id, role=ConsoleMessageRole.USER, content="Other"
+        )
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        surface = console.query_one(ConsoleTranscriptSurface)
+        first_view = surface.transcript
+        first_row = first_view.query_one(f"#console-message-{first_message.id}")
+        original_width = first_view.region.width
+        composer = console._console_composer_or_none()
+        composer.load_draft("first draft")
+        queued_quote = ConsoleSelectionQuoteRequested("old quote").set_sender(
+            first_view
+        )
+        stale_focus = transcript_callback(first_view, first_view.focus)
+        pressed = []
+
+        async def handle_press(event):
+            pressed.append(event.button.console_message_id)
+            return True
+
+        monkeypatch.setattr(console, "handle_console_message_action", handle_press)
+        button = Button("", id=f"console-message-action-copy-{first_message.id}")
+        button.console_message_id = first_message.id
+        queued_press = Button.Pressed(button).set_sender(first_view)
+
+        await console._session._activate_native_console_session(second.id)
+        await pilot.pause()
+        second_view = surface.transcript
+        assert second_view is not first_view
+        assert not first_view.display and first_view.is_attached
+        assert second_message.id in second_view.mounted_message_content_ids()
+        store.update_message_content(first_message.id, "Edited while inactive")
+        await pilot.resize_terminal(100, 30)
+
+        await console._session._activate_native_console_session(first.id)
+        await pilot.pause()
+        assert surface.transcript is first_view
+        assert first_view.query_one(f"#console-message-{first_message.id}") is first_row
+        assert (
+            first_view.display_message(first_message.id).content
+            == "Edited while inactive"
+        )
+        assert first_view.region == surface.region
+        assert first_view.region.width < original_width
+        assert console.post_message(queued_quote)
+        assert console.post_message(queued_press)
+        stale_focus()
+        await pilot.pause()
+        assert composer.draft_text() == "first draft"
+        assert console.focused is composer
+        assert pressed == []
+        assert first_view.post_message(Button.Pressed(button).set_sender(first_view))
+        await pilot.pause()
+        assert pressed == [first_message.id]
+
+        store.rebind_persisted_conversation(second.id, "different-conversation")
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        assert not second_view.is_attached
+        store.switch_session(second.id)
+        await console._sync_native_console_transcript()
+        replacement = surface.transcript
+        assert replacement is not second_view
+        store.close_session(first.id)
+        await console._sync_native_console_transcript()
+        assert list(surface.children) == [replacement]
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_warm_swap_hides_outgoing_hit_targets_without_disabled_restyles(
+    monkeypatch,
+):
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Other", activate=False)
+        for session in (first, second):
+            store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content="Selectable text"
+            )
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        surface = console.query_one(ConsoleTranscriptSurface)
+        first_view = surface.transcript
+        await console._session._activate_native_console_session(second.id)
+        await pilot.pause()
+        outgoing = surface.transcript
+        row = outgoing.query_one(".console-transcript-message")
+        point = row.content_region.offset
+        hit, _ = console.get_widget_at(*point)
+        assert outgoing in hit.ancestors_with_self
+        console.set_focus(outgoing, scroll_visible=False)
+        assert console.focused is outgoing
+        changes = []
+        original = ConsoleTranscript.watch_disabled
+
+        def watch_disabled(viewport, disabled):
+            changes.append(disabled)
+            original(viewport, disabled)
+
+        monkeypatch.setattr(ConsoleTranscript, "watch_disabled", watch_disabled)
+        store.switch_session(first.id)
+        await console._sync_native_console_transcript()
+        assert surface.transcript is first_view
+        assert not outgoing.display
+        assert outgoing not in console.focus_chain
+        assert outgoing not in getattr(console.focused, "ancestors_with_self", ())
+        assert changes == []
+        try:
+            hit, _ = console.get_widget_at(*point)
+        except NoWidget:
+            pass
+        else:
+            assert outgoing not in hit.ancestors_with_self
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_retention_checks_mounted_controls_without_css_matching(monkeypatch):
+    from tldw_chatbook.Widgets.Console.console_transcript import ConsoleRoleplayMarkdown
+
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="Read me"
+        )
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        surface = console.query_one(ConsoleTranscriptSurface)
+        viewport = surface.transcript
+        markdown = ConsoleRoleplayMarkdown("Plain text", open_links=False)
+        await viewport.mount(markdown)
+        await pilot.pause()
+        queries = []
+        query = viewport.query
+
+        def record(*args, **kwargs):
+            queries.append(args)
+            return query(*args, **kwargs)
+
+        monkeypatch.setattr(viewport, "query", record)
+        assert surface._can_retain(viewport)
+        assert queries == []
+
+        button = Button("Action")
+        await viewport.mount(button)
+        assert not surface._can_retain(viewport)
+        await button.remove()
+        assert surface._can_retain(viewport)
+
+        await markdown.update("[Open](https://example.test/)")
+        assert not surface._can_retain(viewport)
+        await markdown.update("Plain text again")
+        assert surface._can_retain(viewport)
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_cancelled_viewport_stage_is_retired_before_switch_retries(monkeypatch):
+    host = _ready_console_host()
+    async with host.run_test(size=(120, 50)) as pilot:
+        console = await _mounted_console(host, pilot)
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Other", activate=False)
+        for session in (first, second):
+            store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content="Text"
+            )
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+        surface = console.query_one(ConsoleTranscriptSurface)
+        first_view = surface.transcript
+        entered = asyncio.Event()
+        original = console._project_native_console_transcript
+
+        async def hold_stage(viewport, current):
+            if viewport is not first_view:
+                entered.set()
+                await asyncio.Future()
+            return await original(viewport, current)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(console, "_project_native_console_transcript", hold_stage)
+            store.switch_session(second.id)
+            switch = asyncio.create_task(console._sync_native_console_transcript())
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                assert surface.transcript is first_view
+                assert sum(view.display for view in surface.children) == 1
+            finally:
+                switch.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await switch
+        assert list(surface.children) == [first_view]
+        await console._sync_native_console_transcript()
+        assert surface.transcript._session_identity == second.id
+        assert len(surface.children) == 2
 
 
 @pytest.mark.asyncio

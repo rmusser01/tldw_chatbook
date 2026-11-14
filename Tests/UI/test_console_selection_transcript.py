@@ -31,6 +31,9 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscriptMessage,
 )
 
+# The real transcript getters retain their collection-selected source.
+pytestmark = pytest.mark.bootstrap_profile
+
 _LONG_BODY = "one two three four five six seven eight nine ten eleven twelve"
 #: ``Content.wrap`` folds ``_LONG_BODY`` at width 40 into
 #: ``'one two three four five six seven eight'`` (39 chars) and

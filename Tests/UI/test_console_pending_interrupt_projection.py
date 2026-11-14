@@ -16,6 +16,9 @@ from textual.widgets import Button, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import drain_active_service_patches, drain_created_dirs
+from Tests.UI.console_fixture_ownership import (
+    owned_console_apps as owned_console_apps,  # noqa: PLC0414 - pytest fixture export
+)
 from Tests.UI.test_console_headless_approval import (
     _arm,
     _arm_install,
@@ -41,6 +44,20 @@ from tldw_chatbook.Utils.token_counter import resolve_context_window
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+
+@pytest.fixture(autouse=True)
+def _register_navigation_database_owners(monkeypatch, owned_console_apps):
+    """Register the injected test Chat owner after the native factory returns."""
+    native_build = _build_navigation_app
+
+    def build(tmp_path):
+        app, gateway = native_build(tmp_path)
+        owned_console_apps(app.console_runtime, app.chachanotes_db)
+        return app, gateway
+
+    monkeypatch.setitem(globals(), "_build_navigation_app", build)
+
 
 QUESTIONS = [
     {
@@ -638,16 +655,21 @@ async def _verify_late_chat_create_projection_transition(
                 _prepare_close_new_chat,
             )
             from tldw_chatbook.Agents.run_context import use_run_id
+            from tldw_chatbook.DB.base_db import operation_owned_connection
 
             try:
-                prepared, run = _prepare_close_new_chat(
-                    controller, session_id, f"Proposed {key}"
-                )
-                with use_run_id(run):
-                    results[key] = controller.request_chat_create_confirm(
-                        prepared,
-                        session_id=session_id,
+                with (
+                    operation_owned_connection(controller.store.persistence.db),
+                    operation_owned_connection(controller._agent_bridge.runs_db),
+                ):
+                    prepared, run = _prepare_close_new_chat(
+                        controller, session_id, f"Proposed {key}"
                     )
+                    with use_run_id(run):
+                        results[key] = controller.request_chat_create_confirm(
+                            prepared,
+                            session_id=session_id,
+                        )
             except Exception as exc:  # noqa: BLE001 - expose worker failure
                 errors.append((key, type(exc).__name__))
 

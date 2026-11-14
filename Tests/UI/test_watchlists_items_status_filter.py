@@ -28,8 +28,9 @@ from __future__ import annotations
 import pytest
 from textual.widgets import ListView
 
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 from tldw_chatbook.UI.Watchlists_Modules.article_list import (
     ArticleListPane,
@@ -141,7 +142,8 @@ def test_the_filter_speaks_the_readers_vocabulary():
 # --- data layers -----------------------------------------------------------
 
 
-def test_get_new_items_with_no_status_returns_every_status():
+@private_profile_test
+def test_get_new_items_with_no_status_returns_every_status(request):
     """AC#1, at the layer that made it impossible."""
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -152,7 +154,8 @@ def test_get_new_items_with_no_status_returns_every_status():
     assert {row["status"] for row in rows} == set(SEEDED)
 
 
-def test_get_new_items_still_defaults_to_new_only():
+@private_profile_test
+def test_get_new_items_still_defaults_to_new_only(request):
     """The default is load-bearing: `briefing_selection` and the smoke suite
     both call this with no status and mean "the unread bucket"."""
     app = _build_test_app()
@@ -162,7 +165,8 @@ def test_get_new_items_still_defaults_to_new_only():
     assert {row["status"] for row in db.get_new_items(limit=50)} == {"new"}
 
 
-def test_get_new_items_scoped_to_one_subscription_still_filters_by_status():
+@private_profile_test
+def test_get_new_items_scoped_to_one_subscription_still_filters_by_status(request):
     """Both predicates are independent; neither may swallow the other."""
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -181,7 +185,8 @@ def test_get_new_items_scoped_to_one_subscription_still_filters_by_status():
 
 
 @pytest.mark.asyncio
-async def test_list_items_no_longer_collapses_none_to_new():
+@private_profile_test
+async def test_list_items_no_longer_collapses_none_to_new(request):
     """The service layer stopped rewriting the caller's intent."""
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -196,7 +201,8 @@ async def test_list_items_no_longer_collapses_none_to_new():
 
 
 @pytest.mark.asyncio
-async def test_every_reader_status_appears_in_the_list_and_is_distinguishable():
+@private_profile_test
+async def test_every_reader_status_appears_in_the_list_and_is_distinguishable(request):
     """AC#1, reader vocabulary. The reader set is present under "All", each
     status visibly told apart: unread rows carry the dot, ingested rows the
     marker, reviewed rows neither."""
@@ -231,7 +237,8 @@ async def test_every_reader_status_appears_in_the_list_and_is_distinguishable():
 
 
 @pytest.mark.asyncio
-async def test_a_triaged_item_is_findable_under_the_readers_filters():
+@private_profile_test
+async def test_a_triaged_item_is_findable_under_the_readers_filters(request):
     """AC#4. The regression test the task asks for, stated as the user's
     question: "where did my ingested item go?".
 
@@ -271,7 +278,8 @@ async def test_a_triaged_item_is_findable_under_the_readers_filters():
 
 
 @pytest.mark.asyncio
-async def test_ingest_repaints_the_live_row_instead_of_removing_it():
+@private_profile_test
+async def test_ingest_repaints_the_live_row_instead_of_removing_it(request):
     """AC#2 and AC#3, pinned on the immediate push rather than the reload.
 
     `_load_items` is stubbed to a no-op here on purpose. With the reload left
@@ -316,7 +324,8 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
 
 
 @pytest.mark.asyncio
-async def test_ingest_feedback_toast_never_parses_markup():
+@private_profile_test
+async def test_ingest_feedback_toast_never_parses_markup(request):
     """AC#3's other half. The toast is app-authored today, but it is the
     Watchlists screen: every neighbouring toast carries feed- or item-derived
     text, and the convention here is to escape at the terminal step rather
@@ -353,7 +362,8 @@ async def test_ingest_feedback_toast_never_parses_markup():
 
 
 @pytest.mark.asyncio
-async def test_an_ingested_item_survives_the_reload_that_follows():
+@private_profile_test
+async def test_an_ingested_item_survives_the_reload_that_follows(request):
     """AC#2 end to end, with the real reload in place."""
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -437,7 +447,8 @@ def _seed_many(db, *, ingested: int, new: int) -> tuple[int, list[str]]:
 
 
 @pytest.mark.asyncio
-async def test_unread_items_past_the_newest_page_are_still_reachable():
+@private_profile_test
+async def test_unread_items_past_the_newest_page_are_still_reachable(request):
     """Review wave, I2. The filter must narrow the QUERY, not just the page.
 
     TASK-2301 made `_load_items` ask for every status, which fixed "triaged
@@ -485,12 +496,12 @@ async def test_unread_items_past_the_newest_page_are_still_reachable():
 
 
 @pytest.mark.asyncio
-async def test_a_search_keystroke_does_not_re_page():
-    """The reload is gated on the STATUS moving, not on any filter message.
+@private_profile_test
+async def test_a_search_keystroke_does_not_re_page(request):
+    """A keystroke does not immediately reload; a status change does.
 
-    `ItemsFilterChanged` also fires per keystroke in the search box, which is
-    a purely in-memory filter; a query per character would be a new defect
-    paying for the fix above.
+    TASK-3791 makes search corpus-wide but debounced, so a query per
+    character would still be a defect. Observe the current typed page seam.
     """
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -503,7 +514,7 @@ async def test_a_search_keystroke_does_not_re_page():
         pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         calls: list[str | None] = []
-        real_list_items = screen._controller.list_items
+        real_list_items = screen._controller.list_reader_items_page
 
         async def _counting(*, runtime_backend=None, status=None, **kwargs):
             calls.append(status)
@@ -511,7 +522,7 @@ async def test_a_search_keystroke_does_not_re_page():
                 runtime_backend=runtime_backend, status=status, **kwargs
             )
 
-        screen._controller.list_items = _counting
+        screen._controller.list_reader_items_page = _counting
 
         pane.search_query = "fresh"
         await pilot.pause()
@@ -529,7 +540,8 @@ async def test_a_search_keystroke_does_not_re_page():
 
 
 @pytest.mark.asyncio
-async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
+@private_profile_test
+async def test_the_delete_gesture_on_an_item_says_and_does_ignore(request):
     """Review wave, Minor 2. The affordance now matches the write.
 
     `d` over an item opened a dialog saying "Delete <title>?" and then wrote
@@ -574,7 +586,8 @@ async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
 
 
 @pytest.mark.asyncio
-async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
+@private_profile_test
+async def test_the_open_item_survives_a_reload_under_a_narrow_filter(request):
     """Round 2, O2. The pin's guarantee must survive query-side filtering.
 
     The pane's `_filtered_items` pins the open item into the list whatever the
@@ -618,8 +631,8 @@ async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
             "filter no longer matches it"
         )
 
-        # Any deliberate action reloads. Force exactly that.
-        await screen._load_items()
+        # Filter replacement retains the open item in the current snapshot.
+        await screen._replace_items_snapshot(reason="filter")
         await pilot.pause()
 
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
@@ -636,7 +649,8 @@ async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
 
 
 @pytest.mark.asyncio
-async def test_the_carried_open_item_keeps_the_pages_ordering():
+@private_profile_test
+async def test_the_carried_open_item_keeps_the_pages_ordering(request):
     """Round 2, O2. Carried, not prepended.
 
     `j`/`k` walk this sequence, so an item jumping to the top of the list the
@@ -663,10 +677,11 @@ async def test_the_carried_open_item_keeps_the_pages_ordering():
         # `_normalize_items_status_filter` maps it to "unread", so this also
         # pins the legacy-value path -- the query below is `status="new"`.
         screen._items_status_filter = "new"
-        screen._items_committed_page_key = screen._items_page_key(0)
         # Production selection records this provenance alongside the item.
-        screen._selected_content_page_key = screen._items_committed_page_key
-        await screen._load_items()
+        screen._selected_content_page_key = screen._items_page_key(
+            scope=screen.tree_scope, status="new", search=""
+        )
+        await screen._replace_items_snapshot(reason="filter")
 
         titles = [row["title"] for row in screen._loaded_items]
         assert titles[-1] == "The oldest thing here", (

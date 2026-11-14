@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from textual.app import App
 from textual.widgets import Static
 
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_voice_input import (
     STATE_ERROR,
     STATE_IDLE,
@@ -16,8 +16,13 @@ from tldw_chatbook.Chat.console_voice_input import (
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
+pytestmark = pytest.mark.bootstrap_profile
+VOICE_COPY_SIZE = (160, 24)
 
-class ComposerApp(App):
+
+class ComposerApp(ConsolidatedCSSApp):
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
     def compose(self):
         yield ConsoleComposerBar(id="console-native-composer")
 
@@ -103,7 +108,7 @@ async def test_idle_collapses_a_chip_that_was_showing():
     would pass even if `set_voice_status` were a no-op.
     """
     app = ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=VOICE_COPY_SIZE) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         composer.set_voice_status(STATE_LISTENING, partial="hello", elapsed_seconds=1)
         await pilot.pause()
@@ -121,7 +126,7 @@ async def test_idle_collapses_a_chip_that_was_showing():
 @pytest.mark.asyncio
 async def test_chip_is_actually_visible_while_listening():
     app = ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=VOICE_COPY_SIZE) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         composer.set_voice_status(
             STATE_LISTENING, partial="and compare them to", elapsed_seconds=7
@@ -145,7 +150,7 @@ async def test_whisper_bracket_tokens_render_literally():
     the string *before* parsing, and passed with no fix in place at all.
     """
     app = ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=VOICE_COPY_SIZE) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         composer.set_voice_status(
             STATE_LISTENING, partial="[BLANK_AUDIO] [Music] hi", elapsed_seconds=3
@@ -167,7 +172,7 @@ async def test_a_bracketed_path_in_a_partial_does_not_blank_the_chip():
     a chip that raises instead of rendering.
     """
     app = ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=VOICE_COPY_SIZE) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         composer.set_voice_status(
             STATE_LISTENING, partial="[/tmp/x] ok", elapsed_seconds=3
@@ -180,17 +185,21 @@ async def test_a_bracketed_path_in_a_partial_does_not_blank_the_chip():
 
 
 @pytest.mark.asyncio
-async def test_narrow_terminal_drops_the_partial_not_the_draft():
+async def test_narrow_terminal_hides_chip_below_legible_budget_without_changing_draft():
     app = ComposerApp()
     async with app.run_test(size=(30, 12)) as pilot:
         composer = app.query_one(ConsoleComposerBar)
+        composer.load_draft("retained draft")
         composer.set_voice_status(
             STATE_LISTENING, partial="a very long partial transcript", elapsed_seconds=3
         )
         await pilot.pause()
         chip = composer.query_one("#console-voice-status", Static)
         assert "very long partial" not in _painted(chip)
-        assert "◉" in _painted(chip)
+        assert not _visible(chip)
+        assert chip.region.area == 0
+        assert composer._voice_chip_last_width == 0
+        assert composer.draft_text() == "retained draft"
 
 
 @pytest.mark.asyncio
@@ -202,12 +211,12 @@ async def test_the_transcribing_label_truncates_from_the_right_not_the_left():
     the START of the label and puts the ellipsis at the cut, so "Transcr"
     (the readable, identifying part) must survive, never "scribing".
 
-    Terminal width 44 was probed to land the composer's own `room` at 11
-    cells -- squarely inside the buggy 9..14 window (composer widths
-    ~42-47 columns per the review).
+    The former 44-column case now correctly hides the chip under the shared
+    draft-floor budget. At 108 columns the live remaining chip budget reaches
+    the original 9..14-character truncation branch without bypassing that floor.
     """
     app = ComposerApp()
-    async with app.run_test(size=(44, 12)) as pilot:
+    async with app.run_test(size=(108, 12)) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         composer.set_voice_status(
             STATE_LISTENING, elapsed_seconds=7, segment_transcribing=True
@@ -215,6 +224,7 @@ async def test_the_transcribing_label_truncates_from_the_right_not_the_left():
         await pilot.pause()
         chip = composer.query_one("#console-voice-status", Static)
         painted = _painted(chip)
+        assert 9 <= composer._voice_chip_last_width - len("◉ 0:07") - 3 <= 14
         assert "◉" in painted
         assert "Transcr" in painted, (
             f"expected the label's start to survive, got {painted!r}"
@@ -227,7 +237,7 @@ async def test_the_transcribing_label_truncates_from_the_right_not_the_left():
 @pytest.mark.asyncio
 async def test_preparing_and_error_states_render_their_message():
     app = ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=VOICE_COPY_SIZE) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         composer.set_voice_status(STATE_PREPARING, message="Loading model…")
         await pilot.pause()
@@ -412,7 +422,7 @@ async def test_production_css_busy_status_stays_meaningful_at_narrow_width():
 @pytest.mark.asyncio
 async def test_production_css_ordinary_voice_states_restore_normal_padding():
     app = ProductionCssComposerApp()
-    async with app.run_test(size=(80, 12)) as pilot:
+    async with app.run_test(size=VOICE_COPY_SIZE) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         chip = composer.query_one("#console-voice-status", Static)
 
@@ -464,7 +474,7 @@ async def test_the_mic_tooltips_claim_nothing_the_backend_no_longer_does():
     from textual.widgets import Button
 
     app = ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=VOICE_COPY_SIZE) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         mic = composer.query_one("#console-dictation", Button)
 
@@ -498,7 +508,7 @@ async def test_there_is_exactly_one_microphone_button():
     from textual.widgets import Button
 
     app = ComposerApp()
-    async with app.run_test():
+    async with app.run_test(size=VOICE_COPY_SIZE):
         composer = app.query_one(ConsoleComposerBar)
         mic_like = [
             button
@@ -519,7 +529,7 @@ async def test_chip_mirrors_the_shipping_dictation_states():
     asserts the voice-status chip mirrors it end to end.
     """
     app = ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=VOICE_COPY_SIZE) as pilot:
         composer = app.query_one(ConsoleComposerBar)
         chip = composer.query_one("#console-voice-status", Static)
 

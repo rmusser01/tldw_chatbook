@@ -29,6 +29,9 @@ from dataclasses import replace
 import pytest
 from textual.widgets import Input, Static
 
+from Tests.UI.console_fixture_ownership import (
+    owned_console_apps as owned_console_apps,  # noqa: PLC0414 - pytest fixture export
+)
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
@@ -1339,6 +1342,7 @@ async def test_console_ctrl_y_on_empty_redo_stack_matches_ctrl_shift_z_behavior(
         composer.load_draft("untouched")
         composer.focus()
         await pilot.pause()
+        console._session._sync_console_session_draft()
         draft_before = store.session_draft(session_id)
 
         await pilot.press("ctrl+y")

@@ -357,7 +357,8 @@ class _StockBrowserRead:
         ):
             raise RuntimeError("console_browser_retirement_source_changed")
         _RETIRE_HANDLE(
-            self.database, connection, self.local, self.registry, strict=True
+            self.database, connection, self.local, self.registry,
+            strict=True, checkpoint=False,
         )
 
     def _read_pair(

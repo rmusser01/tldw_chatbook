@@ -23,6 +23,7 @@ import tldw_chatbook.UI.Screens.settings_endpoint_probe as probe_module
 import tldw_chatbook.Widgets.Console.console_model_popover as popover_module
 from Tests.private_profile import private_profile_test
 from Tests.UI.pump_probe import console_attach_ended
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_model_switcher import (
     SwitcherHarness,
     _draft,
@@ -31,6 +32,7 @@ from Tests.UI.test_console_model_switcher import (
     line_with,
     list_lines,
 )
+from Tests.UI.test_console_provider_apply_defaults_flow import _persisted_console_app
 from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
     build_target_default_console_session_settings,
@@ -999,7 +1001,6 @@ async def test_a_refused_active_llama_cpp_reaches_the_console_status_row(
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
         _open_provider_popover,
-        _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
 
@@ -1041,7 +1042,6 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
     from Tests.UI.test_console_endpoint_discovery import _rail_text
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
-        _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
 

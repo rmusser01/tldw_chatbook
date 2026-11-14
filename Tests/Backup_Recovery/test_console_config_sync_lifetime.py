@@ -449,6 +449,7 @@ screen._current_console_attach_visit=lambda:ConsoleAttachVisit(visit_runtime,scr
 screen._console_attach_sync_complete=True
 screen._console_attach_reconciled=True
 screen._console_sync_in_progress=False;screen._console_sync_requested=False
+screen.is_attached=False
 screen._console_chat_store=None
 # The real screen's property answers None with no chat controller; the
 # sync's cadence reads it (TASK-33620.15.1).

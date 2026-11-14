@@ -1178,13 +1178,20 @@ class EvaluationOrchestrator:
 
     async def aclose(self) -> None:
         """Cancel and drain active evaluations before closing the database."""
-        tasks = list(self._active_tasks.values())
+        self._maintenance_close_admission()
+        tasks = set(self._active_tasks.values()) | set(self._maintenance_runs)
+        if asyncio.current_task() in tasks:
+            raise RuntimeError("evaluation_cannot_close_its_own_run")
         for task in tasks:
             if not task.done():
                 task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.to_thread(self._retire_write_thread)
+        connection = getattr(self.db._local, "connection", None)
+        if connection is not None and connection.in_transaction:
+            # A cancelled producer's tail is not authority to roll back a borrower.
+            raise RuntimeError("evaluation_sqlite_transaction_still_active")
         self.db.close()
 
     def close(self) -> None:
