@@ -16,7 +16,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, RadioButton
 
 from Tests.Wizards.provider_step_harness import (
     SIZE,
@@ -40,7 +40,9 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
 from tldw_chatbook.UI.Wizards.first_run_provider_check import key_check_line
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_MODEL,
+    STEP_PROTECT,
     STEP_PROVIDER,
+    STEP_SUMMARY,
     STEP_VOICE,
 )
 
@@ -112,6 +114,91 @@ async def _type_key(pilot, step, value: str) -> None:
     field.focus()
     field.value = value
     await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_small_terminal_guidance_is_fully_painted():
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        painted = " ".join(
+            strip.text.strip() for strip in wizard._compositor.render_strips()
+        )
+        assert (
+            "Small terminal (80×24) — setup works best at 100×30 or larger. "
+            "Everything still works; steps may scroll."
+        ) in painted
+
+
+@pytest.mark.asyncio
+async def test_connected_provider_with_one_model_explains_skipping(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    wizard, _calls = _wizard(monkeypatch, lambda _: _listed("llama_cpp", "local-model"))
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _, provider = current_step(wizard)
+        provider._probe = AsyncMock(
+            return_value=SettingsEndpointProbeOutcome(
+                state="reachable", summary="reachable", model_ids=("local-model",)
+            )
+        )
+        await pick_provider(pilot, provider, "llama_cpp")
+        provider.query_one(
+            "#setup-provider-endpoint", Input
+        ).value = "http://127.0.0.1:9099"
+        await pilot.pause()
+        wizard.query_one("#setup-provider-test", Button).press()
+        await wait_until(
+            pilot, lambda: "returned 1 model" in static_text(provider, _STATUS)
+        )
+
+        wizard.query_one("#wizard-next", Button).press()
+        await wait_for_step(pilot, wizard, STEP_MODEL)
+        await wait_until(pilot, lambda: bool(wizard.query("#setup-model-option-0")))
+        option = wizard.query_one("#setup-model-option-0", RadioButton)
+        assert str(option.label).startswith("local-model") and not option.value
+        painted = " ".join(
+            strip.text.replace("│", " ") for strip in wizard._compositor.render_strips()
+        )
+
+        for step_id in (STEP_VOICE, STEP_PROTECT, STEP_SUMMARY):
+            wizard.query_one("#wizard-next", Button).press()
+            await wait_for_step(pilot, wizard, step_id)
+        await wait_until(
+            pilot, lambda: "Default model" in static_text(wizard, "#setup-summary-rows")
+        )
+        rows = static_text(wizard, "#setup-summary-rows")
+        assert (
+            "Next without a model leaves this setup unsaved."
+            in " ".join(painted.split()),
+            "Provider — llama.cpp setup is not saved yet" in rows,
+            "Default model — not selected" in rows,
+        ) == (True, True, True)
+        assert (
+            str(wizard.query_one("#setup-exit-chat", Button).label)
+            == "Review provider setup"
+        )
+
+        for step_id in (STEP_PROTECT, STEP_VOICE, STEP_MODEL):
+            wizard.query_one("#wizard-back", Button).press()
+            await wait_for_step(pilot, wizard, step_id)
+        wizard.query_one("#setup-model-option-0", RadioButton).value = True
+        await pilot.pause()
+        for step_id in (STEP_VOICE, STEP_PROTECT, STEP_SUMMARY):
+            wizard.query_one("#wizard-next", Button).press()
+            await wait_for_step(pilot, wizard, step_id)
+        start_chat = wizard.query_one("#setup-exit-chat", Button)
+        await wait_until(pilot, lambda: str(start_chat.label) == "Start chatting")
+        assert "Default model — local-model" in static_text(
+            wizard, "#setup-summary-rows"
+        )
 
 
 @pytest.mark.asyncio

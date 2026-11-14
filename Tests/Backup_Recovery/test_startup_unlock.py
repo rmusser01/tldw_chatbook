@@ -714,3 +714,38 @@ async def test_recovery_host_explains_unlock_problems_without_backup_restore(rea
         await pilot.click("#minimal-recovery-open")
         await pilot.pause()
         assert isinstance(app.screen, BackupRestoreScreen)
+
+
+async def test_shared_config_parent_refusal_shows_private_path_guidance(monkeypatch):
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery import bootstrap, launcher, storage_admission
+    from tldw_chatbook.Utils.private_paths import (
+        PrivatePathError,
+        PrivatePathResult,
+        PrivatePathStatus,
+    )
+
+    monkeypatch.setattr(bootstrap, "startup_permission", lambda *args: (True, None))
+
+    def refuse_config(_owner, path, *, max_bytes):
+        raise PrivatePathError(
+            PrivatePathResult(
+                path, PrivatePathStatus.UNSAFE_PARENT, "shared_writable_parent"
+            )
+        )
+
+    monkeypatch.setattr(storage_admission, "_read_recovery_file", refuse_config)
+    reason, password = launcher.startup_preflight()
+    assert reason == "configuration_shared_writable_parent"
+    assert password is None
+
+    app = launcher.recovery_app(reason)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        text = str(app.query_one("#minimal-recovery-reason", Static).render())
+        assert "shared write access" in text
+        assert "private folder" in text
+        assert "TLDW_CONFIG_PATH" in text
+        assert not app.query("#minimal-recovery-open")
+        assert app.query_one("#minimal-recovery-exit").has_focus

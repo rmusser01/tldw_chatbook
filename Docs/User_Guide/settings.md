@@ -271,9 +271,9 @@ details. **Where changes happen** explains which destination owns each change.
 
 | Button | What it does |
 |---|---|
-| **Switch Source / Server** | Opens "Switch Runtime Source": a **Server URL** box, a masked **API token** box, and **Test Connection**, **Use Local**, **Activate Server**, **Cancel**. Activating validates the URL, saves it, rebinds the app, and prepares the sync profile for this device; failures leave the previous source active and say so. |
-| **Preview manual sync** | Lists pending Notes/Chat changes without sending anything. Needs an active server profile ("Manual Sync requires an active server profile."). |
-| **Run manual sync** | Applies the previewed changes to the server — only when you press it. |
+| **Switch Source / Server** | Opens **Switch Runtime Source** with the server URL, masked API token, and connection and activation controls. **Set up manual sync (server can read synced data)** starts unchecked. Check it in the Default workspace to enroll with a compatible server when you choose **Activate Server**. Setup sends no Notes or Chat content. |
+| **Preview manual sync** | Shows the local enrollment and pending outgoing changes. It requires an active server and an enrolled sync profile. |
+| **Run manual sync** | Applies changes after confirmation on supported profiles. Profiles enrolled through this dialog support Preview. Compatible servers also offer **Prepare Notes organization** for enrollment and adoption review. |
 
 ### Core — Providers & Models
 

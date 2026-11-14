@@ -1,0 +1,10 @@
+Patched Chatbook Library RAG Answer with live DeepSeek and the saved retrieval result from the original semantic walkthrough.
+Query: What colored lights were used during the practice run?
+Source: juniper-source
+Recorded vector score: 0.4168137311935425
+Provider and model: deepseek / deepseek-v4-flash
+Answer status: ready
+Citation status: validated
+Answer: The evidence describes the rehearsal (the practice run) as using blue lanterns [S1].
+Error:
+Credential present in saved TOML: False

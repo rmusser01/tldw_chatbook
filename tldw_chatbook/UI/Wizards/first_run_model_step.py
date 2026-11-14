@@ -186,7 +186,7 @@ class ModelStep(SetupStep):
     def compose_step(self) -> ComposeResult:
         with Vertical(classes="setup-model"):
             yield Static("Pick a default model", classes="setup-title")
-            yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
+            yield from model_discovery.model_subtitles()
             with SetupRadioSet(
                 id="setup-model-choice", classes="setup-choice-list -status"
             ):

@@ -1,0 +1,42 @@
+                                                                                                  ╭─────────────╮
+ ‹    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 R  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+  Plugins — installation and marketplaces
+ Mode: Overview | Runtime controls are in Tools & MCP and ACP
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────┐  │  ┌────────────────────┐
+│                              │  │  │                                                              │  │  │                    │
+│  Filter categories (/)       │  │  │  State: Read-only | Review readiness across Settings         │  │  │  Scope Inspector   │
+│  No filter | / focus         │  │  │  categories.                                                 │  │  │                    │
+│  category search             │  │  │ │ │  Preview pending Notes/Chat changes before anything │ │  │  │  │ Selected category: │
+│                              │  │  │ │ │  is sent to a server.                               │ │  │  │  │ Overview           │
+│  Core                        │  │  │ │ │   Manual sync status: blocked                       │ │  │  │  │ No unsaved changes │
+│    > Overview (view)         │  │  │ │ │   Manual sync preview: No Sync v2 server profile    │ │  │  │  │  Guided edits:     │
+│      Providers & Models      │  │  │ │ │   is configured.                                    │ │  │  │  │  choose Providers  │
+│      Web Search              │  │  │ │ │   Pending outgoing: none                            │ │  │  │  │  or Console.       │
+│      Speech & TTS            │  │  │ │ │                                                     │ │  │  │  │  Open Theme picker │
+│  Interface                   │  │  │ │ │                                                     │ │  │  │  │ Saves apply to     │
+│      Appearance              │  │  │ │ │                                                     │ │  │  │  │ your local config  │
+│      Theme                   │  │  │ │ │                                                     │ │  │  │  │ file. Nothing is   │
+│      Splash Screen           │  │  │ │ │                                                     │ │  │  │  │ sent to a server   │
+│      Console Behavior        │  │  │ │ │                                                     │ │▅ │  │  │ unless you run     │
+│  Data & Privacy              │  │  │ │ │                                                     │ │  │  │  │ Manual sync        │
+│      Storage                 │  │  │ │ │                                                     │ │  │  │  │ yourself.          │
+│      Workspaces              │  │  │ │ │   Sync safety: Collections: dry-run only;           │ │  │  │  │ Impact and         │
+│      Tool Profiles           │  │  │ │ │   Workspaces: dry-run only                          │ │  │  │  │ boundaries         │
+│      Tools & MCP             │  │  │ │ │   Sync recovery: Review dry-run results before      │ │  │  │  │ Readiness,         │
+│      Privacy & Security      │  │  │ │ │   enabling writes.                                  │ │  │  │  │ storage, privacy,  │
+│      Network                 │  │  │ │ │   Workspace default: Default (workspace-default);   │ │  │  │  │ Console behavior,▄ │
+│      My Profile            ▅ │  │  │ │ │   authority local-only; sync not-configured         │ │  │  │  │ diagnostics.       │
+│  Troubleshooting             │  │  │ │ │   Library visibility: Browse/search: all Library    │ │  │  │  │  Runtime owner:    │
+│      Diagnostics (view)      │  │  │ │ │   and Notes items remain visible.                   │ │  │  │  │  owning            │
+│      About (view)            │  │  │ │ │                                                     │ │  │  │  │  destinations      │
+│      Agents                  │  │  │ │ │                                                     │ │  │  │  │  Writes allowed:   │
+│  Expert                      │  │  │ │ │                                                     │ │  │  │  │  No                │
+│      Hooks                   │  │  │ │ │                                                     │ │  │  │  │  Owns: global      │
+│      Internal Prompts        │  │  │ │ │   Switch Source / Server                            │ │  │  │  │  defaults          │
+│      Advanced Config         │  │  │ └─────────────────────────────────────────────────────────┘▅ │  │  │ ▼ more — scroll    │
+│                              │  │  │                                                              │  │  │                    │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────┘  │  └────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,11 @@
+Patched Chatbook Library Search / RAG walkthrough
+Query: What colored lights were used during the practice run?
+Mode: rag
+Retrieval: ready
+Juniper media result: True
+Juniper vector score: 0.4168134927749634
+Answer status: ready
+Citation status: validated
+Answer: The rehearsal uses blue lanterns [S1], so the practice run used blue lights.
+Error:
+Credential present in saved TOML: False

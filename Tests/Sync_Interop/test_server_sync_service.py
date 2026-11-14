@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -1013,6 +1013,308 @@ async def test_server_sync_service_runs_sync_v2_no_content_dry_run_and_persists_
     assert [
         call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
     ] == ["sync.v2.dry_run.server"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "encryption, policies, available",
+    [
+        ({"policy": "server_trusted_v1", "ready": True}, ["server_trusted_v1"], True),
+        ({"policy": "server_trusted_v1", "ready": False}, ["server_trusted_v1"], False),
+        ({"policy": "client_private_v1", "ready": True}, ["client_private_v1"], False),
+    ],
+)
+async def test_settings_enrollment_checks_policy_without_transferring_content(
+    tmp_path, encryption, policies, available
+):
+    client = FakeSyncClient(
+        capabilities_response={
+            "domains": ["notes.note", "chat.conversation"],
+            "encryption": encryption,
+            "encryption_policies": policies,
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-default",
+    }
+
+    if available:
+        await service.run_v2_dry_run(
+            **scope,
+            display_name="Laptop",
+            domains=["notes.note", "chat.conversation"],
+            encryption_policy="server_trusted_v1",
+            enrollment_only=True,
+        )
+        profile = repo.get_sync_v2_profile_state(**scope)
+        assert profile["dataset_id"] == "dataset-1"
+        assert profile["dry_run_metadata"]["encryption_policy"] == "server_trusted_v1"
+        (enroll,) = [
+            call[1] for call in client.calls if call[0] == "enroll_sync_v2_dataset"
+        ]
+        assert enroll["encryption_policy"] == "server_trusted_v1"
+        assert enroll["workspace_id"] is None
+        assert not any(
+            call[0] in {"pull_sync_v2_envelopes", "push_sync_v2_envelopes"}
+            for call in client.calls
+        )
+    else:
+        with pytest.raises(ValueError, match="server-trusted encryption"):
+            await service.run_v2_dry_run(
+                **scope,
+                display_name="Laptop",
+                encryption_policy="server_trusted_v1",
+                enrollment_only=True,
+            )
+        assert client.calls == [("get_sync_v2_capabilities",)]
+        assert repo.get_sync_v2_profile_state(**scope) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_scope", [False, True])
+async def test_settings_enrollment_preserves_existing_dataset_trust(
+    tmp_path, legacy_scope
+):
+    client = FakeSyncClient(
+        capabilities_response={
+            "domains": ["notes.note"],
+            "encryption": {"policy": "server_trusted_v1", "ready": True},
+            "encryption_policies": ["server_trusted_v1"],
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-default",
+    }
+    existing_scope = (
+        {**scope, "authenticated_principal_id": None, "workspace_scope": None}
+        if legacy_scope
+        else scope
+    )
+    previous = repo.set_sync_v2_profile_state(
+        **existing_scope,
+        profile_mode="local_first_sync",
+        device_id="old-device",
+        dataset_id="private-dataset",
+        dry_run_metadata={"encryption_policy": "client_private_v1"},
+    )
+
+    with pytest.raises(ValueError, match="existing Sync v2 dataset"):
+        await service.run_v2_dry_run(
+            **scope,
+            display_name="Laptop",
+            encryption_policy="server_trusted_v1",
+            enrollment_only=True,
+        )
+
+    assert not any(
+        call[0] in {"register_sync_v2_device", "enroll_sync_v2_dataset"}
+        for call in client.calls
+    )
+    assert repo.get_sync_v2_profile_state(**existing_scope) == previous
+
+
+@pytest.mark.asyncio
+async def test_settings_enrollment_retry_reuses_the_registered_device(tmp_path):
+    client = FakeSyncClient(
+        capabilities_response={
+            "domains": ["notes.note"],
+            "encryption": {"policy": "server_trusted_v1", "ready": True},
+            "encryption_policies": ["server_trusted_v1"],
+        }
+    )
+    enroll = client.enroll_sync_v2_dataset
+    client.enroll_sync_v2_dataset = AsyncMock(side_effect=OSError("temporary outage"))
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-default",
+    }
+    options = {
+        **scope,
+        "display_name": "Laptop",
+        "encryption_policy": "server_trusted_v1",
+        "enrollment_only": True,
+    }
+    service = ServerSyncService(client=client, state_repository=repo)
+    with pytest.raises(OSError, match="temporary outage"):
+        await service.run_v2_dry_run(**options)
+
+    pending = repo.get_sync_v2_profile_state(**scope)
+    assert pending["device_id"]
+    assert pending["dataset_id"] is None
+    assert pending["dry_run_metadata"] == {}
+
+    client.enroll_sync_v2_dataset = enroll
+    result = await ServerSyncService(client=client, state_repository=repo).run_v2_dry_run(
+        **options
+    )
+    registered = [
+        call[1]["device_id"]
+        for call in client.calls
+        if call[0] == "register_sync_v2_device"
+    ]
+    assert registered == [pending["device_id"], pending["device_id"]]
+    assert result["device_id"] == pending["device_id"]
+    assert repo.get_sync_v2_profile_state(**scope)["dataset_id"] == result["dataset_id"]
+
+
+@pytest.mark.asyncio
+async def test_late_enrollment_response_preserves_completed_profile(tmp_path):
+    client = FakeSyncClient(
+        capabilities_response={
+            "domains": ["notes.note"],
+            "encryption": {"policy": "server_trusted_v1", "ready": True},
+            "encryption_policies": ["server_trusted_v1"],
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-default",
+    }
+    enroll = client.enroll_sync_v2_dataset
+
+    async def complete_elsewhere(request):
+        response = await enroll(request)
+        repo.set_sync_v2_profile_state(
+            **scope,
+            profile_mode="local_first_sync",
+            device_id=request.device_id,
+            dataset_id=response["dataset_id"],
+            dataset_cursors={"notes.note": "19"},
+            dry_run_metadata={
+                "enrollment_only": True,
+                "encryption_policy": "server_trusted_v1",
+                "notes_organization_bootstrap_identity": "started",
+            },
+        )
+        return response
+
+    client.enroll_sync_v2_dataset = complete_elsewhere
+    result = await ServerSyncService(client=client, state_repository=repo).run_v2_dry_run(
+        **scope,
+        display_name="Laptop",
+        encryption_policy="server_trusted_v1",
+        enrollment_only=True,
+    )
+    profile = repo.get_sync_v2_profile_state(**scope)
+    assert profile["dataset_id"] == result["dataset_id"]
+    assert profile["dataset_cursors"] == {"notes.note": "19"}
+    assert profile["dry_run_metadata"]["notes_organization_bootstrap_identity"] == "started"
+
+
+@pytest.mark.asyncio
+async def test_reactivating_approved_enrollment_refreshes_capabilities_without_reenrollment(
+    tmp_path,
+):
+    caps = {
+        "domains": ["notes.note"],
+        "encryption": {"policy": "server_trusted_v1", "ready": True},
+        "encryption_policies": ["server_trusted_v1"],
+    }
+    client = FakeSyncClient(capabilities_response={**caps, "max_batch_size": 10})
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-default",
+    }
+    approval = {
+        **scope,
+        "display_name": "Laptop",
+        "encryption_policy": "server_trusted_v1",
+        "enrollment_only": True,
+    }
+    original = await service.run_v2_dry_run(**approval)
+    enrolled = repo.get_sync_v2_profile_state(**scope)
+    profile = repo.set_sync_v2_profile_state(
+        **scope,
+        profile_mode=enrolled["profile_mode"],
+        device_id=enrolled["device_id"],
+        dataset_id=enrolled["dataset_id"],
+        dataset_cursors={"sync_v2": "cursor-17"},
+        capabilities=enrolled["capabilities"],
+        dry_run_metadata=enrolled["dry_run_metadata"],
+        last_error="last sync failed",
+    )
+    client.calls.clear()
+    client.capabilities_response = {**caps, "max_batch_size": 50}
+
+    assert await service.run_v2_dry_run(**approval) == original
+
+    refreshed = repo.get_sync_v2_profile_state(**scope)
+    assert refreshed.pop("capabilities")["max_batch_size"] == 50
+    assert profile.pop("capabilities")["max_batch_size"] == 10
+    assert refreshed == profile
+    assert client.calls == [("get_sync_v2_capabilities",)]
+
+
+@pytest.mark.asyncio
+async def test_settings_enrollment_retains_verified_notes_organization_profile(tmp_path):
+    domains = ["notes.note", "chat.conversation", *NOTES_ORGANIZATION_DOMAINS]
+    caps = {
+        "domains": domains,
+        "supported_adapter_versions": {domain: [1] for domain in domains},
+        "encryption": {"policy": "server_trusted_v1", "ready": True},
+        "encryption_policies": ["server_trusted_v1"],
+    }
+    client = FakeSyncClient(capabilities_response=caps)
+    client.get_sync_v2_profile = AsyncMock(
+        return_value={
+            "capabilities": caps,
+            "device": {"registered": True, "device_id": "device-1"},
+            "dataset": {
+                "dataset_id": "dataset-1",
+                "domains": domains,
+                "encryption_policy": "server_trusted_v1",
+                "notes_organization": {"state": "ready"},
+            },
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-default",
+    }
+    previous = repo.set_sync_v2_profile_state(
+        **scope,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dry_run_metadata={"notes_organization_bootstrap_identity": "bootstrap-1"},
+        capabilities=caps,
+    )
+
+    result = await service.run_v2_dry_run(
+        **scope,
+        display_name="Laptop",
+        encryption_policy="server_trusted_v1",
+        enrollment_only=True,
+    )
+
+    assert result["dataset_id"] == "dataset-1"
+    assert repo.get_sync_v2_profile_state(**scope) == {
+        **previous,
+        "dry_run_metadata": {
+            **previous["dry_run_metadata"],
+            "encryption_policy": "server_trusted_v1",
+        },
+    }
+    assert client.calls == [("get_sync_v2_capabilities",)]
+    client.get_sync_v2_profile.assert_awaited_once_with(device_id="device-1")
 
 
 @pytest.mark.asyncio

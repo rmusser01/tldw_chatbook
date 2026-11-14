@@ -66,6 +66,11 @@ later, use Settings ▸ Providers & Models ▸ Advanced ▸ Saved model list: af
 server listed nothing and the step offers the provider's saved model list
 instead, the line names only the provider.
 
+Select a model from the list or enter its name, even when setup recommends a
+single model. Pressing **Next →** without a model leaves the new provider
+setup unsaved. **Summary** identifies the missing default model and the
+pending provider setup.
+
 When the Model step has no models to list, the list box shows one line of
 plain text instead:
 
@@ -223,6 +228,10 @@ act, "test again" appears only while **Test connection** can run, and
 status it got; a local server started with an API key that answers a keyless
 test says it needs one. A refusal that names the endpoint field goes away as
 soon as you edit that field.
+
+If startup reports that a configuration folder allows shared write access,
+set `TLDW_CONFIG_PATH` to a `config.toml` in a private folder under your user
+profile, then exit and launch Chatbook again.
 
 ## Keyboard
 

@@ -2033,6 +2033,129 @@ class SyncStateRepository(BaseDB):
             raise RuntimeError("failed to persist Sync v2 profile state")
         return state
 
+    def reserve_sync_v2_enrollment_device(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        profile_mode: str,
+        proposed_device_id: str,
+    ) -> str | None:
+        """Keep one device ID across enrollment attempts without creating a dataset."""
+        if profile_mode not in _SYNC_V2_PROFILE_MODES:
+            raise ValueError("Invalid Sync v2 profile mode")
+        with self.transaction() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO sync_profile_state (
+                    source_authority, server_profile_id, authenticated_principal_id,
+                    workspace_scope, profile_mode, device_id, updated_at
+                )
+                VALUES ('server', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (
+                    source_authority, server_profile_id, authenticated_principal_id,
+                    workspace_scope
+                )
+                DO UPDATE SET device_id = COALESCE(sync_profile_state.device_id, excluded.device_id)
+                WHERE sync_profile_state.dataset_id IS NULL
+                RETURNING device_id
+                """,
+                (
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    profile_mode,
+                    proposed_device_id,
+                    _utc_now(),
+                ),
+            ).fetchone()
+            conn.commit()
+        return row["device_id"] if row is not None else None
+
+    def finish_sync_v2_enrollment(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        profile_mode: str,
+        device_id: str,
+        dataset_id: str,
+        capabilities: Mapping[str, Any],
+        dry_run_metadata: Mapping[str, Any],
+    ) -> bool:
+        """Record enrollment only while the reserved device has no dataset."""
+        with self.transaction() as conn:
+            updated = conn.execute(
+                """
+                UPDATE sync_profile_state
+                SET profile_mode = ?, dataset_id = ?, capabilities = ?,
+                    dry_run_metadata = json_patch(dry_run_metadata, ?), updated_at = ?
+                WHERE source_authority = 'server'
+                  AND server_profile_id = ?
+                  AND authenticated_principal_id = ?
+                  AND workspace_scope = ?
+                  AND device_id = ?
+                  AND dataset_id IS NULL
+                """,
+                (
+                    profile_mode,
+                    dataset_id,
+                    _json_dumps(dict(capabilities)),
+                    _json_dumps(dict(dry_run_metadata)),
+                    _utc_now(),
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    device_id,
+                ),
+            ).rowcount
+            conn.commit()
+        return updated == 1
+
+    def refresh_sync_v2_profile_capabilities(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        device_id: str,
+        dataset_id: str,
+        capabilities: Mapping[str, Any],
+        verified_encryption_policy: str | None = None,
+    ) -> bool:
+        """Refresh capabilities and fill missing verified trust on the same dataset."""
+        with self.transaction() as conn:
+            updated = conn.execute(
+                """
+                UPDATE sync_profile_state
+                SET capabilities = ?,
+                    dry_run_metadata = CASE
+                        WHEN ? IS NULL THEN dry_run_metadata
+                        ELSE json_insert(dry_run_metadata, '$.encryption_policy', ?)
+                    END
+                WHERE source_authority = 'server'
+                  AND server_profile_id = ?
+                  AND authenticated_principal_id = ?
+                  AND workspace_scope = ?
+                  AND device_id = ?
+                  AND dataset_id = ?
+                """,
+                (
+                    _json_dumps(dict(capabilities)),
+                    verified_encryption_policy,
+                    verified_encryption_policy,
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    device_id,
+                    dataset_id,
+                ),
+            ).rowcount
+            conn.commit()
+        return updated == 1
+
     def get_sync_v2_profile_state(
         self,
         *,
