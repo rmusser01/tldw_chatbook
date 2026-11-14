@@ -12,6 +12,7 @@ from dataclasses import replace
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.geometry import Size
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -153,6 +154,37 @@ async def test_long_session_swap_batches_row_mounts_and_removals(
         recovery = transcript.query_one("#console-archive-recovery")
         assert list(transcript.children)[: len(rows) + 1] == [*rows, recovery]
         assert not moved_rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_non_scrolling_rows_record_native_sizes_without_relayout(monkeypatch):
+    app = WindowHarness()
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_messages(4))
+        await transcript.refresh_messages()
+        await pilot.pause()
+        row = transcript.query_one("#console-message-m0")
+        expected_size = Size(40, 4)
+        requests = []
+        original = row.refresh
+
+        def record_refresh(*args, **kwargs):
+            requests.append(kwargs)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(row, "refresh", record_refresh)
+        assert row._size_updated(expected_size, expected_size, expected_size)
+        assert row.virtual_size == expected_size
+        assert not any(request.get("layout") for request in requests)
+
+        row.styles.overflow_y = "auto"
+        requests.clear()
+        next_size = Size(41, 5)
+        assert row._size_updated(next_size, next_size, next_size)
+        assert row.virtual_size == next_size
+        assert any(request.get("layout") for request in requests)
 
 
 @pytest.mark.asyncio

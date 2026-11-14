@@ -659,10 +659,12 @@ async def test_link_policy_http_opens_browser_other_schemes_do_not(monkeypatch):
         markdown = row.query_one(Markdown)
 
         row._open_link(Markdown.LinkClicked(markdown, "https://example.com"))
+        await app.workers.wait_for_complete()
         assert opened == ["https://example.com"]
 
         row._open_link(Markdown.LinkClicked(markdown, "file:///etc/passwd"))
         row._open_link(Markdown.LinkClicked(markdown, "javascript:alert(1)"))
+        await app.workers.wait_for_complete()
         assert opened == ["https://example.com"]  # nothing else opened
 
 
