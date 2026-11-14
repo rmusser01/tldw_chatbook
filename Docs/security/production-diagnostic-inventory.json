@@ -1730,8 +1730,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 6,
-      "diagnostic_digest": "e43355a220e62d5f778f",
+      "call_count": 7,
+      "diagnostic_digest": "8078029252f1273bbfd2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Library/library_local_rag_search_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
