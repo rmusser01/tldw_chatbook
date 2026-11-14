@@ -452,8 +452,10 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 console, "_sync_console_rail_and_controls", counting_project
             )
 
-            async def settled_sync() -> None:
+            async def settled_sync(*, elapsed: float = 0.0) -> None:
                 await until(sync_settled, timeout=30)
+                # Background syncs must settle before the measured interval starts.
+                clock.now += elapsed
                 await console._sync_native_console_chat_ui()
 
             async def tick() -> None:
@@ -483,12 +485,10 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
 
                 # Freshness: a request with no projection for a poll interval
                 # projects at once, and so does one left waiting that long.
-                clock.now += config_sync.RUN_COALESCE_SECONDS
-                await settled_sync()
+                await settled_sync(elapsed=config_sync.RUN_COALESCE_SECONDS)
                 assert len(calls) == before + 2
                 await settled_sync()  # Within the interval again: it waits...
                 assert len(calls) == before + 2
-                clock.now += config_sync.RUN_COALESCE_SECONDS
                 real_transcript = console._sync_native_console_transcript
                 late_requests: list[tuple[int, int]] = []
 
@@ -510,7 +510,7 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                         "_sync_native_console_transcript",
                         transcript_with_late_request,
                     )
-                    await settled_sync()  # ...a poll interval at most.
+                    await settled_sync(elapsed=config_sync.RUN_COALESCE_SECONDS)
                 assert late_requests and late_requests[-1][1] > late_requests[-1][0]
                 assert len(calls) == before + 3
                 # FULL can receive newer requests after its synchronous projection.

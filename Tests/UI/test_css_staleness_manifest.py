@@ -162,6 +162,7 @@ def test_gained_bundled_css_declaration_is_stale(css_tree: Path) -> None:
     carrier = css_tree / "Widgets" / "demo_widget.py"
     carrier.parent.mkdir()
     carrier.write_text("class Demo:\n    BUNDLED_CSS = 'Demo { color: red; }'\n")
+    _bump_mtime(carrier)  # The new carrier must postdate the recorded build.
 
     stale, reason = _generated_css_is_stale(css_tree)
     assert stale

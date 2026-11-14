@@ -25503,3 +25503,33 @@ initial target; it does not prove ownership throughout all mouse events. Keep
 click exceptions and deletion assertions intact. The corrected three-case module
 passes under the delayed real read; a stuck read still fails the existing10s
 wait. Logs /tmp/tldw-ci-notes-delete-{trash-red,trash-green,module-green,negative}.log.
+
+
+## Start a measured cadence interval after background settlement (TASK-40908)
+
+**Incident, 2026-11-14.** PR3529 run43557511010 UI9 counted two
+projections instead of three. The test counted only its own task, but advanced
+the shared simulated clock before awaiting background settlement. A real FULL
+at that boundary served the newly expired interval before the measured owner.
+Inserting that actual background FULL reproduced the identical count failure;
+advancing the clock after the existing settled predicate made the control pass.
+
+Start the measured interval immediately before the measured operation, after
+background work has settled. Keep the background work, real overlapping request
+and all success/count assertions. Both affected modules passed35 cases; breaking
+coalescing or freshness still failed the unchanged oracles. A separate initial
+local failure at an earlier render-success assertion was not the CI count
+reproduction and is not claimed to be explained by this boundary correction.
+
+
+## A new CSS carrier also needs explicit timestamp ordering (TASK-40938)
+
+**Incident, 2026-11-14.** The same run's UI24 passed the previously repaired
+source/hash ordering cases but failed discovery of a new bundled-CSS carrier.
+The runtime scans unmanifested carriers newer than the recorded build; fixture
+creation could share the recorded input's filesystem tick. Assigning the same
+whole-second timestamps to actual writes reproduced the false stale verdict.
+Reusing the existing mtime helper after the carrier write made all19 module
+cases pass under that control. Disabling the actual declaration regex still
+failed the original stale assertion. Establish this fixture precondition
+explicitly; do not claim it changes the existing equal/backdated-carrier policy.
