@@ -24108,6 +24108,8 @@ regression verifies old revision 1 is discarded and revision 2 renders; its boun
 wait still refuses closed/disposed owners. Keep the real modal-open and unsaved-edit
 assertions, rather than retrying the action or weakening its ownership checks.
 
+**PR #3529, TASK-40848 (2026-11-14).** The same boundary recurred in the endpoint fixture: UI27 queried a model-change button on ChatScreen because the first real settings open had refused. Delaying only the real revision-zero config refresh reproduced that exact NoMatches; its receipt showed captured revision 0/current revision 1 and preparation returning false. Reusing the existing control-bar helper after the direct endpoint edit, and asserting both real opens, passed all five shared-fixture journeys under a deterministic hold that recorded the same 0-to-1 overlap in every case. The helper retains its existing 15-second bound; do not replace this with action retries or a generic worker drain.
+
 ## Exercise body-free tool projections through actual paging
 
 **TASK-35582 Task5, 2026-10-23.** Real review children reading an unchanged nested
