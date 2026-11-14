@@ -795,21 +795,20 @@ def get_character_page_for_ui(
 
     Returns:
         A list of ``{id, name, description, last_modified, created_at, tags}``
-        dicts, skipping any record without an id. An empty list on read
-        failure -- the library degrades to its empty state rather than raising
-        into the render path.
+        dicts, skipping any record without an id.
+
+    Raises:
+        CharactersRAGDBError: The read failed. Dev answered ``[]`` here, so a
+            database fault showed as an empty library (TASK-38228, fixed);
+            the caller shows its failure row with Retry instead.
     """
-    try:
-        rows = db.list_character_cards_page(
-            limit=limit,
-            offset=offset,
-            order_by=order_by,
-            search_term=search_term,
-            tag=tag,
-        )
-    except Exception as exc:
-        logger.opt(exception=True).error(f"Character page fetch failed: {exc}")
-        return []
+    rows = db.list_character_cards_page(
+        limit=limit,
+        offset=offset,
+        order_by=order_by,
+        search_term=search_term,
+        tag=tag,
+    )
     return [
         {
             "id": c.get("id"),
@@ -829,21 +828,22 @@ def get_character_page_for_ui(
 def count_character_page(
     db: CharactersRAGDB, *, search_term: Optional[str] = None, tag: Optional[str] = None
 ) -> int:
-    """Count of characters matching the same search+tag filter as `get_character_page_for_ui`."""
-    try:
-        return db.count_character_cards(search_term=search_term, tag=tag)
-    except Exception as exc:
-        logger.opt(exception=True).error(f"Character count failed: {exc}")
-        return 0
+    """Count of characters matching the same search+tag filter as `get_character_page_for_ui`.
+
+    Raises:
+        CharactersRAGDBError: The count failed (dev answered 0; TASK-38228).
+    """
+    return db.count_character_cards(search_term=search_term, tag=tag)
 
 
 def list_character_tags(db: CharactersRAGDB) -> List[str]:
-    """Distinct tag values across non-deleted characters, for UI tag-filter pickers."""
-    try:
-        return db.list_distinct_character_tags()
-    except Exception as exc:
-        logger.opt(exception=True).error(f"Character tag list failed: {exc}")
-        return []
+    """Distinct tag values across non-deleted characters, for UI tag-filter pickers.
+
+    Raises:
+        CharactersRAGDBError: The read failed (dev answered ``[]``, an empty
+            picker; TASK-38228). The tag picker's caller reports it.
+    """
+    return db.list_distinct_character_tags()
 
 
 def fetch_character_names(

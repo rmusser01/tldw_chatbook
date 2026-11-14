@@ -710,14 +710,17 @@ def items_border_title(
     enabled: int | None = None,
     total_known: bool = True,
     failed: bool = False,
+    matched_known: bool = True,
 ) -> str:
     """The items pane's top-border title (spec 1.5.1, 1.4.2).
 
     ``Characters 28``; ``Characters 3 of 28`` while a search or tag narrows the
     list; ``Characters 20 of 348 · tag fantasy``; ``Characters (…)`` before the
-    first count; ``Characters 100+`` while a server total is unknown;
-    ``Characters (?)`` when the list failed; books add ``· N on``. Plain text:
-    the pane paints it as literal ``Content`` (the tag is untrusted).
+    first count; ``Characters 100+`` while a server total is unknown (and
+    ``Characters 100+ of 340`` for a server search page full with no total,
+    TASK-33910.37); ``Characters (?)`` when the list failed; books add
+    ``· N on``. Plain text: the pane paints it as literal ``Content`` (the tag
+    is untrusted).
     """
     word = ITEM_KINDS.get(kind, ("item", "items", "Items"))[2]
     separator = f" {resolve_glyph(_SEPARATOR)} "
@@ -726,7 +729,10 @@ def items_border_title(
     if total is None:
         return f"{word} ({resolve_glyph(_ELLIPSIS)})"
     count = f"{total}{'' if total_known else '+'}"
-    text = f"{word} {matched} of {count}" if matched is not None else f"{word} {count}"
+    if matched is not None:
+        text = f"{word} {matched}{'' if matched_known else '+'} of {count}"
+    else:
+        text = f"{word} {count}"
     if tag:
         text += f"{separator}tag {_one_line(tag)}"
     if enabled is not None:

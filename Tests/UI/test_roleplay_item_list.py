@@ -381,6 +381,17 @@ def test_a_book_with_a_count_that_is_not_a_number_still_lists(builder):
             "Characters 20 of 348 · tag fantasy",
         ),
         ({"kind": "character", "total": 100, "total_known": False}, "Characters 100+"),
+        # TASK-33910.37 (owner decision 2026-11-05): a server search over a
+        # last unfiltered page that was full with no total; and a search page
+        # that was full with no total of its own (new with this PR).
+        (
+            {"kind": "character", "total": 100, "total_known": False, "matched": 12},
+            "Characters 12 of 100+",
+        ),
+        (
+            {"kind": "character", "total": 340, "matched": 100, "matched_known": False},
+            "Characters 100+ of 340",
+        ),
         ({"kind": "character", "total": 0, "failed": True}, "Characters (?)"),
         ({"kind": "persona", "total": 114}, "Personas 114"),
         ({"kind": "lore", "total": 3, "enabled": 2}, "Lore books 3 · 2 on"),
