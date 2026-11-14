@@ -7358,23 +7358,24 @@ class ConsoleWorkspaceController:
                     and registry is getattr(self.app_instance, "workspace_registry_service", None)
                     and database is getattr(registry, "db", None)
                 ):
-                    self._workspace_files_availability_by_id = MappingProxyType(
-                        {
-                            workspace_id: bool(
-                                availability_snapshot.get(workspace_id, False)
-                            )
-                            for workspace_id in workspace_ids
-                        }
+                    availability = {
+                        workspace_id: bool(availability_snapshot.get(workspace_id, False))
+                        for workspace_id in workspace_ids
+                    }
+                    bindings = {
+                        workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
+                        for workspace_id in workspace_ids
+                    }
+                    changed = (
+                        availability != self._workspace_files_availability_by_id
+                        or bindings != self._workspace_files_runtime_bindings_by_id
                     )
-                    self._workspace_files_runtime_bindings_by_id = MappingProxyType(
-                        {
-                            workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
-                            for workspace_id in workspace_ids
-                        }
-                    )
+                    self._workspace_files_availability_by_id = MappingProxyType(availability)
+                    self._workspace_files_runtime_bindings_by_id = MappingProxyType(bindings)
                     self._workspace_files_availability_cached_at = time.monotonic()
                     self._workspace_files_availability_refresh_in_flight = False
-                    self._sync_console_workspace_context()
+                    if changed:
+                        self._sync_console_workspace_context()
                     return
         except _WorkspaceAvailabilityObsolete:
             return

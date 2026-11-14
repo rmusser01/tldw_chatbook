@@ -2122,6 +2122,18 @@ OPERATIONAL_LOADING_CONTRACTS = [
         ("#workflows-library", "#workflows-navigator", "#workflows-editor"),
         ("#workflow-import",),
     ),
+
+    (
+        "workflows-authoring-ready",
+        WorkflowConsoleContext,
+        "refresh_context",
+        "#workflows-run-status",
+        "#workflows-console-context",
+        "#workflow-readiness",
+        "#workflow-panes",
+        ("#workflows-library", "#workflows-navigator", "#workflows-editor"),
+        ("#workflow-import",),
+    ),
 ]
 
 
@@ -2159,13 +2171,16 @@ async def test_operational_loading_states_preserve_workbench_geometry(
     else:
         monkeypatch.setattr(screen_cls, refresh_method, lambda self, *_a, **_k: None)
     app = _build_test_app()
-    if route == "workflows":
+    if route == "workflows-authoring-ready":
+        route = "workflows"
         # Exercise secondary Console-context loading after real authoring setup.
         await app.ensure_workflow_authoring()
     host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, workbench)
+        # Workflows mounts its loading marker before the authoring panes exist.
+        ready_selector = workbench if route == "workflows" else loading_marker
+        await _wait_for_selector(screen, pilot, ready_selector)
         if load_started is not None:
             await asyncio.wait_for(load_started.wait(), timeout=1)
         _assert_ascii_workbench_contract(

@@ -1016,6 +1016,8 @@ MINIMUM_FILES = 2199
 MINIMUM_FILES = 2316
 # Retain the reviewed PR census positions and append the incoming sync admission file.
 MINIMUM_FILES = 2317
+# Retain all six incoming Send and native shutdown selectors in the gate.
+MINIMUM_FILES = 2323
 
 
 def read_census(path: Path) -> list[str]:
