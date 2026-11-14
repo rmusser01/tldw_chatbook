@@ -430,7 +430,7 @@ class LoopDeps:
     # Callable[..., ...] (not Callable[[str], ...]): the loop itself only
     # ever calls spawn(task) positionally, or spawn(task, agent=...) when
     # the model supplied a named agent (fleet spec §4). The real
-    # implementation (agent_service._run_one's spawn closure) also accepts
+    # implementation (agent_run_tools.AgentRunTools.spawn) also accepts
     # a keyword-only `allowed_tools` override, used by the skill-tool
     # dispatch path (SkillRunner.run) to narrow a spawned child's
     # allow-list -- the loop never passes THAT one and never needs to.

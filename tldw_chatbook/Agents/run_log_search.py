@@ -841,7 +841,7 @@ def format_slice(
 # This section stays a pure, filesystem-explicit sibling of `load_records`/
 # `search_records` above: it is handed already-resolved `(run_id, log_dir)`
 # pairs (or `None` for an unresolved log) rather than resolving roots or
-# querying a DB itself -- `agent_service.py`'s `search_run_log` closure
+# querying a DB itself -- `AgentRunTools.search_run_log` (agent_run_tools.py)
 # (the only impure caller) does that resolution, exactly like it already
 # resolves ONE `log_dir` today before calling `load_records`.
 

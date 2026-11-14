@@ -902,7 +902,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
-    "tldw_chatbook/Agents/agent_service.py": 9720,
+    # TASK-36950.3/.4, 2026-11-13: _run_one's fleet and run-log tool closures
+    # moved to agent_run_tools.py.
+    "tldw_chatbook/Agents/agent_service.py": 7677,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
