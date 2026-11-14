@@ -184,6 +184,8 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
     at load 9-11). The warm-up now re-reads a display past half its life, the
     share the run poll's projections already refresh ahead at.
     """
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
     clock = _install_clock(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -195,8 +197,14 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
 
             clock.now += projection.max_age - 0.01
             assert await projection.warm()
-            clock.now += 0.05  # The FULL sync's own render takes time.
-            result, _ops = _project(console)
+            assert projection.at == clock.now, "warm-up retained the aging display"
+            # A busy coordinator also refuses fresh displays; isolate expiry here.
+            assert storage._lock.acquire(timeout=30), "storage coordinator stayed busy"
+            try:
+                clock.now += 0.05  # The FULL sync's own render takes time.
+                result, _ops = _project(console)
+            finally:
+                storage._lock.release()
             assert result is True, (
                 "the render refused the display its warm-up had just handed back"
             )
