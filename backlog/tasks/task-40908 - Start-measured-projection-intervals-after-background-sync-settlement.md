@@ -1,11 +1,11 @@
 ---
 id: TASK-40908
 title: Start measured projection intervals after background sync settlement
-status: In Progress
+status: Done
 created_date: 2026-11-14 05:53
 assignee:
 - '@codex'
-updated_date: 2026-11-14 06:02
+updated_date: 2026-11-14 17:47
 ---
 
 ## Description
@@ -18,7 +18,7 @@ The run-start coalescing test advances its clock before settling background sync
 <!-- AC:BEGIN -->
 - [x] #1 The measured explicit sync starts its advanced-clock interval after existing background sync settlement, preserving the exact projection counts, successful render checks, overlapping request proof, and existing deadlines.
 - [x] #2 A real background FULL at the old boundary reproduces the CI two-versus-three failure; the corrected test passes the same control and still fails when coalescing or freshness is broken.
-- [ ] #3 Focused affected tests, static checks, and independent review pass; the normal loaded UI9 lane qualifies without production, isolation, selector, resource, or workflow topology changes.
+- [x] #3 Focused affected tests, static checks, and independent review pass; the normal loaded UI9 lane qualifies without production, isolation, selector, resource, or workflow topology changes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,8 +44,8 @@ Both affected modules passed35 cases in169.92s with the probe limited to this ex
 Independent projection_interval_review found no blockers: after the settled predicate there is no yield before FULL takes its in-progress guard. Ruff, changed-range formatter and whitespace pass. Test names and all original assertions match HEAD. Updated the incident-based testing lesson. Loaded normal UI9 qualification remains pending, so AC3 and status stay In Progress.
 
 Evidence limit: the first unmodified local run failed an earlier successful-render assertion (False) in7.00s, not the historical CI count (/tmp/tldw-ci-projection-sync-original.log). An observation-only trace passed36.20s but changes scheduling. Neither result is claimed as the exact CI reproduction or as proof this boundary correction resolves that distinct observation. The controlled exact-count reproduction and successful affected modules support the correction; next loaded CI still governs qualification.
+Loaded normal PR qualification passed on final head 258ebec33d68a46a4f5d5a20838cce8dd6e2f627: run 43612634465 attempt 1, UI9 job 132502103856, runner ghq-test-a5585397. All 151 shard tests passed in 680.66s; job 16:38:39–16:51:14Z (12m35s). The full required gate passed and PR #3529 merged at 2026-11-14T17:22:30Z as d46f753d8287cffd48706f912bfd838dc8756edb. Raw run/jobs and complete logs: /tmp/tldw-ci-success-43612634465. Final merge tree equals the qualified head tree. This completes AC3; no additional code change.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

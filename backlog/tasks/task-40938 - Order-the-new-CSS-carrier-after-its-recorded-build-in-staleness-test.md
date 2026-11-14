@@ -1,11 +1,11 @@
 ---
 id: TASK-40938
 title: Order the new CSS carrier after its recorded build in staleness test
-status: In Progress
+status: Done
 created_date: 2026-11-14 05:56
 assignee:
 - '@codex'
-updated_date: 2026-11-14 06:02
+updated_date: 2026-11-14 17:47
 ---
 
 ## Description
@@ -18,7 +18,7 @@ The new bundled-CSS carrier fixture assumes its creation receives a later filesy
 <!-- AC:BEGIN -->
 - [x] #1 The gained-carrier test establishes a newer carrier timestamp than the recorded build and retains its stale verdict and exact gained-declaration reason assertions.
 - [x] #2 The original failure reproduces with coarse real-file timestamps; the corrected CSS module passes that control and a disabled declaration detector still fails.
-- [ ] #3 Static checks and independent review pass, and the normal loaded UI24 lane qualifies without production or workflow changes.
+- [x] #3 Static checks and independent review pass, and the normal loaded UI24 lane qualifies without production or workflow changes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,8 +42,8 @@ Eleventh full gate43557511010 UI24 job132335367901 failed assert stale for the g
 The meaningful negative replaces only the actual bundled-declaration regex with a never-matching regex, still using the coarse real-file fixture. The corrected exact test fails its original assert stale in1.25s (/tmp/tldw-ci-css-carrier-negative.log; /tmp/tldw_ci_css_carrier_negative.py). This preserves declaration-detection coverage. Temporary plugins are outside the repository and are not committed.
 
 Independent css_carrier_review found no blockers. Ruff, changed-range formatter, whitespace and AST assertion/name checks pass. Updated the testing-evidence lesson. The documented production policy still excludes equal/backdated unmanifested carriers; this change qualifies the newer-than-build scenario and does not broaden that policy. Normal loaded UI24 qualification remains pending, so AC3 and status stay In Progress.
+Loaded normal PR qualification passed on final head 258ebec33d68a46a4f5d5a20838cce8dd6e2f627: run 43612634465 attempt 1, UI24 job 132502103939, runner ghq-test-3327ac58. All 370 tests passed in 648.15s; job 16:53:46–17:06:05Z (12m19s). The full required gate passed and PR #3529 merged at 2026-11-14T17:22:30Z. Raw run/jobs and logs: /tmp/tldw-ci-success-43612634465. This completes AC3; no production or workflow change.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

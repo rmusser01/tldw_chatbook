@@ -1,0 +1,716 @@
+[
+  {
+    "id": 132500782761,
+    "name": "CI preflight",
+    "created_at": "2026-11-14T15:53:58Z",
+    "started_at": "2026-11-14T15:55:17Z",
+    "completed_at": "2026-11-14T15:58:50Z",
+    "runner_name": "ghq-control-6622de1d",
+    "labels": [
+      "tldw-ci-control"
+    ],
+    "queue_seconds": 79,
+    "execution_seconds": 213,
+    "creation_delay_seconds": 0
+  },
+  {
+    "id": 132502103274,
+    "name": "PR Fast Lane",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T15:58:54Z",
+    "completed_at": "2026-11-14T16:31:50Z",
+    "runner_name": "ghq-test-06bf8b95",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4,
+    "execution_seconds": 1976,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103279,
+    "name": "PR Fast Lane (admission-sensitive 2)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T15:58:54Z",
+    "completed_at": "2026-11-14T16:27:56Z",
+    "runner_name": "ghq-test-e009ed5b",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4,
+    "execution_seconds": 1742,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103295,
+    "name": "PR Fast Lane (architecture-review tests)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T15:58:54Z",
+    "completed_at": "2026-11-14T16:08:28Z",
+    "runner_name": "ghq-test-f6016425",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4,
+    "execution_seconds": 574,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103304,
+    "name": "PR Fast Lane (admission-sensitive 3)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T15:58:54Z",
+    "completed_at": "2026-11-14T16:16:26Z",
+    "runner_name": "ghq-test-614a28f6",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4,
+    "execution_seconds": 1052,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103312,
+    "name": "PR lane (recovered suites)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T15:58:54Z",
+    "completed_at": "2026-11-14T16:12:19Z",
+    "runner_name": "ghq-test-ea00de05",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4,
+    "execution_seconds": 805,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103318,
+    "name": "Architecture guard contracts",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T15:58:54Z",
+    "completed_at": "2026-11-14T16:08:39Z",
+    "runner_name": "ghq-test-4f965a8f",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4,
+    "execution_seconds": 585,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103329,
+    "name": "Console P0 regression gate (restore)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T15:58:54Z",
+    "completed_at": "2026-11-14T16:01:29Z",
+    "runner_name": "ghq-test-56c747f6",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4,
+    "execution_seconds": 155,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103348,
+    "name": "Console P0 regression gate (sandboxed)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T15:58:54Z",
+    "completed_at": "2026-11-14T16:05:59Z",
+    "runner_name": "ghq-test-a1ab4426",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4,
+    "execution_seconds": 425,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103353,
+    "name": "Dreams and Guardian boundary contracts",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:08:58Z",
+    "completed_at": "2026-11-14T16:27:38Z",
+    "runner_name": "ghq-test-65b966cd",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 608,
+    "execution_seconds": 1120,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103358,
+    "name": "Dreams tracking tests",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:08:47Z",
+    "completed_at": "2026-11-14T16:19:02Z",
+    "runner_name": "ghq-test-f7c8b85c",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 597,
+    "execution_seconds": 615,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103471,
+    "name": "PR Fast Lane (admission-sensitive)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:01:48Z",
+    "completed_at": "2026-11-14T16:21:51Z",
+    "runner_name": "ghq-test-a5ba0e47",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 178,
+    "execution_seconds": 1203,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103571,
+    "name": "Console P0 regression gate (admission-sensitive)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:06:16Z",
+    "completed_at": "2026-11-14T16:18:43Z",
+    "runner_name": "ghq-test-864881ac",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 446,
+    "execution_seconds": 747,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103724,
+    "name": "UI Fast Lane (1)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:12:39Z",
+    "completed_at": "2026-11-14T16:25:15Z",
+    "runner_name": "ghq-test-68921c66",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 829,
+    "execution_seconds": 756,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103744,
+    "name": "UI Fast Lane (2)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:19:20Z",
+    "completed_at": "2026-11-14T16:31:07Z",
+    "runner_name": "ghq-test-12a95e9c",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1230,
+    "execution_seconds": 707,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103745,
+    "name": "UI Fast Lane (4)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:16:45Z",
+    "completed_at": "2026-11-14T16:28:58Z",
+    "runner_name": "ghq-test-f9b3b616",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1075,
+    "execution_seconds": 733,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103784,
+    "name": "UI Fast Lane (7)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:28:15Z",
+    "completed_at": "2026-11-14T16:40:32Z",
+    "runner_name": "ghq-test-109070bd",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1765,
+    "execution_seconds": 737,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103796,
+    "name": "UI Fast Lane (5)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:19:07Z",
+    "completed_at": "2026-11-14T16:32:56Z",
+    "runner_name": "ghq-test-79d7580a",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1217,
+    "execution_seconds": 829,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103801,
+    "name": "UI Fast Lane (10)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:32:08Z",
+    "completed_at": "2026-11-14T16:44:19Z",
+    "runner_name": "ghq-test-421815a4",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1998,
+    "execution_seconds": 731,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103821,
+    "name": "UI Fast Lane (8)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:27:56Z",
+    "completed_at": "2026-11-14T16:40:41Z",
+    "runner_name": "ghq-test-f605fae0",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1746,
+    "execution_seconds": 765,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103831,
+    "name": "UI Fast Lane (3)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:33:13Z",
+    "completed_at": "2026-11-14T16:47:48Z",
+    "runner_name": "ghq-test-6ecfb7eb",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2063,
+    "execution_seconds": 875,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103840,
+    "name": "UI Fast Lane (6)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:29:17Z",
+    "completed_at": "2026-11-14T16:40:45Z",
+    "runner_name": "ghq-test-66c52f77",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1827,
+    "execution_seconds": 688,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103856,
+    "name": "UI Fast Lane (9)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:38:39Z",
+    "completed_at": "2026-11-14T16:51:14Z",
+    "runner_name": "ghq-test-a5585397",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2389,
+    "execution_seconds": 755,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103874,
+    "name": "UI Fast Lane (11)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:40:58Z",
+    "completed_at": "2026-11-14T16:53:17Z",
+    "runner_name": "ghq-test-770b5f12",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2528,
+    "execution_seconds": 739,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103875,
+    "name": "UI Fast Lane (16)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:22:08Z",
+    "completed_at": "2026-11-14T16:36:24Z",
+    "runner_name": "ghq-test-f67ad350",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1398,
+    "execution_seconds": 856,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103878,
+    "name": "UI Fast Lane (13)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:31:26Z",
+    "completed_at": "2026-11-14T16:44:02Z",
+    "runner_name": "ghq-test-073aadc1",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1956,
+    "execution_seconds": 756,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103896,
+    "name": "UI Fast Lane (25)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:53:57Z",
+    "completed_at": "2026-11-14T17:06:31Z",
+    "runner_name": "ghq-test-568a3fa1",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 3307,
+    "execution_seconds": 754,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103906,
+    "name": "UI Fast Lane (20)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:48:06Z",
+    "completed_at": "2026-11-14T17:00:30Z",
+    "runner_name": "ghq-test-0d7e4e8a",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2956,
+    "execution_seconds": 744,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103921,
+    "name": "UI Fast Lane (26)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:57:08Z",
+    "completed_at": "2026-11-14T17:09:37Z",
+    "runner_name": "ghq-test-4b698ed0",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 3498,
+    "execution_seconds": 749,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103927,
+    "name": "UI Fast Lane (23)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:53:35Z",
+    "completed_at": "2026-11-14T17:05:14Z",
+    "runner_name": "ghq-test-c4ac091a",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 3285,
+    "execution_seconds": 699,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103931,
+    "name": "UI Fast Lane (22)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:51:31Z",
+    "completed_at": "2026-11-14T17:03:05Z",
+    "runner_name": "ghq-test-1b6b1b81",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 3161,
+    "execution_seconds": 694,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103939,
+    "name": "UI Fast Lane (24)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:53:46Z",
+    "completed_at": "2026-11-14T17:06:05Z",
+    "runner_name": "ghq-test-3327ac58",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 3296,
+    "execution_seconds": 739,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103948,
+    "name": "UI Fast Lane (19)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:44:37Z",
+    "completed_at": "2026-11-14T16:56:50Z",
+    "runner_name": "ghq-test-c1671b54",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2747,
+    "execution_seconds": 733,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103962,
+    "name": "UI Fast Lane (12)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:41:04Z",
+    "completed_at": "2026-11-14T16:53:27Z",
+    "runner_name": "ghq-test-dbcd9151",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2534,
+    "execution_seconds": 743,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103963,
+    "name": "UI Fast Lane (14)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:25:33Z",
+    "completed_at": "2026-11-14T16:38:21Z",
+    "runner_name": "ghq-test-63adcda2",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 1603,
+    "execution_seconds": 768,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103970,
+    "name": "UI Fast Lane (17)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:40:50Z",
+    "completed_at": "2026-11-14T16:53:38Z",
+    "runner_name": "ghq-test-309f2949",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2520,
+    "execution_seconds": 768,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502103976,
+    "name": "UI Fast Lane (21)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:48:29Z",
+    "completed_at": "2026-11-14T17:01:00Z",
+    "runner_name": "ghq-test-d446b38b",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2979,
+    "execution_seconds": 751,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502104005,
+    "name": "UI Fast Lane (18)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:36:41Z",
+    "completed_at": "2026-11-14T16:48:10Z",
+    "runner_name": "ghq-test-1c5bafbd",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2271,
+    "execution_seconds": 689,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502104009,
+    "name": "UI Fast Lane (27)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:57:35Z",
+    "completed_at": "2026-11-14T17:08:12Z",
+    "runner_name": "ghq-test-22f8e9c3",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 3525,
+    "execution_seconds": 637,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502104040,
+    "name": "UI Fast Lane (15)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T16:44:20Z",
+    "completed_at": "2026-11-14T16:57:16Z",
+    "runner_name": "ghq-test-17a40686",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 2730,
+    "execution_seconds": 776,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502104049,
+    "name": "UI Fast Lane (28)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T17:00:48Z",
+    "completed_at": "2026-11-14T17:10:28Z",
+    "runner_name": "ghq-test-b4a7fc0c",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 3718,
+    "execution_seconds": 580,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502105149,
+    "name": "UI Fast Lane (34)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T17:08:30Z",
+    "completed_at": "2026-11-14T17:20:30Z",
+    "runner_name": "ghq-test-5d80b303",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4180,
+    "execution_seconds": 720,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502105150,
+    "name": "UI Fast Lane (35)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T17:09:55Z",
+    "completed_at": "2026-11-14T17:20:26Z",
+    "runner_name": "ghq-test-3f733e34",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4265,
+    "execution_seconds": 631,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502105168,
+    "name": "UI Fast Lane (33)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T17:06:49Z",
+    "completed_at": "2026-11-14T17:18:12Z",
+    "runner_name": "ghq-test-3fd4ce27",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4079,
+    "execution_seconds": 683,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502105176,
+    "name": "UI Fast Lane (29)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T17:01:18Z",
+    "completed_at": "2026-11-14T17:13:08Z",
+    "runner_name": "ghq-test-f7736217",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 3748,
+    "execution_seconds": 710,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502105183,
+    "name": "UI Fast Lane (31)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T17:05:30Z",
+    "completed_at": "2026-11-14T17:17:07Z",
+    "runner_name": "ghq-test-bb3f9200",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4000,
+    "execution_seconds": 697,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502105211,
+    "name": "UI Fast Lane (30)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T17:03:24Z",
+    "completed_at": "2026-11-14T17:15:54Z",
+    "runner_name": "ghq-test-869cfc32",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 3874,
+    "execution_seconds": 750,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502105224,
+    "name": "UI Fast Lane (32)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T17:06:25Z",
+    "completed_at": "2026-11-14T17:17:50Z",
+    "runner_name": "ghq-test-ae594e36",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4055,
+    "execution_seconds": 685,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132502105237,
+    "name": "UI Fast Lane (36)",
+    "created_at": "2026-11-14T15:58:50Z",
+    "started_at": "2026-11-14T17:10:51Z",
+    "completed_at": "2026-11-14T17:21:54Z",
+    "runner_name": "ghq-test-64e18fc9",
+    "labels": [
+      "tldw-ci-test"
+    ],
+    "queue_seconds": 4321,
+    "execution_seconds": 663,
+    "creation_delay_seconds": 292
+  },
+  {
+    "id": 132525514742,
+    "name": "Derived artifacts reproduce from their sources",
+    "created_at": "2026-11-14T17:21:55Z",
+    "started_at": "2026-11-14T17:21:59Z",
+    "completed_at": "2026-11-14T17:22:07Z",
+    "runner_name": "ghq-control-bb3cb18f",
+    "labels": [
+      "tldw-ci-control"
+    ],
+    "queue_seconds": 4,
+    "execution_seconds": 8,
+    "creation_delay_seconds": 5277
+  },
+  {
+    "id": 132525573520,
+    "name": "Merge queue tick",
+    "created_at": "2026-11-14T17:22:07Z",
+    "started_at": "2026-11-14T17:22:24Z",
+    "completed_at": "2026-11-14T17:23:40Z",
+    "runner_name": "ghq-control-0011fd1b",
+    "labels": [
+      "tldw-ci-control"
+    ],
+    "queue_seconds": 17,
+    "execution_seconds": 76,
+    "creation_delay_seconds": 5289
+  }
+]
