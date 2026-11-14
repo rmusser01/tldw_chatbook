@@ -7573,9 +7573,10 @@ class ConsoleWorkspaceController:
                     # nothing new, and pushing it rebuilt the whole workspace
                     # context on the UI loop (and dropped the tick's carried
                     # build). An unchanged snapshot only renews its age.
-                    changed = availability != dict(
-                        self._workspace_files_availability_by_id
-                    ) or bindings != dict(self._workspace_files_runtime_bindings_by_id)
+                    changed = (
+                        availability != self._workspace_files_availability_by_id
+                        or bindings != self._workspace_files_runtime_bindings_by_id
+                    )
                     if changed:
                         self._workspace_files_availability_by_id = MappingProxyType(
                             availability
