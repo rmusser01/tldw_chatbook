@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from contextlib import closing
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -218,6 +219,77 @@ async def test_ready_local_skill_capture_runs_original_body_on_worker_and_matche
     assert (
         case.controller._preparation_reads == case.runtime._preparation_reads == set()
     )
+
+
+@pytest.mark.asyncio
+async def test_owned_capture_reads_workspace_policy_and_local_skill_trust(
+    runtime_case, tmp_path
+):
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        capture_console_turn_configuration_owned,
+    )
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        FileSkillTrustGenerationMarkerStore,
+        SkillTrustStore,
+    )
+    from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    case = runtime_case
+    skill_root = tmp_path / "local-skills"
+    trust_root = skill_root / "trust"
+    trust = SkillTrustService(
+        skills_dir=skill_root / "skills",
+        trust_store=SkillTrustStore(
+            store_dir=trust_root,
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                trust_root / "marker.json", store_dir=trust_root
+            ),
+        ),
+    )
+    local = LocalSkillsService(store_dir=skill_root, trust_service=trust)
+    name = "capture-scope-fixture"
+    await local.import_skill(
+        name=name,
+        content=f"---\nname: {name}\ndescription: Capture scope fixture\n---\nTest.",
+    )
+    expected = trust.status_for_skill(name)
+    assert expected.trust_blocked
+    case.app.local_skills_service = local
+
+    with closing(WorkspaceDB(tmp_path / "workspace.sqlite", "capture-scope")) as db:
+        registry = LocalWorkspaceRegistryService(db)
+        workspace = registry.create_workspace(
+            workspace_id="capture-scope",
+            name="Capture scope",
+            assistant_defaults=WorkspaceAssistantDefaults(
+                assistant_id="fixture", tool_policy_profile_id="capture-policy"
+            ),
+        )
+        case.app.workspace_registry_service = registry
+        case.session = case.store.create_session(
+            title="Capture scope", workspace_id=workspace.workspace_id
+        )
+
+        snapshot = await capture_console_turn_configuration_owned(
+            case.app,
+            case.store,
+            case.session.id,
+            selection=_selection(case),
+            creator=case.controller,
+            reads=case.controller._preparation_reads,
+            require_current=lambda: None,
+        )
+
+    assert snapshot.tool_policy_profile_id == "capture-policy"
+    blocked = {
+        skill["name"]: skill
+        for skill in snapshot.skill_context_maximum["blocked_skills"]
+    }
+    assert blocked[name]["trust_reason_code"] == expected.trust_reason_code
 
 
 @pytest.mark.asyncio

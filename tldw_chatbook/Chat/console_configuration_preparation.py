@@ -1949,16 +1949,19 @@ async def capture_console_turn_configuration_owned(
                 ):
                     databases.append(database)
                     scope.enter_context(operation_owned_connection(database))
-                    if type(database) is WorkspaceDB:
-                        scope.enter_context(database.connection())
             current()
             scratch = refs.scratch.snapshot(session_id)
             current()
-            project = capture_project_instruction_authority(
-                session,
-                refs.registry,
-                include_bindings=selection.project_bindings_eligible,
-            )
+            # Keep Workspace admission scoped to the project authority reads.
+            # RAG profiles and skill trust use separate storage paths.
+            with ExitStack() as workspace_scope:
+                if type(refs.workspace_database) is WorkspaceDB:
+                    workspace_scope.enter_context(refs.workspace_database.connection())
+                project = capture_project_instruction_authority(
+                    session,
+                    refs.registry,
+                    include_bindings=selection.project_bindings_eligible,
+                )
             current()
             tools = (
                 _runtime_tool_configuration(raw_config, selection)
