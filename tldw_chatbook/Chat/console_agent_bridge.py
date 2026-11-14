@@ -9961,55 +9961,50 @@ def _read_change_review_markers(
     ]
 
 
-# Direct defining callbacks for finite marker presentation.
+# Definition-time identity of the marker and preflight callbacks.
 _CONSOLE_PRESENTATION_SOURCES = tuple(
     (
         name,
         descriptor,
         (
-            (
-                function,
-                function.__code__,
-                function.__defaults__,
-                function.__kwdefaults__,
-                tuple((function.__kwdefaults__ or {}).items()),
-            ),
+            function,
+            function.__code__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
         ),
     )
-    for name in (
-        "change_review_marker_messages",
-        "_change_review_marker_block",
-        "preview_tool_surface",
-        "light_surface_local_tools_available",
+    for name, descriptor in (
+        *(
+            (name, vars(ConsoleAgentBridge)[name])
+            for name in (
+                "change_review_marker_messages",
+                "_change_review_marker_block",
+                "preview_tool_surface",
+                "light_surface_local_tools_available",
+            )
+        ),
+        ("_read_change_review_markers", _read_change_review_markers),
+        ("_preview_kill_reader", _preview_kill_reader),
+        ("__call__", _PreviewAppToolKillSwitch.__call__),
     )
-    for descriptor in (vars(ConsoleAgentBridge)[name],)
     for function in (
         descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
     )
 )
-_CHANGE_REVIEW_MARKER_SOURCES = _CONSOLE_PRESENTATION_SOURCES[:2]
+_CHANGE_REVIEW_MARKER_SOURCES = tuple(
+    (name, method, (source,))
+    for name, method, source in _CONSOLE_PRESENTATION_SOURCES[:2]
+)
 _CONSOLE_TOOL_PREVIEW_METHODS = tuple(
-    (name, method, bindings[0][1])
-    for name, method, bindings in _CONSOLE_PRESENTATION_SOURCES[2:]
+    (name, method, source[1])
+    for name, method, source in _CONSOLE_PRESENTATION_SOURCES[2:4]
 )
+(
+    _CHANGE_REVIEW_MARKER_HELPER_SOURCE,
+    _CONSOLE_PREVIEW_KILL_SOURCE,
+    _CONSOLE_PREVIEW_APP_KILL_SOURCE,
+) = (source for _, _, source in _CONSOLE_PRESENTATION_SOURCES[4:])
 
-
-# Original collision view is part of ordinary catalog identity, not a new owner.
+# Original collision view is part of ordinary catalog identity.
 _NATIVE_ORDINARY_COLLISION_PROVIDER = _CollisionFilteredMCPProvider
-_CONSOLE_PRESENTATION_HELPER_SOURCES = tuple(
-    (
-        function,
-        function.__code__,
-        function.__defaults__,
-        function.__kwdefaults__,
-        tuple((function.__kwdefaults__ or {}).items()),
-    )
-    for function in (
-        _read_change_review_markers,
-        _preview_kill_reader,
-        _PreviewAppToolKillSwitch.__call__,
-    )
-)
-_CHANGE_REVIEW_MARKER_HELPER_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[0]
-_CONSOLE_PREVIEW_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[1]
-_CONSOLE_PREVIEW_APP_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[2]
