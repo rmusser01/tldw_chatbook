@@ -992,6 +992,11 @@ MINIMUM_FILES = 2028
 # TASK-40720 (2026-11-13): append the native sync admission file at the tail.
 # The floor is the measured entry count.
 MINIMUM_FILES = 2029
+# TASK-33628.16 and TASK-33628.20 with its PR #3458 review (2026-11-12):
+# append the command-row loss nodes, the "a command that ran leaves an empty
+# composer" nodes and the review's captured-draft nodes at the tail. The floor
+# is the measured entry count.
+MINIMUM_FILES = 2041
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
@@ -1000,6 +1005,9 @@ MINIMUM_FILES = 2029
 MINIMUM_FILES = 2034
 
 
+MINIMUM_FILES = 2032
+MINIMUM_FILES = 2037
+MINIMUM_FILES = 2046
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

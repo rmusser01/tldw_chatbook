@@ -25,6 +25,7 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_key_ownership import _mounted
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -265,10 +266,16 @@ async def test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn(monkeypa
         console = await _mounted_console(app, pilot)
         store = console._ensure_console_chat_store()
         session_id = await _temporary_chat_with_parked_turn(pilot, app, console)
-        unsaved = sum(
-            message.persisted_message_id is None
-            for message in store.all_messages_for_session(session_id)
-        )
+        messages = store.all_messages_for_session(session_id)
+        # The Temporary prompt is never saved, and the refused send leaves its
+        # "Provider blocked" error notice, a Console SYSTEM row that is never
+        # saved either. The notice is never loss, so only the prompt counts
+        # (TASK-33628.16). Literal roles and count, not the fix's own rule.
+        assert [message.role for message in messages] == [
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.SYSTEM,
+        ]
+        assert all(message.persisted_message_id is None for message in messages)
 
         dialog = await _ctrl_q_asks(
             pilot, app, events, "the Temporary chat's parked unsent turn"
@@ -276,9 +283,8 @@ async def test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn(monkeypa
 
         rows = _message_rows(dialog)
         assert "Unsent turns needing attention: 1" in rows
-        # The Temporary chat's own messages are never saved, so they count too.
-        assert unsaved >= 1
-        assert f"Temporary or unsaved messages: {unsaved}" in rows
+        # The Temporary chat's own prompt is never saved, so it counts too.
+        assert "Temporary or unsaved messages: 1" in rows
         title = console._session._session_close_display_title(session_id)
         assert any(
             row.startswith("Affected tabs:") and f'"{title}"' in row for row in rows

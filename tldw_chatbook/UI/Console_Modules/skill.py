@@ -39,6 +39,7 @@ class ConsoleSkillController:
         task_resume_state: Callable[[], TaskResumeState],
         set_task_resume_state: Callable[[TaskResumeState], None],
         current_chat_controller: Callable[[], Any | None],
+        take_ran_command_draft: Callable[[], None] = lambda: None,
     ) -> None:
         """Bind the live app and narrow screen/controller callbacks.
 
@@ -49,6 +50,8 @@ class ConsoleSkillController:
             task_resume_state: Return the current immutable resume state.
             set_task_resume_state: Replace the current resume state.
             current_chat_controller: Return the active chat controller, if any.
+            take_ran_command_draft: Take a sent command's own text out of the
+                composer once it ran (TASK-33628.20).
         """
         self.app_instance = app_instance
         self._append_native_console_system_message = (
@@ -58,6 +61,7 @@ class ConsoleSkillController:
         self._task_resume_state = task_resume_state
         self._set_task_resume_state = set_task_resume_state
         self._current_chat_controller = current_chat_controller
+        self._take_ran_command_draft = take_ran_command_draft
         self._console_skill_candidates: tuple[SkillCommandCandidate, ...] = ()
         #: The newest discovery started; an older one never publishes over it.
         self._console_skill_refresh_serial = 0
@@ -239,9 +243,17 @@ class ConsoleSkillController:
         return text, ""
 
     async def _console_command_skills(self, parse: CommandParse) -> None:
-        """List trusted skills or show the static ``$name`` run hint."""
+        """List trusted skills or show the static ``$name`` run hint.
+
+        Listing is the command having run, so "/skills" leaves the composer
+        (TASK-33628.20); ``/skills <name>`` asks for ``$name`` instead and
+        keeps its text to be corrected.
+        """
         args = parse.args.strip()
         if not args:
+            # It cannot be refused (an empty list is still a list), so it
+            # takes "/skills" before the lookup awaits (PR #3458 review).
+            self._take_ran_command_draft()
             context = await self._fetch_console_skill_context()
             candidates = self._console_skill_trusted_candidates_from_context(context)
             # Lazy: keeps command_handoff off the boot path (ADR-097). After
@@ -377,6 +389,13 @@ class ConsoleSkillController:
 def _sync_console_skill_popup(screen: Any) -> None:
     """Keep the original popup lookup late-bound at its existing call site."""
     screen._sync_console_command_popup()
+
+
+def _take_ran_skills_command_draft(screen: Any) -> None:
+    """Take "/skills" out of the screen's composer once it listed."""
+    from .command_draft import take_ran_command_draft
+
+    take_ran_command_draft(screen)
 
 
 async def _read_console_skill_context(
