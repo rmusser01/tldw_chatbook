@@ -1,5 +1,6 @@
 """Keep incomplete Console composition from consuming a real resize."""
 
+import asyncio
 from copy import deepcopy
 
 import pytest
@@ -7,7 +8,7 @@ from textual.events import Resize
 from textual.geometry import Size
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.pump_probe import console_attach_ended
+from Tests.UI.pump_probe import console_attach_ended, until
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -51,9 +52,21 @@ async def test_partial_console_resize_preserves_transition_until_complete(
             assert console._last_console_workspace_width_band is None
             assert app.app_config.get("console", {}) == previous_settings
             await console.recompose()
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 2.0
             await _wait_for_selector(console, pilot, "#console-native-composer")
             await pilot.resize_terminal(80, 40)
             await pilot.pause()
+            # The real Resize can still own a pending config retry after Pilot drains.
+            assert await until(
+                lambda: (
+                    console.size.width == 80
+                    and console._last_console_workspace_width_band == "single-pane"
+                    and "_adapt_console_workspace_to_width"
+                    not in getattr(console, "_console_config_retries", {})
+                ),
+                max(0.0, deadline - loop.time()),
+            ), "the real 80-column resize did not finish after recomposition"
             assert console._last_console_workspace_width_band == "single-pane"
             assert not console.query_one("#console-left-rail").display
             assert not console.query_one("#console-right-rail").display
