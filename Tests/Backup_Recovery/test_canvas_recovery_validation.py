@@ -140,6 +140,8 @@ assert len(CHACHANOTES_V81_SCHEMAS)==4
 for index,schema in enumerate(CHACHANOTES_V81_SCHEMAS):
  path=Path.home()/f'lineage-{index}.sqlite'
  with sqlite3.connect(path) as connection:
+  # DDL otherwise commits every declaration before the first INSERT.
+  connection.execute("BEGIN")
   install_canvas_revision_payload_validator(connection)
   tables=[sql for sql in schema if sql.startswith(('CREATE TABLE','CREATE VIRTUAL TABLE'))]
   for sql in tables+[sql for sql in schema if sql not in tables]:
@@ -209,6 +211,8 @@ def test_current_hybrid_catalog_requires_its_exact_embedded_stamp(
     )
     path = tmp_path / "hybrid.sqlite"
     with closing(sqlite3.connect(path)) as connection, connection:
+        # DDL otherwise commits every declaration before the first INSERT.
+        connection.execute("BEGIN")
         install_canvas_revision_payload_validator(connection)
         for sql in sorted(
             catalog,

@@ -24108,6 +24108,10 @@ regression verifies old revision 1 is discarded and revision 2 renders; its boun
 wait still refuses closed/disposed owners. Keep the real modal-open and unsaved-edit
 assertions, rather than retrying the action or weakening its ownership checks.
 
+**PR #3529, TASK-40848 (2026-11-14).** The same boundary recurred in the endpoint fixture: UI27 queried a model-change button on ChatScreen because the first real settings open had refused. Delaying only the real revision-zero config refresh reproduced that exact NoMatches; its receipt showed captured revision 0/current revision 1 and preparation returning false. Reusing the existing control-bar helper after the direct endpoint edit, and asserting both real opens, passed all five shared-fixture journeys under a deterministic hold that recorded the same 0-to-1 overlap in every case. The helper retains its existing 15-second bound; do not replace this with action retries or a generic worker drain.
+
+**PR #3529, TASK-40878 (2026-11-14).** UI26's pending-display owner controls separately failed at `assert await projection.warm()` before their real owner/source mutations. Their existing 30-second loop handled a deferred render but rejected a transient warm-up refusal. Delaying resumption of the real settled read beyond its one-second display life reproduced that assertion (real warm-up false at age 1.106 seconds). Treat warm-up and render as consecutive readiness predicates inside the existing bound; both original owner-control cases then passed the same delay. This demonstrates a legitimate refusal schedule, not proof of which owner/expiry condition caused the uninstrumented server refusal. Keep all post-readiness owner/source assertions and propagate reader/cancellation exceptions.
+
 ## Exercise body-free tool projections through actual paging
 
 **TASK-35582 Task5, 2026-10-23.** Real review children reading an unchanged nested
@@ -25419,3 +25423,120 @@ For this settled-startup geometry test, wait for real readiness publication, sam
 ## Queued workflow status does not prove its jobs are inactive (PR3496, 2026-11-13)
 
 While the merge queue waited for runners, GitHub's repository API reported zero in-progress workflows and165 queued workflows. A rolling job-level census over those165 runs found40 allocated/in-progress test jobs across eight queued Derived runs, with new allocations and completions during the check. The count is not an atomic capacity-limit measurement, and no billing/quota cause was established. Inspect individual jobs and exact head/PR ownership before attributing a runner outage or cancelling an allegedly inactive workflow. Receipt: pr3496-capacity-census-jobs-full.json.
+
+
+## Disposable-runner evidence must include failed guest shutdown (TASK-40721, 2026-11-13)
+
+**Incident.** The first local-runner qualification passed two sequential GitHub jobs, but source review found that the pinned QEMU controller waited indefinitely for guest poweroff. A root-capable job could disable that command and consume a slot forever. The systemd default also signaled all QEMU children during service stop, bypassing the controller's intended drain.
+
+**Evidence and correction.** Added host-side reclamation for deleted/offline runner records and a busy-job deadline, and used `KillMode=mixed` for orderly service shutdown. In GitHub run 43480488554, the first guest deliberately replaced poweroff with a no-op; the host logged reclamation and a fresh control runner began the next job 23 seconds later with the previous marker absent. Happy-path replacement alone did not prove the disposal boundary.
+
+
+## An idle single-shard benchmark does not qualify all lane budgets (TASK-40724, 2026-11-13)
+
+**Incident.** The disposable runner passed a standalone UI shard in 11m54s, but the first sustained eight-worker run 43487945840 timed out Console P0 during its first invocation and Dreams/Guardian near the end of its last group. Both retained 20-minute hosted job caps. The runner toolchain and actual project-chat UAT had already passed; those results did not establish sustained-load completion or whole-gate timing.
+
+**What to do.** Preserve individual attempt timings and distinguish per-test deadlines from whole-job caps. Qualify all required lanes under the deployed concurrency before reporting full CI success. Keep test coverage and isolation intact when splitting long invocations; measure the resulting full gate before claiming the new budget suffices.
+
+
+## A spawn crash target should not import the application before crashing (TASK-40725, 2026-11-13)
+
+**Incident.** Local CI run 43496035687 failed the real ingest-pool crash regression after its 10-second observation budget: the job was still PARSING. Its crash target was a wrapper defined in the large test module, which forces a spawned worker to import that module and the application before calling os._exit. The previous run had passed, so the log alone did not distinguish slow startup from slow crash reporting. Replacing the wrapper with the picklable stdlib os._exit target removed that unnecessary work while preserving the real production pool and deadlines. The original exact test passed locally in 3.02s; the changed test plus its adjacent idle-generation test passed in 1.19s. Disabling the production sentinel monitor still made the changed exact test fail at its original budget.
+
+**What to do.** Use the smallest picklable target that triggers the fault under test. Keep worker startup/import costs separate from the deadline for observing the fault, and retain a negative control proving the monitor is exercised. Loaded CI remains the final check for timing-sensitive failures.
+
+
+## A sqlite3 connection context does not batch fixture DDL (TASK-40726, 2026-11-13)
+
+**Incident.** Run 43503216961 completed the split P0 jobs within their caps, but all four frozen-Canvas-lineage children exceeded their 45-second deadline. The fixture builders created hundreds of tables, indexes and triggers before their first INSERT. Under sqlite3's legacy transaction behavior, the connection context alone does not begin a transaction for DDL; a direct in_transaction check confirmed those declarations autocommitted individually. This adds durable disk commits to fixture setup, amplified on the concurrent disposable VM storage stack.
+
+**What to do.** Begin an explicit transaction when constructing a frozen catalog fixture, and finish its existing context before invoking production validation. Preserve schema declarations, seed data, migration/rollback assertions, disk-backed isolation and deadlines. Do not disable synchronous writes or change production recovery transactions to accelerate test setup. Local tests and review verify the catalog semantics; loaded CI must verify the timing.
+
+
+## Textual is_current includes background screens (TASK-40728, 2026-11-13)
+
+**Incident.** Self-hosted run43510161110 timed out two snapshot-settings saves. An isolated Linux replay still failed with the CI pool idle: the UI loop used4.96CPU seconds in a5.01-second wait while the save thread remained in config-write work. Profiling found19277 bounded-section retries. Geometry telemetry showed ChatScreen.is_current was true while SettingsScreen was the top screen; the Console viewport kept stale11-row geometry against a13-row target. The existing covered-screen wait therefore took its immediate-retry branch.
+
+**Correction.** Use identity with app.screen to distinguish the top screen from a background screen at this scheduling seam. Preserve the existing owner-screen layout signal, virtual reconcile callback and unmount cleanup. A mounted regression deliberately withholds covered layout: old code retried1566times in0.1s; the fix waits and correctly settles geometry when uncovered. Save deadlines, persistence and concurrent-edit assertions remain unchanged.
+
+
+## Late CI shards exposed unestablished UI and filesystem preconditions (TASK-40758, 2026-11-13)
+
+Run43519057842 UI22 checked Workflows geometry after a context marker mounted but before async authoring recomposed its panes; a 250ms initializer delay reproduced the failure. Wait for the actual workbench with the existing bounded selector wait. UI24 assumed a write advanced the source mtime; an explicit coarse-clock write reproduced the missed hash. Establish recorded-source, edited-source and generated-sheet timestamp ordering, including an integration write that resets a synthetic future mtime back to the coarse wall clock. Negative controls still fail when panes never mount or content hashing is bypassed.
+
+UI24/25 focus captures instead exposed a product bug: activation restored the composer after a collapsed Inspector handle took focus, because it tested the hidden logical rail. A focus-owner probe and explicit restore in the mounted painted test reproduced both terminal sizes. Check the actual focused control through its ancestors; waiting until the activation timer happens to finish would mask the user-visible loss.
+
+
+## A save test must join its save, not a replaceable display read (TASK-40788)
+
+**Incident, 2026-11-14.** PR3529's self-hosted UI18 lane passed the first
+Settings save and later-draft assertions, then failed its second app-wide worker
+wait with WorkerCancelled. The cancelled worker was the internal-prompts summary
+read, revision2: the next real save advanced the config identity and the ordinary
+poll started its replacement. Adding a one-second delay to the real summary read
+reproduced the exact failure locally.
+
+The staged-save fixture now retains get_current_worker() inside its existing
+held writer and awaits each actual save worker, including its acknowledgement.
+The delayed-read control passes; explicitly cancelling the owned save still
+fails at that await. Keep persistence, focus, Revert and native teardown checks;
+do not swallow WorkerCancelled globally or turn off background refresh to make
+a save test pass. Logs: /tmp/tldw-ci-settings-save-controlled-{red,green}.log and
+/tmp/tldw-ci-settings-save-negative.log.
+
+
+## A delete receipt can precede its final Notes canvas publication (TASK-40818)
+
+**Incident, 2026-11-14.** PR3529 UI9 reached a disabled placement-button mouse
+check after deleting a note, then Textual selection routing found a detached
+content widget with no parent. The receipt and withdrawn Move label alone had
+not established completion: delete starts a separate Trash read that publishes
+another canvas rebuild. A one-second delay in that real read proved the old
+test clicked Add while publication was pending. The exact framework exception
+was not reproduced locally; ordinary, delayed-removal and queued-refresh probes
+passed and are not claimed as reproductions.
+
+Wait for the mutation to end and this note to appear in the real Trash snapshot,
+then reuse the settled-canvas check and verify the current button owns its mouse
+coordinates before each real click. A true Pilot.click result confirms its
+initial target; it does not prove ownership throughout all mouse events. Keep
+click exceptions and deletion assertions intact. The corrected three-case module
+passes under the delayed real read; a stuck read still fails the existing10s
+wait. Logs /tmp/tldw-ci-notes-delete-{trash-red,trash-green,module-green,negative}.log.
+
+
+## Start a measured cadence interval after background settlement (TASK-40908)
+
+**Incident, 2026-11-14.** PR3529 run43557511010 UI9 counted two
+projections instead of three. The test counted only its own task, but advanced
+the shared simulated clock before awaiting background settlement. A real FULL
+at that boundary served the newly expired interval before the measured owner.
+Inserting that actual background FULL reproduced the identical count failure;
+advancing the clock after the existing settled predicate made the control pass.
+
+Start the measured interval immediately before the measured operation, after
+background work has settled. Keep the background work, real overlapping request
+and all success/count assertions. Both affected modules passed35 cases; breaking
+coalescing or freshness still failed the unchanged oracles. A separate initial
+local failure at an earlier render-success assertion was not the CI count
+reproduction and is not claimed to be explained by this boundary correction.
+
+
+## A new CSS carrier also needs explicit timestamp ordering (TASK-40938)
+
+**Incident, 2026-11-14.** The same run's UI24 passed the previously repaired
+source/hash ordering cases but failed discovery of a new bundled-CSS carrier.
+The runtime scans unmanifested carriers newer than the recorded build; fixture
+creation could share the recorded input's filesystem tick. Assigning the same
+whole-second timestamps to actual writes reproduced the false stale verdict.
+Reusing the existing mtime helper after the carrier write made all19 module
+cases pass under that control. Disabling the actual declaration regex still
+failed the original stale assertion. Establish this fixture precondition
+explicitly; do not claim it changes the existing equal/backdated-carrier policy.
+
+
+## A fresh checked display can correctly refuse a busy coordinator (TASK-40968, 2026-11-14)
+
+PR #3529 run43565526841 UI9 failed the near-expiry warm-up test at its immediate render assertion;150 other shard tests passed. The same case passed locally. A controlled real thread holding the storage coordinator immediately after the original warm-up reproduced the assertion: the renderer refused at its nonblocking coordinator acquisition while the proof was only0.05 seconds old. The uninstrumented CI log does not identify its exact refusal predicate, so this is a demonstrated valid interleaving, not proof of the historical branch.
+
+An expiry-only assertion must establish the coordinator-free render precondition. The fixture now verifies that warm-up refreshed the timestamp, takes the coordinator with a30-second acquisition timeout, and retains that real lock only across the synchronous render, releasing it in finally. All production ownership, pause, freshness and contention checks remain. The controlled overlap passes; disabling refresh-ahead still fails the refreshed-timestamp assertion. Do not replace a timing regression with repeated warm/render attempts that could refresh away the defect under test.

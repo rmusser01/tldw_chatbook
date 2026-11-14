@@ -222,6 +222,9 @@ def _lanes() -> dict[str, tuple[str, ...]]:
         "Console P0 gate (sandboxed)": _step_targets(
             "console-p0-gate", "Run the sandboxed Console P0 regression tests"
         ),
+        "Console P0 gate (restore)": _step_targets(
+            "console-p0-gate", "Run the restore Console P0 regression tests"
+        ),
         "Console P0 gate (admission-sensitive)": _step_targets(
             "console-p0-gate", "Run the admission-sensitive Console P0 regression tests"
         ),

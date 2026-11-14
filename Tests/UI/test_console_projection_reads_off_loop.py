@@ -184,6 +184,8 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
     at load 9-11). The warm-up now re-reads a display past half its life, the
     share the run poll's projections already refresh ahead at.
     """
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
     clock = _install_clock(monkeypatch)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -195,8 +197,14 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
 
             clock.now += projection.max_age - 0.01
             assert await projection.warm()
-            clock.now += 0.05  # The FULL sync's own render takes time.
-            result, _ops = _project(console)
+            assert projection.at == clock.now, "warm-up retained the aging display"
+            # A busy coordinator also refuses fresh displays; isolate expiry here.
+            assert storage._lock.acquire(timeout=30), "storage coordinator stayed busy"
+            try:
+                clock.now += 0.05  # The FULL sync's own render takes time.
+                result, _ops = _project(console)
+            finally:
+                storage._lock.release()
             assert result is True, (
                 "the render refused the display its warm-up had just handed back"
             )
@@ -452,8 +460,10 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 console, "_sync_console_rail_and_controls", counting_project
             )
 
-            async def settled_sync() -> None:
+            async def settled_sync(*, elapsed: float = 0.0) -> None:
                 await until(sync_settled, timeout=30)
+                # Background syncs must settle before the measured interval starts.
+                clock.now += elapsed
                 await console._sync_native_console_chat_ui()
 
             async def tick() -> None:
@@ -483,12 +493,10 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
 
                 # Freshness: a request with no projection for a poll interval
                 # projects at once, and so does one left waiting that long.
-                clock.now += config_sync.RUN_COALESCE_SECONDS
-                await settled_sync()
+                await settled_sync(elapsed=config_sync.RUN_COALESCE_SECONDS)
                 assert len(calls) == before + 2
                 await settled_sync()  # Within the interval again: it waits...
                 assert len(calls) == before + 2
-                clock.now += config_sync.RUN_COALESCE_SECONDS
                 real_transcript = console._sync_native_console_transcript
                 late_requests: list[tuple[int, int]] = []
 
@@ -510,7 +518,7 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                         "_sync_native_console_transcript",
                         transcript_with_late_request,
                     )
-                    await settled_sync()  # ...a poll interval at most.
+                    await settled_sync(elapsed=config_sync.RUN_COALESCE_SECONDS)
                 assert late_requests and late_requests[-1][1] > late_requests[-1][0]
                 assert len(calls) == before + 3
                 # FULL can receive newer requests after its synchronous projection.

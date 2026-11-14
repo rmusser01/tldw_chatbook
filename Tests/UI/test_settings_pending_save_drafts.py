@@ -7,6 +7,7 @@ import tomllib
 
 import pytest
 from textual.widgets import Button, Input
+from textual.worker import get_current_worker
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
@@ -24,9 +25,9 @@ from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 async def _until(check):
     deadline = asyncio.get_running_loop().time() + 15
     while not check():
-        assert (
-            asyncio.get_running_loop().time() < deadline
-        ), "Save never entered its writer"
+        assert asyncio.get_running_loop().time() < deadline, (
+            "Save never entered its writer"
+        )
         await asyncio.sleep(0.01)
 
 
@@ -82,11 +83,13 @@ async def test_staged_save_acknowledges_only_saved_values(
         ),
     }[kind]
     entered, release = threading.Event(), threading.Event()
+    save_workers = []
     real_writer = sm.SettingsConfigAdapter.save_sections
     real_mutation = config.apply_settings_mutation_to_cli_config
     fail = outcome == "failed"
 
     def held(adapter, *args, **kwargs):
+        save_workers.append(get_current_worker())
         entered.set()
         assert release.wait(30)
         return real_writer(adapter, *args, **kwargs)
@@ -171,7 +174,8 @@ async def test_staged_save_acknowledges_only_saved_values(
             focused = host.focused
         finally:
             release.set()
-        await host.workers.wait_for_complete()
+        # Prompt-summary reads may be superseded; join the actual save instead.
+        await save_workers[0].wait()
         await pilot.pause()
         dirty = outcome != "unchanged"
         (tmp_path / "completion-receipt.json").write_text(
@@ -226,8 +230,8 @@ async def test_staged_save_acknowledges_only_saved_values(
         fail = False
         monkeypatch.setattr(screen, completion_name, complete)
         screen.query_one("#settings-save-category", Button).press()
-        await pilot.pause()
-        await host.workers.wait_for_complete()
+        await _until(lambda: len(save_workers) == 2)
+        await save_workers[1].wait()
         await pilot.pause()
         assert (
             str(tomllib.loads(config_path.read_text(encoding="utf-8"))[section][key])

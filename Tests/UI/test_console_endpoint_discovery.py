@@ -1783,6 +1783,7 @@ def _on_9200(monkeypatch, listed, configured=None):
 async def _console_on_9200(harness, pilot):
     """The Console, with its llama.cpp chat moved to :9200; return it."""
     from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 
     console = harness.screen
     await _wait_for_selector(console, pilot, "#console-settings-summary")
@@ -1790,6 +1791,8 @@ async def _console_on_9200(harness, pilot):
     console._session._replace_active_console_session_settings(
         replace(store.session_settings(store.active_session_id), base_url=SESSION_URL)
     )
+    # An older pending read cannot qualify settings for this new endpoint revision.
+    await _sync_console_control_bar_now(console)
     return console
 
 
@@ -2036,7 +2039,7 @@ async def test_a_settings_round_trip_keeps_the_chats_endpoint_for_its_provider(
     harness = _ConsoleFlowHarness(app)
     async with harness.run_test(size=(211, 44)) as pilot:
         console = await _console_on_9200(harness, pilot)
-        await console._open_console_settings(focus_model=False)
+        assert await console._open_console_settings(focus_model=False)
         await settle(pilot, harness)
         modal = harness.screen
         await pick(pilot, harness, modal, "vendor/model:b")
@@ -2046,7 +2049,7 @@ async def test_a_settings_round_trip_keeps_the_chats_endpoint_for_its_provider(
         await settle(pilot, harness)
         assert harness.screen is console
 
-        await console._open_console_settings(suspended_draft=snapshot)
+        assert await console._open_console_settings(suspended_draft=snapshot)
         await settle(pilot, harness)
         modal = harness.screen
         assert modal._draft.settings.provider == "vllm"

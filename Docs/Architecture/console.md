@@ -133,6 +133,12 @@ attachment reconciliation still owns FULL. A real unread token retains the
 existing FULL, after-paint scheduling, current-owner checks and compare-and-clear.
 This avoids queuing a second FULL behind attachment for unsaved/already-read chats.
 
+Bounded sidebar sections defer geometry retries while their owning screen is below
+the top screen, waking through that owner's layout-refresh signal (TASK-40728).
+Textual's `Screen.is_current` includes background screens, so this scheduling seam
+uses identity with `app.screen`; background visibility alone does not establish
+fresh layout. Foreground reconciliation and unmount cleanup retain their existing paths.
+
 CSS application retains upstream Textual style resolution. A bounded 1024-entry
 candidate LRU uses live subject/ancestor names and the parsed rules-map identity;
 it retains no widgets or resolved styles. Dynamic pseudo-classes, sibling order,
@@ -152,6 +158,8 @@ avoiding intermediate style refreshes while preserving unrelated classes and the
 final disabled, tooltip, queue and setup states (TASK-35614).
 
 ## Screen layout
+
+Activation focus restoration checks the focused control and its ancestors, not only its logical pane. A visible collapsed Inspector handle remains the keyboard target while its full rail is hidden (`ChatScreen._restore_console_workbench_focus`, TASK-40758).
 
 Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech controls; hidden legacy compat statics kept for contract tests; a dispatch-recovery callout; the dense `ConsoleControlBar`; then the main grid — left `ConsoleRailHandle` → `ConsoleLeftRail` (3fr) → center column (13fr, hosting either the transcript region or the embedded terminal workspace) → `ConsoleInspectorRail` (4fr) → right handle. Below the grid: status chips (position from `[console] status_chips_position`), staged evidence strip, dispatch-recovery region, prompt-queue region, the `ConsoleComposerBar`, command popup, and setup modal.
 

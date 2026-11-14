@@ -1604,7 +1604,7 @@ def test_parent_creator_inventory_is_checked_and_has_a_disposition() -> None:
         source_path = PROJECT_ROOT / f"{module}.py"
         creator_calls = _qualified_calls(
             source_path,
-            lambda call: ast.unparse(call) == creator_call,
+            lambda call, expected=creator_call: ast.unparse(call) == expected,
         )
         expected_calls = Counter(
             row["symbol"]

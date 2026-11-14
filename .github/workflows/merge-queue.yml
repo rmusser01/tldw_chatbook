@@ -21,6 +21,7 @@ on:
 permissions:
   contents: read
 
+# ADR-359: CI_CONTROL_RUNNER is an opt-in single label; unset or forks use hosted.
 jobs:
   # Outside Derived Artifacts' concurrency group: an obsolete run must not
   # hold its own cleanup (and the replacement head) behind its test matrix.
@@ -31,7 +32,7 @@ jobs:
       github.event.action == 'synchronize' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.type != 'Bot'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_CONTROL_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       actions: write
@@ -104,7 +105,7 @@ jobs:
       (github.event_name == 'push' ||
        (github.event.action != 'synchronize' &&
         github.event.pull_request.head.repo.full_name == github.repository))
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_CONTROL_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: write

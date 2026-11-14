@@ -4909,15 +4909,14 @@ class ChatScreen(BaseAppScreen):
                     continue
 
     def _restore_console_workbench_focus(self) -> None:
-        """Restore focus to a visible Console Workbench pane after activation."""
+        """Retain visible control focus, including a collapsed rail handle."""
         if self._focus_console_setup_modal_if_blocking():
             self._apply_console_setup_block(True)
             return
         self._ensure_console_workbench_targets_focusable()
         if self._console_terminal_open:
-            # TASK-33622.5: a closing modal (Arm, New) or an activation hands
-            # focus back to the Terminal, never the collapsed composer; focus
-            # already on a visible Terminal or rail control stays put.
+            # TASK-33622.5: activation returns to Terminal, never the collapsed
+            # composer; existing visible Terminal or rail focus stays put.
             current = self._console_workbench_focus_id_for_widget(self.app.focused)
             if current is not None and self._console_pane_is_reachable(current):
                 return
@@ -4927,7 +4926,8 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_workbench_target("console-native-composer")
             return
         current = self._console_workbench_focus_id_for_widget(self.app.focused)
-        if current is not None and self._is_console_widget_displayed(current):
+        focused_id = getattr(self.app.focused, "id", None) or current
+        if current is not None and self._is_console_widget_displayed(focused_id):
             self._last_console_workbench_focus_id = current
             return
         target = run_controls.workbench_restore_target(self)

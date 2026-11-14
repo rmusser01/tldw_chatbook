@@ -377,7 +377,11 @@ def test_derived_artifact_checkers_use_mermaid_builder_python_pin():
     )
 
     assert setup["with"] == {"python-version": "3.12.11"}
-    assert _workflow()["jobs"]["preflight"]["runs-on"] == "ubuntu-24.04"
+    assert _workflow()["jobs"]["preflight"]["runs-on"] == (
+        "${{ (github.event_name != 'pull_request' || "
+        "github.event.pull_request.head.repo.full_name == github.repository) && "
+        "vars.CI_CONTROL_RUNNER || 'ubuntu-24.04' }}"
+    )
 
 
 def test_required_check_name_is_stable():
@@ -496,6 +500,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
         "pr-fast-lane-admission-2: Run admission-sensitive suites 2",
         "pr-fast-lane-admission-3: Run admission-sensitive suites 3",
         "console-p0-gate: Run the sandboxed Console P0 regression tests",
+        "console-p0-gate: Run the restore Console P0 regression tests",
         "console-p0-gate: Run the admission-sensitive Console P0 regression tests",
         "dreams-boundary: Run Dreams and Guardian boundary contracts",
         "dreams-boundary: Run Dreams admission-sensitive contracts",

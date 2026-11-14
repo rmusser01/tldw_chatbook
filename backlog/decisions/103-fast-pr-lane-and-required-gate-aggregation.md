@@ -155,7 +155,7 @@ cron entry on `dev`.
   recovered suites are jobs of their own (TASK-34916, TASK-34929,
   TASK-34986, TASK-38989, PR #3399, owner decision 2026-11-06), so an
   ordinary unlabeled,
-  non-GGUF PR now requests 28 test runners in parallel, 29 with perf-guard
+  non-GGUF PR now requests 30 test runners in parallel, 31 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -403,7 +403,7 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 36 shards. The current total is 46 eligible test jobs per PR
+Current UI lane: 36 shards. The current total is 48 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
@@ -485,3 +485,24 @@ entries, on dev 3a6498ae14, 2026-11-09), with weights from the 22 latest PR
 runs whose UI shards all finished and 92 untimed entries at their local serial
 seconds: 430 worst-case pytest min, and `--rebalance 12.7` projects 13.1-14.4
 min a job across the 36 shards.
+
+
+## Amendment (2026-11-13, TASK-40724): independent Console P0 profiles
+
+The first sustained eight-worker local run 43487945840 reached the Console P0
+20-minute job cap during its sandboxed invocation; its admission-sensitive
+invocation never started. Those two unchanged commands now run in separate
+matrix jobs with fail-fast disabled. The required aggregator still requires
+the entire Console P0 matrix to succeed. Each job uses the existing long-lane
+35-minute budget, below the 45-minute controller deadline. Dreams/Guardian
+also uses 35 minutes after reaching 91% of its final test group at its 20-minute
+cap. Per-test 180/300-second deadlines and test selection are unchanged.
+This adds one eligible job and follows ADR-359's disposable runner boundary.
+
+
+Follow-up in the same task: run 43496035687 passed Dreams in 21m08s and P0
+admission in 13m27s. P0 sandboxed still exhausted 35 minutes: the three
+response-rule restore selectors alone completed in 25m46s before Canvas tests.
+Those unchanged selectors now run as a third P0 profile with the same 180-second
+per-test deadline and 35-minute job limit. This adds one more eligible job;
+all existing selectors remain exactly once across the three required profiles.

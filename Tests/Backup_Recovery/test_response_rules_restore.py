@@ -296,6 +296,8 @@ def test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant(
             install_canvas_revision_payload_validator,
         )
 
+        # DDL otherwise commits every declaration before the first INSERT.
+        connection.execute("BEGIN")
         install_canvas_revision_payload_validator(connection)
         catalog = {
             80: CHACHANOTES_V80_SCHEMAS,

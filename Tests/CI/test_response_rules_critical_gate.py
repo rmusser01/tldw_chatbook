@@ -13,13 +13,15 @@ SELECTION = {
         "Tests/Chat/test_response_rules_preparation_custody.py",
         "Tests/DB/test_response_rules_migration.py::test_historical_migrates_using_installed_sql_without_losing_history[80]",
         "Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics",
-        "Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant",
-        "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload",
-        "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]",
         "Tests/Backup_Recovery/test_canvas_recovery_validation.py",
         "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_shipped76_staged_failure_rolls_back_checkpoint_rebuild",
         "Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation",
         "Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated",
+    ],
+    "restore": [
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant",
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload",
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]",
     ],
     "admission-sensitive": [
         "Tests/Chat/test_response_rules_trace_admission.py",
@@ -38,6 +40,7 @@ SELECTION = {
     ],
 }
 INHERITED = {
+    "Run the restore Console P0 regression tests": ["pytest", "--timeout=180", "--tb=short"],
     "Run the sandboxed Console P0 regression tests": [
         "pytest",
         "Tests/Console/test_console_markdown_export.py",
@@ -163,6 +166,7 @@ INHERITED = {
 #: Where each inherited pytest step runs. TASK-34986 moved the two Dreams
 #: steps out of console-p0-gate, verbatim, into dreams-boundary.
 STEP_JOBS = {
+    "Run the restore Console P0 regression tests": "console-p0-gate",
     "Run the sandboxed Console P0 regression tests": "console-p0-gate",
     "Run the admission-sensitive Console P0 regression tests": "console-p0-gate",
     "Run Dreams and Guardian boundary contracts": "dreams-boundary",
@@ -175,7 +179,8 @@ def validate(document):
     commands = {}
     for job_name in sorted(set(STEP_JOBS.values())):
         job = jobs[job_name]
-        assert job["timeout-minutes"] == 20 and len(job["steps"]) == 5
+        assert job["timeout-minutes"] == 35
+        assert len(job["steps"]) == (6 if job_name == "console-p0-gate" else 5)
         assert (
             job["if"]
             == "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))"
@@ -190,19 +195,13 @@ def validate(document):
     for name, inherited in INHERITED.items():
         step = commands[name]
         assert not step.get("continue-on-error", False)
+        label = next((label for label in SELECTION
+                      if name == f"Run the {label} Console P0 regression tests"), None)
         assert step.get("if") == (
-            None if "sandboxed Console P0" in name else "${{ !cancelled() }}"
+            "${{ !cancelled() && matrix.profile == '" + label + "' }}"
+            if label else "${{ !cancelled() }}"
         )
         tokens = shlex.split(step["run"].replace("\\\n", " "), comments=True)
-        label = (
-            "sandboxed"
-            if "sandboxed Console P0" in name
-            else (
-                "admission-sensitive"
-                if "admission-sensitive Console P0" in name
-                else None
-            )
-        )
         added = SELECTION[label] if label else []
         for target in added:
             assert tokens.count(target) == 1, target
