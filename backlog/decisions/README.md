@@ -247,7 +247,7 @@ Do not reuse numbers.
 | [ADR-358: Bug report evidence and sharing](358-bug-report-evidence-and-sharing.md) | Accepted for implementation planning | Copy one bounded, user-reviewed Markdown report from retained logs and governed Console evidence, with diagnostic facts by default and redacted tool content only by opt-in. |
 | [ADR-359](359-windows-textual-timer-waits-use-the-event-loop.md) | Accepted | Keep Windows Textual timer waits off the shared default worker pool. Renumbered from 354 and 358. Historical timer references in closed task records point to this decision. |
 
-| [ADR-359](359-isolated-self-hosted-ci-runners.md) | Accepted; host qualified | Separate disposable local CI test/control pools, repository-scoped registration and hosted rollback. |
+| [ADR-360](360-isolated-self-hosted-ci-runners.md) | Accepted; host qualified | Separate disposable local CI test/control pools, repository-scoped registration and hosted rollback. |
 
 ### Console approval resync references
 

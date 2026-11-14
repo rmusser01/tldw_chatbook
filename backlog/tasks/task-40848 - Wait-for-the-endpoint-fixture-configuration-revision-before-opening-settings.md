@@ -25,7 +25,7 @@ The endpoint round-trip CI test can open settings while an older configuration p
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/359-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
 Reason: Test fixture readiness correction within the existing projection and CI contracts.
 1. Reproduce the missing-modal error by delaying the real revision-zero configuration refresh and observe its captured/current revision and real opener verdict.
 2. Reuse the production presentation owner in the shared fixture to wait for the newly set endpoint revision through the existing 15-second helper; assert the real round-trip opens succeed.
@@ -35,7 +35,7 @@ Reason: Test fixture readiness correction within the existing projection and CI 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-The shared _console_on_9200 fixture now uses the existing _sync_console_control_bar_now helper after replacing the endpoint, so the checked presentation belongs to the new settings revision before the real opener runs. The round-trip test asserts both real opens. The final test diff is one import, one existing-helper call, a why comment and two opener assertions. All original assertions, function names, selectors, private-profile boundaries and deadlines remain; no production or workflow change. Updated the existing pending-display lesson. ADR-359 applies; no new ADR is required.
+The shared _console_on_9200 fixture now uses the existing _sync_console_control_bar_now helper after replacing the endpoint, so the checked presentation belongs to the new settings revision before the real opener runs. The round-trip test asserts both real opens. The final test diff is one import, one existing-helper call, a why comment and two opener assertions. All original assertions, function names, selectors, private-profile boundaries and deadlines remain; no production or workflow change. Updated the existing pending-display lesson. ADR-360 applies; no new ADR is required.
 
 Evidence: ninth normal gate43539534151 UI27 job132278678047 failed the round-trip test with NoMatches for the model-change control on ChatScreen;231 other tests passed (/tmp/tldw-ci-ninth-ui27-failure.log). The unchanged exact test passed locally12.06s. Delaying only the real revision-zero refresh0.5s reproduced the identical NoMatches, with captured revision0/current1 and real preparation returning False (/tmp/tldw-ci-endpoint-cold-red.log; /tmp/tldw-ci-endpoint-cold-observations.log). The final helper passed all5 shared-fixture journeys in39.86s with an event-conditioned real old-read hold; every case logged revision0/current1 before the original refresh (/tmp/tldw-ci-endpoint-held-green.log; /tmp/tldw-ci-endpoint-held-observations.log). Holding real publication30s fails at the unchanged15-second helper bound (/tmp/tldw-ci-endpoint-final-negative.log). Independent review verified pending-owner, expiry, closed/disposed refusal, real actions and unchanged cleanup; no blockers. Ruff passes; changed ranges are formatted. Full-file formatting reports pre-existing untouched sections, which remain unchanged. Whitespace, backlog IDs/readability and AST assertion/function retention pass.
 

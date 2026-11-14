@@ -25,7 +25,7 @@ The run-start coalescing test advances its clock before settling background sync
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/359-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
 Reason: Test-only scheduling/observation boundary correction within existing cadence and CI contracts.
 1. Retain the exact live UI9 failure and reproduce a real competing FULL serving the advanced-clock request before the measured owner.
 2. Advance the test clock only after its existing settled-sync wait, immediately before the measured original sync; retain every behavioral assertion and real late overlapping request.
@@ -35,7 +35,7 @@ Reason: Test-only scheduling/observation boundary correction within existing cad
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-The existing settled_sync helper now advances the simulated clock after its existing 30-second background-settlement wait, immediately before the measured original FULL. Both expired-interval calls use that boundary. All 13 original assertions, test names, render-success checks, real overlapping late request, deadlines and profile isolation remain unchanged (AST checked). No production, selector, workflow, topology or resource change. ADR-359 applies; no new ADR.
+The existing settled_sync helper now advances the simulated clock after its existing 30-second background-settlement wait, immediately before the measured original FULL. Both expired-interval calls use that boundary. All 13 original assertions, test names, render-success checks, real overlapping late request, deadlines and profile isolation remain unchanged (AST checked). No production, selector, workflow, topology or resource change. ADR-360 applies; no new ADR.
 
 Eleventh full gate 43557511010 UI9 job132335367866 failed the final projection count (2 versus 3); 150 other tests, including all three repaired Notes journeys, passed in687.10s. Retained /tmp/tldw-ci-eleventh-ui9-failure.log. A temporary real-background-FULL probe at the sixth helper entry reproduces the same count failure in6.51s, then the corrected exact test passes7.05s. Its observation records show the old background FULL served the advanced clock interval first; after the correction it sees the prior interval and the measured owner advances afterward. Logs /tmp/tldw-ci-projection-sync-boundary-{red,green}.log and /tmp/tldw-ci-projection-boundary-observations.log; probe /tmp/tldw_ci_projection_boundary_probe.py. The probe runs actual production sync; it neither fabricates cadence results nor suppresses background work.
 

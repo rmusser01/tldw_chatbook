@@ -25,7 +25,7 @@ The near-expiry display test treats every declined render as an expiry defect, a
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/359-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
 Reason: Test-only precondition repair within the existing checked-display and isolated-runner contracts.
 1. Preserve the exact live failure and observe the real renderer under deterministic coordinator overlap; distinguish reproduced interleaving from unobserved historical CI cause.
 2. Establish the coordinator-free synchronous render precondition with a 30-second timed acquisition matching the existing setup wait budget and preserve all original freshness/render/backoff assertions.
@@ -35,7 +35,7 @@ Reason: Test-only precondition repair within the existing checked-display and is
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-The mounted expiry-only test now asserts that warm-up refreshed the timestamp, acquires the real storage coordinator with a 30-second timeout, advances its existing clock and runs the original synchronous render under that lock, then releases it in finally. No production code, expiry threshold, original render/backoff assertion, test selector, workflow topology, runner resource or isolation change. The scoped fixture remains an idle gateway-only harness; it is not a general active-render locking helper. ADR-359 applies; no new ADR required.
+The mounted expiry-only test now asserts that warm-up refreshed the timestamp, acquires the real storage coordinator with a 30-second timeout, advances its existing clock and runs the original synchronous render under that lock, then releases it in finally. No production code, expiry threshold, original render/backoff assertion, test selector, workflow topology, runner resource or isolation change. The scoped fixture remains an idle gateway-only harness; it is not a general active-render locking helper. ADR-360 applies; no new ADR required.
 
 Evidence: normal PR gate43565526841 at29827102be failed only UI9 test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it (150 other shard cases passed); downstream required aggregate failed. Original local exact test passed6.97s. A real thread holding storage_admission._lock for250ms immediately after original warm() returns reproduced the assertion on the rebased branch in7.23s; tracing the original check recorded refusal line913 with proof age0.05s. This proves a valid interleaving, not which predicate failed in the uninstrumented historical CI log. Source helper and production checks were traced before implementation.
 

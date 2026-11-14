@@ -25,7 +25,7 @@ The loaded UI26 owner-control test fails during readiness setup when a real conf
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/359-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
 Reason: Test fixture readiness correction within existing projection and CI contracts.
 1. Record the live assertion and reproduce a legitimate false warm-up using the actual projection with delayed resumption.
 2. Extend the fixture's existing readiness loop to include the warm-up result without changing the deadline, assertions, selectors or isolation.
@@ -35,7 +35,7 @@ Reason: Test fixture readiness correction within existing projection and CI cont
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-The fixture now treats the real configuration warm-up and rail render as consecutive readiness predicates in its existing 30-second loop. A transient false warm-up retries before sync; reader exceptions and cancellation still propagate. Both complete original test functions, mutation controls, assertions, decorators and private-profile isolation are AST-identical. No production, selector, deadline, workflow or resource change. The shared native helper was not substituted because it uses a different 15-second bound and control-bar/lock contract. Updated the existing testing-evidence lesson; ADR-359 applies, no new ADR.
+The fixture now treats the real configuration warm-up and rail render as consecutive readiness predicates in its existing 30-second loop. A transient false warm-up retries before sync; reader exceptions and cancellation still propagate. Both complete original test functions, mutation controls, assertions, decorators and private-profile isolation are AST-identical. No production, selector, deadline, workflow or resource change. The shared native helper was not substituted because it uses a different 15-second bound and control-bar/lock contract. Updated the existing testing-evidence lesson; ADR-360 applies, no new ADR.
 
 Evidence: tenth full gate43548543910 UI26 job132306455432 failed the current-owner/saved-generation test at assert await projection.warm();154 other tests passed (/tmp/tldw-ci-tenth-ui26-failure.log). Unmodified exact local test passed14.57s. Temporary probe /tmp/tldw_ci_pending_owner_probe.py requests a real refresh and delays the actual settled wait's resumption beyond the real one-second display lifetime: production warm returned false at age1.106s, reproducing the same assertion (/tmp/tldw-ci-pending-owner-controlled-red.log; /tmp/tldw-ci-pending-owner-observations.log). Both corrected cases passed26.26s under that one-time real expiry (/tmp/tldw-ci-pending-owner-controlled-green.log). Persistent real expiry fails the existing deadline assertion at about30.6s, including the last attempt,42.69s total with child startup/teardown (/tmp/tldw-ci-pending-owner-negative.log).
 
