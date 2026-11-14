@@ -103,6 +103,7 @@ def test_raw_cli_value_objects_are_frozen_slotted_contracts(raw_cli, tmp_path):
         "timeout_seconds",
         "console_session_id",
         "transcript_anchor_id",
+        "protected_roots",
     ]
     with pytest.raises(FrozenInstanceError):
         request.command = "changed"
@@ -539,3 +540,34 @@ def test_build_scrubbed_environment_defaults_to_ambient_allowlist(raw_cli, monke
 
     assert environment["PATH"] == "/safe-bin"
     assert "OPENAI_API_KEY" not in environment
+
+
+def test_guard_uses_the_resolved_auto_shell(raw_cli, tmp_path, monkeypatch):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    cmd = r"C:\Windows\System32\cmd.exe"
+    monkeypatch.setattr(raw_cli, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(
+        raw_cli.shutil, "which", lambda name: cmd if name == "cmd.exe" else None
+    )
+    request = _request(
+        raw_cli,
+        root,
+        caller="model",
+        command="del /s /q *.*",
+        protected_roots=(root,),
+    )
+
+    with pytest.raises(raw_cli.RawCliHardlineViolation, match="workspace-folder-wipe"):
+        raw_cli.resolve_checked_workspace_shell_argv(request)
+
+    harmless = _request(
+        raw_cli, root, caller="model", command="echo ready", protected_roots=(root,)
+    )
+    assert raw_cli.resolve_checked_workspace_shell_argv(harmless) == (
+        cmd,
+        "/D",
+        "/S",
+        "/C",
+        "echo ready",
+    )

@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 import contextlib
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import math
 import multiprocessing
 import ntpath
@@ -24,7 +24,7 @@ import tempfile
 import threading
 from threading import Event
 import time
-from typing import Any, BinaryIO, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal, TypeAlias
 
 from tldw_chatbook.Agents.run_log import configured_max_record_bytes
 from tldw_chatbook.Utils.input_validation import (
@@ -40,6 +40,9 @@ from tldw_chatbook.STT.executor_process_tree import (
     WorkerContainmentIdentity,
     enter_worker_containment,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Tools.workspace_shell_guard import ShellDialect
 
 MAX_RAW_COMMAND_BYTES = RAW_CLI_COMMAND_MAX_BYTES
 MAX_RAW_TIMEOUT_SECONDS = RAW_CLI_TIMEOUT_MAX_SECONDS
@@ -112,6 +115,7 @@ class RawCliRequest:
     timeout_seconds: float
     console_session_id: str
     transcript_anchor_id: str | None = None
+    protected_roots: tuple[Path, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +148,7 @@ class RawCliResult:
     terminal_state: RawCliTerminalState
     truncated: bool
     cleanup_proven: bool
+    prelaunch_refusal_rule: str | None = None
 
 
 class RequiredCliOutput:
@@ -227,7 +232,7 @@ _SHUTDOWN_COMMANDS = frozenset({"shutdown", "poweroff", "halt", "reboot"})
 
 
 class RawCliHardlineViolation(ValueError):
-    """A catastrophic command shape hit the hardline floor.
+    """The built-in raw shell safety floor refused a request.
 
     Distinct from every permission refusal on purpose (AC#4): callers
     surface it as "the safety floor refused this", never as a user denial,
@@ -239,6 +244,10 @@ class RawCliHardlineViolation(ValueError):
         super().__init__(
             f"hardline safety floor: rule '{rule}' refuses this command"
         )
+
+
+class RawCliPrelaunchRefusal(RawCliHardlineViolation):
+    """A safety refusal before any worker or output setup."""
 
 
 def _basename(token: str) -> str:
@@ -503,6 +512,22 @@ def resolve_shell_argv(
     platform_name: str | None = None,
 ) -> tuple[str, ...]:
     """Return profile-disabled argv using deterministic injected shell lookup."""
+    _, argv = _resolve_shell_invocation(
+        selector,
+        command,
+        executable_lookup=executable_lookup,
+        platform_name=platform_name,
+    )
+    return argv
+
+
+def _resolve_shell_invocation(
+    selector: RawCliShell,
+    command: str,
+    *,
+    executable_lookup: Callable[[str], str | None],
+    platform_name: str | None = None,
+) -> tuple[ShellDialect, tuple[str, ...]]:
     platform_name = os.name if platform_name is None else platform_name
     if selector == "auto":
         candidates = (
@@ -536,12 +561,12 @@ def resolve_shell_argv(
         raise FileNotFoundError(f"raw CLI shell unavailable for selector {selector!r}")
 
     if shell_name == "bash":
-        return (executable, "--noprofile", "--norc", "-c", command)
+        return "bash", (executable, "--noprofile", "--norc", "-c", command)
     if shell_name == "sh":
-        return (executable, "-c", command)
+        return "bash", (executable, "-c", command)
     if shell_name == "cmd.exe":
-        return (executable, "/D", "/S", "/C", command)
-    return (
+        return "cmd", (executable, "/D", "/S", "/C", command)
+    return "powershell", (
         executable,
         "-NoLogo",
         "-NoProfile",
@@ -549,6 +574,38 @@ def resolve_shell_argv(
         "-Command",
         command,
     )
+
+
+def resolve_checked_workspace_shell_argv(request: RawCliRequest) -> tuple[str, ...]:
+    """Resolve argv and inspect protected targets in that shell's dialect.
+
+    Args:
+        request: Validated request with trusted, internal binding locators.
+
+    Raises:
+        FileNotFoundError: No executable matches the shell selector.
+        RawCliHardlineViolation: A workspace rule blocked the model command.
+    """
+    dialect, argv = _resolve_shell_invocation(
+        request.shell, request.command, executable_lookup=shutil.which
+    )
+    if request.caller == "model" and request.protected_roots:
+        from tldw_chatbook.Tools.workspace_shell_guard import (
+            workspace_deletion_violation,
+        )
+
+        try:
+            violation = workspace_deletion_violation(
+                request.command,
+                dialect=dialect,
+                cwd=request.initial_directory,
+                protected_roots=request.protected_roots,
+            )
+        except (OSError, ValueError, RuntimeError):
+            raise RawCliPrelaunchRefusal("workspace-protection-unavailable") from None
+        if violation is not None:
+            raise RawCliPrelaunchRefusal(violation)
+    return argv
 
 
 def build_scrubbed_environment(
@@ -890,6 +947,7 @@ def _raw_cli_worker_entry(
     shell_exited_event: Any,
     shell_exit_code: Any,
     output_queue: Any,
+    checked_argv: tuple[str, ...] | None = None,
 ) -> None:
     """Enter containment, await admission, then run exactly one shell."""
     terminal: tuple[str, str, int | None, str] | None = None
@@ -905,9 +963,13 @@ def _raw_cli_worker_entry(
             if abort_event.is_set():
                 return
 
-        try:
-            argv = resolve_shell_argv(request.shell, request.command)
-        except FileNotFoundError:
+        argv = checked_argv
+        if argv is None:
+            try:
+                argv = resolve_shell_argv(request.shell, request.command)
+            except FileNotFoundError:
+                argv = ()
+        if not argv:
             terminal = ("terminal", "shell_unavailable", None, request.shell)
             return
 
@@ -1327,6 +1389,15 @@ class RawShellExecutor:
         if not callable(on_event) or not callable(admit_worker):
             raise TypeError("on_event and admit_worker must be callable")
 
+        checked_argv = None
+        if request.caller == "model" and request.protected_roots:
+            try:
+                checked_argv = resolve_checked_workspace_shell_argv(request)
+            except FileNotFoundError:
+                # Preserve the missing-shell outcome without letting the worker
+                # select an executable the workspace guard did not inspect.
+                checked_argv = ()
+
         record_limit = configured_max_record_bytes()
         spool_owner = _open_spool(record_limit)
         accumulator = _OutputAccumulator(
@@ -1373,6 +1444,7 @@ class RawShellExecutor:
                             shell_exited_event,
                             shell_exit_code,
                             output_queue,
+                            checked_argv,
                         ),
                         name=f"raw-cli-{request.invocation_id}",
                     )

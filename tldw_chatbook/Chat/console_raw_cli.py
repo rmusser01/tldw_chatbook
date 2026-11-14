@@ -743,7 +743,10 @@ class RawCliRuntime:
         Required output is accepted only by the actual native executor. It remains
         sanitized and obtains completeness only from native stream/cleanup proof.
         """
-        from tldw_chatbook.Tools.raw_cli_executor import current_raw_cli_call
+        from tldw_chatbook.Tools.raw_cli_executor import (
+            RawCliPrelaunchRefusal,
+            current_raw_cli_call,
+        )
 
         try:
             custody = current_raw_cli_call(self, request)
@@ -837,13 +840,16 @@ class RawCliRuntime:
                 admit_worker = worker_guard()(admit_worker)
                 extra["_join_helpers"] = True
                 custody.physical_proven = False
-            result = executor.execute(
-                request,
-                cancel_event=active.cancel_event,
-                on_event=on_event,
-                admit_worker=admit_worker,
-                **extra,
-            )
+            try:
+                result = executor.execute(
+                    request,
+                    cancel_event=active.cancel_event,
+                    on_event=on_event,
+                    admit_worker=admit_worker,
+                    **extra,
+                )
+            except RawCliPrelaunchRefusal as exc:
+                result = self._refused_result(request, prelaunch_refusal_rule=exc.rule)
             if custody is not None:
                 custody.physical_proven = result.cleanup_proven is True
             return result
@@ -967,7 +973,9 @@ class RawCliRuntime:
             return
 
     @staticmethod
-    def _refused_result(request: RawCliRequest) -> RawCliResult:
+    def _refused_result(
+        request: RawCliRequest, *, prelaunch_refusal_rule: str | None = None
+    ) -> RawCliResult:
         return _raw_cli_executor().RawCliResult(
             invocation_id=request.invocation_id,
             caller=request.caller,
@@ -981,6 +989,7 @@ class RawCliRuntime:
             terminal_state="refused",
             truncated=False,
             cleanup_proven=True,
+            prelaunch_refusal_rule=prelaunch_refusal_rule,
         )
 
 
