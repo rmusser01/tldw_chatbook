@@ -1382,3 +1382,75 @@ collector ADRs remain in force.
 Raw probes, partial and complete runs, and test logs are local under
 `/private/tmp/pr3536-loop-7SRnOxID`. The verified
 `retained-reopen-sha256.txt` there records the source-bound receipts.
+
+## Viewport-first screening on November 14
+
+The detached candidate `7ffff8d74ebb72db32be33143dcdf5cbd87b2954`
+capped the existing activation window at one measured viewport plus eight
+estimated lines, rounded to a complete turn. The existing scrollback
+boundary loaded earlier history. Baseline `f497f8d3e93f1bb6560a9af0e79e4c89a5bb82aa`
+mounted all 50 rows in a mounted test. The first draft mounted less than
+half and PageUp loaded earlier rows. The draft also moved a reader's
+scroll position during same-session ingestion. Its broader selection
+passed 51 tests and failed that assertion. The one correction limited
+the cap to session changes and hidden replacement viewports. Both the
+original reading-state assertion and the new mounted test passed on the
+corrected source before native screening.
+
+All six arms ran in order A1, B1, B2, A2, A3, B3 in 120×50 Terminal.app
+470.2 windows on the same 18-CPU host. A is baseline and B is candidate.
+Every arm opened the same sealed corpus, SHA-256
+`023a28e834c1b4d434cf8de9fda43845c2ea74077a62c776e2f24c895de0a0ee`.
+Trips in each cell are first scale Active, warm Active, and cold saved
+open. Times are milliseconds. Original readiness came from the existing
+transcript marker. Usable viewport required the correct tail on a native
+TTY flush, the current transcript visit, and composer focus. Extended
+loop monitoring included native PageUp and PageDown and observed at least
+six seconds for Active and the full 13-second bound for cold.
+
+| Arm | Return to usable viewport | Original readiness | Original max loop gap | Extended max loop gap | Cold busy paint | One-minute host load, start to end |
+| --- | --- | --- | --- | --- | ---: | --- |
+| A1 | 361.22 / 514.39 / 2250.57 | 361.22 / 514.39 / 2250.57 | 56.60 / 198.21 / 118.73 | 118.57 / 203.21 / 365.17 | 62.70 | 36.22 → 40.93 |
+| B1 | 498.09 / 322.43 / 1953.51 | 498.09 / 322.43 / 1953.51 | 144.69 / 45.92 / 83.67 | 144.69 / 127.48 / 336.82 | 43.37 | 40.93 → 34.27 |
+| B2 | 771.61 / 1003.09 / 2458.74 | 423.30 / 1003.09 / 2458.74 | 165.38 / 188.74 / 134.44 | 190.17 / 188.74 / 383.20 | 65.05 | 34.27 → 33.54 |
+| A2 | 1389.77 / 806.86 / 2136.38 | 757.09 / 806.86 / 2136.38 | 295.96 / 144.63 / 125.01 | 295.96 / 144.63 / 397.78 | 57.62 | 26.10 → 30.57 |
+| A3 | 779.59 / 843.44 / 2242.32 | 138.32 / 843.44 / 2242.32 | 54.55 / 192.33 / 153.28 | 184.50 / 192.33 / 403.57 | 37.09 | 30.57 → 33.30 |
+| B3 | 2188.32 / 583.20 / 2368.89 | 2188.32 / 583.20 / 2368.89 | 225.18 / 106.05 / 139.90 | 228.86 / 106.05 / 406.23 | 65.31 | 33.30 → 34.19 |
+
+| Journey | Median usable, A → B | Median improvement | Improvements in pairs 1, 2, 3 |
+| --- | ---: | ---: | --- |
+| First scale Active | 779.59 → 771.61 | 1.0% | −37.9%, +44.5%, −180.7% |
+| Warm Active | 806.86 → 583.20 | 27.7% | +37.3%, −24.3%, +30.9% |
+| Cold saved open | 2242.32 → 2368.89 | −5.6% | +13.2%, −15.1%, −5.6% |
+
+Under the 50 ms limit, the original interval missed in 9/9 baseline and
+8/9 candidate journeys. The extended interval missed in 9/9 on each arm.
+Its worst gap rose from 403.57 to 406.23 ms. All six cold busy paints met
+the 100 ms limit. Exact identity, tab count and composer focus checks
+passed in all 18 journeys. Both Active journeys in every arm confirmed
+an actual oldest-history flush and return to the tail. The cold
+observer expected a marker absent from the selected history, so it
+never confirmed the oldest frame during the full observation on either
+arm. B2 opened a confirmation dialog on ordinary Ctrl+Q. After
+confirmation it exited with zero private DB descriptors, as did the
+other five runs without a prompt. The cold scroll proof and unprompted
+B2 retirement remain failed screening checks.
+
+The candidate mounted 31 rows instead of 51 for Active and 47 for
+cold. Median ChatScreen layout placements before the usable frame
+fell from 1791 to 720 for first Active, 1197 to 840 for warm, and
+3306 to 2906 for cold. B3 still did 12 native layouts before first
+Active became usable, spending 242 ms in ChatScreen layout and 317 ms
+in its paint. Switcher paint was the largest instrumented pre-usable
+cost on every cold open, 437–643 ms across all six arms. Every cold
+extended peak came after scrolling began and overlapped 295–357 ms of
+main-thread generation-two collection. Those are measured spans on
+this loaded host. Some gaps remained outside the recorded spans.
+
+The candidate failed the investment gate. The checkout returned to the
+frozen source, the complete 12-journey qualification was not run, and
+PR #3536 was not updated. TASK-31966 remains In Progress. The patch,
+all six raw arms with host receipts, the original failure logs, and the
+129-entry verified `viewport-screen-sha256.txt` are local under
+`/private/tmp/pr3536-viewport-kcTsyhaZ`. No new ADR was needed for
+this discarded test of ADR-365's existing viewport boundary.
