@@ -1280,3 +1280,105 @@ Raw receipts and probes remain local under `/private/tmp/cold-loop-nhl__vw9`.
 bef7c623394df01f94b9c38a93c0cc0fcb0e360e30f10ade7430110d50ecd6df  presentation-census-a/final-scale/trace.json
 fb0e37cbfb772e7cda567906f4249dbadf0d9c3190fa6ea4c3e0784acfd2a931  occluded-cuts-h/final-scale/trace.json
 ```
+
+## Rebased scale reopen and repeat results on November 14
+
+The published starting commit `14ec81ba2a` on dev `d46f753d82` reached
+113.50 ms on the scale reopen. The exact-source Terminal rerun reproduced
+that journey at 52.62 ms. A separate call-through run reached 127.35 ms on
+the reopen and recorded 47.76 ms of generation-two collection during
+native paint. On the latest source, a separate trace measured 64.33 ms of
+main-thread generation-two collection within a 104.44 ms first Active
+interval, and 48.73 ms of collection inside the 59.35 ms scale reopen
+interval while Textual was rebuilding a Markdown row. Three other saved
+peaks in that trace were predominantly native layout, paint and elapsed
+time outside the measured thread's CPU. These observations identify
+overlap on the traced runs.
+
+The same 12 uninstrumented Terminal.app 470.2 journeys use real Return,
+TTY flush, 100×30 and 120×50 disposable profiles, and the unchanged
+50 ms loop and 100 ms busy-paint limits. All complete rows in the table
+preserved exact targets, composer focus, tab counts, source and corpus
+checks. Every ordinary Ctrl+Q exited zero, retired the private DB
+descriptors and joined the owned Python process. The busy-paint timings in
+these plain runs all passed.
+
+| Source and sample | Ordinary passed | Scale passed | Scale reopen | Worst loop gap | Worst busy paint |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `14ec81ba2a`, starting measurement | 5/6 | 2/6 | 113.50 ms | 113.50 ms | 60.89 ms |
+| `14ec81ba2a`, exact-source rerun | 5/6 | 5/6 | 52.62 ms | 52.62 ms | 26.96 ms |
+| `9668088c73`, two runs | 4/6, 5/6 | 2/6, 1/6 | 79.46, 65.17 ms | 83.15, 111.57 ms | 33.09, 34.52 ms |
+| `0ad926fa72` | 6/6 | 1/6 | 81.49 ms | 98.56 ms | 72.28 ms |
+| `773dd48572` | 5/6 | 2/6 | 75.96 ms | 75.96 ms | 30.59 ms |
+| `5b15c52ab4` | 3/6 | 2/6 | 104.82 ms | 104.82 ms | 39.08 ms |
+| `b67b9498ff`, first run | 5/6 | 1/6 | 75.81 ms | 79.04 ms | 36.98 ms |
+| `b67b9498ff`, repeat | 6/6 | 0/6 | 87.98 ms | 98.52 ms | 45.12 ms |
+
+The local changes defer building archive recovery controls until a live
+recovery or Send admission needs them, preserve the Notes DB borrower while
+avoiding an early shutdown-module import, and mount transcript rows directly
+before persistent controls. Console fixed-height status changes request
+repaint, and unchanged border, confirmation and speech/header copy avoids
+extra redraw work. Managed message classes change in one native restyle.
+The four existing transcript composition owners record native dimensions
+without a redundant virtual-size layout request when both overflow axes are
+hidden. Scrollable owners retain native layout behavior.
+
+Mounted controls reproduced the redundant construction, row movement,
+layout requests and restyles before the corrections. The final recovery
+selection passed 34 tests and eight affected archived/open/Send cases
+passed. The fixed-height selection passed 47 tests. The focused
+assistant/Markdown/windowing selection passed 93 tests in the existing
+bootstrap profile, and the final affected viewport, rail, switcher and
+backdrop selection passed 112 tests. Earlier profile admission errors,
+four stale eager-stack expectations and the link-worker readiness failure
+are retained in the local logs. The stack assertions now exercise first
+attachment, and link assertions wait on the actual workers. The final 12
+size, token and boot checks passed with two existing headroom warnings
+(687/688 import modules and 1,040/1,040 ready modules). No budget changed.
+
+### Remaining native layout and collection
+
+The four scale saved journeys each laid out the newly attached transcript
+at 75 columns, then narrowed it to 74 for the scrollbar. The second
+ChatScreen pass had 143–155 native arrange-cache misses. A stable 74-column
+gutter alone retained the same second set of misses. A separate control
+started with the scrollbar indicated and used notification-only size
+updates for overflow-hidden descendants. It reduced the second-pass
+misses to 89–97, but the reopen reached 114.17 ms and included a 51.40 ms
+collection. Neither geometry control is retained in production.
+
+| Disposable scale experiment | At both limits | Largest loop gap | Scale reopen |
+| --- | ---: | ---: | ---: |
+| Skip occluded widget renders and identity strip divisions | 3/6 | 73.12 ms | 73.12 ms |
+| Native notification-only sizing of four non-scroll rows | 4/6 | 59.41 ms | 56.46 ms |
+| Reduce automatic generation-two frequency in the test process | 3/6 | 76.44 ms | 76.44 ms |
+| Skip unused component styles on plain Markdown paragraphs | 3/6 | 72.77 ms | 44.83 ms |
+| Combined collection, occluded-render and component-style control | 1/6 | 67.93 ms | 67.93 ms |
+| Stage hidden viewport layout in five-row batches | 0/6 | 123.31 ms | 68.00 ms |
+| Combined collection, occluded-render, full-map and paint-fold control | 4/6 | 67.02 ms | 49.94 ms |
+| Stable scrollbar gutter alone | 2/6 | 72.40 ms | 72.40 ms |
+| Preselect scrollbar and suppress redundant descendant geometry feedback | 2/6 | 114.17 ms | 114.17 ms |
+
+The component control skipped 368 virtual style nodes. The map/paint arm
+skipped 20,861 identity divisions, cleared 22 invalidations after a full
+map had just been built and folded seven paints. The earlier combined
+arm still missed five targets without an observed generation-two
+collection on the UI thread during the sampled activations. Its second
+Active peak was 66.84 ms elapsed and 19.74 ms thread CPU. The separate
+instrumented layout-census run also recorded a 100.45 ms reopen busy paint.
+Keep that diagnostic miss alongside the plain busy-paint passes. The
+staged layout control never observed a settled batch in its diagnostic
+wait and increased saved Return-to-transcript time. The native input,
+time limits and production collector policy are unchanged.
+
+TASK-31966 remains open. Both final-source plain repeats missed the loop
+gate, so PR #3536 was not updated. The next structural experiment should
+measure one native viewport-sized layout before making its replacement
+actionable, and prove scrolling, selection, links, resize and cancellation
+on cold and warm activation. The existing viewport ownership and
+collector ADRs remain in force.
+
+Raw probes, partial and complete runs, and test logs are local under
+`/private/tmp/pr3536-loop-7SRnOxID`. The verified
+`retained-reopen-sha256.txt` there records the source-bound receipts.
