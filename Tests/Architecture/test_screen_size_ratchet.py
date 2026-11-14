@@ -355,6 +355,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: size ratchet raises the row): the clearing commands take only their
     #: captured draft and /doctor takes before its checks. 24542/741 -> 24555/741.
     #: 2026-11-12: re-measured after rebasing onto dev 26b2e677dd (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24568/742 -> 24599/742.
+    #: 2026-11-13: re-measured after rebasing onto dev 531acb8cdc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24599/742 -> 24589/742.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24592, 743),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
