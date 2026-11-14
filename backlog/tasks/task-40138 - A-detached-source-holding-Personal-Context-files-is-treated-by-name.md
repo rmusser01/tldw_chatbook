@@ -71,3 +71,5 @@ Detached (portable) imports now treat both Personal Context files by name. Base 
 
 Files: `tldw_chatbook/Backup_Recovery/detached_layout.py`, `tldw_chatbook/Backup_Recovery/portable_relocation.py`, `Tests/Backup_Recovery/test_detached_layout.py`, `Tests/Backup_Recovery/test_portable_relocation.py`, `backlog/docs/backup-recovery-owner-inventory.md`, `Packaging/windows/portable/README.md`.
 
+**2026-11-14, review r14pccB (minor 4).** The refusal test's docstring no longer mentions "today's `_LocalSQLite` row". TASK-40134's real captured owner is the installed one. The stand-in "captured" case (`_SyncAdapter` monkeypatching) is replaced by a "valid" case: a real repository, which would pass validation, is still refused by name.
+
