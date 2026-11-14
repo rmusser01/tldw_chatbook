@@ -44,6 +44,7 @@ Broader affected verification passed63 cases; seven adjacent keyboard cases stop
 
 
 Live qualification on published head357076f002, normal PR gate43530844245: UI22 job132249289536 passed245 tests606.37s (runner ghq-test-e169050c, job00:56:01–01:07:36Z); UI24 job132249289549 passed370 tests647.27s (runner ghq-test-068f70e7, job00:56:28–01:08:44Z); UI25 job132249289488 passed132 tests670.50s (runner ghq-test-ca2b6174, job00:59:03–01:11:38Z). Logs /tmp/tldw-ci-late-ui{22,24,25}-live.log. The normal loaded lanes now qualify this task. This attempt has independent UI9/UI18 failures and is not a successful full-CI baseline.
+Integration with dev531acb8c retains dev's destination geometry fixture verbatim: it prepares real Workflows authoring before the geometry exercise and waits for the workbench. This is the documented first-entry coverage limitation from dev, not evidence that this test now qualifies startup. The focus restoration and CSS timestamp repairs remain. The rebase UI integration passed twelve cases in86.34s, and focused layout/focus plus architecture ratchets passed274 cases in85.97s (/tmp/tldw-ci-dev-rebase-ui.log; /tmp/tldw-ci-dev-rebase-focus-architecture.log). Earlier ChatScreen size and loaded timings above are historical evidence for their stated heads.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

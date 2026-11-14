@@ -1507,7 +1507,6 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
 
     expected_calls = Counter(
         {
-            ("tldw_chatbook/Plugins/backup", "_Plugins.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/DB/recovery_core", "_CoreAdapter.capture", "copy_private_sqlite"): 1,
             ("tldw_chatbook/TTS/recovery", "_Profiles.capture", "copy_private_sqlite"): 1,

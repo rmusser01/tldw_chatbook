@@ -74,7 +74,6 @@ CONNECTION_BACKUP_OWNER_IDS = (
     "db.prompts.backup",
 )
 COPY_BACKUP_OWNER_IDS = (
-    "recovery.plugins.registry",
     "recovery.rag_indexing",
     "recovery.recovered_media",
     "recovery.plugins.registry",
