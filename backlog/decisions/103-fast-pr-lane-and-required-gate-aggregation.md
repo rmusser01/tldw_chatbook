@@ -497,7 +497,7 @@ the entire Console P0 matrix to succeed. Each job uses the existing long-lane
 35-minute budget, below the 45-minute controller deadline. Dreams/Guardian
 also uses 35 minutes after reaching 91% of its final test group at its 20-minute
 cap. Per-test 180/300-second deadlines and test selection are unchanged.
-This adds one eligible job and follows ADR-359's disposable runner boundary.
+This adds one eligible job and follows ADR-360's disposable runner boundary.
 
 
 Follow-up in the same task: run 43496035687 passed Dreams in 21m08s and P0
