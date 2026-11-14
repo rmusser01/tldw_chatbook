@@ -11,6 +11,7 @@ from rich.text import Text
 from textual import events
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
+from textual.geometry import Size
 from textual.message import Message
 from textual.timer import Timer
 from textual.widget import Widget
@@ -30,13 +31,22 @@ _RAW_CLI_ELAPSED_TICK_SECONDS = 0.1
 
 
 class TranscriptCompositionMixin:
-    """Give the event loop a turn before eager transcript descendants mount."""
+    """Keep native transcript row mounts responsive and avoid repeat layout."""
 
     async def mount_composed_widgets(self, widgets: list[Widget]) -> None:
         if widgets:
             await asyncio.sleep(0)
             if not self._closing and not self._pruning and self.is_attached:
                 await super().mount_composed_widgets(widgets)
+
+    def _size_updated(
+        self, size: Size, virtual_size: Size, container_size: Size, layout: bool = True
+    ) -> bool:
+        # Native layout has already placed these rows. Hidden overflow has no
+        # scrollbar transition requiring another parent layout.
+        if self.styles.overflow_x == self.styles.overflow_y == "hidden":
+            layout = False
+        return super()._size_updated(size, virtual_size, container_size, layout)
 
 
 def raw_cli_status_copy(
