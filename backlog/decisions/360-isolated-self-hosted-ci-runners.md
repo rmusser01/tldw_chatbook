@@ -1,7 +1,8 @@
-# ADR-359: Isolated self-hosted Linux CI runners
+# ADR-360: Isolated self-hosted Linux CI runners
 
 Status: Accepted; host qualified, workflow integration pending
 Date: 2026-11-13
+Renumbered from ADR-359 on 2026-11-14. The older Windows Textual timer decision retains 359.
 Task: TASK-40721
 
 ## Context

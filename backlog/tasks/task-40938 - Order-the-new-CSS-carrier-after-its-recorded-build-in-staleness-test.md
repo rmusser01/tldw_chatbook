@@ -25,7 +25,7 @@ The new bundled-CSS carrier fixture assumes its creation receives a later filesy
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/359-isolated-self-hosted-ci-runners.md
+ADR path: backlog/decisions/360-isolated-self-hosted-ci-runners.md
 Reason: Test fixture timestamp precondition for existing CSS staleness policy, no production contract change.
 1. Retain eleventh-run UI24 failure and reproduce the equal timestamp with actual files.
 2. Reuse the existing timestamp helper after writing the new carrier, leaving production and assertions unchanged.
@@ -35,7 +35,7 @@ Reason: Test fixture timestamp precondition for existing CSS staleness policy, n
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Reused the existing _bump_mtime(carrier) immediately after writing the new unmanifested carrier. This establishes the newer-than-recorded-build condition used by the existing CSS discovery policy. Both original assertions and all test names are AST-identical. Production detection, filesystem isolation, selectors and workflow resources/topology are unchanged; no new helper or dependency. ADR-359 applies, no new ADR.
+Reused the existing _bump_mtime(carrier) immediately after writing the new unmanifested carrier. This establishes the newer-than-recorded-build condition used by the existing CSS discovery policy. Both original assertions and all test names are AST-identical. Production detection, filesystem isolation, selectors and workflow resources/topology are unchanged; no new helper or dependency. ADR-360 applies, no new ADR.
 
 Eleventh full gate43557511010 UI24 job132335367901 failed assert stale for the gained-carrier test;369 other tests passed648.85s (/tmp/tldw-ci-eleventh-ui24-failure.log). The normal unchanged exact test passed1.01s locally. A temporary plugin performs real writes and assigns a shared whole-second filesystem tick, while leaving later explicit os.utime calls intact; it reproduces the exact original false stale verdict in1.10s. The corrected full CSS module passes all19 cases in2.04s under that control. Logs /tmp/tldw-ci-css-carrier-{original,controlled-red,controlled-green}.log; probe /tmp/tldw_ci_css_carrier_probe.py.
 
