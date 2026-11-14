@@ -414,15 +414,17 @@ def _registry(
     root: Path,
     *,
     authority_parent: int | None = None,
+    expected_identity: tuple[int, int] | None = None,
     validate: Callable[[dict], None] | None = None,
 ) -> dict | None:
     authority = root / "admission"
-    try:
-        info = os.stat(authority, follow_symlinks=False)
-    except FileNotFoundError:
-        return None
-    if stat.S_ISLNK(info.st_mode) or info.st_mode & 0o077:
-        raise ValueError("authority_unsafe")
+    if expected_identity is None:
+        try:
+            info = os.stat(authority, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if stat.S_ISLNK(info.st_mode) or info.st_mode & 0o077:
+            raise ValueError("authority_unsafe")
     marker = root / "unbound-owner"
     marker_info = os.stat(marker, follow_symlinks=False)
     if (
@@ -438,7 +440,13 @@ def _registry(
         else nullcontext(authority_parent)
     )
     with directory as parent, _registry_read_lock(parent):
-        if authority_parent is not None:
+        if expected_identity is not None:
+            info = os.stat(authority, follow_symlinks=False)
+            if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o077:
+                raise ValueError("authority_unsafe")
+            if (info.st_dev, info.st_ino) != expected_identity:
+                raise ValueError("admission_authority_changed")
+        if authority_parent is not None or expected_identity is not None:
             current = os.fstat(parent)
             if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
                 raise ValueError("admission_authority_changed")
