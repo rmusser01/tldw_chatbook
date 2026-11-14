@@ -15,6 +15,16 @@ Rule: over ``tldw_chatbook/**/*.py``, count every AST node that is
   ``vars(fn).get("__wrapped__")``, ``vars(fn)["__closure__"]``).
 Counts are per name, so a removal under one name cannot pay for an addition
 under another.
+
+Known limits:
+* A name built at runtime (``getattr(f, "__co" + "de__")``, or a name held in
+  a variable) is not seen; only literal attributes and exact constants are.
+* Pins are package totals per name, so a removal in one file can pay for an
+  addition in another under the same name.
+
+ponytail: package totals per name, not per file. If the Agents/ or Chat/ hot
+spots need it, pin those directories (or files) separately the way
+``test_chat_code_identity_ratchet.py`` pins Chat/.
 """
 
 from __future__ import annotations

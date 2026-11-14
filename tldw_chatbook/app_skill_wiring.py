@@ -16,10 +16,14 @@ from .Skills_Interop.skill_trust_models import (
 def record_native_skill_trust_candidate(app, candidate):
     """Record the service a first-use build just published, for the active publication.
 
-    Called only by the two first-use builders after they fill the empty slot.
-    The publication registered for this app on this thread and task, and the
-    slot still holding ``candidate``, decide; the caller's identity does not
-    (ADR-356 rule 4). A service installed through the setter is never passed here.
+    Internal: called only by the two first-use builders (the
+    ``local_skill_trust_service`` getter and ``ensure_local_skill_trust_service``)
+    right after they fill the empty slot; the setter never calls it. The
+    publication registered for this app on this thread and task, and the slot
+    still holding ``candidate``, decide; the caller's identity does not. Any
+    caller on that thread and task could pass the slot's current value and have
+    it recorded; ADR-356 rule 4 accepts that, since in-process code is not a
+    boundary this check could enforce.
     """
     marker = _skill_trust_publisher.get()
     if type(marker) is not _SkillTrustPublisher or not marker.active:

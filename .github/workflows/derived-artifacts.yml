@@ -1356,6 +1356,7 @@ jobs:
             Tests/Backup_Recovery/test_unsaved_editors.py::test_exact_type_names_point_at_their_defining_modules \
             Tests/Chat/test_scope_picker_listers.py::test_scope_picker_contract_has_no_widgets_or_textual_import \
             Tests/Architecture/test_chat_code_identity_ratchet.py \
+            Tests/Architecture/test_code_identity_ratchet.py \
             Tests/test_config_hot_reload.py \
             Tests/Local_Ingestion/test_ingest_import_weight.py \
             Tests/Tools/test_note_tool_user_id.py::test_note_tools_use_the_real_service_on_the_supplied_database \
