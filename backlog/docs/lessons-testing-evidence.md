@@ -25461,3 +25461,21 @@ While the merge queue waited for runners, GitHub's repository API reported zero 
 Run43519057842 UI22 checked Workflows geometry after a context marker mounted but before async authoring recomposed its panes; a 250ms initializer delay reproduced the failure. Wait for the actual workbench with the existing bounded selector wait. UI24 assumed a write advanced the source mtime; an explicit coarse-clock write reproduced the missed hash. Establish recorded-source, edited-source and generated-sheet timestamp ordering, including an integration write that resets a synthetic future mtime back to the coarse wall clock. Negative controls still fail when panes never mount or content hashing is bypassed.
 
 UI24/25 focus captures instead exposed a product bug: activation restored the composer after a collapsed Inspector handle took focus, because it tested the hidden logical rail. A focus-owner probe and explicit restore in the mounted painted test reproduced both terminal sizes. Check the actual focused control through its ancestors; waiting until the activation timer happens to finish would mask the user-visible loss.
+
+
+## A save test must join its save, not a replaceable display read (TASK-40788)
+
+**Incident, 2026-11-14.** PR3529's self-hosted UI18 lane passed the first
+Settings save and later-draft assertions, then failed its second app-wide worker
+wait with WorkerCancelled. The cancelled worker was the internal-prompts summary
+read, revision2: the next real save advanced the config identity and the ordinary
+poll started its replacement. Adding a one-second delay to the real summary read
+reproduced the exact failure locally.
+
+The staged-save fixture now retains get_current_worker() inside its existing
+held writer and awaits each actual save worker, including its acknowledgement.
+The delayed-read control passes; explicitly cancelling the owned save still
+fails at that await. Keep persistence, focus, Revert and native teardown checks;
+do not swallow WorkerCancelled globally or turn off background refresh to make
+a save test pass. Logs: /tmp/tldw-ci-settings-save-controlled-{red,green}.log and
+/tmp/tldw-ci-settings-save-negative.log.
