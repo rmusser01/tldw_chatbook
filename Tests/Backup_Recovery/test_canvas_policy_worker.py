@@ -638,9 +638,8 @@ async def test_identity_releases_unissued_read_and_accepts_unchanged_install(
                 assert logical is not None
                 token = logical.begin(projection)
                 assert token is not None and token.active
-                projection.run(
-                    lambda: None, life=0.0
-                )  # Existing checked-read owner/API.
+                # Establish READY with one real off-loop read before testing refusal.
+                projection.run(lambda: None, life=0.0, _wait_for_config=True)
                 await until(lambda: not projection.pending, timeout=30)
                 assert projection.value == old_value
                 assert spend._same_readiness_key(projection.key, old_key)
