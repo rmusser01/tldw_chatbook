@@ -908,6 +908,125 @@ defect only, with no remembered per-chat capture bypass. This amendment records
 the mechanism that fix and TASK-33621.29 share. It is recorded with the
 implementing change and is subject to the owner's review of that change.
 
+### Amendment recorded 2026-11-13: append in each domain when a send grows both domains
+
+Status: approved by the owner on 2026-11-13. It was proposed on 2026-11-12 with
+its implementing change (TASK-34100.3, folding in TASK-34100.3.1), under the
+title "append in each domain for replayed reasoning", and the branch was held
+from merging until the owner decided. The pre-merge review of 2026-11-13
+tightened the rule and this text (a side-effect-free probe, the precedence and
+scope below, and what the owner check can and cannot prove).
+
+TASK-34100.3 made saved-chat Moonshot (Kimi) replies persist, which made a third
+turn reachable. Every model Moonshot lists returns reasoning on each reply, and
+Console replays each earlier reply's saved reasoning checkpoint on the next turn.
+With capture on (the default), turns 1 and 2 traced normally. Every later
+FRESH or AGENT_FIRST send stopped before the provider with "Trace capture blocked".
+Measured on dev `26b2e677dd`: `count_or_span`, prefix 3, suffix 1, 3 incoming
+entries changed, 0 recorded entries changed, domains `messages_payload` and
+`provider_continuations`. Turn N's request is the recorded messages, then the
+previous reply and the new user message, then every recorded checkpoint, then
+the previous reply's checkpoint. Nothing recorded changes. Flattened, though, the
+new messages sit before the old checkpoints and the new checkpoint sits after
+them, so the planner saw two change points. It already admits growth in one
+domain: a plain append, and new messages before an unchanged continuation
+suffix. Dropping the optional replay is no workaround, because removing a
+recorded continuation is itself refused (TASK-34100.3 review round 2 probe).
+
+Admit one more append shape, for FRESH and AGENT_FIRST sends without live
+native custody and outside a completed project-context transition. The rule is
+not specific to Kimi: any provider's send of that kind qualifies when it grows
+exactly in both domains. Replayed reasoning is the case that produced it and,
+today, the only one known. Every condition must hold:
+
+- Every recorded message equals, through the planner's existing durable
+  comparison, the incoming message at the same index. The planner's flat
+  prefix already compares them and stops at the first recorded continuation,
+  so it must cover exactly the recorded messages; the rule does not compare
+  them again.
+- Every recorded continuation equals the incoming continuation at the same
+  index, through the same comparison.
+- At least one message and at least one continuation are new.
+- Every incoming continuation is a typed `CONTINUATION_ATTACHMENT`. One in a
+  recorded position must be owned by a message equal to a recorded message,
+  and a new one by a message equal to a new message.
+
+What the owner check proves: only which side of the history a checkpoint
+belongs to, by descriptor equality. For a recorded slot it checks that the
+owner is some recorded message, and the slot's bytes must equal the recorded
+checkpoint. The guarantee that no recorded reply gains, loses or swaps a
+checkpoint therefore comes from content, not from the owner reference. A Kimi
+checkpoint carries its own reply's content, so two recorded checkpoints can
+only trade places if they are byte-identical, and then the request carries the
+same bytes either way. That is the strength of the existing rule for new
+messages before an unchanged continuation suffix, which also matches
+continuations by content.
+
+The owner reference cannot be made an identity proof. The pre-merge review
+asked that each owner occur exactly once among the incoming messages (or be a
+saved revision). The mounted Console carries every assistant reply as the same
+`ProviderArtifactTraceProvenance(ACTIVE_REQUEST, policy)` descriptor, so every
+Kimi checkpoint's owner occurs once per reply, and that requirement refused
+every turn 3+ again (all Kimi pilot rows, 2026-11-13); it was reverted. Only an
+owner that carries an identity (a saved revision) lets the rule refuse a new
+checkpoint attached to an earlier reply. With the Console's reply artifacts
+such a checkpoint is appended like any new one; the ledger stores
+continuations without owners and still records exactly the request sent.
+
+Precedence: the rule is tried first. It takes precedence over the
+completed-tool-turn replacement for a non-project witness, and when it admits a
+request the compound replacement is not attempted (a witnessed turn whose
+recorded entries all match needs no replacement). A completed project-context
+turn is outside the rule and keeps the existing rules.
+
+The probe has no side effects. The planner's comparison records each matched
+artifact's original value for the dispatch boundary, so when the rule refuses
+it restores those retained values to what they were before it ran. It never
+compares incoming index 0, so it never touches the rendered-system slot.
+
+Defensive invariants, not gates: the rule also refuses domains out of provider
+order (all messages, then all continuations) on either side, interleaved
+domains, and a recorded surface with no continuation. None of these can reach
+it through the planner, which builds both sequences domain-sorted and calls the
+rule only when its flat prefix stopped short of the recorded surface.
+
+The new messages and continuations append at the end of their own domains, through
+the existing surface append, per-domain ordinals and final binding. This is the
+delta shape cold bootstrap (`_bootstrap_surface_parent`) and dispatch binding
+already accept. No recorded node is replaced, no history is rewritten, and no
+schema, retention, codec, registry or witness is added. The delta's tool-loop
+overlay names each marked message by its position in the admitted indices. An
+edited, removed or reordered recorded entry, an untyped continuation, or a new
+checkpoint whose owner is not a new message (detectable only for an
+identity-bearing owner, above) falls through to the existing rules, which
+refuse it as before. The rule lives in
+`Chat/console_trace_domain_append.py`.
+Its rule-level negative controls are in
+`Tests/Chat/test_console_trace_domain_append.py`, including a refused probe
+that must leave the retained values unchanged and the Console's own reply
+descriptors (equal artifacts), which pin both the admission and the limitation
+above.
+`Tests/Chat/test_console_trace_domain_append_planner.py` drives the real
+planner (`prepare_current_surface_delta`) over a real ledger, warm and cold:
+it admits exactly the new entries of each domain and reads the ledger back as
+the request sent, and it still refuses an edited saved message the ledger
+never recorded, new bytes for a recorded revision, changed checkpoint bytes,
+reordered checkpoints, a second checkpoint on an earlier reply (its fixture's
+replies are saved revisions) and a dropped replay, plus the tool-loop, Continue and Regenerate routes, live native
+custody and a completed project-context turn. It also checks that a refused
+probe leaves the planner's retained values as it found them, and that the
+tool-loop overlay survives the non-contiguous delta.
+`Tests/UI/test_console_trace_retry_refusal.py` drives a really dropped replay
+through the mounted Console and records that it is still refused.
+
+The same change drains the reply's pending trace settlement when the final
+continuation's atomic dispatch settlement completes it. That path set the reply
+complete without the drain the ordinary terminal write performs, so every saved
+Kimi call stayed `response_started` and the Trace view showed none. This adds no
+admission authority. Evidence: `Tests/UI/test_console_moonshot_reasoning_reply.py`
+runs five saved turns per Kimi model with capture on and reconstructs each call's
+request from the ledger.
+
 ## Renumbering provenance
 
 Renumbered from ADR-097 to ADR-337 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-097 now refers to 097-boot-budget-ratchets.md.

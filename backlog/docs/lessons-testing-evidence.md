@@ -131,6 +131,8 @@ Deleting those rows as "gone" would have certified that live durable writers had
 
 **What to do.** Before removing a gone row from a source census, check whether its symbol still exists. If it does, read every call it makes now, including callables passed as arguments (`to_thread`, `run_in_executor`, `partial`). A shim import, a new alias form, a reference passed to a runner or a repo-local or library writer that replaced the counted call is a scanner gap. Extend the scanner, with a unit test that is red first. If a symbol still writes through something you do not add (tempfile, a third-party exporter, a subprocess), say so where its row is removed. Only rows whose code is really gone (a deleted file, a removed call) leave the inventory without a note.
 
+**The same gap from the writer's side (TASK-34100.3 rebase, found in review v5r1, 2026-11-13).** To stay under `console_chat_store.py`'s size row, the rebase moved the locked `create_assistant_with_continuation` call into a helper module that received the database method as a `creator` parameter. Dev's semantic mutation census (`Tests/Chat/test_console_semantic_mutation_inventory.py`) lost the reviewed route and could not see the write at its new site, so two of its tests failed. The branch's own sweep had reported "no new failure", because it ran the trace and continuation files chosen by topic, and the census file is neither. Moving a write between modules, or passing a writer by reference, is a census change wherever the census lives: run `Tests/Chat/test_console_semantic_mutation_inventory.py` and `Tests/Architecture/*census*` for any such move, and prefer raising the size row (owner decision 2026-10-04, expand limits) to moving a write out of sight.
+
 ## Waiting for the worker an action queued misses the loads that worker's result queues (TASK-39058, 2026-11-06)
 
 **Incident.** Two Watchlists Artifacts tests read `'refreshing' == 'idle'`. The filing said `wait_for_complete()` returned before the retry press's `wl-briefings-load` worker existed. The first fix waited for that worker, through a spy on `_request_briefings_refresh` and the loader group's `wait()`. A control that delayed every queued load by 0.5 s still turned the scope-change test red in 2 of 10 runs. The reason: `_load_briefings` assigns `pane.selected_briefing`; when the value changes, the pane's watcher posts `BriefingSelected`, and the screen's handler queues one more full load. So each load that moves the selection is followed by another, queued through a message after the first worker has finished. The fix records every load-requesting message the pane posts (`RefreshBriefingsRequested`, `BriefingSelected`, `ScriptSelected`). It waits until each has been handled (each handler calls `event.stop()` first, so `_stop_propagation` marks it) and no loader worker is left. The same delay control then passed 8 of 8 runs, and the old waits failed in every run.
@@ -2628,6 +2630,112 @@ test failure. Use a disposable private test root and the ordinary test isolation
 do not replace native admission or relax ACL checks to make collection pass.
 Separate later POSIX-only assertions or native publication failures from the
 evidence for the changed feature, and report those verification limits.
+
+## Before calling a rebased pilot failure "inherited", diff the harness against a passing dev sibling (TASK-34100.3 pass 3, 2026-11-12)
+
+**Incident.** After a ~4,080-commit rebase, the rebase report recorded that every
+mounted Console pilot was refused with "Console preparation source unavailable;
+Send again." on dev tip, and named two dev pilot files that fail the same way.
+It concluded that the task's TDD pilot could not run until dev fixed it. In
+fact dev's `Tests/UI/test_console_blocked_send_recovery.py` passed 10 of 12 on
+the same tree. Dev's TASK-39147 (`e7e70c2278`) had repaired the mounted
+fixtures: they build the app with `_build_test_app(user_data_dir=get_user_data_dir())`,
+so native configuration capture finds profile-bound sources, and they wait on
+`runtime.has_custodied_turns(session_id)`. Copying both into the branch's
+fixture made its pilots run within one round. The old wait was worse than
+slow: it awaited tasks captured by an `accept_turn` wrapper that a mounted send
+no longer calls, so `tasks` stayed empty, the wait returned at once, and later
+assertions raced the turn.
+
+**What to do.** When a pilot fails after a rebase with an error that dev's own
+tests "also" hit, find a dev test that drives the same path and still passes,
+and diff the two fixtures before you blame dev. Also check that every
+`wait for X` helper is waiting on something that is actually populated: one
+assertion that the captured list is non-empty would have exposed the dead
+wrapper.
+
+## Assert that a traced call settles, not only that its request was recorded (TASK-34100.3 pass 3, 2026-11-12)
+
+**Incident.** Since gap-02's fix, saved-chat Kimi replies had persisted with
+their reasoning checkpoints, and passed every test. But no saved Kimi call ever
+left `response_started`, so the Trace view (which reads settled calls only)
+showed none of them. The reply completes through the FinalContinuation branch
+of `persist_provider_continuation_event`, whose atomic dispatch settlement
+marks it complete itself and skipped the trace-handoff drain the ordinary
+terminal write performs. The defect surfaced only when the new five-turn pilot
+read each call back with `ConsoleTraceNativeReader.read_calls` and got `()` for
+turn 1. A probe then showed the handoff still sitting in the store's
+`_provider_trace_settlements`.
+
+**What to do.** When a change touches how a reply completes, read the trace
+back the way the viewer does (`ConsoleTraceNativeReader(db).read_calls(user_id)`),
+or at least assert `console_trace_calls.state` is terminal. A recorded request
+surface proves only the request half.
+
+## Run a proposed workaround for a refusal through the real refuser first (TASK-34100.3 review round 2, 2026-10-06)
+
+**Incident.** With trace capture on, the third send of a saved Kimi chat is
+refused by the ADR-337 trace planner (`unsupported_surface_change`): turn 3
+replays two stored reasoning checkpoints where turn 2 replayed one. Replay is
+optional for Kimi, so the review proposed dropping the checkpoints whenever
+the planner would refuse. That sounded safe, and it was the obvious next
+implementation step. A probe through the real pilot stack filtered the turn-3
+replay four ways (`setup-wizard-ux-qa/evidence/g3-r2-probe/`). The planner
+refused today's shape, refused "drop all" (removing an active continuation
+is itself a surface change), refused "newest only", and admitted only "oldest
+only". That last shape would replay turn 1's reasoning on every later turn
+and never anything newer. The probe took one 45-second run. Building the
+workaround first would have cost a full fix round and ended at the same
+refusal.
+
+**What to do.** When the fix for a refusal is "send a different shape so it is
+not refused", wrap the real producer of that shape (here
+`provider_continuation_owner_groups` in the three modules that import it) in
+a scratch test and run every candidate through the real refuser before you
+write any production code. Record which shapes it admitted as evidence. If the
+only admitted shape is semantically wrong, the fix belongs in the refuser and
+its governance (here an ADR-337 admission change), not in the request.
+
+## Build fixture values with the producer the app uses, not by hand (TASK-34100.3, 2026-10-05)
+
+**Incident.** Every Moonshot reply in a saved Console chat was generated, billed
+and then thrown away behind "Provider continuation could not be persisted" and a
+false delivery-unknown card. The store had a test for exactly that path, and a
+controller test drove a reasoning-only Kimi turn end to end; both passed. Both
+built the dispatch row's destination by hand as
+`endpoint_identity="https://api.moonshot.ai/v1"`, and 38 fixtures elsewhere did
+the same. The real `resolve_console_destination` records only the origin
+(`https://api.moonshot.ai`), while the continuation carries the full base URL,
+and the repository compared the two for equality. That check could only pass
+with the hand-built value. The defect surfaced once a test took the
+destination from the real resolver and a pilot ran the real gateway with the
+real Moonshot response builder (only the HTTP call replaced). Both failed on
+the pre-fix code. The first version of the fix then repeated the mistake: the
+match also accepted the raw base URL "so an identity recorded as the exact URL
+still matches", a case no real row can produce, kept only so those fixtures
+stayed green. Review removed it; the five fixtures on the match path now hold
+the origin, and a pin test compares the shared ones to the resolver's output.
+
+**What to do.** When a value crosses a persistence boundary and is compared
+later, build the fixture with the production function that produces it
+(`resolve_console_destination`, the adapter's response builder), not a literal
+that "looks right". If a test must hand-build such a value, add one test that
+pins the hand-built shape to the producer's output. A comparison that only a
+fixture can satisfy is the bug. Related: TASK-33662's restore helper reused
+persisted ids as native ids and hid a relaunch bug the same way.
+
+**The same gap in a planner fixture (TASK-34100.3 pre-merge review, 2026-11-13).**
+The real-planner tests for the ADR-337 per-domain append built each request by
+hand and carried every saved reply as a `SavedRevisionTraceProvenance`, one
+distinct id per reply. The review asked that a checkpoint's owner occur exactly
+once among the incoming messages. That change passed all 46 rule and planner
+tests, was pushed, and then refused turn 3+ in every Kimi row of the mounted
+pilots (10 RED). The Console sends every assistant reply as the same
+`ProviderArtifactTraceProvenance(ACTIVE_REQUEST, policy)`, so no owner can be
+unique. A one-line print of the descriptors in the rule, under one pilot run,
+showed the real shape in a minute. Before tightening a rule on descriptor
+identity, read the descriptors the production caller actually sends, and run
+the mounted pilots before pushing, not after.
 
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 

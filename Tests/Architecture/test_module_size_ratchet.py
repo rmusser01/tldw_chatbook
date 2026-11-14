@@ -293,7 +293,11 @@ _BUDGETS: dict[str, int] = {
     # adopted reply row writes the durable active-leaf cursor and legacy mix-in state.
     # 2026-11-08, TASK-36949.4: 22445 -> 22440 (-5), chat-sync reads go
     # through the Sync_Interop adapter instead of getattr method lookups.
-    "tldw_chatbook/Chat/console_chat_store.py": 22244,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.3 +11 -- the
+    # continuation owner row is created under the stream flush's insert lock
+    # with a re-check, kept inline so the semantic mutation census still sees
+    # the ``create_assistant_with_continuation`` write (review v5r1 F1).
+    "tldw_chatbook/Chat/console_chat_store.py": 22255,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -1063,7 +1067,14 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-39123 (owner size waiver): 6587 -> 6600 (+13) -- the
     # replay and surface-prefix comparisons accept a turn stored under an
     # older readable credential projection (review r12b-rev2).
-    "tldw_chatbook/Chat/console_trace_service.py": 6600,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.3 +24 -- the
+    # planner hook for the per-domain append (rule in
+    # console_trace_domain_append.py) and its non-contiguous admitted delta.
+    # owner decision 2026-10-04 (expand limits), applied 2026-11-13:
+    # TASK-34100.3 pre-merge review +2 -- the hook hands the rule the flat
+    # prefix and the retained values it restores after a refused probe; +1,
+    # the delta's tool-loop overlay is read from the admitted indices.
+    "tldw_chatbook/Chat/console_trace_service.py": 6627,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,
