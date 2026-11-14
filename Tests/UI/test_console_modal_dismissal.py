@@ -37,6 +37,9 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Prompt_Management.prompt_variables import PromptVariableApplication
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+from tldw_chatbook.UI.Console_Modules.citation_records_question import (
+    CitationRecordsQuestionDialog,
+)
 from tldw_chatbook.UI.Screens.change_review_screen import (
     ChangeGitCommitModal,
     ChangeGitPushModal,
@@ -1204,6 +1207,10 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
             # TASK-33003.19: a plain ModalScreen (Esc -> close) outside the
             # safe-dismissal contract; the inventory test names it too.
             WorktreeRecoveryDialog,
+            # TASK-33620.8.3: the one-time citation-records question, a
+            # ConfirmationDialog subclass opened after a reply or from the
+            # command palette.
+            CitationRecordsQuestionDialog,
         ),
         _CONSOLE_ROOT_SOURCE_PATHS,
     ),
@@ -1676,7 +1683,8 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # ConsoleLibrarySearchModal subclass is what the root opens.
     # TASK-35582 adds the safe-dismissal code-review report reader.
     # TASK-39147 adds the three safe-dismissal workflow dialogs.
-    assert len(reachable_modal_types) == 80
+    # TASK-33620.8.3 adds the citation-records question: 80 -> 81.
+    assert len(reachable_modal_types) == 81
     all_contract_types = (
         console_contract_types
         | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}
@@ -1685,6 +1693,9 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         # ModalScreens.
         | plain_types
         | {TrajectoryScreen, WorktreeRecoveryDialog}
+        # A safe ConfirmationDialog subclass outside the scanned Console
+        # widget package (UI/Console_Modules), so not inventory-only.
+        | {CitationRecordsQuestionDialog}
     )
     assert reachable_modal_types == all_contract_types - {ConsoleRagSettingsModal}
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
