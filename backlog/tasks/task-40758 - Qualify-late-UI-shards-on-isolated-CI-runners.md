@@ -1,10 +1,11 @@
 ---
 id: TASK-40758
 title: Qualify late UI shards on isolated CI runners
-status: In Progress
+status: Done
 created_date: 2026-11-13 23:46
 assignee:
 - '@codex'
+updated_date: 2026-11-14 01:13
 ---
 
 ## Description
@@ -18,7 +19,7 @@ The full self-hosted PR gate reaches later UI shards but exposes a collapsed-han
 - [x] #1 Activation focus restoration retains a user's reachable collapsed Inspector handle, and its painted focus cue remains visible at both existing terminal sizes.
 - [x] #2 Workflows loading-state geometry is checked after its actual workbench mounts, including deliberately delayed initialization; missing panes still fail within the existing wait budget.
 - [x] #3 CSS staleness fixtures explicitly establish the timestamp ordering claimed by their scenarios, and still detect changed content when generated sheets are newer.
-- [ ] #4 Focused regressions, independent review, and the affected normal self-hosted PR lanes pass without dropping selectors, coverage, isolation, or raising deadlines.
+- [x] #4 Focused regressions, independent review, and the affected normal self-hosted PR lanes pass without dropping selectors, coverage, isolation, or raising deadlines.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,7 +40,10 @@ The activation restore now checks the visible focused control rather than only i
 
 Evidence: run43519057842 failed UI22/24/25 (logs /tmp/tldw-ci-seventh-ui{22,24,25}-failure.log). A focus-owner probe found the composer owned both captures in failing cases; explicit activation restore failed both original terminal sizes before the correction (/tmp/tldw-ci-focus-red.log). A controlled 250ms Workflows initializer delay and coarse-clock source writes reproduced three fixture failures; corrected fixtures and focus checks passed23 cases11.33s. Independent review caught a second timestamp collision after the integration fixture refreshed its manifest and four lines over the existing ChatScreen limit; both were corrected before push. Updated fixed-coarse-clock probe plus both architecture guards passed34 cases12.15s (/tmp/tldw-ci-late-reviewed-green.log); ChatScreen remains24568lines/742methods. Negative controls disabling manifest hashing or preventing panes from mounting both failed as expected (/tmp/tldw-ci-late-negative.log).
 
-Broader affected verification passed63 cases; seven adjacent keyboard cases stopped in app_factory before touched code because that older module lacks its required bootstrap-profile declaration. Rechecking that module with the documented collection-time profile via a temporary plugin passed all16 cases23.35s; no repository profile/marker was changed. Logs /tmp/tldw-ci-late-ui-focused.log and /tmp/tldw-ci-keyboard-profile.log. F-rule lint, whitespace and backlog validators pass. Differential Ruff comparison found no new findings (existing33 in ChatScreen and9 in destination parity); changed lines conform to the formatter without reformatting existing large-file debt. Independent follow-up review found no blockers. Loaded normal PR qualification remains pending, so task stays In Progress.
+Broader affected verification passed63 cases; seven adjacent keyboard cases stopped in app_factory before touched code because that older module lacks its required bootstrap-profile declaration. Rechecking that module with the documented collection-time profile via a temporary plugin passed all16 cases23.35s; no repository profile/marker was changed. Logs /tmp/tldw-ci-late-ui-focused.log and /tmp/tldw-ci-keyboard-profile.log. F-rule lint, whitespace and backlog validators pass. Differential Ruff comparison found no new findings (existing33 in ChatScreen and9 in destination parity); changed lines conform to the formatter without reformatting existing large-file debt. Independent follow-up review found no blockers. Loaded normal PR qualification completed below.
+
+
+Live qualification on published head357076f002, normal PR gate43530844245: UI22 job132249289536 passed245 tests606.37s (runner ghq-test-e169050c, job00:56:01–01:07:36Z); UI24 job132249289549 passed370 tests647.27s (runner ghq-test-068f70e7, job00:56:28–01:08:44Z); UI25 job132249289488 passed132 tests670.50s (runner ghq-test-ca2b6174, job00:59:03–01:11:38Z). Logs /tmp/tldw-ci-late-ui{22,24,25}-live.log. The normal loaded lanes now qualify this task. This attempt has independent UI9/UI18 failures and is not a successful full-CI baseline.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

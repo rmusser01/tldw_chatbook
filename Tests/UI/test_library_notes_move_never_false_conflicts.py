@@ -405,6 +405,7 @@ def _pointer_target_ready(screen, selector: str) -> bool:
         or canvas._recompose_required
         or screen._library_notes_mutation_fenced()
         or not button.is_attached
+        or not button.display
         or not button.region.area
     ):
         return False
@@ -478,6 +479,16 @@ async def test_after_deleting_the_selected_note_move_and_add_act_on_nothing(
         assert not list(screen.query(".library-notes-tree-note-row.is-selected"))
         painted = _painted(host)
         assert "○ Add to folder" in painted and "○ Move note" in painted, painted
+        # The receipt can paint before the delete's Trash read rebuilds the canvas.
+        await _wait(
+            pilot,
+            lambda: (
+                not screen._library_notes_mutation_fenced()
+                and (trash := screen._notes_state.trash) is not None
+                and any(row.note_id == note_id for row in trash.rows)
+            ),
+            "the delete and its Trash publication to finish",
+        )
         for control in (
             "#library-notes-placement-move",
             "#library-notes-placement-add",
@@ -489,7 +500,7 @@ async def test_after_deleting_the_selected_note_move_and_add_act_on_nothing(
             )
             button = screen.query_one(control, Button)
             assert button.disabled, control
-            await pilot.click(control)
+            assert await pilot.click(control), control
             await pilot.pause(0.3)
             assert host.screen is screen, f"{control} opened {host.screen!r}"
         # The seam both buttons call refuses too, whatever the buttons say.

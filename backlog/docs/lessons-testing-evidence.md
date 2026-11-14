@@ -25479,3 +25479,23 @@ fails at that await. Keep persistence, focus, Revert and native teardown checks;
 do not swallow WorkerCancelled globally or turn off background refresh to make
 a save test pass. Logs: /tmp/tldw-ci-settings-save-controlled-{red,green}.log and
 /tmp/tldw-ci-settings-save-negative.log.
+
+
+## A delete receipt can precede its final Notes canvas publication (TASK-40818)
+
+**Incident, 2026-11-14.** PR3529 UI9 reached a disabled placement-button mouse
+check after deleting a note, then Textual selection routing found a detached
+content widget with no parent. The receipt and withdrawn Move label alone had
+not established completion: delete starts a separate Trash read that publishes
+another canvas rebuild. A one-second delay in that real read proved the old
+test clicked Add while publication was pending. The exact framework exception
+was not reproduced locally; ordinary, delayed-removal and queued-refresh probes
+passed and are not claimed as reproductions.
+
+Wait for the mutation to end and this note to appear in the real Trash snapshot,
+then reuse the settled-canvas check and verify the current button owns its mouse
+coordinates before each real click. A true Pilot.click result confirms its
+initial target; it does not prove ownership throughout all mouse events. Keep
+click exceptions and deletion assertions intact. The corrected three-case module
+passes under the delayed real read; a stuck read still fails the existing10s
+wait. Logs /tmp/tldw-ci-notes-delete-{trash-red,trash-green,module-green,negative}.log.
