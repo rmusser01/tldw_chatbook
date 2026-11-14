@@ -93,9 +93,15 @@ def _checked_display_without_admission_contention(projection, monkeypatch, deadl
     status = spend._checked_display_status
     lock = storage_admission._lock
     loop = asyncio.get_running_loop()
+    owner_thread = threading.get_ident()
+    owner = asyncio.current_task()
 
     def check(current):
-        if current is not projection:
+        if (
+            current is not projection
+            or threading.get_ident() != owner_thread
+            or asyncio.current_task() is not owner
+        ):
             return status(current)
         assert lock.acquire(timeout=max(0.0, deadline - loop.time())), (
             "the storage coordinator remained busy during the freshness check"
@@ -527,15 +533,26 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 console, "_sync_console_rail_and_controls", counting_project
             )
 
+            loop = asyncio.get_running_loop()
+            projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+
             async def settled_sync(*, elapsed: float = 0.0) -> None:
-                await until(sync_settled, timeout=30)
+                deadline = loop.time() + 30
+                await until(sync_settled, timeout=deadline - loop.time())
                 # Background syncs must settle before the measured interval starts.
                 clock.now += elapsed
-                await console._sync_native_console_chat_ui()
+                with _checked_display_without_admission_contention(
+                    projection, monkeypatch, deadline
+                ):
+                    await console._sync_native_console_chat_ui()
 
             async def tick() -> None:
-                await until(sync_settled, timeout=30)
-                await timer._callback()
+                deadline = loop.time() + 30
+                await until(sync_settled, timeout=deadline - loop.time())
+                with _checked_display_without_admission_contention(
+                    projection, monkeypatch, deadline
+                ):
+                    await timer._callback()
 
             try:
                 # A poll may skip work already served by the natural startup poll.
@@ -2077,7 +2094,10 @@ async def test_a_successful_readiness_read_during_a_backoff_renders_at_once(
                         sync = work
 
                         async def render():
-                            result = await sync()
+                            with _checked_display_without_admission_contention(
+                                projection, monkeypatch, asked + 30
+                            ):
+                                result = await sync()
                             render_results.append((loop.time(), result))
                             return result
 
