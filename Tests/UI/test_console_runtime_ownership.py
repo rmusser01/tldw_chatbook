@@ -3954,6 +3954,9 @@ async def test_cold_native_start_commits_both_receipts(
     rig_registered = False
     try:
         async with app.run_test(size=(160, 48)):
+            # Settle startup's real MCP permission owner before capturing the handoff.
+            service = app.unified_mcp_service
+            assert await asyncio.to_thread(lambda: service.permission_store) is not None
             runtime = app.console_runtime
             assert await asyncio.to_thread(controller._scratch_spaces.dispose)
             controller._scratch_spaces = runtime._scratch_spaces
