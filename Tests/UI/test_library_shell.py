@@ -7266,10 +7266,13 @@ async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-prompts").press()
-            await _wait_for_selector(
+            row = await _wait_for_selector(
                 screen, pilot, f"#library-prompt-row-{prompt_id}"
             )
+            # Entry focus may land on the filter before the prompt rows mount.
+            screen.set_focus(row)
             await pilot.pause()
+            assert screen.focused is row
 
             prompts_filter = screen.query_one("#library-prompts-filter", Input)
             rail_search = screen.query_one("#library-search-input", Input)
@@ -36231,7 +36234,11 @@ async def test_background_recompose_restores_focus_on_a_route_without_a_list_row
         selector = f"#library-row-{LIBRARY_ROW_BROWSE_COLLECTIONS}"
         screen.query_one(selector).press()
         await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
-        # The press rebuilds the rail; focus the row it mounts selected.
+        # Entry can rebuild the selected rail again when the capture loads.
+        await _wait_for_worker_group_to_drain(
+            host, pilot, screen, "library_collections_capture_entry"
+        )
+        await pilot.pause()
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one(selector).has_class("library-rail-row-selected"),
