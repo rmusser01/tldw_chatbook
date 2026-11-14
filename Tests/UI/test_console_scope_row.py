@@ -12,7 +12,6 @@ session, and Clear working in both branches.
 from __future__ import annotations
 
 import time
-from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Static
@@ -438,8 +437,9 @@ async def test_conversation_inspector_projects_raw_title_and_workspace_to_one_li
         session = console._session._active_native_console_session()
         session.title = raw_title
         session.workspace_id = raw_workspace
-        console._workspace._build_console_workspace_context_state = lambda: (
-            SimpleNamespace(workspace_label=f"Workspace: {raw_workspace}")
+        # TASK-36571.1: the Inspector reads the workspace label, not the build.
+        console._workspace.console_workspace_label = lambda: (
+            f"Workspace: {raw_workspace}"
         )
 
         rows = console._selected_console_conversation_inspector_rows()

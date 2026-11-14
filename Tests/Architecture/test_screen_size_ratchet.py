@@ -343,7 +343,22 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # rebase onto dev.
     # 2026-11-12, same waiver: re-measured on dev 4b90eb860b (24,524 lines);
     # this branch adds 44 lines and the one method above.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24568, 742),
+    # TASK-36571.1, 2026-11-05: same waiver. The Agent section reads its open
+    # flag (the stored preference, then the fleet force-open) instead of the
+    # whole rail state, and the rail reads the workspace label alone: +17
+    # lines over dev 29592ecc9b's 24604 and two methods (the shared
+    # stored-preference read and the flag): 24616/741 -> 24621/743.
+    # TASK-36571.1 review fix, 2026-11-06: same waiver. The open-flag read
+    # asks for the re-reads the rail-state build it replaced asked for: +2
+    # lines, no methods: 24621/743 -> 24623/743.
+    # TASK-36571.1, 2026-11-12: re-measured after rebasing onto dev
+    # 4b90eb860b (owner rule: exact; dev measures 24524/741, so the branch
+    # adds 19 lines and two methods): 24608/741 -> 24543/743.
+    # TASK-36571.1, 2026-11-12: same waiver. Re-measured after rebasing onto
+    # dev 26b2e677dd (owner rule: exact; dev measures its own row, 24568/742,
+    # and the branch adds 19 lines and two methods): 24568/742 -> 24587/744.
+    #: 2026-11-13: re-measured after rebasing onto dev 531acb8cdc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24587/744 -> 24577/744.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24577, 744),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

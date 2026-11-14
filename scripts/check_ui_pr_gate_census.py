@@ -992,6 +992,28 @@ MINIMUM_FILES = 2028
 # TASK-40720 (2026-11-13): append the native sync admission file at the tail.
 # The floor is the measured entry count.
 MINIMUM_FILES = 2029
+# TASK-36571.1 (2026-11-05): append the run tick's workspace-build pins (the
+# projection's and control bar's label reads, the Agent section's flag read,
+# the poll tick's one reuse and its push and unit guards) as node entries at
+# the tail; the file runs about 60 s serially. The floor is the entry count.
+MINIMUM_FILES = 2036
+# TASK-36571.1 (2026-11-05): the run-status reuse pin and the unchanged
+# folder-availability re-read pin join them. The floor is the entry count.
+MINIMUM_FILES = 2038
+# folder-availability re-read pin join them, then the full-sync reuse, the
+# workspace state builder reuse and the view key pins. The floor is the
+# entry count.
+# workspace state builder reuse, the view key and the cached label read
+# pins. The floor is the entry count.
+MINIMUM_FILES = 2042
+MINIMUM_FILES = 2041
+# workspace state builder reuse, the view key, the cached label read and the
+# stale re-read renewal pins. The floor is the entry count.
+MINIMUM_FILES = 2044
+# TASK-36571.1 review fix (2026-11-06): the idle syncs' re-read pins, the run
+# tick's no-re-read guard, the sub-agent renewal pin and the builder memo's
+# conversation and identity pins join them. The floor is the entry count.
+MINIMUM_FILES = 2049
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
@@ -1000,6 +1022,11 @@ MINIMUM_FILES = 2029
 MINIMUM_FILES = 2034
 
 
+MINIMUM_FILES = 2041
+MINIMUM_FILES = 2047
+MINIMUM_FILES = 2054
+MINIMUM_FILES = 2049
+MINIMUM_FILES = 2054
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

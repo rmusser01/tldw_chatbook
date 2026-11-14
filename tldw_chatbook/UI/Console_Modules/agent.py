@@ -935,6 +935,7 @@ class ConsoleAgentController:
         chat_controller_accessor: Callable[[], Any],
         sync_native_console_chat_ui_accessor: Callable[[], Any],
         reveal_agent_detail: Callable[[], None],
+        current_agent_section_open_accessor: Callable[[], bool] | None = None,
     ) -> None:
         """Wire the agent controller. Built in `Console_Modules/wiring.py`.
 
@@ -982,6 +983,10 @@ class ConsoleAgentController:
             sync_native_console_chat_ui_accessor: Returns the screen's
                 `_sync_native_console_chat_ui` **method object**, handed
                 straight to `run_worker` by the drill-in toggle.
+            current_agent_section_open_accessor: `ChatScreen._current_
+                console_agent_section_open`: the Agent section's open state
+                without the whole rail state (TASK-36571.1). Without it the
+                section reads ``current_rail_state_accessor().agent_open``.
         """
         self._reveal_agent_detail = reveal_agent_detail
         self._screen = screen
@@ -991,6 +996,7 @@ class ConsoleAgentController:
         self._native_tool_calls_enabled_accessor = native_tool_calls_enabled_accessor
         self._current_rail_conversation_id = current_rail_conversation_id
         self._current_rail_state_accessor = current_rail_state_accessor
+        self._current_agent_section_open_accessor = current_agent_section_open_accessor
         self._chat_controller_accessor = chat_controller_accessor
         self._sync_native_console_chat_ui_accessor = (
             sync_native_console_chat_ui_accessor
@@ -1032,6 +1038,9 @@ class ConsoleAgentController:
         self._console_subagent_counts_cache_during_run = False
         self._console_subagent_counts_read: dict[frozenset[str], dict[str, Any]] = {}
         self._console_subagent_counts_read_owner: tuple[Any, Any] | None = None
+        #: TASK-36571.1 review: the last count read's (bridge, rows, row ids),
+        #: which ``_renew_due_subagent_counts`` re-reads once it ages.
+        self._console_subagent_counts_last: tuple[Any, tuple, frozenset] | None = None
         self._console_historical_read: dict[str, Any] | None = None
         #: ``(owner, snapshot)`` a superseded same-owner re-read carried, for
         #: the next re-key to keep showing (TASK-39044).
@@ -1890,7 +1899,15 @@ class ConsoleAgentController:
         fleet_line = self._console_agent_fleet_summary_line()
         back_visible = bool(self._console_agent_drilldown_run_id)
         try:
-            section_open = self._current_console_rail_state().agent_open
+            # TASK-36571.1: the open state alone. The whole rail state built
+            # the Inspector state (and, first in each projection, the whole
+            # workspace context) for this one flag.
+            read_open = self._current_agent_section_open_accessor
+            section_open = (
+                read_open()
+                if read_open is not None
+                else self._current_console_rail_state().agent_open
+            )
         except (AttributeError, NoActiveAppError):
             # A bare/unmounted screen (several tests construct
             # `ChatScreen(app)` directly with no active Textual app
@@ -2415,17 +2432,33 @@ class ConsoleAgentController:
         touches the persisted preference -- only the transient flag and the
         returned dataclass change.
         """
+        agent_open = self._fleet_agent_section_open(rail_state.agent_open)
+        if agent_open == rail_state.agent_open:
+            return rail_state
+        return replace(rail_state, agent_open=agent_open)
+
+    def _fleet_agent_section_open(self, agent_open: bool) -> bool:
+        """The Agent section's rendered open state given its stored preference.
+
+        ``_apply_fleet_agent_section_auto_open``'s rule on the flag alone
+        (TASK-36571.1), so the Agent section's own sync need not build the
+        whole rail state to learn it.
+
+        Args:
+            agent_open: The stored preference's ``agent_open``.
+
+        Returns:
+            True when the section renders open.
+        """
         fleet_line = self._console_agent_fleet_summary_line()
         if not fleet_line:
             # Fleet is quiet: release any sticky dismissal so the NEXT busy
             # window auto-opens again (TASK-915 AC2).
             self._agent_section_user_dismissed_while_busy = False
-            return rail_state
-        if rail_state.agent_open:
-            return rail_state
-        if self._agent_section_user_dismissed_while_busy:
-            return rail_state
-        return replace(rail_state, agent_open=True)
+            return agent_open
+        if agent_open:
+            return True
+        return not self._agent_section_user_dismissed_while_busy
 
     def _console_subagent_counts_refresh_needed(self, row_ids: frozenset) -> bool:
         """Decide whether the sub-agent badge-count cache needs a DB round trip.
@@ -2512,9 +2545,11 @@ class ConsoleAgentController:
         """
         if bridge is None:
             return {}
+        rows = tuple(rows)
         row_ids = frozenset(
             cid for row in rows if (cid := getattr(row, "conversation_id", None))
         )
+        self._console_subagent_counts_last = (bridge, rows, row_ids)
         from ...DB.AgentRuns_DB import AgentRunsDB
 
         database = getattr(bridge, "_db", None)
@@ -2603,6 +2638,33 @@ class ConsoleAgentController:
     def _historical_owner(key: tuple) -> tuple:
         """The key's owner and chat fields: all but the config and live status."""
         return key[:3] + key[4:9]
+
+    def _renew_due_subagent_counts(self) -> None:
+        """Re-read the last count read's rows once that read is due, as a build would.
+
+        TASK-36571.1 review: idle, the Console's syncs built the workspace
+        context, and each build's ``_console_subagent_counts_for_rows`` call
+        re-read aged counts (the off-loop read publishes a change). The
+        cheaper reads that replaced those builds call this instead. It checks
+        the read's own TTL rule first, so fresh counts cost no live-token pass.
+        """
+        last = self._console_subagent_counts_last
+        if last is None or not last[2] or last[0] is not self._console_agent_bridge:
+            return
+        bridge, rows, row_ids = last
+        state = self._console_subagent_counts_read.get(row_ids)
+        if state is None:
+            due = self._console_subagent_counts_refresh_needed(row_ids)
+        else:
+            from ..Screens.chat_screen import CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+
+            due = not state["pending"] and (
+                not state["at"]
+                or time.monotonic() - state["at"]
+                >= CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+            )
+        if due:
+            self._console_subagent_counts_for_rows(bridge, rows)
 
     def _historical_presentation_key(self, bridge: Any, conversation_id: str) -> tuple:
         """Capture only process-local source and display ownership identities."""

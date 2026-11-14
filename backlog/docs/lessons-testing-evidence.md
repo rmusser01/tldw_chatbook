@@ -301,6 +301,22 @@ The first fix warmed the display after the evidence settle, just before the poll
 - Check the scaling assertion with a mutation that adds superlinear work but finishes, such as a rescan loop of `len(text) // 250_000` passes. A real quadratic mutation hangs the scaling test rather than failing it.
 - Give a regex rewrite a differential oracle: keep the old pattern in the test and compare `group(1)` on generated inputs. With random token strings, 25 Hypothesis examples caught none of five semantic mutations (one run each). Structured shapes (opening, whitespace, noise, closing) caught all five in three of three fresh runs.
 
+## A per-tick count on the mounted Console must retry deferred ticks (TASK-36571.1, 2026-11-05)
+
+**Incident.** A pin counted workspace builds over four poll-shaped syncs on a
+settled harness Console and expected `[0, 1, 0, 1]`. It read `[0, 1, 0, 0]`,
+then failed differently on the next run: the third sync returned False (its
+checked display had gone cold, so a whole-sync replay owned the render) and
+the next two returned at entry on the replay flag without reading anything.
+A projection pin that asserted `_sync_console_rail_and_controls() is True`
+failed the same way in one run of three.
+
+**What to do.** Treat a sync that returns False as "did not run" and retry
+it after a `pilot.pause()` until one completes, then count only that one;
+pair the two syncs whose relation you pin (an explicit sync, then at once a
+poll tick) inside the retry. Check the pin on the base build too: the retry
+must not turn the base's red into a pass.
+
 ## A worker-thread SQLite handle can be proven closed from the test thread with the `in_transaction` getter (TASK-38714, 2026-11-05)
 
 **Incident.** Four TASK-38714 tests had to show that a connection a store opened on a pool thread was closed after the owner's close ran elsewhere. The thread-local slot belongs to a thread that has already exited, and TASK-31993's lesson says SQLite's thread check fires before its closed check. So the first plan was to probe on each opening thread. The kernel stores (`AgentRunsDB`) use `check_same_thread=True`, but `sqlite3.Connection.in_transaction.__get__(conn)` only checks that the connection is open, not which thread asks. Called from the test thread, it returned normally for the leaked handles at base (`DID NOT RAISE`, red) and raised "Cannot operate on a closed database" after the fix (green). Statements such as `execute` are the calls that check the thread first.

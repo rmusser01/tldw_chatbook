@@ -111,6 +111,7 @@ from ...Workspaces.display_state import (
     _recompute_filesystem_binding_status,
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
+    console_workspace_label,
 )
 from ...Workspaces.models import (
     RuntimeBindingKind,
@@ -152,6 +153,10 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 10.0
 # made elsewhere show up promptly, while the several merges inside one
 # state build share one read.
 CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS = 2.0
+#: TASK-36571.1: the oldest run-tick build the next run tick may reuse. Two
+#: poll intervals: a tick the host delayed still reuses its predecessor's
+#: build, and a poll that stopped and restarted never reuses an old one.
+CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS = 0.4
 CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY = (
     "Couldn't resume this saved conversation: it was deleted or couldn't be read.\n"
     "Your previous Console chat is still active."
@@ -430,16 +435,26 @@ class _ConsoleRegistryDisplayReads:
       MagicMock's auto-attribute compares equal to itself forever and would
       freeze the view -- the TASK-21118 lesson), so reduced test doubles stay
       on live reads.
-    * ADR-028 is preserved by construction: only the SQL is cached.
-      ``display_state._safe_runtime_bindings`` still recomputes filesystem
-      binding status straight from disk on every build.
+    * ADR-028 is preserved by construction: the view caches registry rows,
+      never filesystem status. The builder reads binding status only from
+      the controller's off-loop availability snapshot, which
+      ``_capture_workspace_files_availability_for_registry`` recomputes from
+      disk. TASK-36571.1: ``display_key`` lets the controller memo the
+      builder's whole output while the view's reads and that snapshot are
+      unmoved.
     """
 
-    __slots__ = ("_service", "_generation", "_cache", "_calls", "_previous", "stale_reader")
+    __slots__ = (
+        "_service", "_generation", "_cache", "_calls", "_previous", "stale_reader",
+        "_revision",
+    )
 
     def __init__(self, service: Any) -> None:
         self._service = service
         self._generation: int | None = None
+        #: TASK-36571.1: moves whenever what a read can return moves (a new
+        #: generation, a cached read, an installed re-read); see display_key.
+        self._revision = 0
         self._cache: dict[tuple, Any] = {}
         #: TASK-33620.15.4: how each cached read was made, the last generation's
         #: reads, and (only while a run tick builds) who re-reads them off-loop.
@@ -465,7 +480,36 @@ class _ConsoleRegistryDisplayReads:
                 self._previous = self._cache
             self._cache = {}
             self._generation = generation
+            self._revision += 1
         return True
+
+    def display_key(self) -> tuple | None:
+        """What every read returns, as a token (TASK-36571.1).
+
+        Equal keys mean the same reads return the same values: a cached
+        read, the last generation's read while a run tick shows stale reads,
+        or a live read, which fills the cache and moves the key. ``None``
+        while caching does not apply (a double without a real generation).
+        """
+        if not self._cacheable():
+            return None
+        # The view itself, not its id: a key held past a registry swap keeps
+        # its view alive, so a new view can never inherit its identity.
+        return (self, self._generation, self._revision, self.stale_reader is not None)
+
+    def serves_cached(self, key: tuple) -> bool:
+        """Whether ``key``'s read returns its cached value for this generation."""
+        return self._cacheable() and key in self._cache
+
+    def renew_stale_requests(self) -> None:
+        """Ask again for the re-read a stale read would ask for (TASK-36571.1).
+
+        A reused build makes no reads, so without this a re-read that failed
+        would not be retried until the view's key moved.
+        """
+        stale_reader = self.stale_reader
+        if stale_reader is not None and self._cacheable() and self.stale_calls():
+            stale_reader(self, self._generation)
 
     def _read(self, key: tuple, method_name: str, *args: Any) -> Any:
         cacheable = self._cacheable()
@@ -481,6 +525,7 @@ class _ConsoleRegistryDisplayReads:
         if cacheable:
             self._cache[key] = value
             self._calls[key] = (method_name, args)
+            self._revision += 1
         return value
 
     def stale_calls(self) -> dict[tuple, tuple[str, tuple]]:
@@ -507,6 +552,8 @@ class _ConsoleRegistryDisplayReads:
             if key not in self._cache:
                 self._cache[key] = value
                 added = True
+        if added:
+            self._revision += 1
         return added
 
     def get_active_workspace(self) -> Any:
@@ -560,27 +607,42 @@ class ConsoleTickWorkspaceBuilds:
     * a ``None`` fingerprint (reduced doubles, any component failure) means
       every read builds live, exactly the pre-cache behavior.
 
-    Task-scoped and never shared across ticks: ``accepts_current_task``
-    admits only the coroutine task that opened the scope, so workers,
-    message handlers, and search settles interleaving during the tick's
-    awaits keep building live -- a mutation followed by a push can never be
-    masked. Inputs outside the fingerprint changing DURING one tick are
-    repainted by the next tick, at most 0.2 s later -- the same cadence
-    every other tick-driven surface repaints at. TASK-36511.2:
-    ``_sync_console_control_bar`` and ``_sync_console_rail_and_controls``
-    open the scope too (``live_workspace_build_scope``), so one such sync
-    pays for one build, for that sync, read live (``stale_reads=False``).
+    Task-scoped: ``accepts_current_task`` admits only the coroutine task
+    that opened the scope, so workers, message handlers, and search settles
+    interleaving during the tick's awaits keep building live -- a mutation
+    followed by a push can never be masked. Inputs outside the fingerprint
+    changing DURING one tick are repainted by the next tick, at most 0.2 s
+    later -- the same cadence every other tick-driven surface repaints at.
+    TASK-36511.2: ``_sync_console_control_bar`` and
+    ``_sync_console_rail_and_controls`` open the scope too
+    (``live_workspace_build_scope``), so one such sync pays for one build,
+    for that sync, read live (``stale_reads=False``).
+
+    TASK-36571.1: the Conversations tray push rebuilt the browser on every
+    run tick to find it unchanged. A run tick (``carries``) reuses its
+    predecessor's build once while the carry key matches (the fingerprint,
+    with the run status read as the run markers and attention facts the
+    build shows), so the inputs it leaves out (stars, unread and receipt
+    markers, appearance, folder availability, fleet counts, collapse
+    preferences, rail height, relative ages) reach the rails at most one
+    tick later. Any build outside a run tick drops the carried build, so a
+    push it made is never overwritten.
     """
 
     __slots__ = (
-        "_controller", "_task", "_fingerprint", "_state", "_building", "_stale_reads"
+        "_controller", "_task", "_fingerprint", "_state", "_building", "_stale_reads",
+        "_serial", "_carries",
     )
 
     def __init__(
-        self, controller: "ConsoleWorkspaceController", *, stale_reads: bool = True
+        self, controller: "ConsoleWorkspaceController", *, stale_reads: bool = True,
+        serial: int | None = None, carries: bool = False,
     ) -> None:
         self._controller = controller
         self._stale_reads = stale_reads
+        # TASK-36571.1: the run tick's number (None: never carried) and
+        # whether this tick may reuse its predecessor's build.
+        self._serial, self._carries = serial, carries
         try:
             self._task = asyncio.current_task()
         except RuntimeError:
@@ -612,6 +674,12 @@ class ConsoleTickWorkspaceBuilds:
             and fingerprint == self._fingerprint
         ):
             return self._state
+        if self._state is None and self._carries and fingerprint is not None:
+            carried = controller._take_carried_workspace_build(fingerprint, self._serial)
+            if carried is not None:
+                self._fingerprint = fingerprint
+                self._state = carried
+                return carried
         self._building = True
         try:
             reads = controller._stale_display_reads() if self._stale_reads else nullcontext()
@@ -624,7 +692,33 @@ class ConsoleTickWorkspaceBuilds:
         # token must describe the state actually cached.
         self._fingerprint = controller._console_workspace_build_fingerprint()
         self._state = state
+        if self._serial is not None and self._fingerprint is not None:
+            controller._console_carried_workspace_build = (
+                self._serial,
+                time.monotonic(),
+                controller._console_workspace_carry_key(self._fingerprint),
+                state,
+            )
         return state
+
+    @property
+    def run_tick(self) -> bool:
+        """Whether a run tick opened this scope (it builds, or reuses a build once)."""
+        return self._serial is not None
+
+    def workspace_label(self) -> str:
+        """The build's label: one display read under this build's read rule (TASK-36571.1).
+
+        A read the view already caches returns the same value under either
+        rule, so only a miss enters the build's stale-read context.
+        """
+        controller = self._controller
+        view = controller._console_registry_reads_view()
+        if view is None or view.serves_cached(("active",)):
+            return console_workspace_label(view)
+        reads = controller._stale_display_reads() if self._stale_reads else nullcontext()
+        with reads:
+            return console_workspace_label(view)
 
 
 def _availability_methods_current(owner, originals):
@@ -713,6 +807,7 @@ class ConsoleWorkspaceController:
         complete_manual_read_visit: Callable[..., None] | None = None,
         sync_session_titles: Callable[[], Awaitable[None]] | None = None,
         await_title_views: Callable[[], Awaitable[bool]] | None = None,
+        renew_subagent_counts: Callable[[], None] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -762,6 +857,8 @@ class ConsoleWorkspaceController:
             broken_conversation_ids_accessor: Return non-openable conversation ids.
             ensure_agent_bridge: Return the Console agent bridge.
             subagent_counts_for_rows: Compute sub-agent counts for browser rows.
+            renew_subagent_counts: Re-read the last count read once it ages
+                (TASK-36571.1 review; ``request_due_console_context_rereads``).
             conversation_browser_collapse_preferences: Return collapse preferences.
             wake_retry_poke: Optionally request a staged-wake retry after resume.
             workspace_tree_owner_accessor: Return the mounted Tree owner identity.
@@ -837,6 +934,7 @@ class ConsoleWorkspaceController:
         self._broken_conversation_ids_accessor = broken_conversation_ids_accessor
         self._ensure_agent_bridge_fn = ensure_agent_bridge
         self._subagent_counts_for_rows_fn = subagent_counts_for_rows
+        self._renew_subagent_counts_fn = renew_subagent_counts
         self._conversation_browser_collapse_preferences_fn = (
             conversation_browser_collapse_preferences
         )
@@ -4499,6 +4597,12 @@ class ConsoleWorkspaceController:
         token = self._console_conversation_browser_search_token
         await self._refresh_console_conversation_browser_search(query, token)
 
+    def _console_browser_projection_query(self) -> str:
+        """The query the browser's rows are read with: a failed search keeps the settled one."""
+        if self._flat_conversation_search.error:
+            return self._flat_conversation_search.settled_query
+        return self._console_conversation_browser_query
+
     def _with_console_conversation_browser_state(
         self,
         state: ConsoleWorkspaceContextState,
@@ -4511,12 +4615,7 @@ class ConsoleWorkspaceController:
             "conversation_local_marks_service",
             None,
         )
-        query = self._console_conversation_browser_query
-        projection_query = (
-            self._flat_conversation_search.settled_query
-            if self._flat_conversation_search.error
-            else query
-        )
+        projection_query = self._console_browser_projection_query()
         rows, total, error_copy = self._current_console_browser_rows(
             projection_query,
             current_conversation_id=current_conversation_id,
@@ -6988,11 +7087,127 @@ class ConsoleWorkspaceController:
         if getattr(self, "_console_tick_builds", None) is not None:
             yield
             return
-        self._console_tick_builds = ConsoleTickWorkspaceBuilds(self, stale_reads=stale_reads)
+        serial = None
+        if stale_reads:  # A run tick: number it, and let it reuse (TASK-36571.1).
+            serial = self._console_run_tick_serial = self._console_run_tick_serial + 1
+        self._console_tick_builds = ConsoleTickWorkspaceBuilds(
+            self, stale_reads=stale_reads, serial=serial, carries=stale_reads
+        )
         try:
             yield
         finally:
             self._console_tick_builds = None
+
+    #: TASK-36571.1: run ticks opened so far, and the last run tick's own build
+    #: as ``(tick serial, monotonic time, carry key, state)`` -- or ``None``
+    #: once it was reused or anything built outside a run tick. CLASS
+    #: defaults, like ``_console_tick_builds``, for hand-built fixtures.
+    _console_run_tick_serial: int = 0
+    _console_carried_workspace_build: tuple | None = None
+    #: TASK-36571.1: (view display key, builder inputs, built workspace state).
+    _console_workspace_state_memo: tuple | None = None
+
+    def _take_carried_workspace_build(self, fingerprint: tuple, serial: int | None) -> Any:
+        """Hand a run tick its predecessor's build, at most once (TASK-36571.1).
+
+        Returns:
+            The previous run tick's own build when it is at most
+            ``CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS`` old and its carry key
+            (``_console_workspace_carry_key``) still matches the one this
+            ``fingerprint`` gives, else ``None``. Taking it always drops it,
+            so the tick after a reuse builds.
+        """
+        carried = self._console_carried_workspace_build
+        self._console_carried_workspace_build = None
+        if carried is None or serial is None:
+            return None
+        built_serial, built_at, built_key, state = carried
+        if (
+            built_key is None
+            or built_serial != serial - 1
+            or time.monotonic() - built_at > CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS
+            or self._console_workspace_carry_key(fingerprint) != built_key
+        ):
+            return None
+        return state
+
+    def console_workspace_label(self) -> str:
+        """The context build's workspace label, read without the build.
+
+        TASK-36571.1: the rail badge and the Inspector's conversation rows
+        show only this label, and each projection built the whole
+        Conversations browser for it. A run tick's or control-bar sync's
+        scope lends its display-read rule; elsewhere it reads live. It asks
+        for the re-reads the build would ask for
+        (``request_due_console_context_rereads``).
+        """
+        self.request_due_console_context_rereads()
+        builds = getattr(self, "_console_tick_builds", None)
+        if builds is not None and builds.accepts_current_task():
+            return builds.workspace_label()
+        return console_workspace_label(self._console_registry_reads_view())
+
+    def request_due_console_context_rereads(self) -> None:
+        """Ask for the TTL-gated re-reads a context build asks for, without the build.
+
+        TASK-36571.1 review: idle, the settings-summary, control-bar and Agent
+        section syncs built the whole workspace context for its label and the
+        Agent section's open flag, and each build asked for the folder-
+        availability snapshot, the saved Conversations rows and the browser's
+        sub-agent counts once each aged past its TTL. The cheaper label and
+        open-flag reads ask here instead, through the same TTL gates; each
+        re-read pushes when it lands with something new. A run tick asks
+        nothing: its own build asks (or, once, it reuses a build that just
+        asked).
+        """
+        builds = getattr(self, "_console_tick_builds", None)
+        if builds is not None and builds.accepts_current_task() and builds.run_tick:
+            return
+        if not self._screen_running_accessor():
+            return
+        view = self._console_registry_reads_view()
+        try:
+            active = view.get_active_workspace() if view is not None else None
+        except Exception:  # noqa: BLE001 - the build's degraded path; it logs.
+            active = None
+        self._request_workspace_files_availability_refresh(
+            self._console_availability_workspace_ids(
+                getattr(active, "workspace_id", "")
+            )
+        )
+        self._sync_persisted_console_browser_rows(
+            self._console_browser_projection_query(),
+            current_conversation_id=self._current_console_conversation_id(),
+        )
+        renew_subagent_counts = getattr(self, "_renew_subagent_counts_fn", None)
+        if renew_subagent_counts is not None:
+            renew_subagent_counts()
+
+    def _console_availability_workspace_ids(
+        self, active_workspace_id: Any
+    ) -> tuple[str, ...]:
+        """The workspaces a context build asks folder availability for.
+
+        Args:
+            active_workspace_id: The built state's ``workspace_id`` (the
+                active workspace's, or empty without one).
+
+        Returns:
+            The active workspace first, then every listed one, deduplicated.
+        """
+        return tuple(
+            dict.fromkeys(
+                workspace_id
+                for workspace_id in (
+                    str(active_workspace_id or "").strip(),
+                    *(
+                        str(workspace.workspace_id or "").strip()
+                        for workspace in self._console_browser_workspace_records()
+                    ),
+                )
+                if workspace_id
+            )
+        )
 
     def live_workspace_build_scope(self):
         """One shared context build for a user-triggered sync, read live.
@@ -7410,23 +7625,32 @@ class ConsoleWorkspaceController:
                     and registry is getattr(self.app_instance, "workspace_registry_service", None)
                     and database is getattr(registry, "db", None)
                 ):
-                    self._workspace_files_availability_by_id = MappingProxyType(
-                        {
-                            workspace_id: bool(
-                                availability_snapshot.get(workspace_id, False)
-                            )
-                            for workspace_id in workspace_ids
-                        }
-                    )
-                    self._workspace_files_runtime_bindings_by_id = MappingProxyType(
-                        {
-                            workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
-                            for workspace_id in workspace_ids
-                        }
-                    )
+                    availability = {
+                        workspace_id: bool(availability_snapshot.get(workspace_id, False))
+                        for workspace_id in workspace_ids
+                    }
+                    bindings = {
+                        workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
+                        for workspace_id in workspace_ids
+                    }
+                    # TASK-36571.1: the once-a-second re-read usually finds
+                    # nothing new, and pushing it rebuilt the whole workspace
+                    # context on the UI loop (and dropped the tick's carried
+                    # build). An unchanged snapshot only renews its age.
+                    changed = availability != dict(
+                        self._workspace_files_availability_by_id
+                    ) or bindings != dict(self._workspace_files_runtime_bindings_by_id)
+                    if changed:
+                        self._workspace_files_availability_by_id = MappingProxyType(
+                            availability
+                        )
+                        self._workspace_files_runtime_bindings_by_id = MappingProxyType(
+                            bindings
+                        )
                     self._workspace_files_availability_cached_at = time.monotonic()
                     self._workspace_files_availability_refresh_in_flight = False
-                    self._sync_console_workspace_context()
+                    if changed:
+                        self._sync_console_workspace_context()
                     return
         except _WorkspaceAvailabilityObsolete:
             return
@@ -7444,46 +7668,54 @@ class ConsoleWorkspaceController:
         builds = getattr(self, "_console_tick_builds", None)
         if builds is not None and builds.accepts_current_task():
             return builds.state()
+        # TASK-36571.1: this build may be pushed; a carried, older one must not
+        # overwrite it. A run tick's own build re-records it after this.
+        self._console_carried_workspace_build = None
         current_conversation = self._current_console_conversation_id()
         # The generation-keyed display-read view stands in for the raw
         # service (TASK-22201): the builder's read set (active workspace,
-        # workspaces, runtime bindings, memberships) is served without SQL
-        # while the registry is unchanged. ADR-028's from-disk binding
-        # status recompute still runs per build inside the builder.
-        state = build_console_workspace_state(
-            registry_service=self._console_registry_reads_view(),
-            current_conversation=current_conversation,
-            conversations=(),
-            server_adapter_state=getattr(
-                self.app_instance,
-                "workspace_server_adapter_state",
-                None,
-            ),
-            acp_handoff_state=getattr(
-                self.app_instance,
-                "workspace_acp_handoff_state",
-                None,
-            ),
-            runtime_bindings_by_workspace=self._workspace_files_runtime_bindings_by_id,
+        # workspaces, memberships) is served without SQL while the registry
+        # is unchanged. Binding status comes only from the off-loop
+        # availability snapshot (ADR-028), one of the memo's inputs below.
+        view = self._console_registry_reads_view()
+        inputs = (
+            current_conversation,
+            getattr(self.app_instance, "workspace_server_adapter_state", None),
+            getattr(self.app_instance, "workspace_acp_handoff_state", None),
+            self._workspace_files_runtime_bindings_by_id,
         )
+        # TASK-36571.1: the builder is a pure function of those inputs and of
+        # what the view's reads return, so an unmoved view key reuses it.
+        memo = self._console_workspace_state_memo
+        view_key = view.display_key() if view is not None else None
+        if (
+            memo is not None
+            and view_key is not None
+            and memo[0] == view_key
+            and memo[1][0] == current_conversation
+            and all(now is then for now, then in zip(inputs[1:], memo[1][1:]))
+        ):
+            state = memo[2]
+            view.renew_stale_requests()  # As the builder's own stale reads would.
+        else:
+            state = build_console_workspace_state(
+                registry_service=view,
+                current_conversation=current_conversation,
+                conversations=(),
+                server_adapter_state=inputs[1],
+                acp_handoff_state=inputs[2],
+                runtime_bindings_by_workspace=inputs[3],
+            )
+            view_key = view.display_key() if view is not None else None
+            self._console_workspace_state_memo = (
+                None if view_key is None else (view_key, inputs, state)
+            )
         state = self._with_native_console_session_rows(state)
         state = self._with_console_conversation_browser_state(
             state,
             current_conversation_id=current_conversation,
         )
-        workspace_ids = tuple(
-            dict.fromkeys(
-                workspace_id
-                for workspace_id in (
-                    str(state.workspace_id or "").strip(),
-                    *(
-                        str(workspace.workspace_id or "").strip()
-                        for workspace in self._console_browser_workspace_records()
-                    ),
-                )
-                if workspace_id
-            )
-        )
+        workspace_ids = self._console_availability_workspace_ids(state.workspace_id)
         self._request_workspace_files_availability_refresh(workspace_ids)
         availability = MappingProxyType(
             {
@@ -7576,7 +7808,6 @@ class ConsoleWorkspaceController:
                 active_session_id,
                 sessions_token,
                 queued_token,
-                run_status,
                 self._canonical_membership_revision,
                 self._console_persisted_rows_cache_token,
                 self._console_conversation_browser_query,
@@ -7597,12 +7828,51 @@ class ConsoleWorkspaceController:
                 attempts_token,
                 getattr(self.app_instance, "workspace_server_adapter_state", None),
                 getattr(self.app_instance, "workspace_acp_handoff_state", None),
+                run_status,  # Last: the carry key replaces it (TASK-36571.1).
             )
         except Exception:
             logger.debug(
                 "Console workspace build fingerprint unavailable; building live"
             )
             return None
+
+    def _console_workspace_carry_key(self, fingerprint: tuple) -> tuple | None:
+        """The fingerprint with its run status replaced by what the build shows of runs.
+
+        TASK-36571.1: a send's run flips VALIDATING -> STREAMING -> ... while
+        no session's run marker or attention facts move, and each flip forced
+        a rebuild that found the browser unchanged. The build reads runs
+        through those (and the queued counts the fingerprint keeps), so a
+        run tick may reuse a build across such a flip. Its attention rows also
+        read the activity receipts' unseen snapshot and the manual-unread
+        marks, which this key leaves out: a receipt is published in the same
+        step as its run's marker change, and a manual-unread landing pushes on
+        its own (TASK-39070 inventories the rest).
+
+        Returns:
+            The key, or ``None`` (never reuse) when the run display is unreadable.
+        """
+        store = self._console_chat_store
+        controller = self._console_chat_controller
+        try:
+            run_display: tuple = ()
+            if store is not None and controller is not None:
+                unseen = self._console_fleet_unseen_ids()
+                read_attention = getattr(controller, "conversation_attention_for", None)
+                run_display = (
+                    unseen,
+                    tuple(
+                        (
+                            session.id,
+                            self._console_run_marker_with_unseen(controller, session, unseen),
+                            tuple(read_attention(session.id)) if callable(read_attention) else (),
+                        )
+                        for session in store.sessions()
+                    ),
+                )
+        except Exception:  # noqa: BLE001 - an unreadable display never reuses.
+            return None
+        return (*fingerprint[:-1], run_display)
 
     @staticmethod
     def _console_workspace_row_key(row: ConsoleWorkspaceConversationRow) -> str:
