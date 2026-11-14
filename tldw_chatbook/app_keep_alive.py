@@ -42,6 +42,45 @@ from textual.screen import Screen
 from textual.timer import Timer
 from textual.widget import Widget
 
+# TASK-32533. The three `textual.message_pump` frames that mean "one pump's own
+# handler raised": `_dispatch_message` (a message handler, and the compose/mount
+# dispatch in `_pre_process` -- the P0's own path), `_flush_next_callbacks`
+# (`call_after_refresh` / `call_later`) and `_process_messages_loop` (the
+# `on_idle` dispatch inlined there). Workers, the compositor and the driver
+# carry none of these and still exit.
+#
+# The application's OWN run loop is the exception: it runs through
+# `_process_messages_loop` too, so this frame set alone would make run-loop
+# errors non-fatal. It is excluded instead by `keep_alive`'s `pump is not self`
+# clause. Neither clause works without the other -- do not remove one because
+# the other "already covers it".
+_PUMP_DISPATCH_FRAMES = frozenset(
+    {"_dispatch_message", "_flush_next_callbacks", "_process_messages_loop"}
+)
+
+
+def _exception_frames(error: BaseException) -> list[tuple[str, str, int | None]]:
+    """Return ``(module, function, line)`` for each traceback frame, outermost first.
+
+    TASK-32533. Identifiers only -- module ``__name__``, ``co_name`` and the
+    line number -- so the result can be persisted through the metadata-only
+    diagnostics schema without ever carrying the message or a file path.
+    """
+    frames: list[tuple[str, str, int | None]] = []
+    tb = error.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        frames.append(
+            (
+                str(frame.f_globals.get("__name__", "")),
+                frame.f_code.co_name,
+                tb.tb_lineno,
+            )
+        )
+        tb = tb.tb_next
+    return frames
+
+
 #: ``App.get_default_screen()``'s id. Textual's blank default screen sits at
 #: the bottom of every stack; ``TldwCli`` pushes its routed content screen on
 #: top of it (``_navigation_outgoing_screen`` documents the layout), so it is

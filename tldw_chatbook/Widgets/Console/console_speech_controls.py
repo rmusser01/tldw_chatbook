@@ -409,6 +409,8 @@ def set_composer_voice_status(
         self._sync_full_width_voice_presentation(False)
         chip.styles.display = "none"
         _owner._swap_size_class(chip, "w-", "w-0")
+        if chip.styles.inline.has_rule("width"):
+            chip.styles.width = None
         chip.styles.min_width = 0
         _owner._clear_static_content(chip)
         return
@@ -439,6 +441,8 @@ def set_composer_voice_status(
         self._sync_full_width_voice_presentation(False)
         chip.styles.display = "none"
         _owner._swap_size_class(chip, "w-", "w-0")
+        if chip.styles.inline.has_rule("width"):
+            chip.styles.width = None
         chip.styles.min_width = 0
         _owner._clear_static_content(chip)
         return
@@ -500,22 +504,27 @@ def set_composer_voice_status(
         chip.tooltip = None
     chip.styles.display = "block"
     self._voice_chip_last_width = max(width, 1)
-    chip.remove_class(*(name for name in chip.classes if name.startswith("w-")))
+    classes = {
+        name for name in chip.classes
+        if not name.startswith(("w-", "h-")) and name != "p-left-1"
+    }
+    classes.add("h-1")
+    if full_width_preparing:
+        classes.add("p-left-1")
+    chip.set_classes(classes)
     # ds-runtime: Voice status text is fitted into measured remaining composer columns.
     chip.set_styles(width=self._voice_chip_last_width)
     chip.styles.min_width = 0
-    chip.remove_class(*(name for name in chip.classes if name.startswith("h-")))
-    chip.set_styles(height=None)
-    chip.add_class("h-1")
+    if chip.styles.inline.has_rule("height"):
+        chip.set_styles(height=None)
     chip.styles.min_height = 1
     self._sync_full_width_voice_presentation(full_width_preparing)
-    if full_width_preparing:
-        chip.add_class("p-left-1")
-    else:
-        chip.remove_class("p-left-1")
-    chip.set_styles(margin=None)
+    if chip.styles.inline.has_rule("margin"):
+        chip.set_styles(margin=None)
     chip.set_class(state == "error", "console-voice-status-error")
-    chip.update(_owner.Content(body))
+    copy = chip.content
+    if type(copy) is not _owner.Content or copy.plain != body or copy.spans:
+        chip.update(_owner.Content(body))
     # TASK-24620: the chip just moved; re-derive the reason strip so it
     # yields whatever the chip now holds (chip has priority).
     self._sync_send_disabled_reason(

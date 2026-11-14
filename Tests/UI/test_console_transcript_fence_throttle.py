@@ -32,6 +32,9 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     _console_markdown_body_ends_in_open_fence,
 )
 
+# The real transcript getters retain their collection-selected source.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class MarkdownHarness(App):
     CSS = "ConsoleTranscript { height: 40; }"

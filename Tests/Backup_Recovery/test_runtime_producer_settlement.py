@@ -4,9 +4,9 @@ import pytest
 
 from Tests.Backup_Recovery.test_activation_mcp import _SCRIPT as _MCP_ORDINARY_SETUP
 from Tests.Backup_Recovery.test_activation_mcp import _TRANSPORT
-from Tests.Backup_Recovery.test_mcp_recovery_review import _APPROVED_SETUP
 from Tests.Backup_Recovery.test_activation_network_sync import _SCRIPT as _SYNC_SETUP
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
+from Tests.Backup_Recovery.test_mcp_recovery_review import _APPROVED_SETUP
 
 _SYNC = (
     _SYNC_SETUP.split("effects = []")[0]
@@ -468,6 +468,16 @@ def test_local_upper_route_records_native_result_before_child_pause(tmp_path, st
     script = _MCP_UPPER
     if state == "ordinary":
         script = _ordinary_mcp_script(script)
+    retirement = (
+        "startup = storage._startups.pop((os.getpid(),str(root)),None)"
+        if state == "ordinary"
+        else "startup=storage._startups.pop((os.getpid(),str(root)),None)"
+    )
+    assert script.count(retirement) == 1
+    # Finish lazy tool imports before retiring this fixture's startup lease.
+    script = script.replace(
+        retirement, "import tldw_chatbook.RAG_Search\n" + retirement
+    )
     _run(tmp_path, "upper", state, script=script)
 
 

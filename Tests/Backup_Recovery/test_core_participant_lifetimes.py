@@ -111,13 +111,18 @@ def test_admitted_transaction_finishes_but_escaped_cursor_keeps_native_hold(
         with owner.transaction() as work:
             work.execute("CREATE TABLE phase3_result (value TEXT)")
             work.execute("INSERT INTO phase3_result VALUES ('committed')")
-            cursor = work.execute("SELECT value FROM phase3_result")
+            # Escape an independent native borrower, not the managed cursor
+            # CharactersRAGDB correctly closes when its transaction ends.
+            cursor = get_connection(owner).execute("SELECT value FROM phase3_result")
             pause = storage._begin_local_pause()
             participant.close_admission()
             # The exact live transaction can finish its originally admitted scope.
             assert get_connection(owner) is cached_connection(owner)
             assert not participant.drain(time.monotonic() + 0.02)
-        # Scope exit commits; it does not revoke reusable native borrowers.
+        if isinstance(owner, CharactersRAGDB):
+            with pytest.raises(sqlite3.ProgrammingError, match="closed cursor"):
+                work.fetchone()
+        # Scope exit commits; it does not revoke independent native borrowers.
         assert cursor.fetchone()[0] == "committed"
         assert cursor.execute("SELECT COUNT(*) FROM phase3_result").fetchone()[0] == 1
         assert not participant.drain(time.monotonic() + 0.02)

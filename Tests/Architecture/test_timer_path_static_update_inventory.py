@@ -1045,14 +1045,6 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     ),
     (
         "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
-        "ConsoleSessionSwitcherModal._update_receipt_status",
-        "status",
-    ): (
-        "NOT-PER-TICK: behind the same projection-snapshot equality gate "
-        "as _update_hints above."
-    ),
-    (
-        "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
         "ConsoleSessionSwitcherModal._update_selected_detail",
         "detail",
     ): (

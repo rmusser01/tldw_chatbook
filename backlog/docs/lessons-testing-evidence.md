@@ -7461,6 +7461,13 @@ rail rows — so the second run collided on the row ids. Sibling screens without
 `on_mount` never crashed, which is why the bug looked screen-specific. If a parent
 `on_mount` does real work, `super().on_mount()` in a child is a crash, not a courtesy.
 
+The 2026-11-12 TASK-31966 Terminal observer repeated this mistake in an App
+subclass. A constructor and stack trace found two Console screens, and the
+covered instance mounted another transcript during the first Active switch.
+Removing the explicit parent call yielded one Console in the same native
+probe. Assert the routed screen count in startup evidence before trusting
+timing from a live observer.
+
 **What to do.** "Fails identically on base" proves you didn't cause it — it does not prove
 it's noise. Before re-dismissing a persistently failing test, spend the five minutes to
 classify WHAT the failure would mean for a user if the tested path were driven live; a
@@ -25540,3 +25547,215 @@ explicitly; do not claim it changes the existing equal/backdated-carrier policy.
 PR #3529 run43565526841 UI9 failed the near-expiry warm-up test at its immediate render assertion;150 other shard tests passed. The same case passed locally. A controlled real thread holding the storage coordinator immediately after the original warm-up reproduced the assertion: the renderer refused at its nonblocking coordinator acquisition while the proof was only0.05 seconds old. The uninstrumented CI log does not identify its exact refusal predicate, so this is a demonstrated valid interleaving, not proof of the historical branch.
 
 An expiry-only assertion must establish the coordinator-free render precondition. The fixture now verifies that warm-up refreshed the timestamp, takes the coordinator with a30-second acquisition timeout, and retains that real lock only across the synchronous render, releasing it in finally. All production ownership, pause, freshness and contention checks remain. The controlled overlap passes; disabling refresh-ahead still fails the refreshed-timestamp assertion. Do not replace a timing regression with repeated warm/render attempts that could refresh away the defect under test.
+## TASK-34661: a five-owner native pass is not a descriptor plateau
+
+The approved app-retirement repair passed 32 native controls and closed all five
+captured constructor handles after actual Runner/default-executor join, before
+test-owned cleanup. A later repeated-app diagnostic still retained AgentRuns DB
+descriptors, with counts 0, 3, 6. Other bounded runs passed; timing changed which
+additional owner survived. Do not credit a passing constructor census or one
+quiet repeated run as aggregate FD retirement. Keep the exact native owner and
+physical-boundary census separate, preserve the failing plateau receipt, and
+seek explicit scope before extending a fixed owner contract. A shared Chat
+foreign-thread operation also caused an overly broad close refusal: that other
+thread retains its own handle, not authority over an independent app-thread
+handle. A real two-thread RED/GREEN pins the distinction without foreign close.
+Receipts and limitations: `Docs/QA/task-34661/README.md`.
+## A disposed runtime slot and finite projection reads are separate owners (TASK-34661, 2026-10-07)
+
+After five constructor stores retired, actual repeated app sessions still
+intermittently retained AgentRuns DB/WAL/SHM descriptors. Creation stacks alone
+did not attribute surviving handles. A real late-access RED showed that the
+app-exit wrapper dropped the runtime's permanent latch and admitted a second
+owner; a second native RED showed existing bridge count reads reopening a cache
+after runtime disposal. Retaining the disposed slot and reusing the existing
+operation-owned guard for both count APIs closes newly opened handles while
+warm transactions survive. Nine borrower/failure controls and actual three-loop
+physical-join checks pass before cleanup, with strong native references excluding
+GC as proof. Controlled gaps do not uniquely attribute every historical failure;
+ordinary config-source refusals and scheduler-failure warnings remain retained
+and reproduce on the exact incoming export. See `Docs/QA/task-34661/README.md`.
+
+## A cancelled caller is not its retained native worker (TASK-34661, 2026-10-07)
+
+An original mounted Interrupt node passed alone after reply-handle guards, but
+failed strict AgentRuns retirement after preceding module cases. First-acquisition
+census showed a live admitted reply worker; its shielded task remained in the
+controller's existing task set after its caller was cancelled. Including that
+set in the existing bounded disposal drain fixes the demonstrated omission;
+zero-budget controls still retain ownership and report incomplete. Whole-module
+instrumented and uninstrumented checks pass, as do three pre-cleanup physical-join
+censuses with strong native references. Do not infer physical settlement from a
+cancelled submit/stream wrapper or a one-node pass. A getter observer overwritten
+on each access identifies latest access, not first acquisition. Also use native
+liveness properties, not SQL from a foreign owning thread, when checking retained
+SQLite handles. Full failures and final causal receipts remain in
+`Docs/QA/task-34661/README.md`; unrelated baseline gates are not waived.
+
+## Scope a scheduler failure mock to the rejected call (TASK-34662, 2026-10-08)
+
+The custody scheduling-failure test globally patched `asyncio.create_task` until
+fixture teardown. A separately scheduled Canvas watcher later passed its real
+`to_thread` coroutine to that mock; the resulting unawaited warning was not a
+production custody leak. A nested monkeypatch context around synchronous
+`accept_turn` preserves the original failure and recovery assertions while
+restoring real scheduling before the loop yields. Promote both RuntimeWarning
+and PytestUnraisableExceptionWarning: pytest wraps the first, so testing only the
+RuntimeWarning filter misleadingly passed with a wrapper warning. The strict
+original node now passes. Completing MCP lazy RAG imports before fixture-owned
+startup retirement likewise keeps the original native maintenance guard meaningful.
+Fixing the Home profile fixture exposed an actual Workspace worker handle; native
+cold/error REDs, rather than setup refusals, established its ownership repair.
+See `Docs/QA/task-34662/README.md`; full diagnostic logs remain local.
+
+## Retained physical tasks and actual finite caches (TASK34661, 2026-10-08)
+
+Warm-ready shutdown still refused AgentRuns after the earlier reply-worker repair:
+Fleet Wake startup recovery was not in the controller's existing physical drain.
+A held actual pending-wake read reproduced that refusal; retaining the recovery
+task fixes successful settlement while zero-budget uncertainty still refuses.
+Research navigation then exposed finite Workspace catalog and Library Subscriptions
+read handles. A guessed private Subscriptions getter did not observe its public
+`.conn` cache; cold success/error native checks using that real cache identified
+the missing existing finite-worker closer. Keep warm borrowers/transactions alive,
+assert native closure before fixture cleanup and do not infer retirement from an
+unlinked file or passed UI body. See `Docs/QA/task-34661/README.md` for audited
+RED/GREEN outcomes; raw logs remain local.
+
+## Files view cancellation and fixture generations (TASK34661, 2026-10-08)
+
+An actual repeated app failed strict Workspace retirement after earlier native
+passes. Forwarding original attach/retirement observers pinned an active Files
+callback after its Textual wrapper's logical cancellation. The finite callback
+already owned its handle; missing physical settlement was the cause. Four
+held-native REDs and final GREEN reuse the existing settled-worker helper and
+exact root worker-group drain, not foreign close or a weaker census. Later142
+passing separate-harness bodies still retained constructor caches; opt-in exact
+fixture owners retire only after actual runtime disposal, with all142 native
+FD/lease censuses empty. A resume fixture preclaimed view1 before actual startup
+claimed view2; creating that view afterward preserves the stale-view guard.
+Passing bodies, flags or setup-invalid probes are not ownership proof. Audited
+outcomes: `Docs/QA/task-34661/broader-qualification-2026-10-08.md`.
+
+## Yielded construction must keep the publication fence (TASK31966, 2026-10-20)
+
+A styled fifty-row Console switcher probe measured roughly150ms of constructor
+CPU per page. Mounted RED then showed both uninterrupted construction and
+`_query_pending=False` while the actual mount still awaited completion. Merely
+yielding inside that loop would expose partial/stale activation authority.
+Keep rows hidden/disabled through complete current-generation publication;
+check real query/authority after each new async boundary, and cover concurrent
+search/reconcile/Enter owners as well as cancellation. The seven mounted
+controls pass, but only a fresh original scale matrix can qualify latency;
+GC-overlapping stalls are not waived by scheduler-progress assertions. See
+`Docs/QA/task-34661/continuation-2026-10-20.md` for retained RED and limits.
+
+### Native no-op writes can still invalidate layout (TASK31966, 2026-10-21)
+
+The Console allocation continuation's original 70-case matrix still failed six
+activation intervals after lazy Strip caches were introduced. Native mounted
+voice-chip regressions found repeated equal copy/class writes; the first repair
+retained the visual but all four layout-generation assertions still failed.
+Installed Textual8.2.8 clears a sizing rule and requests layout on assignment of
+None even when no inline rule exists. Gate an intended clear with
+`widget.styles.inline.has_rule(...)`, rather than repeatedly clearing a missing
+rule or comparing the CSS-effective width. Preserve real inline-drift repair.
+
+That regression also covers a second native trap: `Content.__eq__` compares plain
+text only. A same-copy rendering guard must consider spans when markup, styling
+or links matter. The final eight native projection cases pass, including span
+and width/height drift repair; this does not by itself clear the latency matrix.
+See `Docs/QA/task-34661/voice-projection-continuation-2026-10-21.md`.
+
+### Shielding an already-cancelled Task cannot settle its thread (TASK31966, 2026-10-21)
+
+The allocation continuation's original Model child passed its body but timed out
+after 300 seconds. Native sampling found the default-mutation settlement helper
+catching cancellation and immediately shielding the same cancelled inner Task
+forever. A complete-owned-scope cancellation RED reproduced the spin, as did an
+actual callback raising CancelledError. Keeping the original native callback in
+the same default executor through a shielded Future preserves copied ContextVars
+and physical settlement without adding a separately cancellable inner Task.
+Repeated outer cancellation and exact callback-error controls also pass; the
+whole originally hung Model module passes. A passed body is not retirement.
+
+The same affected run exposed stale test setup: queued startup handoff consumers
+can legitimately retry a one-shot injected failure, and an idle pause need not
+finish a coalesced projection. Observe the actual existing consumer/publication
+boundary before staging a fault or asserting copy. Also put config observers
+below, not in place of, installed reader-identity guards. Retain all assertions
+and original deadlines. Causal limits and non-green attempts are recorded in
+`Docs/QA/task-34661/copy-settlement-continuation-2026-10-21.md`.
+
+The subsequent 237-pass/one-failure run passed the recovered send and message
+checks but reached timer-None before the actual terminal poll completed. A
+matched held-poll RED fails that exact assertion; observing natural retirement
+within the existing 10-second worker phase passes. Do not stop a timer manually
+to certify that it stops itself, or extend a deadline to hide persistent work.
+
+### A passing parent can hide a native worker handle (TASK31966, 2026-10-21)
+
+The visible-copy continuation's strict queue/rail run recorded empty database
+censuses after all 138 parent cases, but a private queued-turn child passed its
+body and failed its own descriptor gate. First native registration, with strong
+references and unchanged getters/admission/close, found two live Workspace
+handles on exited executor threads. The finite hooks-v2 context reader scoped
+Chat persistence but not its actual Workspace consent read. Native cold/error
+REDs and a live borrowed-transaction control pin the missing operation-owned
+boundary; all six original child handles close after the repair, before safety
+cleanup. Require the descriptor gate in private children too; parent-only counts
+or successful bodies are not resource qualification. Audited outcomes and limits:
+`Docs/QA/task-34661/visible-copy-continuation-2026-10-21.md`.
+
+### Frozen rendering values can still carry mutable memos (TASK31966, 2026-10-21)
+
+The owner-free Textual color-cache adapter initially passed30 native/parity/GC
+controls, but an additional truecolor→256→standard check found all three outputs
+using truecolor ANSI instead of their three native encodings. Textual's frozen
+Style dataclass memoizes a mutable Rich style; sharing equal values also shared
+that renderer-specific memo. The original color calculation remains cached by
+immutable inputs, but its templates are never exposed: detached native fields
+preserve per-result memo ownership. Keep the actual native cross-renderer RED
+and GREEN; dataclass freezing alone is not immutability proof for cached values.
+
+### A helper name is not a constructor ownership namespace (TASK31966, 2026-10-21)
+
+The readiness-poll continuation's strict59-case run passed six actual private
+bodies but failed their native constructor-store retirement. Adding three real
+factory aliases to the existing opt-in fixture first passed their retained
+handle REDs, then exposed thirteen setup errors: Resend also has `_console_app`,
+but that helper returns a harness and its module has no `_build_test_app` binding.
+Discover only actual factory namespaces, not names alone; the real Resend harness
+regression pins this collision. Final65 parent cases and six actual private
+children all require the descriptor gate and retain zero DB cases. A private
+body's pass is not its process/retirement pass, and factory cleanup cannot be
+credited as production ownership repair.
+
+### Observe ownership before a lookup can restore it (TASK31966, 2026-11-11)
+
+A disposable finalized-Style restoration control appeared to preserve shallow
+Widget-copy ownership. The observer first compared the copy's styles with the
+original's styles; that original lookup restored owner links and hid the defect.
+Capturing the copied Style's owner before either comparison exposed the mismatch:
+native keeps the original Widget, while the candidate points at the copy.
+ADR364 rejects the candidate. Capture the state under test before invoking any
+accessor that can repair or normalize it; an observation can change the outcome.
+
+### Hidden mounted widgets can still deliver queued actions (TASK31966, 2026-11-13)
+
+A two-viewport Console control queued the old transcript's selection quote,
+then hid and disabled that viewport before publishing the new one. The quote
+still reached the current composer's draft. Test a queued action across the
+actual view change and a return to the same viewport. Check its originating
+activation at the effect boundary before using a hidden mounted view as a
+cache. See ADR-365.
+
+### A timer yield can move a peak without removing it (TASK-31966, 2026-11-14)
+
+After preparing a saved Console transcript, a 1 ms requested yield let due
+rendering run before the switcher dismissed. A matched diagnostic passed all
+six scale journeys, but the first uninstrumented run still missed two cold
+opens. A follow-up trace caught layout and control refresh in the same loop
+gap while the activation was already suspended. The exact-source repeat
+passed all 12. Measure the longest loop gap and Return-to-paint separately,
+and keep the first run and repeat beside the instrumented comparison.

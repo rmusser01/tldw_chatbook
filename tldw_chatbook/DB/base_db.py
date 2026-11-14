@@ -43,7 +43,7 @@ _OPERATION_OWNERS = threading.local()
 
 @contextmanager
 def operation_owned_connection(
-    database: object, *, operation_deadline: float | None = None
+    database: object, *, operation_deadline: float | None = None, read_only: bool = False
 ) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
@@ -53,6 +53,9 @@ def operation_owned_connection(
     A nested operation on the same thread and database defers to the
     outermost owner, which retires the handle when the whole operation ends.
     A monotonic deadline also bounds the departing handle's checkpoint wait.
+
+    Read-only operations can retire a ChaCha handle without requesting an
+    explicit WAL truncation.
     """
     owners = getattr(_OPERATION_OWNERS, "ids", None)
     if owners is None:
@@ -63,7 +66,7 @@ def operation_owned_connection(
     owners.add(id(database))
     try:
         with _operation_owned_connection(
-            database, operation_deadline=operation_deadline
+            database, operation_deadline=operation_deadline, read_only=read_only
         ):
             yield
     finally:
@@ -72,7 +75,7 @@ def operation_owned_connection(
 
 @contextmanager
 def _operation_owned_connection(
-    database: object, *, operation_deadline: float | None = None
+    database: object, *, operation_deadline: float | None = None, read_only: bool = False
 ) -> Iterator[None]:
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
@@ -114,6 +117,11 @@ def _operation_owned_connection(
     else:
         previous = getattr(local, "conn", None)
         borrowed = previous is not None and registry.is_registered(previous)
+        if read_only:
+            from .ChaChaNotes_DB import CharactersRAGDB
+
+            if type(database) is CharactersRAGDB:
+                close = functools.partial(database.close_connection, checkpoint=False)
     try:
         yield
     finally:
@@ -360,7 +368,7 @@ class SQLiteConnectionQuiescenceRegistry:
             connection.close()
             self.unregister(connection)
 
-    def close_if_idle(self, repository: object | None = None) -> bool:
+    def close_if_idle(self, repository: object | None = None, *, owner_only: bool = False) -> bool:
         """Close every registered handle now, or none while any is in use.
 
         Unlike a quiescence barrier it sets no barrier: a fresh acquisition
@@ -378,7 +386,7 @@ class SQLiteConnectionQuiescenceRegistry:
             while a barrier, acquisition, managed use, core operation or
             transaction is active.
         """
-        from tldw_chatbook.Backup_Recovery.participants import core_operation_active
+        from tldw_chatbook.Backup_Recovery.participants import core_operation_active, repository_participant
 
         with self._condition:
             if (
@@ -388,7 +396,14 @@ class SQLiteConnectionQuiescenceRegistry:
                 or (repository is not None and core_operation_active(repository))
             ):
                 return False
-            connections = tuple(self._connections.values())
+            if owner_only:
+                from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+                with storage._lock:
+                    owned = set(repository_participant(repository).connections)
+                connections = tuple(c for c in self._connections.values() if c in owned)
+            else:
+                connections = tuple(self._connections.values())
             for connection in connections:
                 try:
                     if connection.in_transaction:

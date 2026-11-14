@@ -151,6 +151,7 @@ async def test_failed_annotation_write_leaves_the_preview_map_alone():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_restore_rekeys_persisted_annotations_to_native_ids(tmp_path):
     """The restore half, unmocked: annotations written in a previous life of
     the conversation come back keyed to the CURRENT native message ids."""
@@ -163,7 +164,12 @@ async def test_restore_rekeys_persisted_annotations_to_native_ids(tmp_path):
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
             screen._prompt_queue = _RecordingPromptQueue()
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store

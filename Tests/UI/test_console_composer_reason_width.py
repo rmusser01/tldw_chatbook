@@ -22,7 +22,8 @@ import pytest
 from textual.geometry import Region
 from textual.widgets import Static
 
-from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_console_dictation import _ready_host
+from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 #: App size whose composer row cannot hold left cluster + actions row + a
@@ -36,11 +37,12 @@ APP_WIDE = (160, 42)
 #: enforced). The visible draft must never be starved below it while a wider
 #: row could satisfy it.
 DRAFT_FLOOR = 32
+pytestmark = pytest.mark.bootstrap_profile
 
 
 async def _composer_parts(host, pilot):
     """Mount the ready Console and return (composer, draft, reason strip)."""
-    console = await _mounted_console(host, pilot)
+    console = await _wait_for_production_console_ready(host, pilot)
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
     draft = composer.query_one("#console-command-visible-text", Static)
     strip = composer.query_one("#console-send-disabled-reason", Static)
@@ -251,7 +253,7 @@ CHIP_MESSAGE = "Microphone unavailable — check permissions and retry"
 async def test_narrow_composer_keeps_draft_visible_beside_voice_chip():
     _, host = _ready_host()
     async with host.run_test(size=APP_NARROW) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         draft = composer.query_one("#console-command-visible-text", Static)
         chip = composer.query_one("#console-voice-status", Static)
@@ -274,7 +276,7 @@ async def test_narrow_composer_keeps_draft_visible_beside_voice_chip():
 async def test_wide_composer_keeps_voice_chip_capped_and_draft_floor():
     _, host = _ready_host()
     async with host.run_test(size=APP_WIDE) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         draft = composer.query_one("#console-command-visible-text", Static)
         chip = composer.query_one("#console-voice-status", Static)
@@ -293,7 +295,7 @@ async def test_wide_composer_keeps_voice_chip_capped_and_draft_floor():
 async def test_resize_from_wide_to_narrow_retracts_the_voice_chip():
     _, host = _ready_host()
     async with host.run_test(size=APP_WIDE) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         draft = composer.query_one("#console-command-visible-text", Static)
         composer.set_voice_status("error", message=CHIP_MESSAGE)
@@ -377,7 +379,7 @@ async def test_chip_going_idle_restores_the_reason_strip_budget():
     strip immediately -- not at some later unrelated sync."""
     _, host = _ready_host()
     async with host.run_test(size=(140, 40)) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         strip = composer.query_one("#console-send-disabled-reason", Static)
         await pilot.pause()
@@ -406,7 +408,7 @@ async def test_preparing_renders_whole_in_the_intermediate_band():
     chip cap at every width, not only at a zero budget."""
     _, host = _ready_host()
     async with host.run_test(size=APP_INTERMEDIATE) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         chip = composer.query_one("#console-voice-status", Static)
         await pilot.pause()

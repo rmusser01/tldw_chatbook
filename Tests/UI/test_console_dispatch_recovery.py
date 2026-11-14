@@ -4,6 +4,7 @@ import importlib
 from types import SimpleNamespace
 
 import pytest
+from textual.app import App
 from textual.widgets import Static
 
 import tldw_chatbook.Chat.console_chat_models as recovery_models
@@ -178,6 +179,36 @@ def test_widget_constructs_dynamic_copy_with_markup_disabled() -> None:
     assert str(dynamic[1].render()) == (
         "Retry anyway may send a duplicate request because delivery status is unknown."
     )
+
+
+@pytest.mark.asyncio
+async def test_inactive_recovery_preserves_children_across_session_change() -> None:
+    region = _ui_module().ConsoleDispatchRecoveryRegion(session_id="first")
+
+    class RecoveryApp(App[None]):
+        def compose(self):
+            yield region
+
+    async with RecoveryApp().run_test() as pilot:
+        copy = region.query_one("#console-dispatch-recovery-copy", Static)
+        assert region.sync_recovery("second", None)
+        await pilot.pause()
+        assert region._session_id == "second"
+        assert not region.has_class("-visible")
+        assert region.query_one("#console-dispatch-recovery-copy", Static) is copy
+
+        assert region.sync_recovery("second", _state(remote=True))
+        await pilot.pause()
+        assert region.has_class("-visible")
+        assert "another device" in str(
+            region.query_one("#console-dispatch-recovery-copy", Static).renderable
+        )
+
+        assert region.sync_recovery("third", None)
+        await pilot.pause()
+        assert not region.has_class("-visible")
+        final_copy = region.query_one("#console-dispatch-recovery-copy", Static)
+        assert str(final_copy.renderable) == ""
 
 
 def _empty_queue_snapshot() -> PromptQueueSnapshot:

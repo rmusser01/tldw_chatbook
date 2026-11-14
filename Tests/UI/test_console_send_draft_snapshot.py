@@ -17,6 +17,9 @@ from textual.events import Key
 from textual.widgets import Button
 
 from Tests.UI.pump_probe import console_attach_ended
+from Tests.UI.console_fixture_ownership import (
+    owned_console_apps as owned_console_apps,  # noqa: PLC0414 - pytest fixture export
+)
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
     _configure_native_ready_console,

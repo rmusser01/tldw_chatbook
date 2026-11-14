@@ -22,6 +22,7 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_native_chat_flow import _persist_console_provider_config
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (

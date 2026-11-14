@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
@@ -55,6 +55,29 @@ class TrayApp(App[None]):
         rail.styles.width = 41
         with rail:
             yield ConsoleWorkspaceDetailsTray(self._state, id="tray")
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_workspace_details_keeps_widgets_when_only_conversation_changes() -> None:
+    app = TrayApp(_state())
+    async with app.run_test(size=(120, 40)) as pilot:
+        tray = app.query_one(ConsoleWorkspaceDetailsTray)
+        runtime = tray.query_one("#console-workspace-runtime-value", Static)
+        current = _state(scope_detail="Selected chat: second")
+
+        tray.sync_state(current)
+        await pilot.pause()
+        assert tray.state is current
+        assert tray.query_one("#console-workspace-runtime-value", Static) is runtime
+
+        tray.sync_state(
+            _state(workspace_id="work", runtime_label="Local file tools: Read only")
+        )
+        await pilot.pause()
+        assert tray.query_one("#console-workspace-default-persona", Button)
+        next_runtime = tray.query_one("#console-workspace-runtime-value", Static)
+        assert str(next_runtime.renderable) == "Read only"
 
 
 @pytest.mark.asyncio

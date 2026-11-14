@@ -13650,15 +13650,28 @@ def test_paste_collapse_label_still_defaults_to_character_count():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_attachment_indicator_visibility_follows_label():
+    from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
+
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
+        store = console._ensure_console_chat_store()
+        store.set_pending_attachment(
+            store.active_session_id,
+            PendingAttachment(
+                "/tmp/photo.png",
+                "photo.png",
+                "image",
+                "attachment",
+                processed_size=240 * 1024,
+            ),
+        )
         composer.set_pending_attachment_label("photo.png · 240 KB")
         await pilot.pause()
         indicator = console.query_one("#console-attachment-indicator", Static)
@@ -13667,6 +13680,7 @@ async def test_attachment_indicator_visibility_follows_label():
         assert indicator.styles.display != "none"
         assert clear_button.styles.display != "none"
 
+        store.clear_pending_attachments(store.active_session_id)
         composer.set_pending_attachment_label(None)
         await pilot.pause()
         assert indicator.styles.display == "none"
@@ -13674,6 +13688,7 @@ async def test_attachment_indicator_visibility_follows_label():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_staged_attachment_count_stays_visible_after_attach_moved_to_the_menu():
     """TASK-380's guarantee, re-homed: the staged count stays legible.
 
@@ -13683,17 +13698,24 @@ async def test_staged_attachment_count_stays_visible_after_attach_moved_to_the_m
     user looks for it anyway -- and off the ✕ control that acts on it.
     TASK-380's actual defect (staging morphing a CONTROL into an "attached
     OK" status glyph) cannot recur for a control that is no longer there."""
+    from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
+
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         assert not console.query("#console-attach-context")
         clear_button = console.query_one("#console-clear-attachment", Button)
         indicator = console.query_one("#console-attachment-indicator", Static)
 
+        store = console._ensure_console_chat_store()
+        for name in ("photo.png", "other.png"):
+            assert store.add_pending_attachment(
+                store.active_session_id,
+                PendingAttachment(f"/tmp/{name}", name, "image", "attachment"),
+            )
         composer.set_pending_attachment_label("2 files", count=2, total=5)
         await pilot.pause()
         # The count is on the indicator, and the control that acts on it.
@@ -13701,6 +13723,12 @@ async def test_staged_attachment_count_stays_visible_after_attach_moved_to_the_m
         assert clear_button.styles.display == "block"
         assert "2 pending attachments" in str(clear_button.tooltip)
 
+        store.set_pending_attachment(
+            store.active_session_id,
+            PendingAttachment(
+                "/tmp/photo.png", "photo.png", "image", "attachment", processed_size=240
+            ),
+        )
         composer.set_pending_attachment_label("photo.png · 240 B", count=1, total=5)
         await pilot.pause()
         assert "photo.png" in str(indicator.renderable)

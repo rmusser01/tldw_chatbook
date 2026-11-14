@@ -894,7 +894,7 @@ def _sending_frame_pending(screen: Any, anchor: Any) -> bool:
 
 
 async def _mount_row(
-    screen: Any, session_id: str, widget: Any, mount: _RowMount, hops: int
+    screen: Any, session_id: str, mount: _RowMount, hops: int
 ) -> None:
     """Mount the user row once "Sending…" is drawn, then hand off the send.
 
@@ -913,7 +913,7 @@ async def _mount_row(
         try:
             screen.set_timer(
                 _PAINT_HOP_SECONDS,
-                partial(_mount_row, screen, session_id, widget, mount, hops + 1),
+                partial(_mount_row, screen, session_id, mount, hops + 1),
             )
             return
         except Exception:  # noqa: BLE001 -- a closing screen still mounts and sends
@@ -931,9 +931,15 @@ async def _mount_row(
             rows = screen._change_review_projection.project(
                 screen._message._native_console_messages()
             )
-            widget.set_messages(ack.project(session_id, rows), session_id=session_id)
             screen._last_native_transcript_refresh_key = None
-            await widget.refresh_messages()
+            from tldw_chatbook.Widgets.Console.console_background_effect import active_console_transcript
+
+            widget = active_console_transcript(screen)
+            if widget is None or widget._session_identity != session_id:
+                _request_resync(screen)
+            else:
+                widget.set_messages(ack.project(session_id, rows), session_id=session_id)
+                await widget.refresh_messages()
     except Exception as exc:  # noqa: BLE001 -- the send must never depend on its paint
         logger.warning(
             "Console send acknowledgement row mount failed (exception_type={})",
@@ -1028,7 +1034,6 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> _RowMount | Non
 
     if screen._console_chat_store.active_session_id != session_id:
         return None
-    widget = screen.query_one("#console-native-transcript")
     screen._last_native_transcript_refresh_key = None
     # Every lookup happens before the first await: the screen can be torn
     # down while one is pending (textual worker contract).
@@ -1054,9 +1059,9 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> _RowMount | Non
     mount = _RowMount()
     anchor = _row_anchor(screen)
     if anchor is None or not anchor.call_after_refresh(
-        _mount_row, screen, session_id, widget, mount, 0
+        _mount_row, screen, session_id, mount, 0
     ):
-        await _mount_row(screen, session_id, widget, mount, _PAINT_HOPS)
+        await _mount_row(screen, session_id, mount, _PAINT_HOPS)
     return mount
 
 

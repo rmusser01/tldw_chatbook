@@ -1268,11 +1268,10 @@ async def test_console_collapsed_status_uses_presence_only(
     run_active: bool,
     expected: str,
 ):
-    host = _ready_console_host()
+    host = _ComposerGeometryApp()
 
     async with host.run_test(size=(140, 42)) as pilot:
-        console = await _mounted_console(host, pilot)
-        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer = host.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft(draft)
         composer.set_pending_attachment_label(attachment)
         composer.sync_action_state(
@@ -1321,16 +1320,27 @@ async def test_console_collapsed_status_sync_does_not_join_canonical_draft(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_round_trip_preserves_editor_and_attachment_state():
+    from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+
     host = _ready_console_host()
 
     async with host.run_test(size=(140, 42)) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         pasted_text = "preserved large paste " * 20
 
         composer.insert_pasted_text(pasted_text)
         composer.move_cursor_left()
+        store = console._ensure_console_chat_store()
+        store.set_pending_attachment(
+            store.active_session_id,
+            PendingAttachment(
+                "/tmp/photo.png", "photo.png", "image", "attachment", processed_size=12
+            ),
+        )
         composer.set_pending_attachment_label("photo.png · 12 B")
         before_caret_round_trip = (
             composer.draft_text(),

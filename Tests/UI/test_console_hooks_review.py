@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from Tests.Agents.test_hook_permissions import _approve
+from Tests.Agents.test_hook_permissions import _approve, _count_reads
 from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_workbench_contract import (
@@ -64,7 +64,9 @@ async def test_hooks_action_is_reachable_and_returns_focus(size, hook_file):
         assert host.screen is console and console.focused is button
 
 
-async def test_a_warm_console_refresh_shows_an_unsafe_store_directory(hook_file):
+async def test_a_warm_console_refresh_shows_an_unsafe_store_directory(
+    hook_file, monkeypatch
+):
     """TASK-33642: a warm refresh reuses the hook snapshot, not past a change.
 
     The Console's visit refresh reuses the last hook snapshot while nothing
@@ -73,6 +75,7 @@ async def test_a_warm_console_refresh_shows_an_unsafe_store_directory(hook_file)
 
     Args:
         hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts full reads and control projection.
     """
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -81,11 +84,27 @@ async def test_a_warm_console_refresh_shows_an_unsafe_store_directory(hook_file)
         console = host.screen
         await _wait_for_selector(console, pilot, "#console-control-hooks")
         owner = console._console_runtime().ensure_hook_permissions()
+        reads = _count_reads(owner, monkeypatch)
         assert _approve(owner).ready
         for _ in range(3):  # settle the reuse (a reconcile write costs one)
             await console._refresh_console_hooks()
-        assert console._console_hook_review_snapshot.ready
-        approved_tooltip = console.query_one("#console-control-hooks").tooltip
+        approved = console._console_hook_review_snapshot
+        assert approved.ready
+        read_count = len(reads)
+        await console._refresh_console_hooks()
+        assert len(reads) == read_count
+        assert console._console_hook_review_snapshot is approved
+        button = console.query_one("#console-control-hooks")
+        approved_tooltip = button.tooltip
+        projections = []
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                console, "_sync_console_control_bar", lambda: projections.append(1)
+            )
+            button.add_class("hooks-attention")
+            console._apply_console_hooks_state(approved)
+            assert not button.has_class("hooks-attention")
+            assert projections == []
         directory = console._console_hook_review_snapshot.store_path.parent
         with ExitStack() as restore:
             if os.name == "nt":

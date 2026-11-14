@@ -1,4 +1,4 @@
-"""Finite unread reads retire new handles, never a caller's database owner."""
+"""Finite mark reads retire new handles, never a caller's database owner."""
 
 from __future__ import annotations
 
@@ -13,9 +13,11 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
-@pytest.fixture(params=["unread_token", "unread_ids_for"])
+@pytest.fixture(
+    params=["unread_token", "unread_ids_for", "list_marked_conversation_ids"]
+)
 def reader(request):
-    """Exercise both shared readers with fixed, independently checked inputs."""
+    """Exercise shared readers with fixed, independently checked inputs."""
     return request.param
 
 
@@ -32,26 +34,56 @@ def database(tmp_path):
 
 
 def _read(service, reader):
+    if reader == "list_marked_conversation_ids":
+        return service.list_marked_conversation_ids(service.MANUAL_UNREAD)
     argument = "unread" if reader == "unread_token" else ("unread", "read", "unread")
     return getattr(service, reader)(argument)
 
 
-def test_worker_unread_read_retires_its_new_handle(database, reader):
+def _expected(token, reader):
+    return {
+        "unread_token": token,
+        "unread_ids_for": frozenset({"unread"}),
+        "list_marked_conversation_ids": ("unread",),
+    }[reader]
+
+
+def test_worker_mark_read_retires_its_new_handle(database, reader, monkeypatch):
     """Removing operation ownership leaks a real handle after worker exit."""
     service = ConversationLocalMarksService(database)
     token = service.mark_unread("unread")
-    expected = token if reader == "unread_token" else frozenset({"unread"})
+    expected = _expected(token, reader)
     assert database.registered_connection_count() == 1
+    connections = []
+    statements = []
+    original_connection = database.get_connection
+
+    def capture():
+        connection = original_connection()
+        connection.set_trace_callback(statements.append)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(database, "get_connection", capture)
+
+    def read():
+        result = _read(service, reader)
+        assert connections
+        for connection in connections:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 1")
+        return result
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         # Repeated cold callbacks must not accumulate or borrow their own leak.
         for _ in range(3):
-            assert executor.submit(_read, service, reader).result(timeout=5) == expected
+            assert executor.submit(read).result(timeout=5) == expected
             assert database.registered_connection_count() == 1
     assert database.registered_connection_count() == 1
+    assert not any("wal_checkpoint" in statement.lower() for statement in statements)
 
 
-def test_failed_worker_unread_read_retires_its_new_handle(database, reader):
+def test_failed_worker_mark_read_retires_its_new_handle(database, reader):
     """A real SQL failure must propagate without stranding its acquired handle."""
     service = ConversationLocalMarksService(database)
     with database.transaction() as cursor:
@@ -66,11 +98,11 @@ def test_failed_worker_unread_read_retires_its_new_handle(database, reader):
 
 
 @pytest.mark.parametrize("fail_sql", [False, True])
-def test_unread_read_preserves_borrowed_transaction(database, reader, fail_sql):
+def test_mark_read_preserves_borrowed_transaction(database, reader, fail_sql):
     """Overeager cleanup must not close, commit or roll back a native borrower."""
     service = ConversationLocalMarksService(database)
     token = service.mark_unread("unread")
-    expected = token if reader == "unread_token" else frozenset({"unread"})
+    expected = _expected(token, reader)
 
     def borrow():
         connection = database.get_connection()
@@ -114,7 +146,7 @@ class _CustomDatabase(CharactersRAGDB):
 
 
 @pytest.mark.parametrize("owner", ["memory", "custom"])
-def test_unread_read_preserves_memory_and_custom_owners(tmp_path, reader, owner):
+def test_mark_read_preserves_memory_and_custom_owners(tmp_path, reader, owner):
     """Broadening the exact-file guard must not retire excluded owners."""
     db = (
         CharactersRAGDB(":memory:", client_id="memory-read-owner")
@@ -124,7 +156,7 @@ def test_unread_read_preserves_memory_and_custom_owners(tmp_path, reader, owner)
     try:
         service = ConversationLocalMarksService(db)
         token = service.mark_unread("unread")
-        expected = token if reader == "unread_token" else frozenset({"unread"})
+        expected = _expected(token, reader)
 
         def read_owned():
             if owner == "memory":

@@ -14,11 +14,13 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, TextArea
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import ConsoleControllerActivity
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -52,6 +54,8 @@ from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
 from tldw_chatbook.Widgets.Console.console_session_surface import (
     ConsoleSessionSurface,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _activity(
@@ -592,6 +596,7 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(
         )
         controller.prompt_queue_coordinator.publish_registry_change(session_id)
         await console._sync_native_console_chat_ui()
+        await _wait_for_production_console_ready(host, pilot)
         await pilot.pause()
 
         region = console.query_one("#console-prompt-queue", ConsolePromptQueueRegion)
@@ -682,6 +687,7 @@ async def test_mounted_shelf_naming_a_failed_turn_keeps_retry_on_screen(
         )
         controller.prompt_queue_coordinator.publish_registry_change(session_id)
         await console._sync_native_console_chat_ui()
+        await _wait_for_production_console_ready(host, pilot)
         await pilot.pause()
 
         region = console.query_one("#console-prompt-queue", ConsolePromptQueueRegion)

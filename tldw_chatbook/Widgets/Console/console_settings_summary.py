@@ -319,7 +319,7 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         try:
             for widget_id, value in self._body_row_values():
                 row = self.query_one(f"#{widget_id}", Static)
-                if row.content != value:
+                if type(row.content) is not str or row.content != value:
                     row.update(value, layout=False)
                 row.display = bool(value)
             button = self.query_one("#console-settings-open", Button)
@@ -329,8 +329,12 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
             return
 
         label = self._action_label()
-        if button.label.plain != label:
+        label_changed = button.label.plain != label
+        if label_changed:
             button.label = label
+        if label_changed or button.styles.inline.has_rule("height") or any(
+            name.startswith("h-") and name != "h-1" for name in button.classes
+        ):
             self._apply_button_sizing(button)
         button.tooltip = self._action_tooltip()
         self.call_after_refresh(self._request_section_reconcile)
@@ -343,17 +347,18 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
             ),
             CONSOLE_SETTINGS_BUTTON_MAX_WIDTH,
         )
-        button.remove_class(*(name for name in button.classes if name.startswith("w-")))
+        button.set_classes(
+            {name for name in button.classes if not name.startswith(("w-", "h-"))}
+            | {"h-1", "m-0"}
+        )
         # ds-runtime: Action-label text length determines the bounded button width.
         button.set_styles(width=button_width)
         button.styles.min_width = button_width
         button.styles.max_width = button_width
-        button.remove_class(*(name for name in button.classes if name.startswith("h-")))
-        button.set_styles(height=None)
-        button.add_class("h-1")
+        if button.styles.inline.has_rule("height"):
+            button.set_styles(height=None)
         button.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
         button.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
-        button.add_class("m-0")
 
     @staticmethod
     def _row_text(value: str | None) -> str:

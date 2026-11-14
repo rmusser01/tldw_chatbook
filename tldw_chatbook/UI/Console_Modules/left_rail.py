@@ -592,7 +592,7 @@ class ConsoleLeftRail(Vertical):
         widget.sync_state(state)
         header.title = self._character_context_title(state)
         # TASK-33620.15.7: most syncs during a run leave the title unchanged.
-        if title.content != header.title:
+        if type(title.content) is not str or title.content != header.title:
             title.update(header.title)
         title.tooltip = header.title
         self.request_allocation_reconcile()
@@ -810,7 +810,7 @@ class ConsoleLeftRail(Vertical):
             self.query_one(
                 "#console-rail-section-header-model", DestinationRailSectionHeader
             ).title = title_copy
-            if title.content != title_copy:
+            if type(title.content) is not str or title.content != title_copy:
                 title.update(title_copy)
             generation_group = self.query_one("#console-generation-recovery-row")
             context_group = self.query_one("#console-context-recovery-row")

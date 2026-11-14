@@ -2,27 +2,59 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from rich.segment import Segment
 from rich.style import Style
+from textual._time import get_time
 from textual.app import ComposeResult
+from textual.await_remove import AwaitRemove
 from textual.containers import Container
-from textual.css.query import NoMatches
+from textual.content import Content
+from textual.css.query import NoMatches, QueryError
+from textual.dom import DOMNode
 from textual.strip import Strip
+from textual.style import Style as TextualStyle
 from textual.timer import Timer
 from textual.widget import Widget
+from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
+from tldw_chatbook.UI.Navigation.surface_swap_guard import ensure_surface_swap_not_self_awaited
 from tldw_chatbook.Utils.console_background_effects import (
-    ConsoleBackgroundEffectSettings,
     MAX_CONSOLE_BACKGROUND_FPS,
     MIN_CONSOLE_BACKGROUND_FPS,
+    ConsoleBackgroundEffectSettings,
 )
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.Widgets.Console.console_message_more_menu import (
+    message_more_menus_on_screen,
+)
+from tldw_chatbook.Widgets.Console.console_selection_menu import (
+    selection_menus_on_screen,
+)
+from tldw_chatbook.Widgets.Console.console_transcript import (
+    ConsoleRoleplayMarkdown,
+    ConsoleTranscript,
+)
+from tldw_chatbook.Widgets.Console.console_transcript_input import TranscriptInputVisit
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_chat_store import (
+        ConsoleChatSession,
+        ConsoleChatStore,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 _INTENSITY_DENSITY = {"low": 0.035, "medium": 0.07, "high": 0.11}
+#: Bound the additional mounted graph independently of the visible window.
+_RETAINED_TRANSCRIPT_ROWS = 128
 _EFFECT_CHARS = {
     "snow": ".*+",
     "rain": ".:|",
@@ -276,6 +308,276 @@ class ConsoleTranscriptSurface(Container):
         # transcript strip. Dock the dedicated renderer below message children.
         # A factory also restores that decoration after transcript recomposition.
         self.transcript.background_effect_factory = self._make_background_effect
+        self._projection_lock = asyncio.Lock()
+        self._authority: tuple[str, str] | None = None
+        self._store: ConsoleChatStore | None = None
+        self._active_key: _TranscriptKey | None = None
+        self._previous: tuple[_TranscriptKey, ConsoleTranscript] | None = None
+        self._retiring: AwaitRemove | None = None
+
+    def _can_retain(self, viewport: ConsoleTranscript) -> bool:
+        """Keep a bounded, passive text window on the mounted surface."""
+        if (
+            self.settings.active
+            or not viewport._messages
+            or len(viewport._messages) > _RETAINED_TRANSCRIPT_ROWS
+            or len(viewport._row_widgets) > _RETAINED_TRANSCRIPT_ROWS
+            or not viewport._windowing_enabled()
+            or not viewport._is_following_tail()
+            or viewport.selected_message_id is not None
+            or viewport.pending_selection_id is not None
+            or viewport.has_pending_selection_ui
+            or viewport._voice_preview_projection is not None
+            or viewport._refresh_lock.locked()
+            or viewport._hydrating_scrollback
+            or viewport._scrollback_hydration_scheduled
+            or viewport._tailward_hydration_scheduled
+            or viewport._reveal_scroll_target is not None
+            or viewport._image_specs
+            or viewport._generation_card_specs
+            or viewport._video_card_specs
+            or viewport.app.mouse_captured is viewport
+            or any(
+                _displayed_within(viewport, button)
+                for button in viewport.walk_children(Button)
+            )
+            or any(
+                menu.owner is viewport
+                for menu in message_more_menus_on_screen(self.screen)
+            )
+            or any(
+                menu._owner is viewport
+                for menu in selection_menus_on_screen(self.screen)
+            )
+            or any(
+                not worker.is_finished and viewport in worker.node.ancestors_with_self
+                for worker in self.workers
+            )
+        ):
+            return False
+        # Native controls can turn an old click into a newly dated message.
+        if not all(
+            message.role in (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT)
+            and message.status == "complete"
+            and not (
+                message.attachments
+                or message.image_data
+                or message.raw_cli_presentation
+                or message.activity_presentation
+                or message.generation_metadata
+            )
+            for message in viewport._messages
+        ):
+            return False
+        for markdown in viewport.walk_children(ConsoleRoleplayMarkdown):
+            if (
+                markdown.pending_update is not None
+                and not markdown.pending_update.is_done
+            ):
+                return False
+            if any(
+                isinstance(content := block.content, Content)
+                and any(
+                    isinstance(span.style, TextualStyle)
+                    and span.style.meta.get("@click")
+                    for span in content.spans
+                )
+                for block in markdown.walk_children(Static)
+            ):
+                return False
+        return True
+
+    async def _retire_previous(self) -> None:
+        if self._previous is not None:
+            _, viewport = self._previous
+            self._previous = None
+            await self._retire(viewport)
+
+    async def _retire(self, viewport: ConsoleTranscript) -> None:
+        if viewport.parent is self and not viewport._pruning:
+            ensure_surface_swap_not_self_awaited((viewport,), seam="Console transcript")
+            self._retiring = viewport.remove()
+            await self._finish_retirement()
+
+    async def _finish_retirement(self) -> None:
+        if self._retiring is not None:
+            await asyncio.shield(self._retiring)
+            self._retiring = None
+
+    async def project(self, screen: ChatScreen, *, force: bool = False) -> bool | None:
+        """Project the live session, then publish that exact visit."""
+        async with self._projection_lock:
+            await self._finish_retirement()
+            store = screen._ensure_console_chat_store()
+            runtime = screen._console_runtime()
+            generation = runtime._attached_generation
+            authority = runtime.authority_token, runtime.profile_authority
+            if authority != self._authority or self._store is not store:
+                await self._retire_previous()
+                self._active_key = None
+                self._authority, self._store = authority, store
+            epoch = store.active_session_epoch()
+            session_id = store.active_session_id
+            key = _TranscriptKey.from_store(store, session_id)
+            viewport = self.transcript
+            old_viewport = viewport
+
+            def current() -> bool:
+                return (
+                    self.is_attached
+                    and viewport.parent is self
+                    and not viewport._pruning
+                    and runtime.view is screen
+                    and runtime._attached_generation == generation
+                    and (runtime.authority_token, runtime.profile_authority)
+                    == authority
+                    and runtime.chat_store is store
+                    and getattr(screen.app_instance, "console_runtime", None) is runtime
+                    and not runtime._disposed
+                    and store.active_session_epoch() == epoch
+                    and store.active_session_id == session_id
+                    and (
+                        key.is_live_in(store) if key is not None else session_id is None
+                    )
+                )
+
+            if not current():
+                return False
+            previous = self._previous
+            if previous is not None and (
+                previous[1].parent is not self
+                or not previous[0].is_live_in(store)
+                or self.settings.active
+            ):
+                await self._retire_previous()
+                if not current():
+                    return False
+                previous = None
+
+            old_key = self._active_key
+            changing = key != old_key
+            candidate = None
+            try:
+                retain_old = False
+                if changing:
+                    old_viewport._transcript_input_visit = None
+                    retain_old = (
+                        key is not None
+                        and old_key is not None
+                        and old_key.id != key.id
+                        and old_key.is_live_in(store)
+                        and self._can_retain(old_viewport)
+                    )
+                    self._clear_transient_input(old_viewport)
+                    if (
+                        previous is not None
+                        and previous[0] == key
+                        and self._can_retain(previous[1])
+                    ):
+                        viewport = previous[1]
+                    else:
+                        await self._retire_previous()
+                        if not current():
+                            return False
+                        if retain_old:
+                            new_id = (
+                                "console-retained-transcript"
+                                if old_viewport.id == "console-native-transcript"
+                                else "console-native-transcript"
+                            )
+                            candidate = ConsoleTranscript(
+                                id=new_id, classes="console-transcript-viewport"
+                            )
+                            candidate.background_effect_factory = (
+                                self._make_background_effect
+                            )
+                            candidate.display = False
+                            candidate.visible = False
+                            candidate._transcript_surface = self
+                            await self.mount(candidate)
+                            viewport = candidate
+                if not current():
+                    return False
+                viewport._transcript_surface = self
+                viewport._projection_height = (
+                    old_viewport.size.height or self.size.height
+                )
+                if viewport is not old_viewport:
+                    viewport.note_follow_intent()
+                project = screen._project_native_console_transcript
+                acknowledge = (
+                    await project(viewport, current, force=True)
+                    if force
+                    else await project(viewport, current)
+                )
+                if not current():
+                    return False
+                if viewport is not old_viewport:
+                    await self._finish_markdown(viewport)
+                    if not current() or self.settings.active:
+                        return False
+                    retain_old = retain_old and self._can_retain(old_viewport)
+                    # Hit testing can still consult the old compositor map.
+                    # Visibility covers that interval without a :disabled restyle.
+                    old_viewport.visible = False
+                    old_viewport.display = False
+                    focused = screen.focused
+                    if (
+                        focused is not None
+                        and old_viewport in focused.ancestors_with_self
+                    ):
+                        focused.blur()
+                    viewport.styles.visibility = None
+                    viewport.display = True
+                    self.transcript = viewport
+                    self._previous = (old_key, old_viewport) if retain_old else None
+                self._active_key = key
+                prior_visit = getattr(viewport, "_transcript_input_visit", None)
+                if prior_visit is None or not prior_visit.is_current():
+
+                    def input_current() -> bool:
+                        return (
+                            getattr(viewport, "_transcript_input_visit", None) is visit
+                            and current()
+                            and viewport is self.transcript
+                            and viewport.display
+                            and screen.is_active
+                        )
+
+                    visit = TranscriptInputVisit(get_time(), input_current)
+                    viewport._transcript_input_visit = visit
+                if acknowledge is not None:
+                    acknowledge()
+                screen._sync_console_transcript_guidance()
+                screen._last_native_transcript_session_id = session_id
+                if viewport is not old_viewport and not retain_old:
+                    await self._retire(old_viewport)
+                return None
+            finally:
+                if candidate is not None and candidate is not self.transcript:
+                    await self._retire(candidate)
+
+    @staticmethod
+    def _clear_transient_input(viewport: ConsoleTranscript) -> None:
+        if viewport.has_pending_selection_ui or selection_menus_on_screen(
+            viewport.screen
+        ):
+            viewport._remove_selection_menu()
+            viewport.selection_manager.cancel()
+            if viewport._kb_selection_row is not None:
+                viewport._exit_keyboard_selection()
+            viewport._selection_origin_row = None
+        captured = viewport.app.mouse_captured
+        if captured is not None and viewport in captured.ancestors_with_self:
+            viewport.app.capture_mouse(None)
+
+    @staticmethod
+    async def _finish_markdown(viewport: ConsoleTranscript) -> None:
+        for markdown in viewport.walk_children(ConsoleRoleplayMarkdown):
+            if (update := markdown.pending_update) is not None and not update.is_done:
+                await asyncio.shield(update)
+            if markdown.pending_update is update:
+                markdown.pending_update = None
 
     def _make_background_effect(self) -> ConsoleBackgroundEffect:
         return ConsoleBackgroundEffect(
@@ -290,13 +592,129 @@ class ConsoleTranscriptSurface(Container):
     def update_settings(self, settings: ConsoleBackgroundEffectSettings) -> None:
         """Update the mounted background effect child when available."""
         self.settings = settings
-        if not self.is_mounted:
+        if not self.is_mounted or self.transcript.parent is not self:
             return
         try:
-            effect = self.query_one(
+            effect = self.transcript.query_one(
                 "#console-transcript-background-effect",
                 ConsoleBackgroundEffect,
             )
         except NoMatches:
             return
         effect.update_settings(settings)
+
+
+@dataclass(frozen=True)
+class _TranscriptKey:
+    id: str
+    incarnation: str
+    binding: int
+
+    @classmethod
+    def from_store(
+        cls, store: ConsoleChatStore, session_id: str | None
+    ) -> _TranscriptKey | None:
+        session: ConsoleChatSession | None = store._sessions.get(session_id)
+        if session is None:
+            return None
+        return cls(
+            session.id, session.incarnation_id, session.conversation_binding_revision
+        )
+
+    def is_live_in(self, store: ConsoleChatStore) -> bool:
+        session = store._sessions.get(self.id)
+        return (
+            session is not None
+            and session.incarnation_id == self.incarnation
+            and session.conversation_binding_revision == self.binding
+        )
+
+
+def _displayed_within(viewport: ConsoleTranscript, button: Button) -> bool:
+    """Exclude the viewport's own visibility from its descendant check."""
+    for node in button.ancestors_with_self:
+        if node is viewport:
+            return True
+        if not node.display or not node.visible:
+            return False
+    return False
+
+
+def active_console_transcript(owner: DOMNode) -> ConsoleTranscript | None:
+    """Return the attached viewport selected by the transcript surface."""
+    try:
+        surface = owner.query_one(
+            "#console-transcript-surface", ConsoleTranscriptSurface
+        )
+    except QueryError:
+        surface = None
+    if isinstance(surface, ConsoleTranscriptSurface):
+        view = surface.transcript
+        if view.parent is surface and view.is_attached and view.display:
+            return view
+        return None
+    try:
+        return owner.query_one("#console-native-transcript", ConsoleTranscript)
+    except QueryError:
+        return None
+
+
+async def sync_console_transcript(
+    screen: ChatScreen, *, force: bool = False
+) -> bool | None:
+    """Project a prepared view. False means live work or teardown deferred it."""
+    from tldw_chatbook.UI.Console_Modules.transcript import prepare_change_review_projection
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        ChatScreen, _console_screen_is_torn_down,
+    )
+
+    if not await prepare_change_review_projection(screen, _console_screen_is_torn_down):
+        return False
+    try:
+        surface = screen.query_one(
+            "#console-transcript-surface", ConsoleTranscriptSurface
+        )
+    except QueryError:
+        surface = None
+    if isinstance(surface, ConsoleTranscriptSurface):
+        return await surface.project(screen, force=force)
+    else:
+        transcript = active_console_transcript(screen)
+        acknowledge = await ChatScreen._project_native_console_transcript(
+            screen, transcript, force=force
+        )
+        if transcript is not None:
+            if acknowledge is not None:
+                acknowledge()
+            screen._sync_console_transcript_guidance()
+            screen._last_native_transcript_session_id = (
+                screen._ensure_console_chat_store().active_session_id
+            )
+
+
+def acknowledge_console_transcript(
+    screen: ChatScreen,
+    transcript: ConsoleTranscript,
+    messages: Sequence[ConsoleChatMessage],
+    conversation_id: str | None,
+    refresh_key: tuple,
+    gate: tuple | None,
+) -> None:
+    """Acknowledge exact mounted receipts once their projection is published."""
+    rendered = screen._rendered_console_terminal_receipts(
+        transcript, messages, conversation_id=conversation_id
+    )
+    runtime_accessor = getattr(screen, "_console_runtime", None)
+    runtime = runtime_accessor() if callable(runtime_accessor) else None
+    acknowledge = getattr(runtime, "acknowledge_rendered_terminal_receipts", None)
+    if rendered and callable(acknowledge):
+        acknowledge(
+            rendered,
+            view=screen,
+            attachment_generation=getattr(
+                screen, "_console_runtime_attachment_generation", None
+            ),
+        )
+    screen._last_native_transcript_refresh_key = refresh_key
+    if gate is not None:
+        screen._console_transcript_sync_token = gate

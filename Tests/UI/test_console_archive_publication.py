@@ -8,6 +8,7 @@ import pytest
 
 from Tests.UI.test_console_workspace_controller import (
     _browser_row,
+    _NoMountScreen,
     _workspace_controller,
 )
 from tldw_chatbook.Chat import conversation_archive_actions
@@ -20,7 +21,9 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["refresh", "membership", "archive", "inflight"])
+@pytest.mark.parametrize(
+    "change", ["refresh", "membership", "archive", "inflight", "new open tab"]
+)
 async def test_archive_read_cannot_publish_after_owner_or_archive_changes(
     monkeypatch, change
 ):
@@ -29,9 +32,8 @@ async def test_archive_read_cannot_publish_after_owner_or_archive_changes(
         _conversation_archive_states={"c": False},
         _conversation_archive_inflight=set(),
     )
-    store = SimpleNamespace(
-        sessions=lambda: [SimpleNamespace(persisted_conversation_id="c")]
-    )
+    sessions = [SimpleNamespace(persisted_conversation_id="c")]
+    store = SimpleNamespace(sessions=lambda: sessions)
     controller = _workspace_controller(
         app_instance=app, current_chat_store_accessor=lambda: store
     )
@@ -49,20 +51,22 @@ async def test_archive_read_cannot_publish_after_owner_or_archive_changes(
         return {"c": False}
 
     monkeypatch.setattr(conversation_archive_actions, "storage_call", read)
-    key = ("", None, controller._console_persisted_rows_cache_token)
+    key = ("", controller._console_persisted_rows_cache_token)
     controller._console_persisted_rows_refresh_key = key
     task = asyncio.create_task(
         controller._refresh_console_persisted_rows_cache(refresh_key=key)
     )
     await asyncio.wait_for(entered.wait(), 3)
     if change == "refresh":
-        controller._console_persisted_rows_refresh_key = ("new query", None, key[2])
+        controller._console_persisted_rows_refresh_key = ("new query", key[1])
     elif change == "membership":
         controller._canonical_membership_revision += 1
     elif change == "archive":
         app._conversation_archive_states["c"] = True
-    else:
+    elif change == "inflight":
         app._conversation_archive_inflight.add("c")
+    else:
+        sessions.append(SimpleNamespace(persisted_conversation_id="new"))
     release.set()
     await task
     assert controller._console_persisted_rows_cache is None
@@ -70,6 +74,44 @@ async def test_archive_read_cannot_publish_after_owner_or_archive_changes(
         assert controller._console_persisted_rows_refresh_key[0] == "new query"
     if change == "archive":
         assert app._conversation_archive_states["c"] is True
+
+
+@pytest.mark.asyncio
+async def test_new_open_tab_refreshes_archive_state_on_the_existing_page(monkeypatch):
+    screen = _NoMountScreen()
+    app = SimpleNamespace(local_chat_conversation_service=object())
+    sessions = [SimpleNamespace(persisted_conversation_id="c")]
+    store = SimpleNamespace(sessions=lambda: sessions)
+    controller = _workspace_controller(
+        screen=screen, app_instance=app, current_chat_store_accessor=lambda: store
+    )
+    page = ([_browser_row("c", "Saved chat")], 1, "")
+    page_reads = []
+    archive_reads = []
+
+    async def read_page(query):
+        page_reads.append(query)
+        return page
+
+    async def read_archive(_service, method, ids):
+        assert method == "get_conversation_archive_states"
+        archive_reads.append(ids)
+        return {"c": False} if ids == ["c"] else {}
+
+    controller._persisted_console_browser_rows = read_page
+    monkeypatch.setattr(conversation_archive_actions, "storage_call", read_archive)
+    assert await controller._refresh_console_persisted_rows_cache() == page
+    cached_at = controller._console_persisted_rows_cache_at
+
+    sessions.append(SimpleNamespace(persisted_conversation_id="missing"))
+    assert controller._sync_persisted_console_browser_rows() == page
+    [(refresh, _options)] = screen.workers
+    assert await refresh() == page
+    assert controller._sync_persisted_console_browser_rows() == page
+    assert len(screen.workers) == 1
+    assert page_reads == [""]
+    assert archive_reads == [["c"], ["missing"]]
+    assert controller._console_persisted_rows_cache_at == cached_at
 
 
 @pytest.mark.asyncio

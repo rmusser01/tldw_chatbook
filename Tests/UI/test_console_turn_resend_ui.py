@@ -18,6 +18,7 @@ from textual.app import ComposeResult
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,

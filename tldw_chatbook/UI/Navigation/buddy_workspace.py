@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Persona_Buddy.inbox import BuddyInboxEntry, project_workspace_inbox
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 
@@ -57,30 +58,34 @@ class BuddyWorkspaceCoordinator:
         }
 
         def read_members() -> tuple[str, dict[str, str]]:
-            workspace = registry.get_workspace(self.binding.target_id)
-            if (
-                workspace is None
-                or workspace.archived
-                or str(getattr(workspace.authority, "value", workspace.authority))
-                != "local-only"
-            ):
-                raise ValueError(
-                    "The bound workspace is unavailable. Choose another in Buddy settings."
-                )
             service = getattr(self.app, "local_chat_conversation_service", None)
-            members = {}
-            if wanted:
-                for membership in registry.list_workspace_conversations(
-                    self.binding.target_id
+            with (
+                operation_owned_connection(getattr(registry, "db", None)),
+                operation_owned_connection(getattr(service, "db", None)),
+            ):
+                workspace = registry.get_workspace(self.binding.target_id)
+                if (
+                    workspace is None
+                    or workspace.archived
+                    or str(getattr(workspace.authority, "value", workspace.authority))
+                    != "local-only"
                 ):
-                    if membership.item_id not in wanted or service is None:
-                        continue
-                    row = service.get_conversation_metadata(membership.item_id)
-                    if row and not row.get("deleted", False):
-                        members[membership.item_id] = str(
-                            row.get("title") or membership.title or "Conversation"
-                        )
-            return workspace.name, members
+                    raise ValueError(
+                        "The bound workspace is unavailable. Choose another in Buddy settings."
+                    )
+                members = {}
+                if wanted:
+                    for membership in registry.list_workspace_conversations(
+                        self.binding.target_id
+                    ):
+                        if membership.item_id not in wanted or service is None:
+                            continue
+                        row = service.get_conversation_metadata(membership.item_id)
+                        if row and not row.get("deleted", False):
+                            members[membership.item_id] = str(
+                                row.get("title") or membership.title or "Conversation"
+                            )
+                return workspace.name, members
 
         title, members = await asyncio.to_thread(read_members)
         # Refresh live owners after I/O: selection, move or deletion may have changed.

@@ -442,6 +442,7 @@ async def test_console_streaming_message_excerpt_is_static_placeholder():
         assert store.get_message(message.id).status == "streaming"
 
         await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(message.id)
         # `select_message` schedules its own row refresh via `call_later`;

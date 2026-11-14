@@ -25,6 +25,7 @@ from tldw_chatbook.Widgets.Chat_Widgets.archive_recovery_cards import (
     RecoveryActionButton,
     safe_text,
 )
+from tldw_chatbook.Widgets.Console.console_background_effect import active_console_transcript
 
 
 class ConsoleArchiveRecoverySurface(Vertical):
@@ -79,9 +80,10 @@ class ConsoleArchiveRecoveryView:
         return self.screen._console_runtime().ensure_archive_recovery()
 
     def _surface(self) -> ConsoleArchiveRecoverySurface | None:
-        if not hasattr(self.screen, "_nodes"):
+        transcript = active_console_transcript(self.screen) if hasattr(self.screen, "_nodes") else None
+        if transcript is None:
             return None
-        matches = self.screen.query("#console-archive-recovery-controls")
+        matches = transcript.query("#console-archive-recovery-controls")
         return matches.first() if matches else None
 
     def _confirmation(self) -> ArchiveRecoveryConfirmCard | None:
@@ -122,7 +124,10 @@ class ConsoleArchiveRecoveryView:
         async with self._sync_lock:
             if not hasattr(self.screen, "_nodes"):
                 return
-            roots = self.screen.query("#console-archive-recovery")
+            transcript = active_console_transcript(self.screen)
+            if transcript is None:
+                return
+            roots = transcript.query("#console-archive-recovery")
             if not roots:
                 return
             root = roots.first()
@@ -147,7 +152,11 @@ class ConsoleArchiveRecoveryView:
             def current() -> bool:
                 # An await can let Console switch or close this chat; the next
                 # sync renders whichever chat is active then (TASK-38652).
-                return surface.is_attached and store.active_session_id == session_id
+                return (
+                    surface.is_attached
+                    and active_console_transcript(self.screen) is transcript
+                    and store.active_session_id == session_id
+                )
 
             if self._session_id != session_id or self._confirmation() is None:
                 self._render_generation += 1

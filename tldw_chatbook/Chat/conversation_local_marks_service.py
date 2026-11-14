@@ -276,7 +276,7 @@ class ConversationLocalMarksService:
         # Finite reads own only newly opened native file handles, not callers'
         # existing caches, transactions, memory databases or custom owners.
         ownership = (
-            operation_owned_connection(self.db)
+            operation_owned_connection(self.db, read_only=True)
             if type(self.db) is CharactersRAGDB and not self.db.is_memory_db
             else nullcontext()
         )
@@ -350,7 +350,7 @@ class ConversationLocalMarksService:
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
         ownership = (
-            operation_owned_connection(self.db)
+            operation_owned_connection(self.db, read_only=True)
             if type(self.db) is CharactersRAGDB and not self.db.is_memory_db
             else nullcontext()
         )
@@ -629,7 +629,15 @@ class ConversationLocalMarksService:
             generation = self._list_cache_generation
         if cached is not None:
             return cached
-        with self.db.transaction() as conn:
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        ownership = (
+            operation_owned_connection(self.db, read_only=True)
+            if type(self.db) is CharactersRAGDB and not self.db.is_memory_db
+            else nullcontext()
+        )
+        with ownership, self.db.transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT conversation_id

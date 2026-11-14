@@ -7,6 +7,7 @@ from textual.app import ComposeResult
 from textual.containers import Container
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -25,6 +26,8 @@ from tldw_chatbook.Widgets.Console.console_background_effect import (
     ConsoleTranscriptSurface,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class EffectHarness(ConsolidatedCSSApp):

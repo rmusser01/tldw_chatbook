@@ -1276,9 +1276,9 @@ class ChatApprovalCard(Container):
         # card container as its keyboard inspection target while every
         # decision control is disabled.
         self.can_focus = finishing
-        title.update(
-            "Finishing — Stop will not cancel" if finishing else "Approval required"
-        )
+        title_text = "Finishing — Stop will not cancel" if finishing else "Approval required"
+        if title.content != title_text:
+            title.update(title_text)
         # ADR-332 (task 5): stash the payload-carried summary so any remount
         # re-renders it (a live `set_summary` patch is for THIS mount only).
         self._batch_summary = format_context_line(summary) if summary else None
@@ -1897,12 +1897,10 @@ class ChatApprovalCard(Container):
         except NoMatches:
             return
         text = self._batch_summary or ""
-        if text:
-            summary.update(f"[dim italic]{SUMMARY_LABEL} {escape(text)}[/dim italic]")
-            summary.display = True
-        else:
-            summary.update("")
-            summary.display = False
+        copy = f"[dim italic]{SUMMARY_LABEL} {escape(text)}[/dim italic]" if text else ""
+        if summary.content != copy:
+            summary.update(copy)
+        summary.display = bool(text)
 
     def set_summary(self, round_id: str | None, text: str) -> None:
         """Patch ONLY the batch summary line for a matching round (ADR-332).
