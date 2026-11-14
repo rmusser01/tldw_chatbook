@@ -10816,6 +10816,14 @@ class ConsoleChatController:
             coordinator.validate_resolution(
                 goal_authorization, resolution, turn_context
             )
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            # TASK-33621.80: over the Ask trigger a wake pauses, never Failed.
+            from .console_compaction_gate import pause_wake_at_ask_trigger
+
+            if paused := await pause_wake_at_ask_trigger(
+                self, session, wake_authorization, resolution, turn_context, clean_draft
+            ):
+                return paused
         if origin in (
             ConsoleSubmissionOrigin.AGENT_WAKE,
             ConsoleSubmissionOrigin.GOAL_ITERATION,
@@ -19010,6 +19018,7 @@ class ConsoleChatController:
             if hooks is not None:
                 self._release_compaction_submission(hooks._controller_submission)
         if transaction.terminal is CompactionTerminal.SUCCEEDED:
+            self._fleet_wake.release_compaction_pause(session_id)
             turns = len(plan_result.plan.selected_units)
             visible_copy = (
                 f"Summarized {turns} turn{'s' if turns != 1 else ''} from that message."
@@ -24033,9 +24042,12 @@ class ConsoleChatController:
         self, session_id: str, *, micro: bool = False
     ) -> tuple[bool, str]:
         """Forward to the documented compaction preflight implementation."""
-        return await self._compaction_preflight.compact_context_now(
+        compacted, copy = await self._compaction_preflight.compact_context_now(
             session_id, micro=micro
         )
+        if compacted or not micro:  # TASK-33621.80: a wake paused at Ask re-checks.
+            self._fleet_wake.release_compaction_pause(session_id)
+        return compacted, copy
 
     def _compaction_admission(
         self,

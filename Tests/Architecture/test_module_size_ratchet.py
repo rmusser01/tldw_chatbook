@@ -265,7 +265,13 @@ _BUDGETS: dict[str, int] = {
     # 28,734 plus TASK-39159's +8, measured.
     # 2026-11-10, TASK-39155 (owner size waiver): 29183 -> 29184 (+1, exact),
     # a session close in progress counts as an explicit cancellation.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28743,
+    # 2026-11-06 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): 29173 -> 29185 (+12) -- an agent wake
+    # pauses before acceptance at the Ask trigger (+8), and the two
+    # compaction routes lift that pause (+4); the logic lives in
+    # console_compaction_gate.py and console_fleet_wake.py.
+    # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28743 -> 28755.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28755,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -1138,7 +1144,16 @@ _BUDGETS: dict[str, int] = {
     # a legacy/imported chat's missing Library-policy row (the safe
     # Never/Blocked default its turn ran under) instead of refusing it.
     # 2026-11-08, TASK-39119 review (owner size waiver): +19, the pending reply row save without a mix-in attempt.
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4258,
+    # 2026-11-06 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): +4 -- the mix-in attempt save's docstring
+    # says why it starts BEGIN IMMEDIATE (dev 591a723c0d made the same switch;
+    # a deferred start refused a turn with "database is locked").
+    # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 4258 -> 4262.
+    # 2026-11-12 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): 4262 -> 4265 (+3) -- save_pending_assistant,
+    # the anchorless reply-row save a resumed wake takes since TASK-39119, also
+    # starts BEGIN IMMEDIATE, so a concurrent writer no longer fails it.
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4265,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The
