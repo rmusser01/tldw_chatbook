@@ -328,8 +328,11 @@ async def test_the_collapsed_rail_handle_has_a_focus_carrier(size):
         assert opener in console.focus_chain, "the handle is not a Tab stop"
         # The delayed activation restore must retain a user-focused collapsed handle.
         console.set_focus(opener, scroll_visible=False)
+        assert console.focused is opener
         console._restore_console_workbench_focus()
         await pilot.pause()
+        await pilot.pause()
+        assert console.focused is opener, "activation stole focus from the Inspector opener"
         assert host.focused is opener
         unfocused, focused = await _focus_carrier_rows(host, pilot, console, opener)
         assert unfocused != focused, (

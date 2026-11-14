@@ -3181,65 +3181,52 @@ _PER_CALL_SAMPLING_RESOLUTION_FIELDS = {
 class _StreamingModelAdapter:
     """chat_call-compatible adapter that streams every PRIMARY turn live.
 
-    AgentService calls it as ``chat_call(api_endpoint=…, messages_payload=…,
-    streaming=False, model=…)`` and expects a
-    ``{"choices":[{"message":{"content": <full text>}}]}`` response. Sub-agent
-    turns (leading system content prefixed by the registry-resolved or
-    shipped-default ``agents.subagent_system`` prompt — see ``_is_subagent``)
-    are streamed to a throwaway gate and never touch the transcript.
+    AgentService calls it as ``chat_call(api_endpoint=…, messages_payload=…, streaming=False,
+    model=…)`` and expects a ``{"choices":[{"message":{"content": <full text>}}]}`` response.
+    Sub-agent turns (leading system content prefixed by the registry-resolved or shipped-default
+    ``agents.subagent_system`` prompt — see ``_is_subagent``) are streamed to a throwaway gate and
+    never touch the transcript.
 
-    Every non-sealed primary turn streams live to the store as it arrives —
-    not just the final answer — since the gate cannot know in advance
-    whether a given turn will end up being a tool call or the final answer:
-    a well-behaved fence-first tool call never streams anything (the gate
-    seals from the first token), but a disobedient turn that emits prose
-    before a mid-stream fence has already forwarded that prose to the store
-    by the time the completed turn is classified as a tool call. When that
-    happens, this adapter resets the message's streamed content back to
-    empty once the turn is confirmed to carry a tool call (see
-    ``ConsoleChatStore.reset_stream_content``), so the leaked prose — already
-    preserved in that turn's ``STEP_MODEL`` step log — does not survive to
-    garble the next turn's chunks on the same message (Plan-B Task 5
-    Finding A).
+    Every non-sealed primary turn streams live to the store as it arrives — not just the final
+    answer — since the gate cannot know in advance whether a given turn will end up being a tool
+    call or the final answer: a well-behaved fence-first tool call never streams anything (the gate
+    seals from the first token), but a disobedient turn that emits prose before a mid-stream fence
+    has already forwarded that prose to the store by the time the completed turn is classified as a
+    tool call. When that happens, this adapter resets the message's streamed content back to empty
+    once the turn is confirmed to carry a tool call (see
+    ``ConsoleChatStore.reset_stream_content``), so the leaked prose — already preserved in that
+    turn's ``STEP_MODEL`` step log — does not survive to garble the next turn's chunks on the same
+    message (Plan-B Task 5 Finding A).
 
-    ``should_cancel`` is polled once per received chunk, AFTER it has been fed
-    to the gate and (for the primary) flushed to the store — never before.
-    Checking before-feed would let a single-chunk turn's content vanish
-    entirely (e.g. a whole leading tool-call fence dropped mid-flight),
-    which the pure loop would then misreport as a normal empty "done" turn
-    rather than "cancelled", since it only re-polls cancellation at its own
-    step/tool-call boundaries. Checking after-feed guarantees every received
-    chunk is always accounted for, while still stopping the stream promptly
-    (no more chunks are pulled once cancellation is observed) and letting the
-    loop's own boundary check catch the cancellation on the next poll.
-    While NO chunk arrives it is also polled on a timer (TASK-33666; see
-    ``watch_content_stalls``), so a Stop ends the wait on a silent provider.
-    That poll runs only between chunks, so it never drops a received one.
+    ``should_cancel`` is polled once per received chunk, AFTER it has been fed to the gate and (for
+    the primary) flushed to the store — never before. Checking before-feed would let a single-chunk
+    turn's content vanish entirely (e.g. a whole leading tool-call fence dropped mid-flight), which
+    the pure loop would then misreport as a normal empty "done" turn rather than "cancelled", since
+    it only re-polls cancellation at its own step/tool-call boundaries. Checking after-feed
+    guarantees every received chunk is always accounted for, while still stopping the stream
+    promptly (no more chunks are pulled once cancellation is observed) and letting the loop's own
+    boundary check catch the cancellation on the next poll. While NO chunk arrives it is also
+    polled on a timer (TASK-33666; see ``watch_content_stalls``), so a Stop ends the wait on a
+    silent provider. That poll runs only between chunks, so it never drops a received one.
 
-    ``chat_call`` bridges into async gateway code via the single event
-    ``loop`` passed in at construction — created once by
-    ``ConsoleAgentBridge.run_reply`` and reused for every turn of that run
-    (the tool-call turn(s), any sub-agent turns, and the final-answer turn),
-    rather than a fresh ``asyncio.run()`` per turn (PR #629 Fix 1(c)). A
-    fresh loop per turn meant a fresh loop identity on every single
-    ``chat_call``, which forced the gateway's owned ``httpx.AsyncClient`` to
-    swap (see ``ConsoleProviderGateway._active_http_client``) once per turn
-    instead of at most once per run.
+    ``chat_call`` bridges into async gateway code via the single event ``loop`` passed in at
+    construction — created once by ``ConsoleAgentBridge.run_reply`` and reused for every turn of
+    that run (the tool-call turn(s), any sub-agent turns, and the final-answer turn), rather than a
+    fresh ``asyncio.run()`` per turn (PR #629 Fix 1(c)). A fresh loop per turn meant a fresh loop
+    identity on every single ``chat_call``, which forced the gateway's owned ``httpx.AsyncClient``
+    to swap (see ``ConsoleProviderGateway._active_http_client``) once per turn instead of at most
+    once per run.
 
-    PR2a Task 6.5: that shared loop is now driven by its OWN thread
-    (``run_forever``, started in ``run_reply``) and every turn is submitted
-    with ``asyncio.run_coroutine_threadsafe``. It used to be driven by
-    ``run_until_complete`` on whichever thread happened to call — sound
-    only while the whole run tree was single-threaded. Under the fleet a
-    child runs on its own thread and calls ``chat_call`` while the parent
-    is inside its own call, and a second ``run_until_complete`` on an
-    already-running loop raises ``RuntimeError: This event loop is already
-    running``: PROBED, and it failed EVERY overlapping child (the child's
-    run row persisted `error` and its coroutine was dropped un-awaited).
-    Submitting instead keeps exactly one loop and one httpx client per run
-    — Fix 1(c) intact — while letting the parent's and the children's
-    turns be genuinely in flight at once, which is the whole point of the
-    fleet.
+    PR2a Task 6.5: that shared loop is now driven by its OWN thread (``run_forever``, started in
+    ``run_reply``) and every turn is submitted with ``asyncio.run_coroutine_threadsafe``. It used
+    to be driven by ``run_until_complete`` on whichever thread happened to call — sound only while
+    the whole run tree was single-threaded. Under the fleet a child runs on its own thread and
+    calls ``chat_call`` while the parent is inside its own call, and a second
+    ``run_until_complete`` on an already-running loop raises ``RuntimeError: This event loop is
+    already running``: PROBED, and it failed EVERY overlapping child (the child's run row persisted
+    `error` and its coroutine was dropped un-awaited). Submitting instead keeps exactly one loop
+    and one httpx client per run — Fix 1(c) intact — while letting the parent's and the children's
+    turns be genuinely in flight at once, which is the whole point of the fleet.
     """
 
     def _acknowledge_live_native_continuation(self, original, projected, model_result):
