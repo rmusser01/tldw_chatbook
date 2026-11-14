@@ -1,0 +1,145 @@
+{
+  "total_count": 1,
+  "jobs": [
+    {
+      "id": 132500781640,
+      "run_id": 43612634332,
+      "workflow_name": "Perf Guard",
+      "head_branch": "codex/self-hosted-ci",
+      "run_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/actions/runs/43612634332",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOOcyyl88AAAAe2al6SA",
+      "head_sha": "258ebec33d68a46a4f5d5a20838cce8dd6e2f627",
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/actions/jobs/132500781640",
+      "html_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43612634332/job/132500781640",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-11-14T15:53:58Z",
+      "started_at": "2026-11-14T16:51:29Z",
+      "completed_at": "2026-11-14T17:05:43Z",
+      "name": "UI latency guardrails",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-11-14T16:51:30Z",
+          "completed_at": "2026-11-14T16:51:30Z"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-11-14T16:51:30Z",
+          "completed_at": "2026-11-14T16:51:58Z"
+        },
+        {
+          "name": "Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-11-14T16:51:58Z",
+          "completed_at": "2026-11-14T16:51:58Z"
+        },
+        {
+          "name": "Install package (test deps only path)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-11-14T16:51:58Z",
+          "completed_at": "2026-11-14T16:52:23Z"
+        },
+        {
+          "name": "Run latency guardrails",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-11-14T16:52:23Z",
+          "completed_at": "2026-11-14T16:54:12Z"
+        },
+        {
+          "name": "Run GC policy and idle re-freeze tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-11-14T16:54:12Z",
+          "completed_at": "2026-11-14T16:54:42Z"
+        },
+        {
+          "name": "Run boot budget ratchets",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-11-14T16:54:42Z",
+          "completed_at": "2026-11-14T16:56:50Z"
+        },
+        {
+          "name": "Run Console tab-publication and voice gates",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-11-14T16:56:50Z",
+          "completed_at": "2026-11-14T16:56:58Z"
+        },
+        {
+          "name": "Run Console keystroke work census",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-11-14T16:56:58Z",
+          "completed_at": "2026-11-14T16:59:36Z"
+        },
+        {
+          "name": "Run Console storage-unit ratchet",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-11-14T16:59:36Z",
+          "completed_at": "2026-11-14T17:01:13Z"
+        },
+        {
+          "name": "Run Console compact-setup gates",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-11-14T17:01:13Z",
+          "completed_at": "2026-11-14T17:05:39Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21,
+          "started_at": "2026-11-14T17:05:39Z",
+          "completed_at": "2026-11-14T17:05:40Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 22,
+          "started_at": "2026-11-14T17:05:40Z",
+          "completed_at": "2026-11-14T17:05:40Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 23,
+          "started_at": "2026-11-14T17:05:40Z",
+          "completed_at": "2026-11-14T17:05:40Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/check-runs/132500781640",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1000837378,
+      "runner_name": "GitHub Actions 1000837378",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    }
+  ]
+}

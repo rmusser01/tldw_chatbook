@@ -83,7 +83,7 @@ permissions:
   contents: read
 
 # ADR-359: opt-in single runner labels; clearing either variable restores hosted
-# capacity. Forks stay hosted; only same-repository PRs use CI_TEST_RUNNER.
+# capacity. Forks stay hosted; same-repository PRs and dev pushes use CI_TEST_RUNNER.
 jobs:
   preflight:
     name: CI preflight
@@ -1738,7 +1738,7 @@ jobs:
     # the file's module bootstrap_profile marker is its isolation (TASK-39141).
     name: Library shell (push to dev)
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       # Report every shard, so one red shard does not hide another.

@@ -1,0 +1,15 @@
+{
+  "baked_at": "2026-11-13T17:44:02Z",
+  "cloud_image_sha256": "04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94",
+  "runner_version": "2.338.2"
+}
+  File: /var/lib/github-qemu-runner/images/base.qcow2
+  Size: 6490161152	Blocks: 12676520   IO Block: 4096   regular file
+Device: 7,0	Inode: 786437      Links: 1
+Access: (0644/-rw-r--r--)  Uid: (  999/gh-runner)   Gid: (  992/gh-runner)
+Access: 2026-11-13 10:59:21.990263212 -0800
+Modify: 2026-11-13 10:59:20.758251419 -0800
+Change: 2026-11-13 10:59:20.762251458 -0800
+ Birth: 2026-11-13 10:59:17.926224307 -0800
+8ef3e08a1215b5113a30606c79cd5a68bda01b20f6f67ee0714f1b7dc083832d  /var/lib/github-qemu-runner/images/base.qcow2
+Connection to 192.168.2.236 closed.

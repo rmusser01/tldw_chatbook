@@ -1,0 +1,249 @@
+{
+  "total_count": 3,
+  "jobs": [
+    {
+      "id": 132500769921,
+      "run_id": 43612630706,
+      "workflow_name": "Self-hosted runner qualification",
+      "head_branch": "codex/self-hosted-ci",
+      "run_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/actions/runs/43612630706",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOOcyyl88AAAAe2alMgQ",
+      "head_sha": "258ebec33d68a46a4f5d5a20838cce8dd6e2f627",
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/actions/jobs/132500769921",
+      "html_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43612630706/job/132500769921",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-11-14T15:53:55Z",
+      "started_at": "2026-11-14T15:53:59Z",
+      "completed_at": "2026-11-14T15:54:56Z",
+      "name": "control-first",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-11-14T15:54:00Z",
+          "completed_at": "2026-11-14T15:54:02Z"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-11-14T15:54:02Z",
+          "completed_at": "2026-11-14T15:54:36Z"
+        },
+        {
+          "name": "Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-11-14T15:54:36Z",
+          "completed_at": "2026-11-14T15:54:50Z"
+        },
+        {
+          "name": "Verify Python imports in a sanitized child",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-11-14T15:54:50Z",
+          "completed_at": "2026-11-14T15:54:52Z"
+        },
+        {
+          "name": "Verify control tools and leave a disposable marker",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-11-14T15:54:52Z",
+          "completed_at": "2026-11-14T15:54:52Z"
+        },
+        {
+          "name": "Make guest shutdown fail to exercise host reclamation",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-11-14T15:54:52Z",
+          "completed_at": "2026-11-14T15:54:52Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-11-14T15:54:52Z",
+          "completed_at": "2026-11-14T15:54:52Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-11-14T15:54:52Z",
+          "completed_at": "2026-11-14T15:54:53Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-11-14T15:54:53Z",
+          "completed_at": "2026-11-14T15:54:53Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/check-runs/132500769921",
+      "labels": [
+        "tldw-ci-control"
+      ],
+      "runner_id": 589,
+      "runner_name": "ghq-control-1a18d13c",
+      "runner_group_id": 1,
+      "runner_group_name": "Default"
+    },
+    {
+      "id": 132500770131,
+      "run_id": 43612630706,
+      "workflow_name": "Self-hosted runner qualification",
+      "head_branch": "codex/self-hosted-ci",
+      "run_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/actions/runs/43612630706",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOOcyyl88AAAAe2alNUw",
+      "head_sha": "258ebec33d68a46a4f5d5a20838cce8dd6e2f627",
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/actions/jobs/132500770131",
+      "html_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43612630706/job/132500770131",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-11-14T15:53:56Z",
+      "started_at": "2026-11-14T15:54:00Z",
+      "completed_at": "2026-11-14T15:55:17Z",
+      "name": "test-worker",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-11-14T15:54:01Z",
+          "completed_at": "2026-11-14T15:54:02Z"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-11-14T15:54:02Z",
+          "completed_at": "2026-11-14T15:54:56Z"
+        },
+        {
+          "name": "Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-11-14T15:54:56Z",
+          "completed_at": "2026-11-14T15:55:08Z"
+        },
+        {
+          "name": "Verify Python imports in a sanitized child",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-11-14T15:55:08Z",
+          "completed_at": "2026-11-14T15:55:10Z"
+        },
+        {
+          "name": "Verify test worker tools and private network isolation",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-11-14T15:55:10Z",
+          "completed_at": "2026-11-14T15:55:14Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-11-14T15:55:14Z",
+          "completed_at": "2026-11-14T15:55:14Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-11-14T15:55:14Z",
+          "completed_at": "2026-11-14T15:55:14Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-11-14T15:55:14Z",
+          "completed_at": "2026-11-14T15:55:14Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/check-runs/132500770131",
+      "labels": [
+        "tldw-ci-test"
+      ],
+      "runner_id": 581,
+      "runner_name": "ghq-test-85df9da5",
+      "runner_group_id": 1,
+      "runner_group_name": "Default"
+    },
+    {
+      "id": 132501051871,
+      "run_id": 43612630706,
+      "workflow_name": "Self-hosted runner qualification",
+      "head_branch": "codex/self-hosted-ci",
+      "run_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/actions/runs/43612630706",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOOcyyl88AAAAe2a2Z3w",
+      "head_sha": "258ebec33d68a46a4f5d5a20838cce8dd6e2f627",
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/actions/jobs/132501051871",
+      "html_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/43612630706/job/132501051871",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-11-14T15:54:57Z",
+      "started_at": "2026-11-14T16:02:15Z",
+      "completed_at": "2026-11-14T16:02:19Z",
+      "name": "control-renewed",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-11-14T16:02:15Z",
+          "completed_at": "2026-11-14T16:02:15Z"
+        },
+        {
+          "name": "Verify the single control slot was replaced",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-11-14T16:02:15Z",
+          "completed_at": "2026-11-14T16:02:15Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-11-14T16:02:15Z",
+          "completed_at": "2026-11-14T16:02:16Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/check-runs/132501051871",
+      "labels": [
+        "tldw-ci-control"
+      ],
+      "runner_id": 595,
+      "runner_name": "ghq-control-4d59c07e",
+      "runner_group_id": 1,
+      "runner_group_name": "Default"
+    }
+  ]
+}
