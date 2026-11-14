@@ -268,7 +268,9 @@ def test_app_string_lookups_match_their_pin(pkg: str) -> None:
     assert count <= pin, (
         f"{pkg}: {count} literal getattr/hasattr lookups on the app object "
         f"(pinned {pin}, +{count - pin}). Reach the service explicitly; do NOT "
-        f"raise the pin ({CENSUS.name})."
+        f"raise the pin ({CENSUS.name}). Helper calls are matched by name: if "
+        f"the new count is an unrelated call that shares a lookup helper's "
+        f"name, rename that call instead."
     )
     assert count >= pin, (
         f"{pkg}: {count} lookups, pinned {pin}. Lower the pin to {count} in "
