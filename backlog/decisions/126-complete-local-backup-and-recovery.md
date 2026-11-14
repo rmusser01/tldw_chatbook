@@ -1432,6 +1432,29 @@ The current flat persisted browser retains its global/Default scopes, generic-ch
 
 Root released test-only qualification preparation before any Windows optimization selection. Keep current Windows full derivation, actual owner/security projection, ordinary-hold exclusion and accepted TASK34408 fixed creation-intent durability unchanged. Exact source invalid-ancestor and ancestor-replacement controls are distinct from newly authored standalone fresh descriptor/absence/order/native retirement/uncertain-close controls. Source OPT74 native counters assume both one-name validation and TokenOwner queries; retain them unchanged for their later stage, never label them a current-security/full-ancestor baseline. Source binding-tree custody controls require their original missing owner and cannot be silently imported as facade tests. An independently reviewed exact test snapshot and actual supported Windows execution precede any product prerequisite release. Portable collection/skips establish no native qualification; elevated original-token policy and acquisition reuse need separate review.
 
+### 2026-11-13 — Windows admission with an established native hold
+
+An ordinary Windows acquisition may perform its fresh authority observation
+outside the process-local first-use initializer when a serving native hold
+already exists for the bootstrap root. The warm observation has no creation
+path. It verifies the settled ancestry, the actual enrollment marker and
+registry, and the authority directory identity against the observed hold.
+First use and startup reacquisition retain their serialized registration.
+
+Every acquisition still checks current startup permission, qualification,
+source scope and local pause. It counts its own lease before the final
+permission and scope read. A changed authority or uncertain observation
+refuses. The original native lock owner and shutdown retirement remain in use.
+Within each warm check, the permission and path-scope decisions consume the
+same freshly read control records and registry. The two checks independently
+read these inputs on either side of counting the lease.
+For the existing authority, the pre-count registry reader verifies the pinned
+directory against the live authority and validates the unbound marker against
+its registered identity in the locked registry. It uses the ordinary
+qualification and registry validation on that same pinned directory.
+This changes which reads must wait for first-use serialization. Windows still
+derives admission fresh and keeps the existing evidence-reuse exclusion.
+
 ### 2026-10-14 — Fresh Windows metadata prerequisite, before optimization selection
 
 The independently reviewed supported Windows capability run38515921962 keeps

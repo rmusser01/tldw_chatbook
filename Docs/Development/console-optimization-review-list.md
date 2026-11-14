@@ -108,6 +108,22 @@ records the separate cost observed by the subsequent diagnostic without claiming
 that its passes explain those failures. These are headless observations, not a
 quiet comparison, physical terminal flush or a whole-Send speed improvement.
 
+### Windows post-save admission follow-up (2026-11-13)
+
+Both send routes saved the turn on dev `531acb8cdc` and then missed the
+provider-entry bound. The profile-wide initializer queued Send and background
+storage reads. Moving established Windows admission out of that queue removed
+the observed initializer waits, but repeated permission, scope and authority
+reads still delayed the dispatch checkpoint. The fix shares those fresh reads
+within each of the checks before and after lease counting. It retains the
+original save-before-dispatch order and the validation required by ADR-126.
+
+The broader Windows metadata batching proposals (OPT-17 and OPT-23), Console
+polling changes beyond the implemented scope (OPT-60), and further native
+admission work (OPT-73) remain deferred. The feedback tests qualify both
+input routes and their visible state changes. A repeatable Send latency
+measurement and live-provider response timing remain open.
+
 ## Latest bounded cleanup and quiet comparison (2026-10-08)
 
 Integration commit `fa3dad2d82d31920bd18fdb8db2b7abf74565faf` implements
