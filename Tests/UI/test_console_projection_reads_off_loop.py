@@ -184,7 +184,7 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
     at load 9-11). The warm-up now re-reads a display past half its life, the
     share the run poll's projections already refresh ahead at.
     """
-    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery import storage_admission
 
     clock = _install_clock(monkeypatch)
     host, gateway, _timeline = build()
@@ -193,18 +193,33 @@ async def test_a_warm_up_rereads_a_display_near_expiry_so_its_render_accepts_it(
             console, _composer = await ready_console(host, pilot, gateway)
             projection = await _fresh_display(console)
             console._stop_console_transcript_sync_timer()  # No run poll.
-            await until(lambda: not projection.pending, timeout=30)
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 30
+            await until(lambda: not projection.pending, timeout=deadline - loop.time())
 
             clock.now += projection.max_age - 0.01
             assert await projection.warm()
             assert projection.at == clock.now, "warm-up retained the aging display"
-            # A busy coordinator also refuses fresh displays; isolate expiry here.
-            assert storage._lock.acquire(timeout=30), "storage coordinator stayed busy"
-            try:
-                clock.now += 0.05  # The FULL sync's own render takes time.
+            clock.now += 0.05  # The FULL sync's own render takes time.
+            status = spend._checked_display_status
+            lock = storage_admission._lock
+
+            def check_age_after_admission(current):
+                if current is not projection:
+                    return status(current)
+                # Isolate proof age from unrelated admission contention.
+                # The original status still checks custody and freshness.
+                assert lock.acquire(timeout=max(0.0, deadline - loop.time())), (
+                    "the storage coordinator remained busy during the freshness check"
+                )
+                try:
+                    return status(current)
+                finally:
+                    lock.release()
+
+            with monkeypatch.context() as checked:
+                checked.setattr(spend, "_checked_display_status", check_age_after_admission)
                 result, _ops = _project(console)
-            finally:
-                storage._lock.release()
             assert result is True, (
                 "the render refused the display its warm-up had just handed back"
             )

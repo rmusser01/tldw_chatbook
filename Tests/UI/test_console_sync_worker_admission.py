@@ -144,7 +144,7 @@ async def test_native_refresh_survives_worker_replacement_and_pre_entry_cancel()
 
 @pytest.mark.parametrize("cancel_before_entry", [True, False])
 async def test_context_snapshot_native_publication_owns_deferred_refresh(
-    cancel_before_entry,
+    cancel_before_entry, monkeypatch
 ):
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
@@ -152,10 +152,37 @@ async def test_context_snapshot_native_publication_owns_deferred_refresh(
     )
 
     host = _host()
+    startup = {}
+    call_after_refresh = ChatScreen.call_after_refresh
+
+    def observe_startup(screen, callback, *args, **kwargs):
+        if (
+            screen.app_instance is host.app_instance
+            and callback == screen.run_worker
+            and args == (screen._sync_native_console_chat_ui,)
+            and kwargs.get("group") == "console-sync"
+            and kwargs.get("exclusive") is False
+        ):
+            def dispatch():
+                startup[screen] = callback(*args, **kwargs)
+
+            return call_after_refresh(screen, dispatch)
+        return call_after_refresh(screen, callback, *args, **kwargs)
+
+    monkeypatch.setattr(ChatScreen, "call_after_refresh", observe_startup)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", RuntimeWarning)
         async with _running(host):
             screen = host.screen
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 8
+            assert await until(
+                lambda: screen._console_attach_reconciled
+                and screen in startup
+                and startup[screen].state is WorkerState.SUCCESS
+                and not screen._console_sync_in_progress,
+                deadline - loop.time(),
+            ), "initial Console attachment did not settle"
             controller = screen._ensure_console_chat_controller()
             store = controller.store
             session_id = store.active_session_id
@@ -163,7 +190,9 @@ async def test_context_snapshot_native_publication_owns_deferred_refresh(
             assert snapshot.schedule == screen.run_worker
             assert snapshot.refresh == screen._sync_native_console_chat_ui
             assert await snapshot.warm(controller, session_id)
-            assert await until(lambda: not screen._console_sync_in_progress, 8)
+            assert await until(
+                lambda: not screen._console_sync_in_progress, deadline - loop.time()
+            )
             tab = store.create_session(title="Context publication", activate=False)
             store.append_message(
                 session_id,
