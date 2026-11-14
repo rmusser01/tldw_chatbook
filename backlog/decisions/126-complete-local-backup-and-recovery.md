@@ -1443,8 +1443,11 @@ First use and startup reacquisition retain their serialized registration.
 
 Every acquisition still checks current startup permission, qualification,
 source scope and local pause. It counts its own lease before the final
-permission and scope read. A changed authority or uncertain observation
-refuses. The original native lock owner and shutdown retirement remain in use.
+permission and scope read. If the hold retires during the read-only check,
+the acquisition discards that observation and retries once through the
+serialized registration path after checking the execution selection. A changed
+authority or uncertain observation refuses. Native lock ownership and shutdown
+retirement use the existing mechanism.
 Within each warm check, the permission and path-scope decisions consume the
 same freshly read control records and registry. The two checks independently
 read these inputs on either side of counting the lease.
@@ -1452,6 +1455,10 @@ For the existing authority, the pre-count registry reader verifies the pinned
 directory against the live authority and validates the unbound marker against
 its registered identity in the locked registry. It uses the ordinary
 qualification and registry validation on that same pinned directory.
+The post-count read also binds the named and pinned directory identities to
+the hold and samples the pending records under the same shared registry lock.
+If the platform qualification check denies native admission, the acquisition
+performs the existing serialized ordinary-use checks.
 This changes which reads must wait for first-use serialization. Windows still
 derives admission fresh and keeps the existing evidence-reuse exclusion.
 

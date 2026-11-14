@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from tldw_chatbook.Backup_Recovery import bootstrap, control_records
+from tldw_chatbook.Backup_Recovery import bootstrap, control_records, qualification
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Backup_Recovery.participants import repository_participant
 from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
@@ -79,7 +79,51 @@ def test_established_windows_hold_does_not_wait_for_first_use(
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows uses fresh admission")
-@pytest.mark.parametrize("publish_pending", [False, True])
+def test_established_windows_acquisition_retries_when_last_lease_closes(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "bootstrap"
+    selected = tmp_path / "data.sqlite"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+    observed, release = threading.Event(), threading.Event()
+    observe = control_records.observe_settled_admission_registry
+    register = storage.admission_authority
+    registrations = []
+
+    def held_observation(root, authority):
+        registry = observe(root, authority)
+        observed.set()
+        assert release.wait(10)
+        return registry
+
+    def record_registration(root):
+        registrations.append(root)
+        return register(root)
+
+    with storage.acquire_storage(selected) as original, ThreadPoolExecutor(1) as pool:
+        expected_scope = original.execution_scope()
+        hold = storage._holds[original._key]
+        monkeypatch.setattr(
+            control_records, "observe_settled_admission_registry", held_observation
+        )
+        monkeypatch.setattr(storage, "admission_authority", record_registration)
+        result = pool.submit(storage.acquire_storage, selected)
+        try:
+            assert observed.wait(5)
+            original.close()
+            assert hold.stop.is_set()
+            assert not hold.thread.is_alive()
+        finally:
+            release.set()
+        with result.result(timeout=10) as acquired:
+            assert acquired.execution_scope() == expected_scope
+            assert storage._holds[acquired._key] is not hold
+        assert registrations == [root]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows uses fresh admission")
+@pytest.mark.parametrize("publish_pending", ["never", "before-registry", "during-registry"])
 def test_established_windows_hold_observes_fresh_records_on_each_side_of_count(
     tmp_path, monkeypatch, publish_pending
 ):
@@ -92,15 +136,31 @@ def test_established_windows_hold_observes_fresh_records_on_each_side_of_count(
         hold = storage._holds[original._key]
         original_records = bootstrap._records
         original_registry = bootstrap._registry
+        original_read = bootstrap._read
         lease_counts = []
         registry_counts = []
+        pending_visible = False
 
         def read_records(path):
             lease_counts.append(hold.count)
             result = original_records(path)
-            if publish_pending and hold.count == 2:
+            if hold.count == 2 and (
+                publish_pending == "before-registry" or pending_visible
+            ):
                 pending, profiles = result
                 return [*pending, {"selectors": [str(tmp_path / "config.toml")]}], profiles
+            return result
+
+        def read_registry_contents(parent, name, **kwargs):
+            nonlocal pending_visible
+            result = original_read(parent, name, **kwargs)
+            if (
+                publish_pending == "during-registry"
+                and name == "registry.json"
+                and hold.count == 2
+            ):
+                # The pending fence is visible after the final registry read starts.
+                pending_visible = True
             return result
 
         def read_registry(path, **kwargs):
@@ -108,9 +168,10 @@ def test_established_windows_hold_observes_fresh_records_on_each_side_of_count(
             return original_registry(path, **kwargs)
 
         monkeypatch.setattr(bootstrap, "_records", read_records)
+        monkeypatch.setattr(bootstrap, "_read", read_registry_contents)
         monkeypatch.setattr(bootstrap, "_registry", read_registry)
         monkeypatch.setattr(control_records, "_registry", read_registry)
-        if publish_pending:
+        if publish_pending != "never":
             with pytest.raises(bootstrap.RecoveryRequired, match="recovery_pending"):
                 with storage.acquire_storage(selected):
                     pytest.fail("acquired after recovery became pending")
@@ -119,6 +180,54 @@ def test_established_windows_hold_observes_fresh_records_on_each_side_of_count(
                 assert borrowed.execution_scope() == original.execution_scope()
         assert lease_counts == [1, 2]
         assert registry_counts == [1, 2]
+        assert hold.count == 1
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows uses fresh admission")
+def test_established_windows_hold_preserves_ordinary_unqualified_use(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "bootstrap"
+    selected = tmp_path / "data.sqlite"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+
+    def unavailable():
+        raise FileNotFoundError
+
+    with storage.acquire_storage(selected) as original:
+        scope = original.execution_scope()
+        hold = storage._holds[original._key]
+        monkeypatch.setattr(qualification, "_load_evidence", unavailable)
+        with storage.acquire_storage(selected) as acquired:
+            assert acquired.execution_context(selected) == (root, None)
+            assert original.execution_scope() == scope
+            assert hold.count == 1
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows uses fresh admission")
+def test_established_windows_hold_refuses_different_registry_authority(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "bootstrap"
+    selected = tmp_path / "data.sqlite"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+
+    with storage.acquire_storage(selected) as original:
+        hold = storage._holds[original._key]
+        read_registry = bootstrap._registry
+
+        def replaced_authority(path, **kwargs):
+            if hold.count == 2 and "expected_identity" in kwargs:
+                device, inode = kwargs["expected_identity"]
+                kwargs["expected_identity"] = (device, inode + 1)
+            return read_registry(path, **kwargs)
+
+        monkeypatch.setattr(bootstrap, "_registry", replaced_authority)
+        with pytest.raises(bootstrap.RecoveryRequired, match="recovery_scope_uncertain"):
+            with storage.acquire_storage(selected):
+                pytest.fail("acquired with a different registry authority")
         assert hold.count == 1
 
 
