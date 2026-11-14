@@ -1,11 +1,13 @@
 """Contended initialization waits for changes without polling native authority."""
 
-from contextlib import contextmanager
+import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from contextlib import contextmanager
 
 import pytest
 
-from tldw_chatbook.Backup_Recovery import bootstrap
+from tldw_chatbook.Backup_Recovery import bootstrap, control_records
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Backup_Recovery.participants import repository_participant
 from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
@@ -52,6 +54,90 @@ def repository_case(tmp_path, monkeypatch):
         repository.close()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows uses fresh admission")
+def test_established_windows_hold_does_not_wait_for_first_use(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "bootstrap"
+    selected = tmp_path / "data.sqlite"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+
+    with storage.acquire_storage(selected) as original, ThreadPoolExecutor(1) as pool:
+        expected = original.execution_scope()
+        with held_initializer(root):
+            result = pool.submit(storage.acquire_storage, selected)
+            try:
+                lease = result.result(timeout=5)
+            except TimeoutError:
+                lease = None
+        # Take ownership even when the test fails so the cold behavior drains.
+        with result.result(timeout=10) as acquired:
+            assert acquired.execution_scope() == expected
+            assert lease is acquired, "established Windows admission waited for first use"
+        assert original.execution_scope() == expected
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows uses fresh admission")
+@pytest.mark.parametrize("publish_pending", [False, True])
+def test_established_windows_hold_observes_fresh_records_on_each_side_of_count(
+    tmp_path, monkeypatch, publish_pending
+):
+    root = tmp_path / "bootstrap"
+    selected = tmp_path / "data.sqlite"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+
+    with storage.acquire_storage(selected) as original:
+        hold = storage._holds[original._key]
+        original_records = bootstrap._records
+        original_registry = bootstrap._registry
+        lease_counts = []
+        registry_counts = []
+
+        def read_records(path):
+            lease_counts.append(hold.count)
+            result = original_records(path)
+            if publish_pending and hold.count == 2:
+                pending, profiles = result
+                return [*pending, {"selectors": [str(tmp_path / "config.toml")]}], profiles
+            return result
+
+        def read_registry(path, **kwargs):
+            registry_counts.append(hold.count)
+            return original_registry(path, **kwargs)
+
+        monkeypatch.setattr(bootstrap, "_records", read_records)
+        monkeypatch.setattr(bootstrap, "_registry", read_registry)
+        monkeypatch.setattr(control_records, "_registry", read_registry)
+        if publish_pending:
+            with pytest.raises(bootstrap.RecoveryRequired, match="recovery_pending"):
+                with storage.acquire_storage(selected):
+                    pytest.fail("acquired after recovery became pending")
+        else:
+            with storage.acquire_storage(selected) as borrowed:
+                assert borrowed.execution_scope() == original.execution_scope()
+        assert lease_counts == [1, 2]
+        assert registry_counts == [1, 2]
+        assert hold.count == 1
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows uses fresh admission")
+def test_established_windows_hold_refuses_missing_settled_ancestry(tmp_path, monkeypatch):
+    root = tmp_path / "bootstrap"
+    selected = tmp_path / "data.sqlite"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+
+    with storage.acquire_storage(selected):
+        ancestry = root / "ancestry-settled.json"
+        ancestry.unlink()
+        with pytest.raises(bootstrap.RecoveryRequired):
+            with storage.acquire_storage(selected):
+                pytest.fail("acquired without the settled ancestry receipt")
+        assert not ancestry.exists()
+
+
 @pytest.mark.parametrize("change", ["unchanged", "replaced-parent", "pause"])
 def test_nested_waiter_checks_current_scope_on_wake_without_native_polling(
     repository_case, monkeypatch, change
@@ -95,6 +181,18 @@ def test_nested_waiter_checks_current_scope_on_wake_without_native_polling(
     follower = threading.Thread(target=run)
     monkeypatch.setattr(storage._changed, "wait", observed_wait)
     monkeypatch.setattr(storage._Acquisition, "check", observed_check)
+    if sys.platform == "win32":
+        # Exercise the initializer fallback even though the nested operation
+        # supplies a live lease. The established-hold route has its own control.
+        original_serving = storage._hold_serving
+        monkeypatch.setattr(
+            storage,
+            "_hold_serving",
+            lambda hold: not (
+                threading.current_thread() is follower and ready.is_set()
+            )
+            and original_serving(hold),
+        )
     follower.start()
     pause = None
     try:
@@ -179,3 +277,27 @@ def test_pause_wakes_and_retires_waiter_before_initializer_finishes(
             follower.join(10)
         if pause is not None:
             pause.resume()
+
+
+def test_first_acquisition_waits_before_creating_authority(tmp_path, monkeypatch):
+    root = tmp_path / "bootstrap"
+    selected = tmp_path / "data.sqlite"
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+    waiting = threading.Event()
+    original_wait = storage._changed.wait
+
+    def observed_wait(timeout=None):
+        if threading.current_thread().name.startswith("first-acquisition"):
+            waiting.set()
+        return original_wait(timeout)
+
+    monkeypatch.setattr(storage._changed, "wait", observed_wait)
+    with ThreadPoolExecutor(1, thread_name_prefix="first-acquisition") as pool:
+        with held_initializer(root):
+            result = pool.submit(storage.acquire_storage, selected)
+            parked = waiting.wait(5)
+            still_absent = not root.exists()
+        with result.result(timeout=10) as lease:
+            assert lease.execution_scope()
+        assert parked and still_absent

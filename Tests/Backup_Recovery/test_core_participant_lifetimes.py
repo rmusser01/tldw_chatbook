@@ -529,20 +529,28 @@ def test_pause_cancels_independent_nested_admission_and_keeps_outer_live(
     outer = PromptsDatabase(tmp_path / "outer-race.sqlite", "outer-test")
     inner = PromptsDatabase(tmp_path / "inner-race.sqlite", "inner-test")
     entered, finish, retired = (threading.Event() for _ in range(3))
-    original = storage.admission_authority
     errors = []
 
-    def delayed_authority(root):
-        if any(
-            getattr(operation, "path", None) == inner.db_path
-            and operation.lease is None
-            for operation in tuple(storage._operations)
-        ):
-            entered.set()
-            assert finish.wait(5)
-        return original(root)
+    def hold_inner_observation(observe):
+        def delayed(*args, **kwargs):
+            with storage._lock:
+                entering_inner = any(
+                    getattr(operation, "path", None) == inner.db_path
+                    and operation.lease is None
+                    for operation in storage._operations
+                )
+            if entering_inner:
+                entered.set()
+                assert finish.wait(5)
+            return observe(*args, **kwargs)
 
-    monkeypatch.setattr(storage, "admission_authority", delayed_authority)
+        return delayed
+
+    if storage.os.name == "nt":
+        module, name = storage.control_records, "observe_settled_admission_registry"
+    else:
+        module, name = storage, "admission_authority"
+    monkeypatch.setattr(module, name, hold_inner_observation(getattr(module, name)))
 
     def work():
         try:
