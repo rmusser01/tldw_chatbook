@@ -781,6 +781,33 @@ def test_a_release_reopens_the_transcript_gate_the_paint_went_past():
     assert screen._console_sync_requested
 
 
+def test_a_release_forgets_the_pushed_controls_the_paint_went_past():
+    """TASK-33621.59: a send that ends where it began repaints the header.
+
+    The paint pushes "running" straight to the Workbench header, past the
+    push cache (``_push_console_control_state_if_changed``). Live, Stop
+    pressed during a held durable commit that then failed put the message
+    back in the draft. No whole sync had run during the send, so the
+    release's sync derived exactly the state pushed before Enter, skipped
+    the push, and the header read "Running" on an idle Console until the
+    next send.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    screen = SimpleNamespace(
+        _console_transcript_sync_token=("the gate's token from before Enter",),
+        _last_native_transcript_refresh_key=("refresh key",),
+        _last_console_workbench_state="the Workbench state pushed before Enter",
+        _console_sync_in_progress=True,  # a running pass is re-armed
+        _console_sync_requested=False,
+    )
+    module._resync(screen)
+    assert screen._last_console_workbench_state is None
+    assert screen._console_sync_requested
+
+
 def test_acknowledgement_marks_its_tab_running_but_keeps_approval():
     from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker as Marker
 

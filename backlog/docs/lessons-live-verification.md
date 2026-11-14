@@ -6,6 +6,34 @@
 
 **What to do.** Authenticate the actual interpreter's image, creation time, ancestry and argv against the owned launcher, retain its handle, and acknowledge ownership before product imports. Start the fixture clock at the mounted-context boundary. Keep explicit phase deadlines and a single cleanup bound; report the last observed marker as censored evidence, without diagnosing the next call from its absence.
 
+## A mounted send harness runs whole syncs that a live send never does: only live showed a stale "Running" header (TASK-33621.59, 2026-11-06)
+
+**Incident.** The fix made a send stopped during a durable commit that then failed end
+exactly where it began: draft back, no echo, no card. The mounted test (real ChatScreen,
+runtime, controller and store over a file-backed DB) passed, and its screen read "Ready".
+Live (Anthropic haiku through the review proxy, a stdlib `BEGIN EXCLUSIVE` holder on the
+profile's ChaChaNotes DB, Stop from the command palette), the header read "Running" on
+an idle Console until the next send. Temporary `F59PROBE` log lines in the worktree
+showed why: live, no whole sync built the Workbench state between Enter and the failure
+(16 s), while the harness built it three times. The send acknowledgement paints
+"running" straight to the header, past the `_push_console_control_state_if_changed`
+cache. The release's sync then derived exactly the state cached before Enter and skipped
+the push. `send_acknowledgement._resync` now forgets that cache, as it already forgot the
+transcript gate's token (TASK-38994).
+
+Two driving traps from the same rounds:
+- While the commit runs the run state is VALIDATING. The composer's Stop and Ctrl+G are
+  not offered, so a Ctrl+G does nothing. The palette's "Console: Stop this tab's run"
+  works, but tmux must send `Down` before `Enter`, because Enter alone leaves the palette
+  open.
+- The lock isolates the commit only on a chat's first send. A second send in the same
+  chat waited on the lock before `controller_submit`, until the holder timed out.
+
+**What to do.** When a fix changes what the screen settles to, check it live, not only in
+the mounted harness. A harness's extra syncs can repair a cache that live never repairs.
+To see which syncs ran, log the build and push sites temporarily in the worktree, and
+remove the lines before you commit.
+
 ## A regression filed against a reviewed head can be gone from the merge: measure the merged code (TASK-33620.15.51, 2026-11-05)
 
 **Incident.** TASK-33620.15.51 was filed from TASK-33620.15.18's review. A first send's

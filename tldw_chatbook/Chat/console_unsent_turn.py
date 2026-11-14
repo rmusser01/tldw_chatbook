@@ -212,6 +212,35 @@ def own_draft_takes_it_back(store: Any, session_id: str, sent_text: str) -> bool
     return draft in {"", sent_text.strip()}
 
 
+def stop_cancelled_send(result: Any, session_id: str, preparation_id: str) -> bool:
+    """Whether a card action ended with Stop cancelling this send, unsent.
+
+    TASK-33621.59 review: Stop pressed while a card action's save ran (Retry
+    send after a failed save) and that save failed too. The controller then
+    cancels the send as Cancel send would and puts its text back, so the card
+    settles it like its own Cancel: the unsent turn and its attachments go
+    back to the draft instead of onto the shelf.
+
+    Args:
+        result: The card action's controller result.
+        session_id: The paused send's session.
+        preparation_id: The paused send's preparation id.
+
+    Returns:
+        True only for an unaccepted STOPPED result for exactly this send that
+        records the draft revision its text went back as.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+
+    return (
+        not getattr(result, "accepted", False)
+        and getattr(result, "terminal_status", None) is ConsoleRunStatus.STOPPED
+        and getattr(result, "cancelled_draft_revision", None) is not None
+        and getattr(result, "session_id", None) == session_id
+        and getattr(result, "preparation_id", None) == preparation_id
+    )
+
+
 def card_action_started(runtime: Any, preparation_id: str) -> None:
     """Take the paused send's unsent turn off the shelf while its card acts.
 

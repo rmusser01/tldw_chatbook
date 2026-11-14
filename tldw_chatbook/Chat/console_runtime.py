@@ -449,6 +449,7 @@ class _ConsoleTurnRefusedError(RuntimeError):
         reason: str = "",
         preparation_id: str | None = None,
         card_held: bool = False,
+        returned_draft_revision: int | None = None,
     ) -> None:
         super().__init__(message)
         #: The code-owned copy the unsent-turn shelf states; may be empty.
@@ -458,6 +459,8 @@ class _ConsoleTurnRefusedError(RuntimeError):
         #: TASK-33621.18: only that pause's card ends it, so its unsent turn
         #: (and the attachments Cancel gives back) is kept off the shelf.
         self.card_held = card_held
+        #: TASK-33621.59: Stop won; the draft revision its text went back as.
+        self.returned_draft_revision = returned_draft_revision
 
 
 @dataclass(frozen=True, slots=True)
@@ -3643,6 +3646,12 @@ class ConsoleRuntime:
                     preparation_id=exc.preparation_id if refused else None,
                     card_held=refused and exc.card_held,
                 )
+                if refused and exc.returned_draft_revision is not None:
+                    # TASK-33621.59: its attachments follow the text back.
+                    self.return_turn_recovery_to_draft(
+                        exc.preparation_id,
+                        expected_draft_revision=exc.returned_draft_revision,
+                    )
             logger.warning(
                 "Console runtime turn ended with exception_type={}",
                 type(exc).__name__,
