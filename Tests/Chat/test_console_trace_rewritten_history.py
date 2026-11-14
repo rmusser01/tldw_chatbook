@@ -28,6 +28,7 @@ from Tests.Chat.test_console_trace_current_turn_transforms import (  # noqa: F40
     trace_harness,
 )
 from tldw_chatbook.Chat import console_trace_rewritten_tail
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
 from tldw_chatbook.Chat.console_context_compaction import ConsoleCompactionService
@@ -35,6 +36,9 @@ from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextBudgetMode,
     ContextCompactionMode,
+)
+from tldw_chatbook.Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
 )
 from tldw_chatbook.Chat.console_prepared_request import MEMORY_OPEN_TAG
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
@@ -87,23 +91,23 @@ def harness(trace_harness, tmp_path, request, monkeypatch):  # noqa: F811
     return trace_harness
 
 
-async def _send(harness, text: str):
+async def _send(harness, text: str, *, session: str = SESSION):
     sent_before = len(harness.entries)
     reserved_before = len(harness.boundaries)
-    result = await harness.controller.submit_draft(text, session_id=SESSION)
+    result = await harness.controller.submit_draft(text, session_id=session)
     return result, harness.entries[sent_before:], harness.boundaries[reserved_before:]
 
 
-def _assert_captured(harness, result, sent, reserved) -> None:
+def _assert_captured(harness, result, sent, reserved, *, session=SESSION) -> None:
     """The send reached the provider once, with its trace call reserved."""
 
     assert harness.failures == [], "trace reservation was refused"
     assert result.terminal_status is ConsoleRunStatus.COMPLETED, result
     # No decision card: the turn is not held for a trace-capture choice.
-    assert harness.controller.run_state_for(SESSION).status is not (
+    assert harness.controller.run_state_for(session).status is not (
         ConsoleRunStatus.BLOCKED
     )
-    assert harness.store.preparation_for_session(SESSION) is None
+    assert harness.store.preparation_for_session(session) is None
     assert len(sent) == 1, "the provider must be contacted exactly once"
     assert len(reserved) == 1, "the send must reserve exactly one trace call"
     user = harness.store.get_message(result.user_message_id)
@@ -236,3 +240,109 @@ async def test_captured_sends_after_edit_and_resend_keep_trace_capture(
     following, sent, reserved = await _send(harness, "and again")
     _assert_captured(harness, following, sent, reserved)
     assert len(harness.rechecks) == 1, "a plain append needs no rewrite proof"
+
+
+async def _long_chat(harness):
+    """Open a saved 129-exchange chat and capture one more exchange in it.
+
+    TASK-38298. Sending 130 exchanges one by one takes about 100 s, so the
+    first 129 are saved directly and the chat is opened as Console opens any
+    saved chat. One real captured send then records all 259 rows in the trace,
+    as the 130th send of a long chat would. Returns the session id and the
+    result of that send.
+    """
+
+    conversation_id = ChatConversationService(harness.db).create_conversation(
+        title="Long chat", scope_type="global", state="in-progress"
+    )
+    parent = None
+    with harness.db.transaction():
+        for index in range(258):
+            role = "user" if index % 2 == 0 else "assistant"
+            parent = harness.db.add_message(
+                {
+                    "conversation_id": conversation_id,
+                    "parent_message_id": parent,
+                    "sender": role,
+                    "role": role,
+                    "content": f"{'q' if role == 'user' else 'a'}{index // 2}",
+                    "timestamp": f"2026-11-12T00:{index // 60:02d}:"
+                    f"{index % 60:02d}.000000+00:00",
+                }
+            )
+    tree = ChatConversationService(harness.db).get_conversation_tree(
+        conversation_id, depth_cap=10_000, root_limit=10_000
+    )
+    session = harness.store.restore_persisted_session(
+        title="Long chat",
+        workspace_id=None,
+        persisted_conversation_id=conversation_id,
+        all_nodes=console_messages_from_conversation_tree(tree, db=harness.db),
+        active_leaf_persisted_id=parent,
+        settings=harness.store.session_settings(SESSION),
+    )
+    harness.store.set_session_context_policy_overrides(
+        session.id,
+        ConsoleContextPolicyOverrides(
+            budget_mode=ContextBudgetMode.CUSTOM,
+            custom_budget_tokens=200_000,
+            compaction_mode=ContextCompactionMode.OFF,
+            summary_max_tokens=100,
+        ),
+    )
+    result, sent, reserved = await _send(harness, "q129", session=session.id)
+    _assert_captured(harness, result, sent, reserved, session=session.id)
+    assert len(sent[0]) == 259
+    return session.id, result
+
+
+async def _rewrite_then_send(harness, session: str, *, memory_anchor: bool) -> None:
+    """Send after the rewrite: captured as a chain, then a plain append."""
+
+    result, sent, reserved = await _send(harness, "after", session=session)
+    _assert_captured(harness, result, sent, reserved, session=session)
+    assert [witness.memory_anchor for witness in harness.rechecks] == [memory_anchor]
+    assert len(sent[0]) == 3
+    assert sent[0][-1] == {"role": "user", "content": "after"}
+    with harness.db.transaction() as cursor:
+        (links,) = cursor.execute(
+            "SELECT count(*) FROM console_trace_surface_nodes "
+            "WHERE omission_reason_code = 'replacement_chain_link'"
+        ).fetchone()
+    assert links == 2, "259 replaced rows need two links of at most 256"
+
+    following, sent, reserved = await _send(harness, "and again", session=session)
+    _assert_captured(harness, following, sent, reserved, session=session)
+    assert len(harness.rechecks) == 1, "a plain append needs no rewrite proof"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("harness", ["agent"], indirect=True)
+async def test_compact_now_in_a_chat_over_128_exchanges_keeps_trace_capture(harness):
+    """TASK-38298 AC#2: 259 recorded rows, Compact now, then a send.
+
+    One replacement may span only 256 stored sequences, so the send is
+    recorded as a chained replacement.
+    """
+
+    session, _last = await _long_chat(harness)
+    succeeded, copy = await harness.controller.compact_context_now(session)
+    assert succeeded is True, copy
+
+    await _rewrite_then_send(harness, session, memory_anchor=True)
+
+
+@pytest.mark.asyncio
+async def test_edit_first_message_of_a_chat_over_128_exchanges_keeps_capture(harness):
+    """TASK-38298 AC#3: 259 recorded rows, Edit & resend on the first
+    message, then a send, recorded as a chained replacement."""
+
+    session, _last = await _long_chat(harness)
+    first_user = harness.store.messages_for_session(session)[0]
+    assert first_user.content == "q0"
+    resent = await harness.controller.edit_and_resend_message(
+        first_user.id, "edited question"
+    )
+    assert resent.accepted is True
+
+    await _rewrite_then_send(harness, session, memory_anchor=False)

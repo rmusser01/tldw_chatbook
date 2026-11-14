@@ -1063,7 +1063,12 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-39123 (owner size waiver): 6587 -> 6600 (+13) -- the
     # replay and surface-prefix comparisons accept a turn stored under an
     # older readable credential projection (review r12b-rev2).
-    "tldw_chatbook/Chat/console_trace_service.py": 6600,
+    # 2026-11-12, TASK-38298 (owner rule 2026-10-04: a fix over a size
+    # ratchet raises the row; never squeeze code to fit): 6600 -> 6739
+    # (+139), exact measurement. The owner-approved chained replacement
+    # (ADR-337 amendment 2026-11-06): the planner cuts a rewritten tail into
+    # links, and the writer validates and writes each link in dispatch binding.
+    "tldw_chatbook/Chat/console_trace_service.py": 6739,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,
