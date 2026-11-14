@@ -1357,14 +1357,15 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
 
     async with app.run_test(size=(120, 36)) as pilot:
         try:
-            await _wait_until(lambda: app._ui_ready, pause=pilot.pause)
+            # The held DB timer awaits release on the app's message pump.
+            await _wait_until(lambda: app._ui_ready, pause=asyncio.sleep)
             await _wait_until(
                 lambda: (
                     tts_started.is_set()
                     and stts_started.is_set()
                     and db_size_started.is_set()
                 ),
-                pause=pilot.pause,
+                pause=asyncio.sleep,
             )
             assert app._ui_ready is True
 
