@@ -62,6 +62,8 @@ Same-process initialization followers wait on the existing `_changed` condition 
 
 Creation-intent ancestry validation uses the internal visitor of `native_files.pinned_directory` to inspect every existing parent in a single nofollow traversal (ADR-126, TASK-35595). Each descriptor reaches the visitor only after its original owner/mode check and is borrowed only for that call. Missing descendants do not hide existing ancestor intents; visitor errors and native close errors propagate. No settled verdict or directory handle is cached between acquisitions.
 
+Ordinary Windows acquisitions against a serving hold read the settled authority without joining the first-use initializer. The acquisition verifies current ancestry, pins the existing authority, and validates the enrollment marker against the locked registry. Each side of lease counting reads fresh control records and shares those inputs across the startup-permission and scope checks. The acquisition must still count against the same serving hold and pass the post-count checks before returning a lease. First-use, startup reacquisition and recovery retain their existing initialization paths.
+
 ## Failure behaviors and boundaries
 
 | Case | Behavior |

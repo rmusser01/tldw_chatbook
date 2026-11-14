@@ -13,7 +13,7 @@ import re
 import stat
 import threading
 from collections.abc import Callable, Iterable, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import ParamSpec, TypeVar
 
@@ -410,14 +410,21 @@ def _registry_read_lock(parent: int):
         os.close(fd)
 
 
-def _registry(root: Path) -> dict | None:
+def _registry(
+    root: Path,
+    *,
+    authority_parent: int | None = None,
+    expected_identity: tuple[int, int] | None = None,
+    validate: Callable[[dict], None] | None = None,
+) -> dict | None:
     authority = root / "admission"
-    try:
-        info = os.stat(authority, follow_symlinks=False)
-    except FileNotFoundError:
-        return None
-    if stat.S_ISLNK(info.st_mode) or info.st_mode & 0o077:
-        raise ValueError("authority_unsafe")
+    if expected_identity is None:
+        try:
+            info = os.stat(authority, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if stat.S_ISLNK(info.st_mode) or info.st_mode & 0o077:
+            raise ValueError("authority_unsafe")
     marker = root / "unbound-owner"
     marker_info = os.stat(marker, follow_symlinks=False)
     if (
@@ -427,7 +434,22 @@ def _registry(root: Path) -> dict | None:
         or marker_info.st_mode & 0o077
     ):
         raise ValueError("enrollment_marker_unsafe")
-    with pinned_directory(authority) as parent, _registry_read_lock(parent):
+    directory = (
+        pinned_directory(authority)
+        if authority_parent is None
+        else nullcontext(authority_parent)
+    )
+    with directory as parent, _registry_read_lock(parent):
+        if expected_identity is not None:
+            info = os.stat(authority, follow_symlinks=False)
+            if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o077:
+                raise ValueError("authority_unsafe")
+            if (info.st_dev, info.st_ino) != expected_identity:
+                raise ValueError("admission_authority_changed")
+        if authority_parent is not None or expected_identity is not None:
+            current = os.fstat(parent)
+            if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
+                raise ValueError("admission_authority_changed")
         if "registry.pending.json" in os.listdir(parent):
             raise ValueError("registry_pending")
         result = _read(parent, "registry.json")
@@ -445,6 +467,8 @@ def _registry(root: Path) -> dict | None:
                 or entry["proposed"] != []
             ):
                 raise ValueError("uncertain_registry")
+        if validate is not None:
+            validate(result["entries"])
         return result["entries"]
 
 
@@ -504,45 +528,53 @@ def startup_permission(config_selector: Path, bootstrap_root: Path) -> tuple[boo
         selector = lexical_path(config_selector)
         pending, profiles = _records(bootstrap_root)
         registry = _registry(bootstrap_root)
-        if not pending:
-            # A normal config edit can require re-enrollment but is not recovery.
-            if (
-                profiles or (bootstrap_root / "unbound-owner").exists()
-            ) and registry is None:
-                return False, "recovery_scope_uncertain"
-            return True, "startup_allowed"
-        if any(
-            any(_overlap(selector, Path(p)) for p in r["selectors"]) for r in pending
-        ):
-            return False, "recovery_pending"
-        binding = _binding(selector, profiles, registry)
-        if binding is None:
-            return False, "recovery_scope_uncertain"
-        for record in pending:
-            if set(binding["namespaces"]) & set(record["namespaces"]):
-                return False, "recovery_pending"
-            if registry is None or any(n not in registry for n in record["namespaces"]):
-                return False, "recovery_scope_uncertain"
-            own_tokens = identity_view(
-                t for n in binding["namespaces"] for t in registry[n]["historical"]
-            )
-            affected_tokens = identity_view(
-                t for n in record["namespaces"] for t in registry[n]["historical"]
-            )
-            if own_tokens & affected_tokens:
-                return False, "recovery_pending"
-            affected = record["selectors"] + [
-                p for n in record["namespaces"] for p in registry[n]["roots"]
-            ]
-            if any(
-                _overlap(Path(a), Path(b))
-                for a in [binding["selector"]] + binding["roots"]
-                for b in affected
-            ):
-                return False, "recovery_pending"
-        return True, "startup_allowed"
+        return _startup_permission_from_controls(
+            selector, bootstrap_root, pending, profiles, registry
+        )
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, AttributeError):
         return False, "recovery_scope_uncertain"
+
+
+def _startup_permission_from_controls(
+    selector: Path, bootstrap_root: Path, pending, profiles, registry
+) -> tuple[bool, str]:
+    if not pending:
+        # A normal config edit can require re-enrollment but is not recovery.
+        if (
+            profiles or (bootstrap_root / "unbound-owner").exists()
+        ) and registry is None:
+            return False, "recovery_scope_uncertain"
+        return True, "startup_allowed"
+    if any(
+        any(_overlap(selector, Path(p)) for p in r["selectors"]) for r in pending
+    ):
+        return False, "recovery_pending"
+    binding = _binding(selector, profiles, registry)
+    if binding is None:
+        return False, "recovery_scope_uncertain"
+    for record in pending:
+        if set(binding["namespaces"]) & set(record["namespaces"]):
+            return False, "recovery_pending"
+        if registry is None or any(n not in registry for n in record["namespaces"]):
+            return False, "recovery_scope_uncertain"
+        own_tokens = identity_view(
+            t for n in binding["namespaces"] for t in registry[n]["historical"]
+        )
+        affected_tokens = identity_view(
+            t for n in record["namespaces"] for t in registry[n]["historical"]
+        )
+        if own_tokens & affected_tokens:
+            return False, "recovery_pending"
+        affected = record["selectors"] + [
+            p for n in record["namespaces"] for p in registry[n]["roots"]
+        ]
+        if any(
+            _overlap(Path(a), Path(b))
+            for a in [binding["selector"]] + binding["roots"]
+            for b in affected
+        ):
+            return False, "recovery_pending"
+    return True, "startup_allowed"
 
 
 def require_startup_permission() -> None:

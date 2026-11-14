@@ -16,7 +16,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
@@ -1318,9 +1318,13 @@ def _scope(
     startup_attempt=None,
     authority=None,
     related_paths: tuple[Path, ...] = (),
+    controls=None,
 ) -> tuple[str, ...]:
-    pending, profiles = bootstrap._records(root)
-    registry = bootstrap._registry(root)
+    if controls is None:
+        pending, profiles = bootstrap._records(root)
+        registry = bootstrap._registry(root)
+    else:
+        pending, profiles, registry = controls
     binding = bootstrap._binding(selector, profiles, registry) if profiles else None
     if type(startup_attempt) is _StartupReacquisition:
         _StartupReacquisition.check(startup_attempt, path)
@@ -1384,6 +1388,36 @@ def _scope(
     return tuple(binding["namespaces"])
 
 
+def _checked_admission_controls(
+    root: Path, selector: Path, authority: Admission, *, counted: bool = False
+):
+    """Read permission and scope inputs together for a single acquisition phase."""
+    try:
+        if counted:
+            # Sample the pending files while the final registry is still locked.
+            def check_records(_registry):
+                nonlocal pending, profiles
+                pending, profiles = bootstrap._records(root)
+
+            pending, profiles = [], []
+            registry = bootstrap._registry(
+                root, expected_identity=authority._identity, validate=check_records
+            )
+        else:
+            pending, profiles = bootstrap._records(root)
+            registry = control_records.observe_settled_admission_registry(root, authority)
+        allowed, reason = bootstrap._startup_permission_from_controls(
+            selector, root, pending, profiles, registry
+        )
+    except bootstrap.RecoveryRequired:
+        raise
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError, AttributeError):
+        raise bootstrap.RecoveryRequired("recovery_scope_uncertain") from None
+    if not allowed:
+        raise bootstrap.RecoveryRequired(reason)
+    return pending, profiles, registry
+
+
 def acquire_storage(
     path: Path | None = None, *, related_paths: tuple[Path, ...] = ()
 ) -> StorageLease:
@@ -1424,14 +1458,21 @@ def _acquire_storage(
     execution_selection = _execution_selection_for(path)
     if execution_selection[1:3] != (root, selector):
         raise bootstrap.RecoveryRequired("execution_selection_changed")
+    key = (os.getpid(), str(root))
     with _lock:
         check()
         if (
             attempt.operation is not None
             and attempt.operation.key is not None
-            and attempt.operation.key != (os.getpid(), str(root))
+            and attempt.operation.key != key
         ):
             raise bootstrap.RecoveryRequired("operation_native_scope_changed")
+        existing_hold = _holds.get(key)
+        observe_settled = (
+            os.name == "nt"
+            and type(attempt) is _Acquisition
+            and _hold_serving(existing_hold)
+        )
     before = None
     if _EVIDENCE_REUSE and type(attempt) is _Acquisition and os.name != "nt":
         reused = _reuse_evidence(
@@ -1440,56 +1481,78 @@ def _acquire_storage(
         if reused is not None:
             return reused
         before = _observe_candidates(root, selector, path, related_paths)
-    with attempt.initializing(root, path):
-        check()
-        allowed, reason = bootstrap.startup_permission(selector, root)
-        if not allowed:
-            raise bootstrap.RecoveryRequired(reason)
-        if getattr(_local, "admitted", False):
-            raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
-        existing = root.parent
-        while not existing.exists():
-            existing = existing.parent
-        allowed, reason = qualified_for("admission", existing)
-        if not allowed:
-            # Preserve a positively disjoint startup decision, while still limiting
-            # each owner path to its verified scope. Native unavailability is not a
-            # conflict with an unrelated operation and never qualifies maintenance.
-            _scope(
-                root, selector, lexical_path(path) if path is not None else None,
-                related_paths=related_paths,
-            )
-            allowed, reason = bootstrap.startup_permission(selector, root)
+    retry = False
+    while True:
+        if retry and _execution_selection_for(path) != execution_selection:
+            raise bootstrap.RecoveryRequired("execution_selection_changed")
+        controls = None
+        with nullcontext() if observe_settled else attempt.initializing(root, path):
+            check()
+            if not observe_settled:
+                allowed, reason = bootstrap.startup_permission(selector, root)
+                if not allowed:
+                    raise bootstrap.RecoveryRequired(reason)
+            if getattr(_local, "admitted", False):
+                raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
+            existing = root.parent
+            while not existing.exists():
+                existing = existing.parent
+            allowed, reason = qualified_for("admission", existing)
             if not allowed:
-                raise bootstrap.RecoveryRequired(reason)
-            with _lock:
-                check()
-                token = StorageLease(None)
-                token._execution_selection = execution_selection
-                return token
-        # Opening existing authority can wait on the registry. Retiring unrelated
-        # owners must remain possible while that or a native gate is contended.
-        authority = admission_authority(root)
-    with _lock:
-        check()
-        names = _scope(
-            root,
-            selector,
-            lexical_path(path) if path is not None else None,
-            startup_attempt=attempt,
-            authority=authority,
-            related_paths=related_paths,
-        )
-        key = (os.getpid(), str(root))
-        hold = _holds.get(key)
-        if hold is not None and names != hold.names:
-            raise bootstrap.RecoveryRequired("close_owners_before_scope_change")
-        if hold is None:
-            hold = _Hold(authority, names, key)
-            _holds[key] = hold
-        hold.count += 1
-        token = StorageLease(key)
-        token._execution_selection = execution_selection
+                if observe_settled:
+                    # Use the ordinary unqualified path with its own fresh checks.
+                    observe_settled = False
+                    retry = True
+                    continue
+                # Preserve a positively disjoint startup decision, while still limiting
+                # each owner path to its verified scope. Native unavailability is not a
+                # conflict with an unrelated operation and never qualifies maintenance.
+                _scope(
+                    root, selector, lexical_path(path) if path is not None else None,
+                    related_paths=related_paths,
+                )
+                allowed, reason = bootstrap.startup_permission(selector, root)
+                if not allowed:
+                    raise bootstrap.RecoveryRequired(reason)
+                with _lock:
+                    check()
+                    token = StorageLease(None)
+                    token._execution_selection = execution_selection
+                    return token
+            # Established Windows holds still require fresh, read-only evidence.
+            # Only the registration path can create authority and must serialize it.
+            if observe_settled:
+                authority = existing_hold.authority
+                controls = _checked_admission_controls(root, selector, authority)
+            else:
+                authority = admission_authority(root)
+        with _lock:
+            check()
+            hold = _holds.get(key)
+            if observe_settled and (hold is not existing_hold or not _hold_serving(hold)):
+                # The last owner may retire during the read-only observation.
+                # Re-derive authority once through the original serialized path.
+                observe_settled = False
+                retry = True
+                continue
+            names = _scope(
+                root,
+                selector,
+                lexical_path(path) if path is not None else None,
+                startup_attempt=attempt,
+                authority=authority,
+                related_paths=related_paths,
+                controls=controls,
+            )
+            if hold is not None and names != hold.names:
+                raise bootstrap.RecoveryRequired("close_owners_before_scope_change")
+            if hold is None:
+                hold = _Hold(authority, names, key)
+                _holds[key] = hold
+            hold.count += 1
+            token = StorageLease(key)
+            token._execution_selection = execution_selection
+        break
     # Count pending acquisitions before dropping the lock: a drain must see
     # them, and another acquiring thread must share this same native hold.
     try:
@@ -1502,9 +1565,12 @@ def _acquire_storage(
         # lease; never enter on a stale pre-enrollment decision.
         with _lock:
             check()
-            allowed, reason = bootstrap.startup_permission(selector, root)
-            if not allowed:
-                raise bootstrap.RecoveryRequired(reason)
+            if observe_settled:
+                controls = _checked_admission_controls(root, selector, authority, counted=True)
+            else:
+                allowed, reason = bootstrap.startup_permission(selector, root)
+                if not allowed:
+                    raise bootstrap.RecoveryRequired(reason)
             if (
                 _scope(
                     root,
@@ -1513,6 +1579,7 @@ def _acquire_storage(
                     startup_attempt=attempt,
                     authority=authority,
                     related_paths=related_paths,
+                    controls=controls,
                 )
                 != names
             ):

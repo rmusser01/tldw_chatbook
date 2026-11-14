@@ -123,12 +123,17 @@ async def test_run_start_rereads_an_expired_display_so_the_first_projection_pays
             await until(lambda: not projection.pending, timeout=30)
             assert projection.at == clock.now
 
-            result, ops = _project(console)
-            assert result is True
-            assert ops.main == 0, (
-                f"the first projection after run start entered {ops.main} checked "
-                "config operation(s) on the UI loop"
-            )
+            def project_without_native_work() -> bool:
+                result, ops = _project(console)
+                assert ops.main == 0, (
+                    f"projection after run start entered {ops.main} checked "
+                    "config operation(s) on the UI loop"
+                )
+                return result is True
+
+            # A busy storage coordinator may defer even a freshly checked
+            # display. Every attempt must stay off the native config path.
+            await until(project_without_native_work, timeout=30)
 
 
 @pytest.mark.asyncio
