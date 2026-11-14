@@ -1731,3 +1731,43 @@ Restore still never overwrites a keyring entry (decision 8). The stored key refe
 This is the first non-server credential that restore writes back to the keyring. Link keys (the device wrapping key, staged integrity keys and dataset staging keys) are never captured, and a restored repository does not resume its link. Isolated restored profiles keep Personal Context locked.
 
 Design: [Personal Context backup and key custody](../../Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md). Implementation: TASK-40133 to TASK-40136, TASK-40138 and TASK-40139.
+
+### TASK-33620.15.47 — One-walk path resolution in admission (2026-11-05)
+
+Every storage-admission operation resolves its participant path, and every
+acquisition records the resolved config selector and source in its execution
+selection; `_Operation.check` resolves the path again for each descendant use.
+Those five resolutions per transaction entry, their values and every comparison
+made with them are unchanged. Only the way a value is computed changes, in
+`storage_admission._resolved`:
+
+- An absolute, normalized path with no symbolic link in any component resolves
+  to itself. On macOS 11+ (Darwin 20+), one `O_NOFOLLOW_ANY` open of the
+  parent, which the kernel refuses if any component is a link, plus an lstat of
+  the leaf proves that in three filesystem calls instead of one lstat per
+  component (a warm ChaChaNotes transaction entry made 59 resolution calls of
+  its 93 filesystem calls; 15 of 49 after).
+- Only the parent directory is opened, never the leaf. The leaf is often a
+  SQLite database, and closing any descriptor of it would drop every POSIX lock
+  this process holds on that file.
+- A link anywhere, any error, a relative or non-normalized path, an older kernel
+  (which may ignore the flag) or another platform runs `Path.resolve()` itself.
+  Linux and Windows therefore keep today's cost.
+
+So a link swapped into a participant, selector or source chain is seen exactly
+as before (`operation_path_outside_scope`, `execution_selection_changed`).
+`Tests/Backup_Recovery/test_admission_path_resolution.py` pins the value against
+`Path.resolve()` over a catalog of path shapes, with the walk on and off, and
+pins those refusals. It also pins the never-open-the-leaf rule directly: while
+this process holds `BEGIN EXCLUSIVE` on a database, no resolution of it lets
+another process write. Mutation checks show each guard is load-bearing. No stamp,
+evidence rule, refusal reason or lock order changes, nothing is cached, and the
+resolution still runs on whatever thread enters the transaction. Moving it to a
+worker was rejected: a hop costs more than the walk it would hide
+(TASK-33620.15.5).
+
+The storage-unit census (`Tests/Performance/test_console_keystroke_work_census.py`)
+counts `os.open`, not `lstat`. Its macOS `os_opens` rows therefore rise while
+total filesystem calls fall: trace GC pass goes from 54 to 110, and admissions
+are unchanged. Re-pinning that macOS row is an owner decision recorded in
+TASK-33620.15.47. The Linux rows cannot change, because Linux keeps the fallback.

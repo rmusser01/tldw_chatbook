@@ -1494,11 +1494,22 @@ MAX_VISIT_STORAGE_UNITS = {
 #: pytest temp dir (16 components), 39 on the Linux runner (11). A deeper
 #: ``--basetemp`` adds 3 per component; a helper reused from a live
 #: connection reads 18 fewer.
+#: Re-pinned ``os_opens`` 54 -> 110 on 2026-11-05 by owner decision
+#: (TASK-33620.15.47): "raise MAX_TRACE_GC_PASS_STORAGE_UNITS['os_opens']
+#: (macOS) from 54 to 110 -- file opens rise while total filesystem calls
+#: halve, 93 -> 49 per warm entry". Storage admission now proves that a
+#: link-free path resolves to itself with one ``O_NOFOLLOW_ANY`` open of its
+#: parent (``storage_admission._resolved``) instead of ``Path.resolve``'s
+#: lstat per component. This census counts ``os.open`` but not lstat, so the
+#: pass reads the helpers' 54 plus 56 parent opens, a count that does not
+#: grow with path depth. Measured at e9348f9242, both cases: 110 with the
+#: one-walk, 54 with it switched off. Linux keeps ``Path.resolve``, so its
+#: row below is unchanged.
 MAX_TRACE_GC_PASS_STORAGE_UNITS = {
     "config_admissions": 0,
     "storage_admissions": 9,
     "helper_spawns": 3,
-    "os_opens": 54,
+    "os_opens": 110,
 }
 #: How long the GC census waits for its billed pass, and again for owned
 #: calls still in their worker threads after cancelling the loop.
