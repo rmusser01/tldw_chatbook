@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Backup_Recovery import bootstrap
+from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Backup_Recovery.control_records import (
     admission_authority,
@@ -276,7 +276,7 @@ def test_one_walk_is_used_only_where_the_kernel_honours_the_flag(
     monkeypatch, platform, release, expected
 ):
     """An older kernel may ignore an unknown open flag, which would follow links."""
-    monkeypatch.setattr(storage.sys, "platform", platform)
+    monkeypatch.setattr(profile_paths.sys, "platform", platform)
     monkeypatch.setattr(storage.os, "O_NOFOLLOW_ANY", 0x20000000, raising=False)
     monkeypatch.setattr(
         storage.os, "uname", lambda: os.uname_result(("X", "h", release, "v", "m"))
@@ -399,8 +399,12 @@ def test_execution_selection_values_are_path_resolve_values(nested_scope, scope)
 
 
 def _called_from_resolved(frame) -> bool:
-    code = frame.f_code
-    return code.co_name == "_resolved" and code.co_filename.endswith(_ADMISSION_FILE)
+    caller = frame.f_back
+    return (
+        frame.f_code is profile_paths._verified_resolved_path.__code__
+        and caller is not None
+        and caller.f_code is storage._resolved.__code__
+    )
 
 
 def test_resolved_closes_every_descriptor_it_opens(tmp_path, monkeypatch):

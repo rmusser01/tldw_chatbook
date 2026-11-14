@@ -1499,7 +1499,7 @@ MAX_VISIT_STORAGE_UNITS = {
 #: (macOS) from 54 to 110 -- file opens rise while total filesystem calls
 #: halve, 93 -> 49 per warm entry". Storage admission now proves that a
 #: link-free path resolves to itself with one ``O_NOFOLLOW_ANY`` open of its
-#: parent (``storage_admission._resolved``) instead of ``Path.resolve``'s
+#: parent (via ``storage_admission._resolved``) instead of ``Path.resolve``'s
 #: lstat per component. This census counts ``os.open`` but not lstat, so the
 #: pass reads the helpers' 54 plus 56 parent opens, a count that does not
 #: grow with path depth. Measured at e9348f9242, both cases: 110 with the

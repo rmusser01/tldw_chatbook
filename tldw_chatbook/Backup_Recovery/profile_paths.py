@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import stat
+import sys
 import time
 from pathlib import Path
 from typing import Mapping
@@ -27,6 +29,93 @@ def lexical_path(value: str | Path) -> Path:
         path_cost(value, copies=3) if isinstance(value, Path) else 768 + 48 * len(value)
     )
     return Path(os.path.abspath(os.path.expanduser(str(value))))
+
+
+def _nofollow_any_flag() -> int:
+    """``O_NOFOLLOW_ANY`` where the running kernel is known to honour it, else 0.
+
+    macOS 11 (Darwin 20) refuses a symbolic link in any component of an open
+    with this flag. The constant comes from the build SDK, and an older kernel
+    may ignore an open flag it does not know, which would follow links.
+    """
+    if sys.platform != "darwin":
+        return 0
+    flag = getattr(os, "O_NOFOLLOW_ANY", 0)
+    if not flag:
+        return 0
+    try:
+        major = int(os.uname().release.split(".", 1)[0])
+    except (AttributeError, ValueError):
+        return 0
+    return flag if major >= 20 else 0
+
+
+def _verified_resolved_path(path: Path, nofollow_any: int) -> Path | None:
+    """Prove the path resolves to itself with one nofollow parent open.
+
+    TASK-33620.15.47: ``Path.resolve`` lstat()s one component per call, and each
+    call releases the GIL. Every transaction entry resolves the participant path,
+    the config selector and the acquired source several times, so a UI-loop entry
+    waited for the scheduler dozens of times per resolution at high host load.
+
+    An absolute, normalized path that has no link in any component resolves to
+    itself. One ``O_NOFOLLOW_ANY`` open of its parent (the kernel refuses a link
+    anywhere on the way) and an lstat of its leaf prove that. A link, any error,
+    another path shape or a kernel without the flag leaves the original
+    ``path.resolve()`` to the caller.
+
+    Only the parent directory is opened, never the leaf: the leaf is often a
+    SQLite database, and closing any descriptor of it would drop every POSIX
+    lock this process holds on that file.
+    """
+    if nofollow_any:
+        text = str(path)
+        if (
+            text.startswith("/")
+            and not text.startswith("//")
+            and text != "/"
+            and os.path.normpath(text) == text
+        ):
+            parent, name = os.path.split(text)
+            try:
+                descriptor = os.open(
+                    parent,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | nofollow_any,
+                )
+            except (OSError, ValueError):
+                descriptor = -1
+            if descriptor >= 0:
+                try:
+                    leaf = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                except FileNotFoundError:
+                    leaf = None  # resolve() keeps an absent leaf as written
+                except (OSError, ValueError):
+                    leaf = False
+                finally:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass  # a read-only directory descriptor holds nothing
+                if leaf is None or (
+                    leaf is not False and not stat.S_ISLNK(leaf.st_mode)
+                ):
+                    return path
+
+
+def _chain(path: Path) -> tuple[Path, ...]:
+    """Every component from the filesystem root down to ``path`` itself."""
+    return (*reversed(path.parents), path)
+
+
+def _selected_paths(path, related_paths) -> tuple[Path, ...]:
+    return tuple(
+        selected
+        for selected in (
+            (lexical_path(path) if path is not None else None),
+            *related_paths,
+        )
+        if selected is not None
+    )
 
 
 def default_config_path() -> Path:
@@ -283,8 +372,6 @@ def _user_data_dir_inputs(*, source_globals) -> tuple[tuple, tuple[Path, ...]]:
         the default-root selection reads (conventional root, fallback root,
         root lock file).
     """
-    from tldw_chatbook.Backup_Recovery.storage_admission import _chain
-
     user_folder = source_globals["get_user_folder_name"]()
     configured_data_dir = source_globals["get_cli_setting"]("paths", "data_dir", None)
     if configured_data_dir is None:

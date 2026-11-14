@@ -1739,7 +1739,7 @@ acquisition records the resolved config selector and source in its execution
 selection; `_Operation.check` resolves the path again for each descendant use.
 Those five resolutions per transaction entry, their values and every comparison
 made with them are unchanged. Only the way a value is computed changes, in
-`storage_admission._resolved`:
+`storage_admission._resolved` and its `profile_paths._verified_resolved_path` helper:
 
 - An absolute, normalized path with no symbolic link in any component resolves
   to itself. On macOS 11+ (Darwin 20+), one `O_NOFOLLOW_ANY` open of the
