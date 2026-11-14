@@ -30,7 +30,8 @@ ROUTES = [
     ("merge-queue.yml", "queue", "control", "ubuntu-latest"),
     ("lint.yml", "gate-new", "control", "ubuntu-latest"),
     ("lint.yml", "gate-ratchet", "control", "ubuntu-latest"),
-    ("derived-artifacts.yml", "library-shell-dev", "hosted", "ubuntu-latest"),
+    ("derived-artifacts.yml", "library-shell-dev", "dev-test", "ubuntu-latest"),
+    ("perf-guard.yml", "ui-latency-guardrails", "dev-test", "ubuntu-latest"),
 ]
 
 
@@ -57,19 +58,30 @@ def _runner(expression: str, context: dict[str, str]) -> str:
 
 @pytest.mark.parametrize("workflow,job,pool,hosted", ROUTES)
 @pytest.mark.parametrize(
-    "event,head_repo",
+    "event,head_repo,ref",
     [
-        ("pull_request", "owner/repo"),
-        ("pull_request", "fork/repo"),
-        ("pull_request", ""),
-        ("push", ""),
-        ("workflow_dispatch", ""),
+        ("pull_request", "owner/repo", "refs/pull/1/merge"),
+        ("pull_request", "fork/repo", "refs/pull/2/merge"),
+        ("pull_request", "", "refs/pull/3/merge"),
+        ("push", "", "refs/heads/dev"),
+        ("push", "", "refs/heads/main"),
+        ("push", "", "refs/heads/feature"),
+        ("workflow_dispatch", "", "refs/heads/dev"),
     ],
 )
 @pytest.mark.parametrize("test_label", ["", "local-test"])
 @pytest.mark.parametrize("control_label", ["", "local-control"])
 def test_runner_routing(
-    workflows, workflow, job, pool, hosted, event, head_repo, test_label, control_label
+    workflows,
+    workflow,
+    job,
+    pool,
+    hosted,
+    event,
+    head_repo,
+    ref,
+    test_label,
+    control_label,
 ):
     selected = _runner(
         workflows[workflow]["jobs"][job]["runs-on"],
@@ -77,6 +89,7 @@ def test_runner_routing(
             "github.event_name": event,
             "github.event.pull_request.head.repo.full_name": head_repo,
             "github.repository": "owner/repo",
+            "github.ref": ref,
             "vars.CI_TEST_RUNNER": test_label,
             "vars.CI_CONTROL_RUNNER": control_label,
         },
@@ -90,6 +103,8 @@ def test_runner_routing(
                 expected = control_label or hosted
     elif pool == "control":
         expected = control_label or hosted
+    elif pool == "dev-test" and event == "push" and ref == "refs/heads/dev":
+        expected = test_label or hosted
     assert selected == expected
 
 

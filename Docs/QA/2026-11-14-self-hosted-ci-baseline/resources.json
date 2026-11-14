@@ -1,0 +1,26 @@
+{
+  "host": "192.168.2.236",
+  "cpu": "Ryzen 7 7700X, 8 cores / 16 threads",
+  "ram": "124 GiB",
+  "test_guests": 8,
+  "test_guest_vcpu": 2,
+  "test_guest_memory_gib": 6,
+  "control_guests": 1,
+  "control_guest_vcpu": 1,
+  "control_guest_memory_gib": 2,
+  "virtual_disk_gib_each": 20,
+  "storage_bound_gib": 100,
+  "service_memory_max_bytes": 68719476736,
+  "service_cpu_quota_per_second_usec": 12000000,
+  "service_tasks_max": 4096,
+  "service_restart_count_observed": 0,
+  "service_state_observed": "active",
+  "custom_base_sha256": "8ef3e08a1215b5113a30606c79cd5a68bda01b20f6f67ee0714f1b7dc083832d",
+  "custom_base_modified_at": "2026-11-13T18:59:20.758251419Z",
+  "resource_sources": [
+    "scripts/ci/self_hosted/README.md",
+    "live systemctl show github-qemu-runner.service",
+    "live sudo stat/sha256sum of base.qcow2"
+  ],
+  "image_metadata_note": "base.json records original upstream bake; final customized image fingerprint and mtime above identify the deployed base."
+}
