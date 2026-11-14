@@ -8,6 +8,7 @@ would leave its "never awaited" RuntimeWarning.
 
 import asyncio
 import gc
+import time
 import warnings
 
 import pytest
@@ -148,7 +149,9 @@ async def test_context_snapshot_native_publication_owns_deferred_refresh(
 ):
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        REFRESH_AHEAD_SHARE,
         ConsoleContextReadSnapshot,
+        _same_readiness_key,
     )
 
     host = _host()
@@ -189,6 +192,23 @@ async def test_context_snapshot_native_publication_owns_deferred_refresh(
             snapshot = ConsoleContextReadSnapshot.for_screen(screen, max_age=1)
             assert snapshot.schedule == screen.run_worker
             assert snapshot.refresh == screen._sync_native_console_chat_ui
+            projection = snapshot.config_projection
+            assert projection is not None
+
+            def display_ready():
+                # Worker success can precede a usable checked config publication.
+                return (
+                    projection.run(lambda: None, life=projection.max_age * REFRESH_AHEAD_SHARE)
+                    and not projection.pending
+                    and _same_readiness_key(projection.key, projection._key())
+                    and projection._display_proof is not None
+                    and time.monotonic() - projection.at
+                    < projection.max_age * REFRESH_AHEAD_SHARE
+                )
+
+            assert await until(display_ready, deadline - loop.time()), (
+                "the active session's checked config did not publish"
+            )
             assert await snapshot.warm(controller, session_id)
             assert await until(
                 lambda: not screen._console_sync_in_progress, deadline - loop.time()
