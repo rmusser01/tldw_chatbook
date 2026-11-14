@@ -1,5 +1,6 @@
 """Thin canonical backup view over the application's recovery service."""
 
+import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 from types import MappingProxyType
@@ -40,6 +41,7 @@ _SYNC_IDENTITY_COUNTS = (
     ("remote_heads", "Remote heads"),
     ("personal_context_links", "Personal Context links"),
     ("pending_outbox", "Unsent changes"),
+    ("prepare_results", "Saved Prepare results"),
 )
 _PERSONAL_CONTEXT_LOCKED = "credential_personal_context_restore_locked:"
 
@@ -824,10 +826,17 @@ class BackupRestoreScreen(Screen):
     def _refresh_list(self, app, revision, mode):
         current = self.service.current_requirements() if mode == "profiles" else None
         if current is not None:
-            # TASK-40139: the counts the sync-identity review shows first.
-            current = MappingProxyType(
-                {**current, "sync_identity": self.service.sync_identity_review()}
-            )
+            # TASK-40139: the counts the sync-identity review shows first, only
+            # while the current generation still waits for the sync state.
+            identity = None
+            if current["requirements_checked"] and "runtime.sync_state" in (
+                current["pending_owners"] or ()
+            ):
+                try:
+                    identity = self.service.sync_identity_review()
+                except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+                    identity = self.service.issue_code(error)
+            current = MappingProxyType({**current, "sync_identity": identity})
         try:
             entries = (
                 self.service.recovery_copies()
@@ -948,8 +957,19 @@ class BackupRestoreScreen(Screen):
                     )
                 )
             counts = current.get("sync_identity")
-            self._sync_identity_shown = counts
-            if counts is not None:
+            self._sync_identity_shown = counts if isinstance(counts, dict) else None
+            if isinstance(counts, str):
+                # Review r14pccB: an unreadable review says so instead of vanishing.
+                widgets.append(
+                    Static(
+                        "Sync identity review unavailable: "
+                        + self.service.issue_message(counts)
+                        + f" ({counts}) Server sync stays off.",
+                        id="backup-sync-identity-review",
+                        markup=False,
+                    )
+                )
+            elif counts is not None:
                 # TASK-40139, owner ruling 2026-11-12 (TASK-40137): one reviewed
                 # step clears the restored identity and approves both owners.
                 widgets.append(
@@ -958,9 +978,10 @@ class BackupRestoreScreen(Screen):
                         "Context) stays off after a restore, because the restored "
                         "sync state would act as the device the backup came from. "
                         "Approving clears that identity for every server profile and "
-                        "turns server sync back on: the next sync registers this "
-                        "device as a new one and downloads again, and changes queued "
-                        "but never sent are dropped from the queue. It clears:\n"
+                        "approves server sync; then Prepare sync again in Settings > "
+                        "Sync, which registers this device as a new one and downloads "
+                        "again. Changes queued but never sent are dropped from the "
+                        "queue. It clears:\n"
                         + "\n".join(
                             f"• {label}: {counts.get(key, 0)}"
                             for key, label in _SYNC_IDENTITY_COUNTS
@@ -1102,10 +1123,10 @@ class BackupRestoreScreen(Screen):
         try:
             self.service.approve_sync_identity(shown)
             message = (
-                "Sync identity cleared and server sync approved. The next sync "
-                "registers this device as a new one."
+                "Sync identity cleared and server sync approved. Prepare sync again "
+                "in Settings > Sync; it registers this device as a new one."
             )
-        except (OSError, ValueError, RuntimeError) as error:
+        except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
             code = self.service.issue_code(error)
             message = f"Sync identity review unavailable: {self.service.issue_message(code)} ({code})"
         self._deliver(app, self._config_approval_done, revision, message)

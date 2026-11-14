@@ -1744,20 +1744,48 @@ def test_reencryption_leaves_the_restored_key_reading_no_row(
     assert [record.record_id for record in reopened.list_records()] == records
 
 
+def _damage(db_path, version_id) -> None:
+    """The reviewer's damaged-tag shape: the row decrypts, its HMAC fails."""
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute(
+            "UPDATE encrypted_objects SET integrity_tag = ? "
+            "WHERE object_type = 'record' AND version_id = ?",
+            ("hmac-sha256-v1:" + "0" * 64, version_id),
+        )
+
+
+def _second_version(db_path, backend, record_factory) -> None:
+    repo = _keyring_repo(db_path, backend)
+    repo.commit_record_version(
+        record_factory(
+            repo.get_manifest().profile_id,
+            version_id="record-version-2",
+            parent_version_id="record-version-1",
+            value="newer answers",
+        ),
+        expected_version_id="record-version-1",
+    )
+
+
+@pytest.mark.parametrize("damaged", [False, True])
 @pytest.mark.parametrize(
     "step", ["before_rewrite", "mid_rewrite", "before_verify", "before_delete"]
 )
 def test_an_interrupted_reencryption_leaves_one_stored_key_that_opens_it(
-    tmp_path, record_factory, monkeypatch, step
+    tmp_path, record_factory, monkeypatch, step, damaged
 ) -> None:
-    """AC#2: interrupted at each step, one stored key opens the database (old rows
-    with the old key, or new rows with the new key), never none; before the
-    commit, the new account the database never named is gone again."""
+    """AC#2/#5: interrupted at each step, one stored key opens the database (old
+    rows with the old key, or new rows with the new key), never none; before the
+    commit, the new account the database never named is gone again, and a
+    damaged version the review counted is still there; after it, it is gone."""
     from tldw_chatbook.Personal_Context import crypto
 
     db_path, backend, protector, restored, records = _restored_profile(
         tmp_path, record_factory
     )
+    if damaged:
+        _second_version(db_path, backend, record_factory)
+        _damage(db_path, "record-version-1")
     accounts_before = set(backend.values)
     repo = _keyring_repo(db_path, backend)
 
@@ -1805,7 +1833,7 @@ def test_an_interrupted_reencryption_leaves_one_stored_key_that_opens_it(
         monkeypatch.setattr(KeyringProfileKeyProtector, "delete", old_account_stops)
 
     with pytest.raises(Interrupted):
-        repo.reencrypt_profile(keep_old_account=False)
+        repo.reencrypt_profile(keep_old_account=False, expected_damaged=int(damaged))
     monkeypatch.undo()
 
     named = _stored_account(db_path)
@@ -1815,7 +1843,10 @@ def test_an_interrupted_reencryption_leaves_one_stored_key_that_opens_it(
     assert all(_opens_with(row, key.encryption_key) for row in rows)
     reopened = _keyring_repo(db_path, backend)
     assert [record.record_id for record in reopened.list_records()] == records
-    if step in {"before_rewrite", "mid_rewrite"}:
+    committed = step not in {"before_rewrite", "mid_rewrite"}
+    if damaged:
+        assert ("record-version-1" in {row["version_id"] for row in rows}) is not committed
+    if not committed:
         assert named == restored
         assert set(backend.values) == accounts_before
     else:
@@ -1910,3 +1941,52 @@ def test_without_a_secure_keyring_the_restore_reason_still_shows(
         "profile_locked"
     )
     assert not absent.exists()
+
+
+@pytest.mark.parametrize("damaged", ["head", "history"])
+def test_reencryption_removes_the_damaged_versions_the_review_counted(
+    tmp_path, record_factory, damaged
+) -> None:
+    """TASK-40140 AC#5, owner decision 2026-11-14 ("Drop them, after showing the
+    count"): unreadable record versions are counted first; re-encryption with
+    that count rewrites the readable rows and removes the damaged ones in the
+    same transaction. A different count refuses and changes nothing."""
+    db_path, backend, protector, restored, _records = _restored_profile(
+        tmp_path, record_factory
+    )
+    _second_version(db_path, backend, record_factory)
+    repo = _keyring_repo(db_path, backend)
+    repo.commit_record_version(
+        record_factory(
+            repo.get_manifest().profile_id,
+            record_id="record-2",
+            version_id="record-2-version-1",
+        ),
+        expected_version_id=None,
+    )
+    target = "record-version-2" if damaged == "head" else "record-version-1"
+    _damage(db_path, target)
+    data = db_path.read_bytes()
+    repo = _keyring_repo(db_path, backend)
+    assert repo.damaged_record_versions() == 1
+
+    with pytest.raises(ProfileLockedError):
+        repo.reencrypt_profile(keep_old_account=False)  # the review showed 1
+    assert db_path.read_bytes() == data and _stored_account(db_path) == restored
+
+    account = _keyring_repo(db_path, backend).reencrypt_profile(
+        keep_old_account=False, expected_damaged=1
+    )
+
+    key = protector.load(account)
+    rows = _rows(db_path)
+    assert target not in {row["version_id"] for row in rows}
+    assert all(_opens_with(row, key.encryption_key) for row in rows)
+    fresh = _keyring_repo(db_path, backend)
+    assert fresh.damaged_record_versions() == 0
+    if damaged == "head":
+        assert [r.record_id for r in fresh.list_records()] == ["record-2"]
+    else:
+        assert [r.record_id for r in fresh.list_records()] == ["record-1", "record-2"]
+        assert fresh.get_record("record-1").version_id == "record-version-2"
+

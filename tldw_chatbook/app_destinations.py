@@ -1113,17 +1113,17 @@ async def _run_personal_context_link(app) -> None:
         )
         return
     try:
+        from .Personal_Context.recovery import require_sync_allowed
+
+        # TASK-40134/40139: every link waits for the restore reviews, before any
+        # key or link-state read; a review must never delete a fresh link.
+        require_sync_allowed()
         wrapping_provider = KeyringPersonalContextWrappingKeyProvider()
         key_custodian = KeyringPersonalContextLinkKeyCustodian()
         existing = app.sync_state_repository.get_personal_context_link_state(
             server_profile_id=str(server_profile_id),
             authenticated_principal_id=scope.get("authenticated_principal_id"),
         )
-        if existing is not None:
-            from .Personal_Context.recovery import require_sync_allowed
-
-            # TASK-40134: before the staged-key reads and activation below.
-            require_sync_allowed()
         recovered_apply = False
         if existing is not None and existing["state"] == "applying":
             binding = PersonalContextLinkService._key_binding(existing)

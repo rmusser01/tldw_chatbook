@@ -39,6 +39,7 @@ from ...Personal_Context.recovery import (
     RESTORED_LINK_STATE,
     REVIEW_AVAILABLE,
     REVIEW_UNAVAILABLE,
+    SYNC_IDENTITY_PENDING,
     approve_restore_review,
     restore_review,
 )
@@ -121,17 +122,27 @@ _COLLISION_COPY = (
 )
 
 
+_SYNC_IDENTITY_STEP = (
+    "Backup & Restore > Restored profiles > Sync identity review"
+)
 _RESTORE_REVIEW_COPY = {
     REVIEW_AVAILABLE: (
         "This profile was restored from a backup. Choose Review restored profile "
-        "to confirm Personal Context on this device. Sync with your home server "
-        "stays off after a restore."
+        "to confirm Personal Context on this device; it re-encrypts the profile "
+        "under a new key. Sync with your home server stays off until you also "
+        f"review the restored sync identity in {_SYNC_IDENTITY_STEP}."
     ),
     # TASK-40139 AC#8: the old link never resumes; the next one is a fresh link.
     RESTORED_LINK_STATE: (
         "Personal Context sync is off because this profile was restored. Choose "
-        "Review restored profile, then Link to home server again. If the old "
+        "Review restored profile, review the restored sync identity in "
+        f"{_SYNC_IDENTITY_STEP}, then Link to home server again. If the old "
         "device is lost, remove it on your server."
+    ),
+    # Review r14pccB: sync stays off after this review until that one.
+    SYNC_IDENTITY_PENDING: (
+        "Personal Context sync is still off: review the restored sync identity in "
+        f"{_SYNC_IDENTITY_STEP}, then Link to home server again."
     ),
     REVIEW_UNAVAILABLE: (
         "Personal Context sync is off: the restore review for this profile could "
@@ -252,6 +263,7 @@ class PersonalContextSettingsPanel(Vertical):
         self._load_generation = 0
         self._proposal_review: PersonalContextProposalReviewModal | None = None
         self._restore_review: str | None = None
+        self._damaged_records = 0
 
     def on_mount(self) -> None:
         self.load_records(retry_locked=True)
@@ -301,8 +313,16 @@ class PersonalContextSettingsPanel(Vertical):
             return
         path = self._repository_path(service)
         review = None if path is None else restore_review(path)
+        damaged = 0
+        if review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
+            # TASK-40140, owner decision 2026-11-14: counted before confirming.
+            count = getattr(service, "damaged_record_count", None)
+            try:
+                damaged = int(count()) if callable(count) else 0
+            except Exception:
+                damaged = 0
         self.app.call_from_thread(
-            self._apply_snapshot, generation, snapshot, service, review
+            self._apply_snapshot, generation, snapshot, service, review, damaged
         )
 
     @staticmethod
@@ -334,13 +354,18 @@ class PersonalContextSettingsPanel(Vertical):
         snapshot: PersonalContextSettingsSnapshot,
         service: PersonalContextService | None = None,
         review: str | None = None,
+        damaged: int = 0,
     ) -> None:
         if generation != self._load_generation:
             return
         if service is not None:
             self._service = service
-        review_changed = review != self._restore_review
+        review_changed = (review, damaged) != (
+            self._restore_review,
+            self._damaged_records,
+        )
         self._restore_review = review
+        self._damaged_records = damaged
         self.load_failed = False
         self.snapshot = snapshot
         if review_changed:
@@ -623,6 +648,14 @@ class PersonalContextSettingsPanel(Vertical):
                 classes="settings-inline-guidance",
             )
             if self._restore_review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
+                if self._damaged_records:
+                    yield Static(
+                        f"{self._damaged_records} damaged records can't be read "
+                        "and will be removed",
+                        id="personal-context-restore-review-damaged",
+                        classes="settings-inline-guidance",
+                        markup=False,
+                    )
                 yield Button(
                     "Review restored profile", id="personal-context-restore-review"
                 )
@@ -966,11 +999,13 @@ class PersonalContextSettingsPanel(Vertical):
         elif button_id == "personal-context-restore-review":
             path = self._repository_path(self._service)
             service = self._service
+            damaged = self._damaged_records
 
             def review() -> None:
                 # TASK-40140, owner decision 2026-11-13: re-encrypt first, so a
                 # failure leaves the profile readable and the review offered.
-                service.reencrypt_after_restore()
+                # Owner decision 2026-11-14: the damaged records shown go too.
+                service.reencrypt_after_restore(expected_damaged=damaged)
                 approve_restore_review(path)
 
             self.notify("Re-encrypting the restored profile under a new key…")

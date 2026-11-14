@@ -222,15 +222,50 @@ class RepositoryKeyCustody:
                     self._protector.delete(account)
             raise
 
-    def reencrypt_profile(self, *, keep_old_account: bool) -> str:
+    def damaged_record_versions(self) -> int:
+        """How many stored record versions no key can read (TASK-40140).
+
+        Owner decision 2026-11-14: the review shows this count, and
+        re-encryption removes them. Read-only.
+        """
+
+        self._require_keys()
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            try:
+                rows = connection.execute(
+                    "SELECT * FROM encrypted_objects WHERE object_type = 'record'"
+                ).fetchall()
+                return sum(1 for row in rows if self._reads(row) is None)
+            finally:
+                connection.rollback()
+
+    def _reads(self, row) -> bytes | None:
+        """The row's plaintext, or None when it fails authentication (a record
+        only; any other damaged object still refuses)."""
+        from .repository import ProfileIntegrityError
+
+        try:
+            return self._decrypt_row_authenticated(row)
+        except ProfileIntegrityError:
+            if row["object_type"] != "record":
+                raise
+            return None
+
+    def reencrypt_profile(
+        self, *, keep_old_account: bool, expected_damaged: int = 0
+    ) -> str:
         """Re-encrypt every row under a fresh encryption key (TASK-40140).
 
         The integrity key and link state stay; ``key_version`` goes up. The new
         key goes into a new, unused account first; one transaction then rewrites
         every row and names that account, so an interruption leaves either the
-        old rows naming the old key or the new rows naming the new one. The old
-        account is deleted only after the new one opens the database, and only
-        when the caller knows no retained restore copy can name it.
+        old rows naming the old key or the new rows naming the new one. Record
+        versions no key can read are removed in that same transaction, but only
+        as many as the review showed (``expected_damaged``; owner decision
+        2026-11-14). The old account is deleted only after the new one opens the
+        database, and only when the caller knows no retained restore copy can
+        name it.
 
         Returns:
             The new account.
@@ -256,11 +291,14 @@ class RepositoryKeyCustody:
                 rows = connection.execute(
                     "SELECT * FROM encrypted_objects"
                 ).fetchall()
+                damaged = []
                 for row in rows:
                     key = (row["object_type"], row["object_id"], row["version_id"])
-                    sealed = cipher.encrypt(
-                        self._decrypt_row_authenticated(row), self._aad(*key)
-                    )
+                    plaintext = self._reads(row)
+                    if plaintext is None:
+                        damaged.append(key)
+                        continue
+                    sealed = cipher.encrypt(plaintext, self._aad(*key))
                     connection.execute(
                         "UPDATE encrypted_objects SET algorithm = ?, nonce = ?, "
                         "ciphertext = ?, wrapped_dek = ?, key_version = ? "
@@ -274,6 +312,9 @@ class RepositoryKeyCustody:
                             *key,
                         ),
                     )
+                if len(damaged) != expected_damaged:
+                    raise ProfileLockedError("Damaged records changed since review.")
+                self._remove_damaged(connection, damaged)
                 connection.execute(
                     "UPDATE profile_meta SET key_account = ? WHERE singleton = 1",
                     (account,),
@@ -295,6 +336,24 @@ class RepositoryKeyCustody:
         if not keep_old_account:
             self._protector.delete(old_account)
         return account
+
+    @staticmethod
+    def _remove_damaged(connection, damaged) -> None:
+        """Drop unreadable record versions with what points at them: a head
+        (the record goes; it already reads under no key), queued envelopes and
+        quarantine notes. Readable history stays."""
+        for key in damaged:
+            for table in ("object_heads", "encrypted_outbox", "quarantine"):
+                connection.execute(
+                    f"DELETE FROM {table} WHERE object_type = ? "  # nosec B608 - fixed names
+                    "AND object_id = ? AND version_id = ?",
+                    key,
+                )
+            connection.execute(
+                "DELETE FROM encrypted_objects WHERE object_type = ? "
+                "AND object_id = ? AND version_id = ?",
+                key,
+            )
 
     def _reencryption_source(self, connection, keys) -> str:
         """The live account holding exactly ``keys``; never mid-link."""

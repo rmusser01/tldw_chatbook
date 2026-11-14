@@ -385,8 +385,12 @@ Personal Context merge or resolution action in Settings.
   Sync with your server, for Notes and Chat too, stays off after a restore and
   never resumes as the old device: turn it back on with the **Sync identity
   review** in Backup & Restore > Restored profiles, which clears the restored
-  device identity first. When the review cannot be read, Settings says sync stays
-  off and why.
+  device identity first, then Prepare sync again in Settings > Sync. Until then
+  Settings > Personal Context keeps saying sync is off and names that step. Link
+  to home server waits for both reviews. If some records were damaged so that no
+  key can read them, **Review restored profile** first says how many, and
+  confirming removes them while it re-encrypts the rest. When the review cannot
+  be read, Settings says sync stays off and why.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that

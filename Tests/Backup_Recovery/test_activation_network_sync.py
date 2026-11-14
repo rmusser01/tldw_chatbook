@@ -277,7 +277,7 @@ if case == 'neither':
     assert pc.restore_review(db) == pc.REVIEW_AVAILABLE
     pc.approve_restore_review(db)
     assert store.allowed('generation', 'personal_context.repository')
-    assert pc.restore_review(db) is None
+    assert pc.restore_review(db) == pc.SYNC_IDENTITY_PENDING  # sync still off
 else:
     # TASK-40139: the review clears the restored link first, then approves.
     assert pc.restore_review(db) == pc.RESTORED_LINK_STATE
@@ -333,7 +333,8 @@ scope = dict(server_profile_id='server-config-1', authenticated_principal_id='us
 repo = SyncStateRepository(state_path)
 repo.set_sync_v2_profile_state(**scope, workspace_scope=None, profile_mode='local_first',
     device_id='old-device', dataset_id='dataset-1', dataset_cursors={'sync_v2': '41'},
-    capabilities={'supported_domains': ['notes']})
+    capabilities={'supported_domains': ['notes']},
+    dry_run_metadata={'notes_organization_bootstrap_identity': 'old-client-profile'})
 repo.set_remote_pull_cursor(source_authority='server', **scope, workspace_scope=None,
     domain='sync_v2', remote_collection='dataset-1', cursor='41')
 repo.set_personal_context_link_state(**scope, state='complete', device_id='old-device',
@@ -395,7 +396,7 @@ assert link_state() is None
 assert store.allowed('generation', 'personal_context.repository')
 assert not store.allowed('generation', 'config')
 assert not store.allowed('generation', 'runtime.sync_state')
-assert pc.restore_review(db) is None and not pc.sync_allowed(db)
+assert pc.restore_review(db) == pc.SYNC_IDENTITY_PENDING and not pc.sync_allowed(db)
 # AC#3: Notes and Chat sync is still refused, before any request.
 try:
     notes_sync()
@@ -412,7 +413,8 @@ assert service._sync_state_path() == state_path
 counts = service.sync_identity_review()
 assert counts == sync_recovery.sync_identity_review(state_path)
 assert counts == {'device_ids': 1, 'datasets': 1, 'pull_cursors': 1, 'remote_heads': 0,
-                  'personal_context_links': 0, 'pending_outbox': 1}, counts
+                  'personal_context_links': 0, 'pending_outbox': 1,
+                  'prepare_results': 1}, counts
 try:
     service.approve_sync_identity({**counts, 'pending_outbox': 0})
 except ValueError as error:
@@ -428,8 +430,9 @@ assert store.allowed('generation', 'config') and store.allowed('generation', 'ru
 assert sync_recovery.sync_identity_review(state_path) is None
 row = profile_row()
 assert (row['device_id'], row['dataset_id'], row['dataset_cursors']) == (None, None, {})
+assert row['dry_run_metadata'] == {}
 assert sync_recovery._identity_counts(state_path) == dict.fromkeys(counts, 0)
-assert pc.sync_allowed(db)
+assert pc.sync_allowed(db) and pc.restore_review(db) is None
 # AC#4: a fresh first link binds the device the server issues; no conflict.
 from Tests.Sync_Interop.test_personal_context_first_link import (
     FakeFirstLinkSync, FakeProfileService, FakeServerSync, FakeWrappingProvider)
@@ -452,6 +455,31 @@ try:
 except BoundaryReached:
     pass
 assert sent == [{'device_id': 'device-1', 'cursor': None, 'last_known_cursor': None}], sent
+# Review r14pccB: the old Notes organization client profile id never goes out.
+from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
+required = ['notes.note', 'chat.conversation', *NOTES_ORGANIZATION_DOMAINS]
+bootstrap_sent = []
+class OrgClient:
+    async def get_sync_v2_profile(self, device_id):
+        return {'capabilities': {'domains': required,
+                'supported_adapter_versions': {d: [1] for d in required}}, 'dataset': None}
+    async def bootstrap_sync_v2_profile(self, request):
+        bootstrap_sent.append((request.device_id, request.client_profile_id))
+        raise BoundaryReached()
+class OrgProvider:
+    def build_client(self):
+        return OrgClient()
+r = SyncStateRepository(state_path)
+org = ServerSyncService(None, client_provider=OrgProvider(), state_repository=r)
+try:
+    asyncio.run(org.bootstrap_notes_organization_profile(
+        display_name='Laptop', workspace_scope=None, **scope))
+except BoundaryReached:
+    pass
+r.close()
+assert len(bootstrap_sent) == 1, bootstrap_sent
+assert bootstrap_sent[0][0] == 'device-1'
+assert bootstrap_sent[0][1] not in (None, 'old-client-profile'), bootstrap_sent
 assert not blocked_attempts()
 print('retired and reopened')
 """

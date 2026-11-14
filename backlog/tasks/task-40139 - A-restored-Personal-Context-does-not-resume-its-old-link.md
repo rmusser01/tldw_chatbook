@@ -11,7 +11,7 @@ labels:
 - recovery
 - personal-context
 - security
-updated_date: '2026-11-13 19:50'
+updated_date: '2026-11-14 23:18'
 priority: medium
 references:
 - tldw_chatbook/app.py
@@ -108,4 +108,12 @@ Files: `tldw_chatbook/Personal_Context/recovery.py`, `tldw_chatbook/Sync_Interop
   - `Tests/UI/test_backup_restore_setup_entry.py::test_restored_profiles_sync_identity_review_shows_counts_then_approves[approved|counts_changed]`: a laned file. Red with the screen at the previous head: "AssertionError: no sync review".
   - The relink child now drives the review through `RecoveryService` with a real profile config, and asserts `_sync_state_path()`.
 - **Docs.** `Docs/Backup-and-Recovery.md` (Restored profiles) and the Personal Context User Guide describe it.
+
+**2026-11-14, review r14pccB fixes.**
+- **Old Prepare identity.** `clear_restored_identity` now also resets `sync_profile_state.dry_run_metadata`, which held the Notes organization `notes_organization_bootstrap_identity` and the old Prepare result. The review counts it as "Saved Prepare results". The relink child seeds `old-client-profile` and checks that `bootstrap_notes_organization_profile` then sends `device-1` with a different client profile id. Red: with the reset removed, the child failed.
+- **SQLite errors.** `RecoveryService.sync_identity_review` and `approve_sync_identity` turn `sqlite3.Error` into `ValueError("sync_identity_unavailable")`, which has its own message. The screen calls the review inside its try, only while the current generation still waits for `runtime.sync_state`. An unreadable review now shows "Sync identity review unavailable: … Server sync stays off." instead of vanishing (minor 5). The approval worker also catches `sqlite3.Error`. Test: `Tests/UI/test_backup_restore_setup_entry.py::test_an_unreadable_sync_state_never_crashes_restored_profiles[list|approve]`. Red before the fix: `WorkerFailed`, and the app exited.
+- **Link order.** `app_destinations._run_personal_context_link` now calls `require_sync_allowed()` before every link, ahead of any key or link-state read, not only when link state exists. So a fresh link can no longer land before the Personal Context review deletes it. Test: `Tests/App/test_personal_context_wiring.py::test_no_link_starts_before_the_restore_reviews`. Red before the fix: wrapping, custodian and state were read.
+- **Panel copy.** The review copy now names "Backup & Restore > Restored profiles > Sync identity review". After the Personal Context review, `restore_review` returns the new `personal_context_sync_identity_pending` state while `sync_allowed()` is false, and the panel keeps saying sync is still off and names that step (no button). Tests: `test_sync_stays_named_off_until_the_sync_identity_review` and `test_the_review_names_sync_identity_pending_only_while_sync_is_off`. The children expect that state after the Personal Context review.
+- **Race-free counts (minor 1).** `approve_sync_identity` holds `acquire_storage(state_path)` for the whole step. `clear_restored_identity(expected=shown)` compares the counts and clears inside one `BEGIN IMMEDIATE` transaction.
+- **Copy (minor 2).** Success and the review note say to Prepare sync again in Settings > Sync, which registers this device as a new one. `sync_once` refuses until then. `Docs/Backup-and-Recovery.md` says the same.
 

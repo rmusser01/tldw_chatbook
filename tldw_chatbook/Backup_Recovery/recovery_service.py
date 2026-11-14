@@ -204,6 +204,10 @@ _ISSUE_MESSAGES = {
         "secure keyring to hold its key. The data is kept, and the key stays in "
         "the encrypted restore copy."
     ),
+    "sync_identity_unavailable": (
+        "The restored sync state could not be read, so nothing was cleared and "
+        "server sync stays off. Open Restored profiles again later."
+    ),
     "sync_identity_counts_changed": (
         "What the sync-identity review would clear changed after it was shown. "
         "Open Restored profiles again and review the new counts."
@@ -1218,20 +1222,32 @@ class RecoveryService:
         return user_data_dir(tomllib.loads(raw.decode("utf-8"))) / SYNC_STATE_DB_FILENAME
 
     def sync_identity_review(self):
-        """What the sync-identity review would clear, or None (TASK-40139)."""
+        """What the sync-identity review would clear, or None (TASK-40139).
+
+        Raises:
+            ValueError: ``sync_identity_unavailable`` when the sync state cannot
+                be read; other failures keep their own code.
+        """
+        import sqlite3
+
         from tldw_chatbook.Sync_Interop.recovery import sync_identity_review
 
         try:
             return sync_identity_review(self._sync_state_path())
-        except (OSError, ValueError, RuntimeError, KeyError, TypeError):
-            return None
+        except sqlite3.Error:
+            raise ValueError("sync_identity_unavailable") from None
 
     def approve_sync_identity(self, shown):
         """Clear the restored sync identity the user saw counted, then approve
         `config` and `runtime.sync_state` together (owner ruling, TASK-40137)."""
+        import sqlite3
+
         from tldw_chatbook.Sync_Interop.recovery import approve_sync_identity
 
-        approve_sync_identity(self._sync_state_path(), shown=shown)
+        try:
+            approve_sync_identity(self._sync_state_path(), shown=shown)
+        except sqlite3.Error:
+            raise ValueError("sync_identity_unavailable") from None
 
     def profiles(self):
         """Enumerate locally associated restored profiles and recheck launch evidence."""

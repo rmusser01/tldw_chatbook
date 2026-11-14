@@ -4,7 +4,7 @@ title: "Re-encrypt the Personal Context profile after a restore so an old archiv
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-13 19:50'
+updated_date: '2026-11-14 23:18'
 created_date: 2026-11-10 17:13
 labels:
 - follow-up
@@ -45,6 +45,7 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [x] #2 An interruption at any point leaves a database that one stored key opens (old rows with the old key, or new rows with the new key), never one that no stored key opens; a test interrupts at each step
 - [x] #3 The integrity key, `key_account` semantics and link state are unchanged by re-encryption
 - [x] #4 The new key goes into a new keyring account without overwriting the old one, and the old account is deleted only after the new one verifies and only if no retained restore copy names it
+- [x] #5 Record versions that no key can read are counted before the restored-profile review is confirmed ("N damaged records can't be read and will be removed"); on confirm, re-encryption rewrites the readable rows and removes the damaged ones in the same transaction, crash-safe at the same four points; a damaged head version and a damaged historical version are each tested (owner decision 2026-11-14)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -75,4 +76,21 @@ Files: `tldw_chatbook/Personal_Context/{repository_keys.py,key_protector.py,reco
   - `Tests/UI/test_settings_personal_context.py::test_restored_profile_review_reencrypts_before_it_approves[reencrypted|reencrypt_failed]`. Red with the panel at the previous head: the first notice was "Restored profile reviewed.".
   - `Tests/Personal_Context/test_repository.py::test_the_review_trigger_reencrypts_through_the_service`, which uses the real service and repository. Red before the method existed: `AttributeError`.
 - **Docs.** The User Guide's restore paragraph says what confirming does and what a failure leaves.
+
+**Owner decision, 2026-11-14 (AskUserQuestion, relayed by the coordinator), on review r14pccB's finding that one damaged row blocks the review for good:** "Drop them, after showing the count (Recommended)". The option as put to the owner: "Before confirming, the review says 'N damaged records can't be read and will be removed'. Re-encryption then rewrites only the readable ones. Nothing readable is lost, since the damaged records already can't be read by any key." AC#5 was added for it.
+
+**2026-11-14, review r14pccB fixes.**
+- **Damaged records (AC#5).**
+  - **Count.** `RepositoryKeyCustody.damaged_record_versions()` counts stored record versions that fail authentication. The count is read-only and exposed as `PersonalContextService.damaged_record_count()`.
+  - **Display.** The panel's load worker shows "N damaged records can't be read and will be removed" under the review. N counts stored versions, so a damaged older version counts too.
+  - **Confirm.** Confirming passes N as `expected_damaged`.
+  - **Rewrite.** `reencrypt_profile(expected_damaged=...)` skips unreadable record rows during the rewrite and refuses if their number differs from N. In the same transaction it removes them with their head (so the record goes, as it already read under no key), queued envelopes and quarantine notes. Readable history stays.
+  - **Other objects.** A damaged manifest, scope, proposal or local body still refuses.
+  - **Tests.** `test_reencryption_removes_the_damaged_versions_the_review_counted[head|history]`, which also checks that a wrong count refuses and changes nothing. The four interruption cases now also run with a damaged version (8 cases): before the commit the damaged row remains, after it the row is gone, and one stored key always opens the database. Panel test: `test_restored_profile_review_shows_and_removes_the_damaged_count`.
+  - **Negative control.** Skipping the removal turned 4 of those red; reverted.
+- **Old account (minor).** Neither of the two suggested paths is taken: the old account is kept while any recovery copy exists, and is never deleted later.
+  - **Why the invariant is not relied on.** "A retained copy never names the live account" holds for copies taken during the restore that stamped the live account. It breaks after a rollback: rolling back restores the original's bytes, which name the original account, and that restore's own rollback copy names it too.
+  - **Why deleting on copy removal was not built.** It would add a new durable record and a hook in copy deletion.
+  - **Why keeping it is safe.** The kept account holds only the old encryption key, which reads no row once the profile is re-encrypted, so keeping it does not weaken this task's goal.
+  - **Proposed follow-up:** delete kept accounts when the last recovery copy is deleted.
 

@@ -4100,9 +4100,13 @@ It never approves `config` or `runtime.sync_state` (TASK-40137), so sync stays o
 Those two are approved together only by the sync-identity review
 (`Sync_Interop.recovery.approve_sync_identity`, TASK-40139, owner ruling
 2026-11-12): it recounts what it will clear, refuses if the counts the user saw
-changed, clears device ids, dataset bindings and cursors, pull cursors, remote
-heads, Personal Context link state and the unsent outbox (with their projection
-receipts) for every server profile, then approves both owners. Its screen is
+changed, clears device ids, dataset bindings and cursors, saved Prepare results
+(`dry_run_metadata`, which holds the Notes organization client profile id), pull
+cursors, remote heads, Personal Context link state and the unsent outbox (with
+their projection receipts) for every server profile, then approves both owners.
+The step holds the sync state's storage, and the count check and the clear share
+one `BEGIN IMMEDIATE` transaction. Every Link to home server waits for both
+reviews (`require_sync_allowed` before any key or link-state read). Its screen is
 Backup & Restore > Restored profiles > Current profile, beside **Approve
 settings** (`RecoveryService.sync_identity_review` / `approve_sync_identity`;
 owner decision 2026-11-13). Confirming **Review restored profile** in Settings >

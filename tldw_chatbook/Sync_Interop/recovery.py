@@ -141,25 +141,31 @@ def sync_identity_review(state_path: Path) -> dict[str, int] | None:
 
 
 def approve_sync_identity(state_path: Path, *, shown: dict[str, int]) -> None:
-    """Clear the restored identity the user saw counted, then approve both owners."""
+    """Clear the restored identity the user saw counted, then approve both owners.
+
+    The whole step holds the sync state's storage; the counts are compared and
+    the identity cleared inside one write transaction.
+    """
     from tldw_chatbook.Backup_Recovery.activation import ActivationStore
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
     from .sync_state_repository import SyncStateRepository
 
     state_path = Path(state_path)
-    pending = _sync_identity_generations(state_path)
-    if not pending:
-        return
-    if _identity_counts(state_path) != dict(shown):
-        raise ValueError(SYNC_IDENTITY_CHANGED)
-    if state_path.exists():
-        repository = SyncStateRepository(state_path)
-        try:
-            repository.clear_restored_identity()
-        finally:
-            repository.close()
-    for (store_root, generation), owners in pending.items():
-        store = ActivationStore(Path(store_root))
-        for owner in owners:
-            store.approve(generation, owner)
+    with acquire_storage(state_path):
+        pending = _sync_identity_generations(state_path)
+        if not pending:
+            return
+        if state_path.exists():
+            repository = SyncStateRepository(state_path)
+            try:
+                repository.clear_restored_identity(expected=shown)
+            finally:
+                repository.close()
+        elif dict(shown) != _identity_counts(state_path):
+            raise ValueError(SYNC_IDENTITY_CHANGED)
+        for (store_root, generation), owners in pending.items():
+            store = ActivationStore(Path(store_root))
+            for owner in owners:
+                store.approve(generation, owner)
 

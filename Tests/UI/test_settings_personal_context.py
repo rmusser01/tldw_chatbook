@@ -2283,13 +2283,19 @@ async def test_export_and_deleted_labels_keep_literal_metadata(monkeypatch):
 class _RestoredProfileService(_ProfileServiceStub):
     _repository = SimpleNamespace(db_path="restored-personal-context.db")
 
-    def __init__(self, snapshot, *, fail_reencrypt: bool = False) -> None:
+    def __init__(
+        self, snapshot, *, fail_reencrypt: bool = False, damaged: int = 0
+    ) -> None:
         super().__init__(snapshot)
         self.fail_reencrypt = fail_reencrypt
+        self.damaged = damaged
         self.steps: list[str] = []
 
-    def reencrypt_after_restore(self) -> str:
-        self.steps.append("reencrypt")
+    def damaged_record_count(self) -> int:
+        return self.damaged
+
+    def reencrypt_after_restore(self, *, expected_damaged: int = 0) -> str:
+        self.steps.append(("reencrypt", expected_damaged) if expected_damaged else "reencrypt")
         if self.fail_reencrypt:
             raise RuntimeError("private-key-detail-that-must-never-render")
         return "personal-context:profile_" + "f" * 32
@@ -2394,4 +2400,69 @@ async def test_restored_profile_review_reencrypts_before_it_approves(
         assert notices[-1].startswith("The profile change could not be saved.")
         assert "private-key-detail" not in " ".join(notices)
         assert panel.query("#personal-context-restore-review")
+
+
+@pytest.mark.asyncio
+async def test_restored_profile_review_shows_and_removes_the_damaged_count(
+    monkeypatch,
+) -> None:
+    """TASK-40140 AC#5, owner decision 2026-11-14: before confirming, the review
+    says "N damaged records can't be read and will be removed"; confirming
+    passes exactly that count to re-encryption."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    service = _RestoredProfileService(_ready_snapshot(), damaged=2)
+    monkeypatch.setattr(
+        module,
+        "restore_review",
+        lambda path: None if "approve" in service.steps else recovery.REVIEW_AVAILABLE,
+    )
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        line = str(
+            panel.query_one("#personal-context-restore-review-damaged", Static).render()
+        )
+        assert line == "2 damaged records can't be read and will be removed"
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.steps == [("reencrypt", 2), "approve"]
+
+
+@pytest.mark.asyncio
+async def test_sync_stays_named_off_until_the_sync_identity_review(monkeypatch) -> None:
+    """TASK-40139 (review r14pccB): after the Personal Context review, while sync
+    is still off, the panel names the Backup & Restore step; no review button."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    monkeypatch.setattr(
+        module, "restore_review", lambda path: recovery.SYNC_IDENTITY_PENDING
+    )
+    panel = PersonalContextSettingsPanel(_RestoredProfileService(_ready_snapshot()))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        copy = str(panel.query_one("#personal-context-restore-review-copy", Static).render())
+        assert "sync is still off" in copy
+        assert "Backup & Restore > Restored profiles > Sync identity review" in copy
+        assert not panel.query("#personal-context-restore-review")
 

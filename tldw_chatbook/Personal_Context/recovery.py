@@ -201,6 +201,8 @@ SYNC_OWNERS = (OWNER, "runtime.sync_state")
 REVIEW_AVAILABLE = "personal_context_restore_review_available"
 RESTORED_LINK_STATE = "personal_context_restored_link_state"
 REVIEW_UNAVAILABLE = "personal_context_restore_review_unavailable"
+# Review r14pccB: after this review, sync stays off until the sync identity is.
+SYNC_IDENTITY_PENDING = "personal_context_sync_identity_pending"
 
 
 SYNC_REVIEW_REQUIRED = "personal_context_sync_restore_review_required"
@@ -294,7 +296,9 @@ def restore_review(db_path: Path) -> str | None:
         return None if sync_allowed(db_path) else REVIEW_UNAVAILABLE
     if RESTORED_LINK_STATE in states:
         return RESTORED_LINK_STATE
-    return REVIEW_AVAILABLE if states else None
+    if states:
+        return REVIEW_AVAILABLE
+    return None if sync_allowed(db_path) else SYNC_IDENTITY_PENDING
 
 
 def approve_restore_review(db_path: Path) -> None:
@@ -660,7 +664,7 @@ def verify_restored_keys(plan) -> tuple[str, ...]:
     )
 
 
-def reencrypt_profile(repository) -> str:
+def reencrypt_profile(repository, *, expected_damaged: int = 0) -> str:
     """TASK-40140: re-encrypt a profile so an old archive's key reads no live row.
 
     The old account stays while any recovery copy exists: a retained copy may
@@ -675,5 +679,7 @@ def reencrypt_profile(repository) -> str:
         retained = bool(list_recovery_copies(default_control_root()))
     except Exception:  # noqa: BLE001 - unreadable copies count as retained
         retained = True
-    return repository.reencrypt_profile(keep_old_account=retained)
+    return repository.reencrypt_profile(
+        keep_old_account=retained, expected_damaged=expected_damaged
+    )
 

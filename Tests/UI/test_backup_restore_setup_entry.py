@@ -830,6 +830,7 @@ async def test_restored_profiles_sync_identity_review_shows_counts_then_approves
         "remote_heads": 3,
         "personal_context_links": 1,
         "pending_outbox": 4,
+        "prepare_results": 1,
     }
     confirmed = []
 
@@ -873,6 +874,7 @@ async def test_restored_profiles_sync_identity_review_shows_counts_then_approves
             assert screen.query("#backup-sync-identity-review"), "no sync review"
             review = _text(screen, "#backup-sync-identity-review")
             assert review.startswith("Sync identity review")
+            assert "Prepare sync again in Settings > Sync" in review
             assert "registers this device as a new one" in review
             for line in (
                 "• Device ids: 1",
@@ -881,6 +883,7 @@ async def test_restored_profiles_sync_identity_review_shows_counts_then_approves
                 "• Remote heads: 3",
                 "• Personal Context links: 1",
                 "• Unsent changes: 4",
+                "• Saved Prepare results: 1",
             ):
                 assert line in review, line
             button = screen.query_one("#backup-approve-sync-identity", Button)
@@ -902,10 +905,86 @@ async def test_restored_profiles_sync_identity_review_shows_counts_then_approves
                     while not screen.query("#backup-sync-identity-review"):
                         await pilot.pause(0.02)
                 return
-            assert "registers this device as a new one" in message
+            assert "Prepare sync again in Settings > Sync" in message
             async with asyncio.timeout(10):
                 while screen.query("#backup-sync-identity-review"):
                     await pilot.pause(0.02)
             assert not screen.query("#backup-approve-sync-identity")
     finally:
         service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["list", "approve"])
+async def test_an_unreadable_sync_state_never_crashes_restored_profiles(
+    tmp_path, monkeypatch, where
+):
+    """TASK-40139 (review r14pccB): a SQLite error while the review is read or
+    confirmed becomes ``sync_identity_unavailable``, shown by name; the screen
+    keeps running and an unreadable review says so instead of vanishing."""
+    import asyncio
+    import sqlite3
+    from types import MappingProxyType
+
+    from textual.widgets import Button
+
+    import tldw_chatbook.Sync_Interop.recovery as sync_recovery
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    def current_requirements():
+        return MappingProxyType(
+            {
+                "config": str(tmp_path / "config.toml"),
+                "operation_id": "restore",
+                "generation": "generation-1",
+                "required_owners": ("config", "runtime.sync_state"),
+                "pending_owners": ("runtime.sync_state",),
+                "requirements_checked": True,
+                "needs_setup": True,
+                "status": "requirements_checked",
+            }
+        )
+
+    def locked(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    service = RecoveryService(tmp_path / "control")
+    monkeypatch.setattr(service, "current_requirements", current_requirements)
+    monkeypatch.setattr(service, "profiles", lambda: ())
+    monkeypatch.setattr(
+        RecoveryService, "_sync_state_path", staticmethod(lambda: tmp_path / "s.db")
+    )
+    if where == "list":
+        monkeypatch.setattr(sync_recovery, "sync_identity_review", locked)
+    else:
+        monkeypatch.setattr(
+            sync_recovery, "sync_identity_review", lambda _path: {"device_ids": 1}
+        )
+        monkeypatch.setattr(sync_recovery, "approve_sync_identity", locked)
+    message = service.issue_message("sync_identity_unavailable")
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(100, 48)) as pilot:
+            screen = app.screen
+            await pilot.click("#backup-open-profiles")
+            async with asyncio.timeout(10):
+                while not screen.query("#backup-sync-identity-review"):
+                    await pilot.pause(0.02)
+            review = _text(screen, "#backup-sync-identity-review")
+            if where == "list":
+                assert review.startswith("Sync identity review unavailable: ")
+                assert message in review and "(sync_identity_unavailable)" in review
+                assert not screen.query("#backup-approve-sync-identity")
+            else:
+                screen.query_one("#backup-approve-sync-identity", Button).press()
+                async with asyncio.timeout(10):
+                    while not _text(screen, "#backup-message"):
+                        await pilot.pause(0.02)
+                assert _text(screen, "#backup-message") == (
+                    f"Sync identity review unavailable: {message} "
+                    "(sync_identity_unavailable)"
+                )
+            assert app.is_running and app.return_code is None
+    finally:
+        service.close()
+

@@ -1035,24 +1035,41 @@ class SyncStateRepository(BaseDB):
         ("personal_context_links", "SELECT COUNT(*) FROM personal_context_link_state"),
         ("pending_outbox", "SELECT COUNT(*) FROM sync_v2_local_outbox "
          "WHERE status IN ('pending', 'dispatched')"),
+        # Saved Prepare results, including the Notes organization client
+        # profile id the old device registered (review r14pccB).
+        ("prepare_results", "SELECT COUNT(*) FROM sync_profile_state "
+         "WHERE dry_run_metadata != '{}'"),
     )
+
+    @classmethod
+    def _identity_counts_on(cls, conn: sqlite3.Connection) -> dict[str, int]:
+        return {
+            name: int(conn.execute(sql).fetchone()[0])
+            for name, sql in cls._RESTORED_IDENTITY_COUNTS
+        }
 
     def restored_identity_counts(self) -> dict[str, int]:
         """What ``clear_restored_identity`` removes, for the user to see first."""
         with self.transaction() as conn:
-            return {
-                name: int(conn.execute(sql).fetchone()[0])
-                for name, sql in self._RESTORED_IDENTITY_COUNTS
-            }
+            return self._identity_counts_on(conn)
 
-    def clear_restored_identity(self) -> None:
-        """Clear device ids, dataset bindings and cursors, pull cursors, remote
-        heads, Personal Context link state and the unsent outbox; Notes and
-        Chat share these rows when no workspace is active."""
+    def clear_restored_identity(
+        self, *, expected: Mapping[str, int] | None = None
+    ) -> None:
+        """Clear device ids, dataset bindings and cursors, saved Prepare results,
+        pull cursors, remote heads, Personal Context link state and the unsent
+        outbox; Notes and Chat share these rows when no workspace is active.
+
+        With ``expected``, the counts the user saw are compared inside the same
+        write transaction, so nothing changes between the check and the clear.
+        """
         with self.transaction() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if expected is not None and self._identity_counts_on(conn) != dict(expected):
+                raise ValueError("sync_identity_counts_changed")
             conn.execute(
                 "UPDATE sync_profile_state SET device_id = NULL, dataset_id = NULL, "
-                "dataset_cursors = '{}', updated_at = ?",
+                "dataset_cursors = '{}', dry_run_metadata = '{}', updated_at = ?",
                 (_utc_now(),),
             )
             for table in (
