@@ -268,7 +268,11 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             reads: list = []
             after_transcript: list = []
 
+            owner = asyncio.current_task()
+
             async def slow_transcript(*args, **kwargs):
+                if asyncio.current_task() is not owner:
+                    return await real(*args, **kwargs)
                 # Load stretched the FULL's awaits.
                 clock.now += projection.max_age * stretch["share"]
                 result = await real(*args, **kwargs)
@@ -298,15 +302,21 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             async def unparseable(*args, **kwargs):
                 raise RuntimeError("config.toml is unparseable")
 
+            await until(
+                lambda: not console._console_sync_in_progress
+                and not _replay_pending(console)
+                and not console._console_control_bar_sync_scheduled,
+                timeout=30,
+            )
             monkeypatch.setattr(
                 console_preparation_reads, "run_preparation_read", unparseable
             )
-            await until(lambda: not projection.pending, timeout=30)
             projection._retry_delay = spend.RETRY_FIRST_DELAY  # A read failed.
             refresh = projection._refresh
 
             def counting_refresh(key):
-                reads.append(key)
+                if asyncio.current_task() is owner:
+                    reads.append(key)
                 return refresh(key)
 
             projection._refresh = counting_refresh
@@ -314,7 +324,8 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             rail = config_sync.sync_console_rail_visibility
 
             def counting_rail(screen):
-                at_rail.append(len(reads))
+                if asyncio.current_task() is owner:
+                    at_rail.append(len(reads))
                 return rail(screen)
 
             monkeypatch.setattr(
