@@ -1557,11 +1557,9 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
             client_provider=self.server_context_provider,
         )
-
         borrowed_chat = getattr(self.notes_service, "db", None)
-        self._chat_sqlite_borrowed = borrowed_chat, getattr(
-            getattr(borrowed_chat, "_local", None), "conn", None
-        )
+        borrowed_local = getattr(borrowed_chat, "_local", None)
+        self._chat_sqlite_borrowed = borrowed_chat, getattr(borrowed_local, "conn", None)
         self.chachanotes_db = _select_profile_database(
             self.notes_service, self.app_config, self._startup_chachanotes_db
         )

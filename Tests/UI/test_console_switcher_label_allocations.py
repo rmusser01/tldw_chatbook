@@ -5,11 +5,45 @@ from dataclasses import replace
 import pytest
 from rich.text import Text
 from textual.content import Content
+from textual.widgets import Static
 
 from Tests.UI.test_console_character_switcher_geometry import _GeometryApp
 from tldw_chatbook.Chat.console_conversation_activation import ConsoleActivationPhase
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+
+
+@pytest.mark.parametrize("size", [(52, 20), (120, 50)])
+async def test_character_activation_copy_repaints_fixed_rows_without_layout(
+    monkeypatch, size
+):
+    app = _GeometryApp()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        rows = {
+            modal.query_one(f"#console-switcher-{name}", Static)
+            for name in ("status", "divider", "scope", "hints")
+        }
+        geometry = {row: row.region for row in rows}
+        calls = []
+        original = Static.update
+
+        def record_update(row, content="", *, layout=True):
+            if row in rows:
+                calls.append((row.id, layout))
+            return original(row, content, layout=layout)
+
+        monkeypatch.setattr(Static, "update", record_update)
+        entry = modal._entries[0]
+        modal._activation_phase = ConsoleActivationPhase.OPENING_CANCELLABLE
+        modal._set_status("Opening…")
+        modal._update_hints(entry)
+        await pilot.pause()
+        assert "Opening" in modal.query_one("#console-switcher-divider", Static).content
+        assert "Opening" in modal.query_one("#console-switcher-hints", Static).content
+        assert {row: row.region for row in rows} == geometry
+        assert calls and not any(layout for _, layout in calls)
 
 
 @pytest.mark.parametrize("size", [(52, 20), (120, 50)])
