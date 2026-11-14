@@ -2249,17 +2249,18 @@ class ConsoleSessionSwitcherModal(
         else:
             primary = "No result selected"
         if self._query_pending:
-            hints.update("Waiting for results · Esc:close")
+            copy = "Waiting for results · Esc:close"
         elif self._activation_phase is ConsoleActivationPhase.OPENING_CANCELLABLE:
-            hints.update("Opening…  ·  Esc: cancel")
+            copy = "Opening…  ·  Esc: cancel"
         elif self._activation_phase is ConsoleActivationPhase.COMMITTING:
-            hints.update("Finishing…")
+            copy = "Finishing…"
         else:
-            hints.update(
+            copy = (
                 f"{primary} Shift+F3:mode Esc:close"
                 if self._compact_layout
                 else f"{primary} · ↑↓:move · Shift+F3:mode · Esc:close"
             )
+        self._update_static_copy(hints, copy, layout=False)
 
     async def action_show_workbench_help(self) -> None:
         """Expose full selected identity without shadowing app-global F1."""
@@ -2853,7 +2854,7 @@ class ConsoleSessionSwitcherModal(
     def _set_status(self, message: str) -> None:
         try:
             self._update_static_copy(
-                self.query_one("#console-switcher-status", Static), message
+                self.query_one("#console-switcher-status", Static), message, layout=False
             )
         except NoMatches:
             pass
@@ -2862,28 +2863,32 @@ class ConsoleSessionSwitcherModal(
         except NoMatches:
             return
         if self._mode is SwitcherMode.CHARACTER_CHATS:
-            self._update_static_copy(scope, "This profile · Local chats")
+            self._update_static_copy(scope, "This profile · Local chats", layout=False)
             self._update_static_copy(
                 self.query_one("#console-switcher-divider", Static),
                 message
                 if self._query_pending
                 or self._activation_phase is not ConsoleActivationPhase.IDLE
                 else "─" * 48,
+                layout=False,
             )
         else:
             self._update_static_copy(
-                self.query_one("#console-switcher-divider", Static), "─" * 48
+                self.query_one("#console-switcher-divider", Static), "─" * 48, layout=False
             )
             self._update_static_copy(
                 scope,
                 f"Activity updates unavailable · {message}"
                 if self._compact_layout and self._activity_receipt_state == "degraded"
                 else message,
+                layout=False,
             )
 
     def _set_feedback(self, message: str) -> None:
         try:
-            self.query_one("#console-switcher-feedback", Static).update(message)
+            self._update_static_copy(
+                self.query_one("#console-switcher-feedback", Static), message, layout=False
+            )
         except NoMatches:
             pass
         self._set_status(message)
