@@ -100,19 +100,25 @@ async def test_long_resume_mounts_only_a_contiguous_tail_window() -> None:
 
 
 @pytest.mark.asyncio
-async def test_long_session_swap_batches_row_mounts_and_removals(monkeypatch) -> None:
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("initial_count", [0, 180], ids=["empty", "populated"])
+async def test_long_session_swap_batches_row_mounts_and_removals(
+    monkeypatch, initial_count
+) -> None:
     app = WindowHarness()
 
     async with app.run_test(size=(100, 30)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
-        transcript.set_messages(_messages(180, prefix="old-"))
+        transcript.set_messages(_messages(initial_count, prefix="old-"))
         await transcript.refresh_messages()
         await pilot.pause()
 
         mount_batch_sizes: list[int] = []
         remove_batch_sizes: list[int] = []
+        moved_rows = []
         original_mount = transcript.mount
         original_remove_children = transcript.remove_children
+        original_move_child = transcript.move_child
 
         def recording_mount(*widgets, **kwargs):
             mount_batch_sizes.append(len(widgets))
@@ -124,17 +130,29 @@ async def test_long_session_swap_batches_row_mounts_and_removals(monkeypatch) ->
                 remove_batch_sizes.append(len(materialized))
             return original_remove_children(materialized)
 
+        def recording_move_child(child, **kwargs):
+            moved_rows.append(child)
+            return original_move_child(child, **kwargs)
+
         monkeypatch.setattr(transcript, "mount", recording_mount)
         monkeypatch.setattr(transcript, "remove_children", recording_remove_children)
+        monkeypatch.setattr(transcript, "move_child", recording_move_child)
 
         transcript.set_messages(_messages(180, prefix="new-"))
         await transcript.refresh_messages()
         await pilot.pause()
 
         assert mount_batch_sizes and max(mount_batch_sizes) > 1
-        assert remove_batch_sizes and max(remove_batch_sizes) > 1
         assert len(mount_batch_sizes) <= 2
         assert len(remove_batch_sizes) == 1
+        if initial_count:
+            assert remove_batch_sizes[0] > 1
+        rows = [
+            transcript._row_widgets[row.key] for row in transcript._transcript_rows()
+        ]
+        recovery = transcript.query_one("#console-archive-recovery")
+        assert list(transcript.children)[: len(rows) + 1] == [*rows, recovery]
+        assert not moved_rows
 
 
 @pytest.mark.asyncio
