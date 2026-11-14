@@ -1458,3 +1458,201 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
         f"{class_name} is {max_methods - methods} methods under its budget "
         f"({methods} vs {max_methods}). Set it to {methods}."
     )
+
+
+# --- LibraryScreen coupling pins (TASK-36952.1, architecture review 2026-10-25 F2) ---
+# Lambdas in ``LibraryScreen.__init__`` are callbacks the Library controllers
+# take instead of typed dependencies. Unbound uses of ``LibraryScreen`` methods
+# under Tests/ (a call on the class, or a method bound to a hand-built fake)
+# run screen code without a mounted screen or the controller that owns it.
+# Both pins are exact: a rise fails, and a fall fails until the pin is lowered
+# to the measurement in the same change. Never raise them.
+# Moving controller construction out of ``__init__`` into a builder method
+# lowers the lambda count without decoupling anything (ChatScreen moved its
+# wiring out of ``__init__`` in wave 4, see ``_BUDGETS`` above): a PR that does
+# so must point ``_library_init_lambdas`` at the builder in the same change.
+#: Measured at dev 26b2e677dd: 416, all passed to controller or note-session
+#: constructors (the review's 413 at 7a5e2513c5 counted the controllers only;
+#: this count was 416 there too).
+_LIBRARY_INIT_LAMBDAS = 416
+#: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
+#: 724 in 59 files.
+#: - 602 calls: 594 on the class, public handlers included (the review's 370
+#:   named private `_x(fake_self, ...)` calls only), and 8 `.__wrapped__(...)`.
+#:   60 of them call static or class-method helpers (no fake self) and 3 are
+#:   `LibraryScreen.__new__(LibraryScreen)` constructions.
+#: - 122 bindings to a fake: 110 `MethodType` (10 through `getattr`),
+#:   1 `partial`, 1 `.__get__`, and 10 fake-class attributes (`m = C.m`).
+#: Every one reaches the screen class from a test instead of the code's owner,
+#: so read the number as "test sites coupled to LibraryScreen", not as fake
+#: selves. A static helper lowers it by moving to its owner.
+#: Not counted (known limit): 18 references handed to something that calls
+#: them later, 16 `_press(fake, LibraryScreen.x)` (with the fake) and 2
+#: `asyncio.to_thread(LibraryScreen.x, ...)` (a static helper called with a
+#: service); and a class held in a variable.
+_LIBRARY_UNBOUND_TEST_CALLS = 724
+
+
+def _library_init_lambdas() -> int:
+    rel_path = "tldw_chatbook/UI/Screens/library_screen.py"
+    tree = ast.parse((_REPO_ROOT / rel_path).read_text(encoding="utf-8"))
+    screens = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.ClassDef) and n.name == "LibraryScreen"
+    ]
+    inits = [
+        n
+        for screen in screens
+        for n in screen.body
+        if isinstance(n, ast.FunctionDef) and n.name == "__init__"
+    ]
+    assert len(inits) == 1, (
+        f"LibraryScreen.__init__ not found in {rel_path}; _LIBRARY_INIT_LAMBDAS is stale."
+    )
+    return sum(isinstance(node, ast.Lambda) for node in ast.walk(inits[0]))
+
+
+def _unbound_class_calls(source: str, class_name: str) -> int:
+    """Unbound uses of ``class_name``'s methods: calls on the class, and bindings.
+
+    A method reference is ``C.m``, ``mod.C.m``, ``Alias.m`` after
+    ``from mod import C as Alias``, or ``getattr(C, name)``. Counts a call of
+    one (``C.m(...)``, ``C.m.__wrapped__(...)``), a binding of one
+    (``MethodType(C.m, fake)``, ``partial(C.m, ...)``, either spelling
+    qualified or bare, ``C.m.__get__(...)``, and ``m = C.m`` in a class body),
+    and the same inside any string constant that parses as Python (a test's
+    subprocess child program).
+
+    Not counted: a reference handed to a helper or executor that calls it
+    later (``_press(fake, C.m)``, ``asyncio.to_thread(C.m, ...)``),
+    and a class held in a variable.
+    """
+    tree = ast.parse(source)
+    names = {class_name} | {
+        alias.asname
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name == class_name and alias.asname
+    }
+
+    def is_class(node: ast.expr) -> bool:
+        return (isinstance(node, ast.Name) and node.id in names) or (
+            isinstance(node, ast.Attribute) and node.attr == class_name
+        )
+
+    def is_method(node: ast.expr) -> bool:
+        return (isinstance(node, ast.Attribute) and is_class(node.value)) or (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and bool(node.args)
+            and is_class(node.args[0])
+        )
+
+    count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            callee = getattr(func, "id", None) or getattr(func, "attr", None)
+            if (
+                is_method(func)
+                or (
+                    callee in ("MethodType", "partial")
+                    and bool(node.args)
+                    and is_method(node.args[0])
+                )
+                or (
+                    isinstance(func, ast.Attribute)
+                    and func.attr in ("__get__", "__wrapped__")
+                    and is_method(func.value)
+                )
+            ):
+                count += 1
+        elif isinstance(node, ast.ClassDef):
+            count += sum(
+                isinstance(stmt, (ast.Assign, ast.AnnAssign)) and is_method(stmt.value)
+                for stmt in node.body
+            )
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and class_name in node.value
+        ):
+            try:
+                count += _unbound_class_calls(node.value, class_name)
+            except (SyntaxError, ValueError):
+                pass  # prose, not a program
+    return count
+
+
+def _library_unbound_test_calls() -> int:
+    total = 0
+    for path in (_REPO_ROOT / "Tests").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if "LibraryScreen" in source:
+            total += _unbound_class_calls(source, "LibraryScreen")
+    return total
+
+
+def _assert_pinned(count: int, pin: int, what: str, pin_name: str, advice: str) -> None:
+    assert count <= pin, (
+        f"{count} {what} (pinned {pin}, +{count - pin}). {advice} Do NOT raise {pin_name}."
+    )
+    assert count >= pin, (
+        f"{count} {what}, pinned {pin}. Lower {pin_name} to {count} in "
+        "Tests/Architecture/test_screen_size_ratchet.py so the gain is kept."
+    )
+
+
+@pytest.mark.unit
+def test_library_screen_init_lambdas_match_their_pin() -> None:
+    _assert_pinned(
+        _library_init_lambdas(),
+        _LIBRARY_INIT_LAMBDAS,
+        "lambdas in LibraryScreen.__init__",
+        "_LIBRARY_INIT_LAMBDAS",
+        "Give the controller a typed dependency instead of another screen callback.",
+    )
+
+
+@pytest.mark.unit
+def test_unbound_library_screen_calls_in_tests_match_their_pin() -> None:
+    _assert_pinned(
+        _library_unbound_test_calls(),
+        _LIBRARY_UNBOUND_TEST_CALLS,
+        "unbound LibraryScreen method calls and bindings under Tests/",
+        "_LIBRARY_UNBOUND_TEST_CALLS",
+        "Test the controller that owns the method, or a mounted screen, instead of "
+        "calling or binding the screen class's method; move a static helper off "
+        "the screen.",
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("Probe._x(fake)", 1),
+        ("mod.Probe._x(fake)", 1),
+        ("from mod import Probe as P\nP._x(fake)", 1),
+        ("getattr(Probe, name)(fake)", 1),
+        ("run('Probe._x(fake)')", 1),
+        ("f._x = MethodType(Probe._x, f)", 1),
+        ("f._x = types.MethodType(mod.Probe._x, f)", 1),
+        ("partial(Probe._x, f)()", 1),
+        ("functools.partial(getattr(Probe, name), f)", 1),
+        ("Probe._x.__get__(f)", 1),
+        ("Probe._x.__wrapped__(fake)", 1),
+        ("getattr(mod.Probe, name).__wrapped__(fake)", 1),
+        ("class Fake:\n    _x = Probe._x", 1),
+        ("class Fake:\n    _x: object = getattr(mod.Probe, '_x')", 1),
+        ("Probe(fake); Probe._x; getattr(Probe, name); fake._x()", 0),
+        ("MethodType(fake._x, f); partial(print, Probe); fake._x.__get__(f)", 0),
+        ("fake._x.__wrapped__(f)\nclass Fake:\n    _x = fake._x\nsaved = Probe._x", 0),
+        ("'``Probe._x(fake)`` in prose'", 0),
+    ],
+)
+def test_unbound_class_call_counter_sees_each_shape(source: str, expected: int) -> None:
+    assert _unbound_class_calls(source, "Probe") == expected
