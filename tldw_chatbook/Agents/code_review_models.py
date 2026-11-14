@@ -368,6 +368,50 @@ def review_result_char_limit(max_tool_result_chars: int) -> int:
     return min(max_tool_result_chars, 16000) if max_tool_result_chars > 0 else 16000
 
 
+#: Every explicit review-stage request names one of these (lower case):
+#: ``console_code_review._explicit_stages`` returns no stage for text without
+#: one, before it parses anything (TASK-33620.15.53). A new stage word goes
+#: here first, or the parser never sees it.
+REVIEW_REQUEST_WORDS = ("review", "verify", "consolidate", "retry")
+
+
+def mentions_review_request(text: str) -> bool:
+    """Whether ``text`` names a review-stage word, so it may request a stage."""
+    lowered = text.lower()
+    return any(word in lowered for word in REVIEW_REQUEST_WORDS)
+
+
+def review_turn_possible(
+    text: str | None, *, review_owner: object | None, wake_authorization: object
+) -> bool:
+    """Whether a Console turn could be a code-review turn at all.
+
+    False only for a turn ``console_code_review.classify_review_turn`` treats
+    as ordinary chat, which checks this first: no accepted review wake, no
+    review owner built for the store (an offer answer or a stage control
+    needs its state), and text naming no review-stage word. Run start checks
+    it before importing the review composition, so an ordinary send loads no
+    review service module and makes no worker hop for it (TASK-33620.15.53:
+    live, a first send imported that service on the UI loop, 14-159 ms).
+
+    Args:
+        text: The trusted user message's text, or ``None`` when there is none.
+        review_owner: The controller's built review coordinator, or ``None``.
+        wake_authorization: The turn's wake authorization, or ``None``.
+
+    Returns:
+        ``True`` when review composition must run for this turn.
+    """
+    if getattr(wake_authorization, "review_boundary", None) is not None:
+        return True
+    if review_owner is not None:
+        return True
+    if text is None:
+        return False
+    # Anything but text goes on to composition, whose failures never fail a turn.
+    return not isinstance(text, str) or mentions_review_request(text)
+
+
 _RECORD_KINDS = {
     "findings": FindingRecord,
     "coverage": CoverageRecord,

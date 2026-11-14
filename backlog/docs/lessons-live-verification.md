@@ -115,6 +115,12 @@ Enter and the POST than dev: the profiles' history, not their code.
 - When another session already holds the host loaded, run your high-load block on its load and move your low-load block to later. Do not sit waiting for quiet.
 - Record load1 and idle CPU at every Enter, and bin each send by those readings, not by the block it ran in.
 
+## A probe that wraps `importlib._bootstrap._find_and_load` cannot call `sys._getframe(1)`: the app dies at startup and the driver waits out its render timeout (TASK-33620.15.53, 2026-11-05)
+
+**Incident.** TASK-33620.15.53's import probe wrapped `_find_and_load` to record each cold module load with its thread, then gained a caller stack (`sys._getframe(1)`) for loads on the main thread. The next launch died at once: an import made from C has no Python frame above the wrapper, and `ValueError: call stack is not deep enough` escaped into the app's own imports. The tmux pane closed with the app, the probe's output file stayed empty, and the orchestrator's driver waited its full 300 s for a first render before moving on. Relaunching with `remain-on-exit` on showed the traceback. An earlier launch of the same kit lost its whole record differently: the evidence directory was relative, and the app runs with its cwd in the profile directory, so the probe's writer thread could not open its file.
+
+**What to do.** In an import hook, walk frames from `sys._getframe(0).f_back` and stop at `None`. Pass the driver an absolute evidence path. When a probed launch never renders, relaunch it once by hand with `tmux -L <name> set-option -g remain-on-exit on` before rerunning the round.
+
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
 **Incident.** TASK-37653's first owner-approved live run spent 40 requests and 2 children, and its verifier never started. Every spawn returned `original_reports_not_presented`. The gated harness built its own `ConsoleChatController` and set `controller.app = app`. That was the attach step before PR #3286 moved review presentation into the UI wiring. The Console screen now attaches through `wiring.attach_review_presenter`, which is what installs the original-report presenter. With that one-line change, the second run (50 requests) sealed the verifier and expanded every finding. The run also failed twice before it started:

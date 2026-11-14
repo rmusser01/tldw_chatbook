@@ -18,6 +18,8 @@ from tldw_chatbook.Agents.code_review_models import (
     ReviewRunChoice,
     canonical_record_bytes,
     get_code_review_team,
+    mentions_review_request,
+    review_turn_possible,
 )
 from tldw_chatbook.Agents.code_review_service import (
     CodeReviewService,
@@ -51,12 +53,15 @@ _NEGATION = re.compile(r"\b(not|never|don.t|without)\b")
 _REVIEWER_RETRY = re.compile(
     r"(?:please\s+)?retry\s+(?:the\s+)?reviewer\s+(r[1-9]\d*)[.!]?", re.I
 )
-_RESUME_REVIEW = re.compile(r"resume\s+(?:(?:the|this)\s+)?review[.!]?", re.I)
+# Lowered text only, no re.I: it would case-fold "revıew" or "reſume" to a stage.
+_RESUME_REVIEW = re.compile(r"resume\s+(?:(?:the|this)\s+)?review[.!]?")
 
 
 def _explicit_stages(text: str, trusted_skill_bindings=()) -> frozenset[str]:
     """Keep a qualified later stage as intent requiring a new native acceptance."""
     text = text.strip().lower()
+    if not mentions_review_request(text):
+        return frozenset()  # run start skips such a turn unparsed (TASK-33620.15.53)
     mention = re.match(r"^\$multi-model-review(?:\s+|$)", text)
     if mention:
         if "multi-model-review" not in trusted_skill_bindings:
@@ -1197,13 +1202,19 @@ def classify_review_turn(
     """
     from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 
+    existing = getattr(controller, "_code_review", None)
+    if not review_turn_possible(
+        getattr(message, "content", None),
+        review_owner=existing,
+        wake_authorization=wake_authorization,
+    ):
+        return None  # run start's own check: it composes nothing for this turn
     if getattr(wake_authorization, "review_boundary", None) is not None:
         return "wake"
     if message is None:
         return None
     stages = _explicit_stages(message.content, trusted_skill_bindings)
     reply = message.content.strip().lower()
-    existing = getattr(controller, "_code_review", None)
     offered = has_review = False
     if existing is not None:
         with existing._lock:
