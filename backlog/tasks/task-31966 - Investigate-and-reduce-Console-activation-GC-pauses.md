@@ -826,4 +826,20 @@ private DB retirement checks passed on all complete repeats.
 [The QA report](../../Docs/QA/task-34661/stability-candidates-2026-11-11.md#intermittent-scale-cold-opens-on-november-14)
 records the partial runs, native layout and paint traces and rejected
 controls. The broader qualification gates remain open.
+
+### Rebased Terminal reopen follow-up on 2026-11-14
+
+Five local commits remove demonstrated redundant archive-control mounting,
+history row moves, fixed-height layout feedback and repaint or restyle
+work. Final affected selection passed 112 tests. The size, token and boot
+selection passed 12 with two existing headroom warnings. Two final-source
+Terminal runs met both limits in 6 of 12 journeys each. Scale reopen
+reached 75.81 and 87.98 ms. Exact activation, focus, tab counts and
+ordinary quit with zero private DB descriptors passed. The plain maximum
+busy paint was 45.12 ms. Separate native probes isolated collections as
+long as 64.33 ms and repeated saved-chat layout. Geometry and combined
+allocation probes also missed the loop limit. See the
+[QA report](../../Docs/QA/task-34661/stability-candidates-2026-11-11.md#rebased-scale-reopen-and-repeat-results-on-november-14).
+ADR-120, ADR-198 and ADR-365 continue to govern the work. TASK-31966
+remains In Progress and the PR still awaits passing repeats.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
