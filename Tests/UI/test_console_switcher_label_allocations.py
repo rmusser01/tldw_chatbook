@@ -4,13 +4,70 @@ from dataclasses import replace
 
 import pytest
 from rich.text import Text
+from textual.containers import Vertical
 from textual.content import Content
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_console_character_switcher_geometry import _GeometryApp
 from tldw_chatbook.Chat.console_conversation_activation import ConsoleActivationPhase
+from tldw_chatbook.Chat.console_switcher_state import SwitcherMode
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+
+
+@pytest.mark.parametrize("size", [(52, 20), (120, 50)])
+async def test_character_activation_keeps_stable_chrome_without_repainting(
+    monkeypatch, size
+):
+    app = _GeometryApp()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        panel = modal.query_one("#console-switcher-modal", Vertical)
+        status = modal.query_one("#console-switcher-page-status", Static)
+        confirm = modal.query_one("#console-switcher-confirm-mark-seen", Button)
+        original_refresh = panel.refresh
+        original_update = status.update
+        original_resize = modal._sync_modal_max_height
+        repaints = []
+        page_updates = []
+        resizes = []
+
+        def refresh(*regions, **kwargs):
+            repaints.append(1)
+            return original_refresh(*regions, **kwargs)
+
+        def update(content="", *, layout=True):
+            page_updates.append((content, layout))
+            return original_update(content, layout=layout)
+
+        def resize():
+            resizes.append(1)
+            original_resize()
+
+        monkeypatch.setattr(panel, "refresh", refresh)
+        monkeypatch.setattr(status, "update", update)
+        monkeypatch.setattr(modal, "_sync_modal_max_height", resize)
+        assert panel.border_title == "Switch or resume [Character chats]"
+        assert status.content
+        assert not confirm.display
+
+        modal._set_activation_controls_disabled(True)
+        modal._update_page_controls(None)
+        modal._update_page_controls(None)
+        modal._clear_mark_seen_confirmation()
+        assert not repaints
+        assert page_updates == [("", False)]
+        assert not resizes
+
+        confirm.display = True
+        modal._armed_mark_seen_key = "confirmed-row"
+        modal._clear_mark_seen_confirmation()
+        assert not confirm.display and not modal._armed_mark_seen_key
+        assert resizes == [1]
+        modal._mode = SwitcherMode.ACTIVE
+        modal._update_mode_controls()
+        assert panel.border_title == "Switch or resume [Active]"
 
 
 @pytest.mark.parametrize("size", [(52, 20), (120, 50)])

@@ -1917,12 +1917,12 @@ class ConsoleSessionSwitcherModal(
     def _clear_mark_seen_confirmation(self) -> None:
         self._armed_mark_seen_key = ""
         try:
-            self.query_one(
-                "#console-switcher-confirm-mark-seen", Button
-            ).display = False
+            confirm = self.query_one("#console-switcher-confirm-mark-seen", Button)
         except NoMatches:
-            pass
-        self._sync_modal_max_height()
+            return
+        if confirm.display:
+            confirm.display = False
+            self._sync_modal_max_height()
 
     @on(Button.Pressed, "#console-switcher-confirm-mark-seen")
     def _confirm_mark_seen(self, event: Button.Pressed) -> None:
@@ -2111,9 +2111,10 @@ class ConsoleSessionSwitcherModal(
             if history_is_current
             else "Active"
         )
-        self.query_one("#console-switcher-modal", Vertical).border_title = Text(
-            f"Switch or resume [{mode_label}]"
-        )
+        panel = self.query_one("#console-switcher-modal", Vertical)
+        title = f"Switch or resume [{mode_label}]"
+        if panel.border_title != title:
+            panel.border_title = Content(title)
         active.set_class(
             self._mode is SwitcherMode.ACTIVE and not history_is_current,
             "console-switcher-mode-current",
@@ -2158,7 +2159,7 @@ class ConsoleSessionSwitcherModal(
         previous.display = visible
         following.display = visible
         if not visible:
-            status.update("")
+            self._update_static_copy(status, "", layout=False)
             return
         assert source is not None
         previous.disabled = offset <= 0
@@ -2170,7 +2171,9 @@ class ConsoleSessionSwitcherModal(
         following.disabled = offset + item_count >= source.total
         first = offset + 1 if item_count else 0
         last = offset + item_count
-        status.update(f"{first}–{last} of {source.total}")
+        self._update_static_copy(
+            status, f"{first}–{last} of {source.total}", layout=False
+        )
 
     def _update_receipt_status(self) -> None:
         """Expose only content-free local activity storage readiness."""
