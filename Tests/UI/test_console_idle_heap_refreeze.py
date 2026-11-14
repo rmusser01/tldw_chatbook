@@ -96,6 +96,26 @@ async def test_busy_sampler_detects_a_single_event_loop_turn_gap() -> None:
     assert sampler.samples[-1] is True
 
 
+async def test_the_busy_sampler_lets_an_idle_loop_sleep() -> None:
+    """The sampler reads every loop turn but adds no turns of its own.
+
+    A sampler that re-queued itself with ``sleep(0)`` never let the loop block
+    in its selector. On CI's Linux runners the loop thread then kept taking
+    the GIL back, and the send's worker-thread steps starved until the
+    mounted test's 15 s wait gave up and stopped the sampler (TASK-40334).
+    """
+    sampler = BusySampler(BusyScreen())
+    try:
+        await asyncio.sleep(0.2)  # one timer: an idle loop sleeps through it
+    finally:
+        sampler.stop()
+    # One sample at start, then one per turn: more than one proves the
+    # observer fired; a spinning sampler makes hundreds of turns here.
+    assert 1 < len(sampler.samples) <= 20, (
+        f"the sampler turned an idle loop {len(sampler.samples)} times in 0.2 s"
+    )
+
+
 def sending(console) -> bool:
     """Whether the Console has a visible send in flight (its Enter was handled)."""
     flight = getattr(console, "_console_send_flight", None)
