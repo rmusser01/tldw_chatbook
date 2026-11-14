@@ -309,6 +309,22 @@ async def test_wire_cancellation_expires_only_the_matching_confirmation(
         wiring, "get_cli_setting", lambda section, key, default=None: default
     )
     store = _store(tmp_path)
+    # Await real save completion: polling guarded storage here can consume
+    # the readiness deadline before the producer gets an event-loop turn.
+    created_requests = asyncio.Queue()
+    save_approval_request = store.save_approval_request
+
+    def observe_approval_creation(request):
+        """Announce a receipt only after the real guarded save succeeds.
+
+        Args:
+            request: Confirmation to save through the unchanged store.
+        """
+        saved_request = save_approval_request(request)
+        created_requests.put_nowait(saved_request)
+        return saved_request
+
+    monkeypatch.setattr(store, "save_approval_request", observe_approval_creation)
     dispatcher = wiring.build_server_request_dispatcher_factory(store)("server")
     reader = asyncio.StreamReader()
     sent = []
@@ -348,9 +364,39 @@ async def test_wire_cancellation_expires_only_the_matching_confirmation(
         Args:
             predicate: State condition to observe.
         """
-        async with asyncio.timeout(2):
-            while not predicate():
-                await asyncio.sleep(0.005)
+        try:
+            async with asyncio.timeout(2):
+                while not predicate():
+                    assert not conn._read_task.done(), (
+                        "MCP reader stopped before the expected state: "
+                        f"cancelled={conn._read_task.cancelled()}, "
+                        f"unavailable={conn._reader_unavailable}"
+                    )
+                    assert not any("error" in response for response in sent), (
+                        f"Unexpected MCP response: {repr(sent[-5:])[:2000]}"
+                    )
+                    await asyncio.sleep(0.005)
+        except TimeoutError as exc:
+            approvals = [
+                (request.request_id, request.status)
+                for request in store.list_approval_requests()[:5]
+            ]
+            requests = [
+                (request_id, task.done(), task.cancelled())
+                for request_id, task in list(conn._server_request_tasks.items())[:5]
+            ]
+            dispatches = [
+                (task.done(), task.cancelled())
+                for task in list(conn._dispatch_tasks)[:5]
+            ]
+            raise TimeoutError(
+                f"MCP state wait timed out: approvals={approvals!r}, "
+                f"requests(id/done/cancelled)={requests!r}, "
+                f"dispatches(done/cancelled)={dispatches!r}, "
+                f"reader_done={conn._read_task.done()}, "
+                f"reader_unavailable={conn._reader_unavailable}, "
+                f"sent={repr(sent[-5:])[:2000]}"
+            ) from exc
 
     # Opposite-direction IDs belong to a separate namespace.
     outgoing = asyncio.get_running_loop().create_future()
@@ -368,7 +414,10 @@ async def test_wire_cancellation_expires_only_the_matching_confirmation(
                     },
                 }
             )
-        await wait_for(lambda: len(store.list_approval_requests()) == 2)
+        async with asyncio.timeout(2):
+            for _ in range(2):
+                await created_requests.get()
+        assert len(store.list_approval_requests()) == 2
         assert all(r.status == "pending" for r in store.list_approval_requests())
         frame(
             {
@@ -424,9 +473,9 @@ async def test_wire_cancellation_expires_only_the_matching_confirmation(
                 "params": {"message": "Disconnect?", "requestedSchema": {}},
             }
         )
-        await wait_for(
-            lambda: any(r.status == "pending" for r in store.list_approval_requests())
-        )
+        async with asyncio.timeout(2):
+            created = await created_requests.get()
+        assert created.payload["message"] == "Disconnect?"
         (abandoned,) = [
             r for r in store.list_approval_requests() if r.status == "pending"
         ]

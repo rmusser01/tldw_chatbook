@@ -1240,8 +1240,10 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
         assert rail._allocation_reconcile_scheduled
         await _wait_for_context_condition(
             pilot,
-            lambda: recovery.has_class("conversation-attention-error")
-            and _context_allocation_idle(rail),
+            lambda: (
+                recovery.has_class("conversation-attention-error")
+                and _context_allocation_idle(rail)
+            ),
         )
 
         assert recovery.display is True
@@ -1270,16 +1272,35 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         rail = console.query_one("#console-left-rail", ConsoleLeftRail)
-        await _wait_for_context_condition(
-            pilot,
-            lambda: _context_allocation_idle(rail),
-        )
+
+        def startup_publications_settled() -> bool:
+            # Allocation can be idle while startup readers still have a later
+            # FULL/context publication queued. Measure resize after those real
+            # publishers settle, without stopping workers or raising the bound.
+            projection = getattr(console, "_console_readiness_config_projection", None)
+            return (
+                console._console_attach_reconciled
+                and projection is not None
+                and projection.value is not None
+                and not projection.pending
+                and not projection._reads
+                and not console._console_sync_in_progress
+                and not console._console_sync_requested
+                and not getattr(
+                    console, "_console_control_bar_replay_whole_sync", False
+                )
+                and not getattr(console, "_console_control_bar_sync_scheduled", False)
+                and not any(
+                    worker.node is console and not worker.is_finished
+                    for worker in console.workers
+                )
+                and _context_allocation_idle(rail)
+            )
+
+        await _wait_for_context_condition(pilot, startup_publications_settled)
         for descriptor in CONTEXT_SECTION_DESCRIPTORS:
             rail.apply_section_open(descriptor.section_id, True)
-        await _wait_for_context_condition(
-            pilot,
-            lambda: _context_allocation_idle(rail),
-        )
+        await _wait_for_context_condition(pilot, startup_publications_settled)
         sections = list(rail.query(ConsoleBoundedSection))
         before_allocations = tuple(section.allocation for section in sections)
         before_viewport_height = rail.query_one(
@@ -1308,10 +1329,12 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         )
         monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
         compact_flips: list[bool] = []
+        compact_passes: list[int] = []
         original_set_compact = PortraitRadio.set_compact
 
         def set_compact_spy(radio: PortraitRadio, compact: bool) -> None:
             compact_flips.append(compact)
+            compact_passes.append(reconcile_runs)
             original_set_compact(radio, compact)
 
         monkeypatch.setattr(PortraitRadio, "set_compact", set_compact_spy)
@@ -1328,12 +1351,13 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         cue = rail.query_one("#console-left-rail-outer-hint", Static)
         assert console.query_one("#console-shell").has_class("-console-compact")
         assert helper_calls >= 1
-        # Every request the resize makes coalesces into one pass. Since
-        # b333cebdfe that pass flips the Character radio's voice meter to
-        # compact (it no longer fits in 30 rows), which changes the body's
-        # height, so the radio asks for exactly one follow-up pass (TASK-39158).
+        # The first pass changes the Character radio's geometry (b333cebdfe,
+        # TASK-39158). Its follow-up may precede the bounded section's demand
+        # update, which then needs one further pass. Pin the first-pass flip
+        # and bounded convergence; the stability assertion below forbids a loop.
         assert compact_flips == [True]
-        assert reconcile_runs == 1 + len(compact_flips)
+        assert compact_passes == [1]
+        assert 2 <= reconcile_runs <= 3
         assert outer.content_region.height < before_viewport_height
         assert (
             before_allocations
@@ -1359,8 +1383,7 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         # 96f24f0efa moved Character from the last section to the third, so the
         # header scroll_end must reveal is the last descriptor's (TASK-39158).
         last_header = rail.query_one(
-            "#console-rail-section-header-"
-            f"{CONTEXT_SECTION_DESCRIPTORS[-1].section_id}"
+            f"#console-rail-section-header-{CONTEXT_SECTION_DESCRIPTORS[-1].section_id}"
         )
         outer.scroll_end(animate=False, immediate=True)
         await pilot.pause()

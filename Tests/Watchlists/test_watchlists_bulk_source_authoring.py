@@ -1190,7 +1190,10 @@ async def test_a_rail_reopened_after_a_discarded_build_shows_the_landed_tree(
             tree = screen.query_one("#wl-tree", WatchlistTree)
             return [int(row["id"]) for row in tree._watchlists]
 
-        await _until(pilot, lambda: shown() == [watchlist["id"]])
+        await _until(
+            pilot,
+            lambda: bool(screen.query("#wl-tree")) and shown() == [watchlist["id"]],
+        )
         result = shown()
 
     assert landed == [True]

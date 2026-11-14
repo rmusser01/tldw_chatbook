@@ -176,7 +176,7 @@ def _approval_wire_payload(payload: dict[str, Any]) -> dict[str, Any]:
         else []
     )
     calls = _relay_calls(raw_calls, payload.get("view"))
-    for row, call in zip(rows, calls):
+    for row, call in zip(rows, calls, strict=False):
         call.update(
             (key, row[key])
             for key in (

@@ -339,8 +339,7 @@ def clear_raw_shell_progress(bridge, run_ids, *, cancelled: bool, log) -> None:
             )
         except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
             log.warning(
-                "Console shell activity display could not be settled ({})",
-                type(exc).__name__,
+                f"Console shell activity display could not be settled ({type(exc).__name__})"
             )
 
 
@@ -379,8 +378,7 @@ def finish_approval_activity(
         tool_activity.finish(cancelled)
     except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
         log.warning(
-            "Console tool activity display could not be settled ({})",
-            type(exc).__name__,
+            f"Console tool activity display could not be settled ({type(exc).__name__})"
         )
     from tldw_chatbook.Agents.approval_observation import (
         forget_approval_contexts,

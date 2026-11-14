@@ -113,7 +113,9 @@ class _SaveTimeline:
             if start not in self.marks:
                 break
             if end not in self.marks:
-                phases.append(f"{name} still running at {now - self.marks[start]:.2f} s")
+                phases.append(
+                    f"{name} still running at {now - self.marks[start]:.2f} s"
+                )
                 break
             phases.append(f"{name} {self.marks[end] - self.marks[start]:.2f} s")
         running = self.thread is not None and "thread_end" not in self.marks
@@ -123,8 +125,11 @@ class _SaveTimeline:
             _frame_of(thread)
             for thread in list(getattr(executor, "_threads", ()))
             if any(
-                e.name == "run" and e.filename.endswith("futures/thread.py")
-                for e in traceback.extract_stack(sys._current_frames().get(thread.ident))
+                e.name == "run"
+                and e.filename.replace("\\", "/").endswith("futures/thread.py")
+                for e in traceback.extract_stack(
+                    sys._current_frames().get(thread.ident)
+                )
             )
         ]
         threads = {thread.ident: thread for thread in threading.enumerate()}
@@ -277,10 +282,16 @@ async def test_success_canonicalizes_unchanged_f9_draft_and_continues_once(
             original_action(**kwargs)
 
         monkeypatch.setattr(screen, "action_settings_save_category", action)
+        timeline = _SaveTimeline(monkeypatch, screen)
+        timeline.start()
         original_action(allow_text_entry_focus=True)
         # Until the save worker settles: its thread's write lands before the
         # worker canonicalizes the field (TASK-38993; a 0.2 s pause raced it).
-        await _until(lambda: not screen._snapshot_preferences_saving)
+        try:
+            await _until(lambda: not screen._snapshot_preferences_saving)
+        except TimeoutError as error:
+            error.add_note(timeline.note())
+            raise
         assert len(writes) == 1
         assert preferences.load_snapshot_preferences().keep_count == 27
         assert field.value == "27"

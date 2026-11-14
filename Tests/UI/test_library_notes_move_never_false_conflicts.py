@@ -313,10 +313,12 @@ async def _move(host, pilot, screen, outcomes, seeded, move) -> tuple:
         host,
         screen,
         lambda: _row_for(screen, note_id, source_id),
-        lambda: (selected := screen._selected_library_notes_tree_row()) is not None
-        and selected.note_id == note_id
-        and bool(screen.query("#library-notes-placement-move"))
-        and not screen._library_notes_mutation_fenced(),
+        lambda: (
+            (selected := screen._selected_library_notes_tree_row()) is not None
+            and selected.note_id == note_id
+            and bool(screen.query("#library-notes-placement-move"))
+            and not screen._library_notes_mutation_fenced()
+        ),
         lambda: f"{title!r} selected with Move note offered",
     )
     return await _pick(
@@ -355,8 +357,10 @@ async def _pick(
     await pilot.press(*query)
     await _wait(
         pilot,
-        lambda: _picker_rows(host)[:1] == [destination]
-        and host.screen._shown_query == query,
+        lambda: (
+            _picker_rows(host)[:1] == [destination]
+            and host.screen._shown_query == query
+        ),
         lambda: f"the list narrowed to {destination!r}: {_picker_rows(host)}",
     )
     await pilot.press("down", "enter")
@@ -388,6 +392,26 @@ def _laid_out(screen, selector: str) -> bool:
     )
 
 
+def _pointer_target_ready(screen, selector: str) -> bool:
+    """Wait out the delete's final recompose and its stale compositor hit map."""
+    canvases = list(screen.query("#library-notes-canvas"))
+    buttons = list(screen.query(selector).results(Button))
+    if not canvases or not buttons:
+        return False
+    canvas, button = canvases[0], buttons[0]
+    if (
+        not canvas.display
+        or not canvas._children_ready
+        or canvas._recompose_required
+        or screen._library_notes_mutation_fenced()
+        or not button.is_attached
+        or not button.region.area
+    ):
+        return False
+    target, _offset = screen.get_widget_and_offset_at(*button.region.offset)
+    return target is button
+
+
 def _folder_row(screen, folder_id: str) -> Button | None:
     for row in screen.query(".library-notes-folder-row").results(Button):
         if getattr(row, "folder_id", "") == folder_id:
@@ -411,9 +435,11 @@ async def test_after_deleting_the_selected_note_move_and_add_act_on_nothing(
             host,
             screen,
             lambda: _row_for(screen, note_id, None),
-            lambda: screen._library_note_session.snapshot is not None
-            and screen._library_note_session.snapshot.note_id == note_id
-            and bool(screen.query("#library-note-context")),
+            lambda: (
+                screen._library_note_session.snapshot is not None
+                and screen._library_note_session.snapshot.note_id == note_id
+                and bool(screen.query("#library-note-context"))
+            ),
             lambda: "'Loose note 4' open in the editor",
         )
         selected = screen._selected_library_notes_tree_row()
@@ -441,8 +467,10 @@ async def test_after_deleting_the_selected_note_move_and_add_act_on_nothing(
         )
         await _wait(
             pilot,
-            lambda: _row_for(screen, note_id, None) is None
-            and "○ Move note" in _painted(host),
+            lambda: (
+                _row_for(screen, note_id, None) is None
+                and "○ Move note" in _painted(host)
+            ),
             lambda: f"the note gone and Move note withdrawn: {_painted(host)}",
         )
 
@@ -450,7 +478,15 @@ async def test_after_deleting_the_selected_note_move_and_add_act_on_nothing(
         assert not list(screen.query(".library-notes-tree-note-row.is-selected"))
         painted = _painted(host)
         assert "○ Add to folder" in painted and "○ Move note" in painted, painted
-        for control in ("#library-notes-placement-move", "#library-notes-placement-add"):
+        for control in (
+            "#library-notes-placement-move",
+            "#library-notes-placement-add",
+        ):
+            await _wait(
+                pilot,
+                lambda control=control: _pointer_target_ready(screen, control),
+                lambda control=control: f"the settled pointer target for {control}",
+            )
             button = screen.query_one(control, Button)
             assert button.disabled, control
             await pilot.click(control)
@@ -464,7 +500,9 @@ async def test_after_deleting_the_selected_note_move_and_add_act_on_nothing(
         assert outcomes == []
 
 
-async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch) -> None:
+async def test_a_genuine_conflict_offers_a_working_refresh(
+    tmp_path, monkeypatch
+) -> None:
     """AC#6: a folder changed behind the tree -> the notice names it, in full,
     with a Refresh control; Refresh reloads the tree and clears the notice,
     and the same move then succeeds against the reloaded folder."""
@@ -478,9 +516,11 @@ async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch
             host,
             screen,
             lambda: _folder_row(screen, recipes),
-            lambda: (selected := screen._selected_library_notes_tree_row()) is not None
-            and selected.folder_id == recipes
-            and bool(screen.query("#library-notes-folder-move")),
+            lambda: (
+                (selected := screen._selected_library_notes_tree_row()) is not None
+                and selected.folder_id == recipes
+                and bool(screen.query("#library-notes-folder-move"))
+            ),
             lambda: "Recipes selected with Move folder offered",
         )
         loaded_version = _folder_row(screen, recipes).folder_version
@@ -506,10 +546,14 @@ async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch
         conflict = "This folder was changed elsewhere since the tree loaded."
         await _wait(
             pilot,
-            lambda: conflict in _status_line(host, screen)
-            and "Refresh" in _status_line(host, screen),
-            lambda: f"the whole conflict sentence and Refresh: "
-            f"{_status_line(host, screen)!r}",
+            lambda: (
+                conflict in _status_line(host, screen)
+                and "Refresh" in _status_line(host, screen)
+            ),
+            lambda: (
+                f"the whole conflict sentence and Refresh: "
+                f"{_status_line(host, screen)!r}"
+            ),
         )
         assert "…" not in _status_line(host, screen)
         assert screen._notes_state.notice_refresh_offered is True
@@ -525,9 +569,11 @@ async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch
         screen._refresh_library_notes_trash()
         await _wait(
             pilot,
-            lambda: screen.focused is not None
-            and screen.focused is not refresh
-            and screen.focused.id == "library-notes-notice-refresh",
+            lambda: (
+                screen.focused is not None
+                and screen.focused is not refresh
+                and screen.focused.id == "library-notes-notice-refresh"
+            ),
             lambda: f"focus kept on the recomposed Refresh: {screen.focused!r}",
         )
         assert (
@@ -546,15 +592,19 @@ async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch
         await pilot.press("enter")
         await _wait(
             pilot,
-            lambda: not screen._notes_state.notice
-            and (row := _folder_row(screen, recipes)) is not None
-            and row.folder_version == loaded_version + 1,
+            lambda: (
+                not screen._notes_state.notice
+                and (row := _folder_row(screen, recipes)) is not None
+                and row.folder_version == loaded_version + 1
+            ),
             lambda: f"the tree reloaded: {_status_line(host, screen)!r}",
         )
         await _wait(
             pilot,
-            lambda: conflict not in _painted(host)
-            and not screen.query("#library-notes-notice-refresh"),
+            lambda: (
+                conflict not in _painted(host)
+                and not screen.query("#library-notes-notice-refresh")
+            ),
             lambda: f"the notice and Refresh gone: {_status_line(host, screen)!r}",
         )
         assert screen._notes_state.notice_refresh_offered is False
@@ -565,16 +615,20 @@ async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch
         # Waited on, never read straight after a mount.
         await _wait(
             pilot,
-            lambda: screen.focused is not None
-            and screen.focused.id == "library-notes-filter",
+            lambda: (
+                screen.focused is not None
+                and screen.focused.id == "library-notes-filter"
+            ),
             lambda: f"focus on the filter after Refresh: {screen.focused!r}",
         )
         # And a real key still works on the recomposed screen: Tab moves on.
         await pilot.press("tab")
         await _wait(
             pilot,
-            lambda: screen.focused is not None
-            and screen.focused.id != "library-notes-filter",
+            lambda: (
+                screen.focused is not None
+                and screen.focused.id != "library-notes-filter"
+            ),
             lambda: f"Tab to move focus off the filter: {screen.focused!r}",
         )
 
@@ -584,9 +638,11 @@ async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch
             host,
             screen,
             lambda: _folder_row(screen, recipes),
-            lambda: (selected := screen._selected_library_notes_tree_row()) is not None
-            and selected.folder_id == recipes
-            and bool(screen.query("#library-notes-folder-move")),
+            lambda: (
+                (selected := screen._selected_library_notes_tree_row()) is not None
+                and selected.folder_id == recipes
+                and bool(screen.query("#library-notes-folder-move"))
+            ),
             lambda: "Recipes selected again",
         )
         _operation, asked, ok, notice = await _pick(

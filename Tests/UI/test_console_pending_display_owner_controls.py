@@ -31,15 +31,17 @@ from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspec
 async def _prepared(app, pilot):
     console, controller, store, session_id = await original._seed_console(app, pilot)
     projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-    # TASK-38745: warm() accepts a display up to its 1 s life, so the checked
-    # proof can expire mid-sync (or the storage-admission lock be busy) and
-    # the sync defers. Retry until one sync renders.
+    # TASK-38745: warming can decline a changed owner key; an accepted proof
+    # can also expire mid-sync (or the storage-admission lock be busy).
+    # Keep the original retry deadline while establishing readiness and rendering.
     deadline = time.monotonic() + 30
     while True:
-        assert await projection.warm()
-        if console._sync_console_rail_and_controls() is not False:
+        if (
+            await projection.warm()
+            and console._sync_console_rail_and_controls() is not False
+        ):
             break
-        assert time.monotonic() < deadline, "the rail sync kept deferring"
+        assert time.monotonic() < deadline, "the checked rail display kept deferring"
         await pilot.pause(0.05)
     await pilot.pause()
     inspector = console.query_one("#console-run-inspector-state", ConsoleRunInspector)

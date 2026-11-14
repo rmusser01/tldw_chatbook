@@ -21,6 +21,93 @@ Sources: [phase-attribution report](2026-10-06-console-send-phase-attribution.md
 [ADR-230](../../backlog/decisions/230-console-send-preparation-and-io-ownership.md),
 and [qualification task](../../backlog/tasks/task-34563.4%20-%20Qualify-shared-preparation-Send-latency.md).
 
+## Current-dev regression follow-up (2026-11-11)
+
+PR #3050 (including #3049) merged on October 31. Verification against dev
+`ae9f9e8d21c999b30ac52b2258324ef92a04c8e1` found test-harness drift:
+child interpreters could import Core from a different editable checkout; the
+mounted feedback host lacked the production executor/timer guard; and receipt
+setup could send before the real emergency-stop arrival read published.
+Correct these without changing product storage or permission policy.
+
+Retain OPT-73 (native admission) and OPT-78 (executor attribution) separately.
+In `current-dev-provider-entry-stacks-20261111-1`, a diagnostic 60-second
+provider-entry deadline expired while the agent's RunLogWriter.bind called
+resolve_sensitive_context → config.get_user_data_dir and waited for the existing
+root-scoped storage initializer. The active initializer belonged to a workspace
+availability read and was in Windows file-identity qualification. Thirty-five
+executor threads were idle. This identifies an admission queue, not a deadlock,
+a 60-second syscall, or executor starvation. Admission serialization predates
+PR #3050; workspace availability already coalesces in-flight refreshes. A larger
+functional timeout did not resolve the failure and was reverted.
+
+A bounded preview-read correction is selected as OPT-101 below; further native-admission contraction remains deferred. All four image controls passed: two empty-selection cases and two actual
+current/detached native-read shutdown cases with physical native cleanup. Other sessions were
+running native work on the same host: these regression runs are not quiet timing
+comparisons and establish no new Send or physical-terminal latency result.
+
+
+### PR3496 Windows admission attribution (2026-11-11)
+
+Passive original-function attribution in `merge-windows-admission-20261111-2`
+found 54 admissions on the UI thread after Send; 38 belonged to the two light
+surface previews (26 before commit, 12 during history preflight). The older
+349-admission sample includes fixture startup and is not a per-Send file count.
+Four original held-permission-read controls reproduced blocked loop progress.
+The first owned-read candidate passed all 16 focused ownership, cancellation,
+kill-state and custom-callback controls, while existing headless controls exposed
+a compatibility defect retained in the review receipts.
+
+`merge-windows-preview-handoff-20261111-1` confirms the original switch read now
+runs in a preparation worker, but still misses the unchanged 15-second provider
+entry deadline. The failure stack is in native startup/witness checks while a
+character-context metadata worker also runs. This establishes neither a deadlock
+nor a throughput gain. Keep OPT-73/78/90/96/99 deferred; no cache, skipped native
+check, new scheduler or deadline increase is selected. Other sessions' native
+suites remain active, so these are not quiet timing comparisons.
+
+The separate cold input diagnostic `merge-windows-input-20261111-1` observed
+mutation at 8.1 ms and a supplied frame at 24.4 ms while the original configuration
+read stayed held. It predates the preview correction and is not a whole-Send,
+physical terminal flush or consistent 100 ms qualification claim.
+
+### PR3496 first-feedback follow-up (2026-11-12)
+
+At published `20cd2cf`, `merge-windows-final-20261111-1` passed eight Windows
+checks, including actual current/detached native image-read shutdown and physical
+retirement. Enter supplied feedback was 60.3 ms; button feedback failed at
+1135.8 ms wall / 968.8 ms loop CPU. Both full-handoff routes missed their
+unchanged 15-second provider-entry bounds. A separate cold original button
+control failed at 866.2 / 828.1 ms. These failures remain retained.
+
+Original-function diagnostics then observed button feedback at 239.2 / 171.9 ms,
+72.2 / 62.5 ms, and cold 95.0 / 93.8 ms without a production change. They preserve
+original input, observers, I/O and deadlines but add sampling/phase callbacks, so
+they do not establish acceptance timing or a gain. The 239 ms sample places a
+queued full-sync prefix before Send handling, then transcript/config metadata and
+layout before the natural frame; the final display scan adds only 1.7 ms before
+detection. GC accounts for 28.7 ms in that sample. The larger uninstrumented CPU
+intervals remain unexplained. Keep OPT30/60 for full-sync/render scheduling and
+configuration metadata investigation; no replay suppression, readiness warm-up,
+new cache, permission shortcut or increased deadline is selected. OPT102 retains
+the narrowly scoped lookup alternative without claiming it fixes the delay.
+
+
+### PR3496 current-dev integration (2026-11-12)
+
+Rebasing onto dev e10ce63fe8 required recognizing its exact AppToolKillSwitch
+constructor through the existing finite preparation owner. The original held-read
+regression failed on the UI thread before correction; all28 preparation controls
+then passed. No additional native reads are omitted. The final integrated run was
+71pass/1fail; final Windows qualification was12pass/6fail, with actual current and
+detached native shutdown passing and source fixed within each run. Enter/button
+submitted text appeared at489/206ms and Sending at492/208ms; both100ms CPU budgets
+and both15s provider-entry bounds remain unqualified. Held-read input frames were
+18.5/23.0ms. Three original MCP completion-wait failures remain retained; OPT-103
+records the separate cost observed by the subsequent diagnostic without claiming
+that its passes explain those failures. These are headless observations, not a
+quiet comparison, physical terminal flush or a whole-Send speed improvement.
+
 ## Latest bounded cleanup and quiet comparison (2026-10-08)
 
 Integration commit `fa3dad2d82d31920bd18fdb8db2b7abf74565faf` implements
@@ -228,6 +315,9 @@ Source: `chat_screen.py` d221 lines 17507-17842, 18219, 20682-20743;
 | OPT-98 / Retained; qualified duplicate-stage removal | **Establish stock tool definitions once at existing composition.** Qualified owned capture omits initial policy/catalog/inventory reads; successful consumer publication freezes its IDs/hashes. | ADR-230 explicitly moves eligibility to each existing execution consumer; invocation authority stays fresh. 259 distinct targeted cases pass. Quiet ABBA warm3.031 to2.718s, cold4.885 to3.945s, with all12 turns saved/settled and source/no-overlap checks. Initial a1 excluded for detected external evidence-reader overlap, replaced before candidate runs. See composition-tool-ceiling plan; one-second and physical-feedback targets remain open. |
 | OPT-99 / Deferred; source invalidation owner missing | **Retain reusable versioned MCP definition metadata on LocalMCPStore.** This could amortize inventory reads across consumers. | Not implemented: hand edits, other processes, recovery and cold empty snapshots need a complete invalidation contract. OPT98 removes the duplicate initial stage using existing owners; no cross-attempt cache is needed for that gain. A shared mutable attempt ceiling is also unselected under OPT14 because hooks, previews and live runs have distinct lifetimes. |
 | OPT-100 / Deferred; startup config-lock consumer identified | **Review scheduler heartbeat default-path naming's full config admission within its existing finite worker.** The original failure-time trace identifies `default_heartbeat_path` holding both config RLocks through recovery metadata observation while Console FULL retries. Explicit `heartbeat_path` skips default naming, but no elapsed saving is measured. | Latency shrink is paused. The producer/default route pre-exists dev; no matched dev contention measurement proves unchanged cost or permits cached/constructor-path substitution. Heartbeat is already off-loop. Revisit only after establishing live profile/source currentness and a compatible existing destination owner; preserve selected-root changes, cold establishment/refusal, native recovery/pause evidence, atomic durable heartbeat write and awaited shutdown retirement. Any chosen change needs causal correctness and separate timing evidence; no geometry, timer, executor, TTL or budget shortcut. See archived `pr3050-closeout/geometry-readiness-consumer-evidence/evidence-note.md` (SHA17358203) and `final-geometry-consumer-evidence-2`. |
+| OPT-101 / Selected; final qualification pending | **Prepare the stock light-preview kill-switch observation off the input loop.** Capacity and history preflights currently perform real permission admission synchronously despite the preview's former no-I/O description. | Reuse the existing finite preparation owner and one-pass result, preserve fresh kill-state representation, original custom callback routes, source/session checks and physical retirement. This is distinct from OPT-98's composition ceiling. Initial original-body RED and candidate ownership controls are retained above; no reduction in admission work or whole-Send latency is claimed. |
+| OPT-102 / Deferred; benefit unqualified | **Use the portrait radio's existing typed ID lookup instead of a class-selector scan.** A slow first-feedback diagnostic sampled `update_portrait_radio` during a queued full Console sync. Stock construction fixes the ID to `console-character-radio`; Textual can use its ID lookup while retaining type checking and per-call replacement handling. | No application widget cache is proposed. A later cold phase trace measured this call at only 0.09 ms, so no material saving or cause of the 828/969 ms loop-CPU misses is established. Preserve custom/absent widget behavior and prove a reached cost before choosing this change. |
+| OPT-103 / Deferred; native approval-read cost observed | **Review synchronous guarded approval polling in live MCP elicitation.** The current-dev path uses a one-second poll and reads the approval store again in final cleanup. Two original Windows typed-ID cancellation cases missed their existing two-second completion wait; a passive follow-up passed and measured two reads totaling0.739/0.802s, almost all of the final-wait wall interval. | The relevant MCP production files match dev; no failed-run completion timestamp proves which interval caused the deadline misses. Preserve typed IDs, authoritative approval state, cancellation/disconnect cleanup and physical native retirement. Investigate an existing owned I/O or notification boundary only after causal evidence; no cache, polling-policy change, relaxed deadline or new scheduler is selected in this PR. Diagnostic passes do not establish consistent latency. |
 
 ## Architecture alternatives retained with their decision
 
@@ -2242,3 +2332,21 @@ One Textual Worker ContextVar warning remains recorded. This does not close
 consistent 100 ms feedback or final post-rebase qualification. See the phase
 report for Windows Close and early legacy-approval limits; no further latency
 work is selected.
+
+**FOLLOWUP-17 — review startup FULL requests during replay backoff (deferred, 2026-11-12).** The unchanged three-second Windows backoff test produced one warm-up at 2.81s in an earlier candidate run, ten after integration, and seven on dev4a9 with a passive observer. The dev observer saw attachment still incomplete at the first replay decision, then original requested delays growing through 0.4, 0.8, 1.6, 3.2 and 5 seconds. This does not identify which requests shortened the actual intervals or prove an owner-reset cause. The fixed one-second startup pause is not a readiness proof. Review the originating request paths and a bounded readiness precondition before selecting any scheduling or fixture change; do not raise the existing count/time limits. The new owned preflight path is not reached by this no-Send test. No change is selected while further latency work is paused. Receipts: pr3496-cadence-batch-integrated-20261112-1, pr3496-rebased-ui-fixes-20261112-1 and baseline-4a9-backoff-observed-20261112-1 under claude-watch-final-gate-review.
+**FOLLOWUP-18 — evaluate completion-event waits in save fixtures (deferred, 2026-11-12).** UI25's original five-second snapshot-save predicate failed on both clean dev457 and the integrated branch. It polls a resident flag every10ms; unlike TASK36530's older defect it performs no DOM walk. An exact worker-completion event could avoid those wakeups, but no measured causal improvement is established. A timed direct Textual Worker.wait() would propagate cancellation to the save task, so any later comparison must preserve the original save lifetime and five-second deadline (for example, reuse the existing timeline completion event). Do not change the polling or deadline on speculation. Native-write/executor attribution remains covered by OPT73/78 and TASK38987. Receipts: baseline-457-late-ci-20261112-1 and pr3496-457-late-ci-20261112-1 under claude-watch-final-gate-review.
+
+**FOLLOWUP-19 — isolate parent-profile Send fixtures (deferred, 2026-11-12).** The db0 Windows batch proved that feedback fixtures leave their created workspaces in the shared bootstrap profile and the first resend case inherits them; this persists whether the preceding case passes or fails. The second resend uses a fresh private child profile and still misses the initial failed-stream text assertion, so carryover is not an established cause of that failure. The dump includes hidden recovery placeholders and cannot establish trace-persistence refusal; inspect structured run/recovery state before attributing a cause. Consider private-profile ownership or cleanup of only fixture-created records, weighing added startup cost; no isolation change is selected during the merge. Receipts: pr3496-db0-final-windows-20261112-1 and pr3496-closeout-deferred.md under claude-watch-final-gate-review.
+
+**FOLLOWUP-20 — retain fleet-delivery cleanup ownership through session close (deferred, 2026-11-12).** The integrated228-case run passed its assertions but emitted a pending cancelling `ConsoleFleetWakeCoordinator._deliver` task awaiting `_finish_attempt`. The exact close-arm control on clean dev4b90 reproduced that diagnostic. Source review found that the session fence removes delivery registry membership before the outer finally settles; the test cleanup gathers only registered deliveries, and production session/app closure has no explicit drain of that outer delivery tail. These paths match dev and the fixture does not reach this PR's permission worker. Review a retained/drained owner for that tail before claiming universal shutdown cleanliness; no lifecycle redesign is included here. Existing current/detached native-image shutdown checks both pass. Receipts: pr3496-4b90-contracts-preparation-20261112-1 and baseline-4b90-resend-wake-20261112-1 under claude-watch-final-gate-review.
+
+
+**FOLLOWUP-21 — profile storage-admission contention before Send submission (deferred, 2026-11-12).** A one-shot snapshot at the original Windows resend text-wait failure, before teardown, locates both Sends in mounted configuration capture -> MCP definition selection -> native permission payload read. Both have zero provider calls, no active submit/custodied turn and settled attachment with the stop path installed. The first permission reader waits at storage_admission._Acquisition.initializing while a concurrent background AgentRunsDB.count_subagents_by_conversation admission is inside Windows qualification evidence stat/NtCreateFile. Source places both paths under profile-wide initializing(root); direct acquisition/root identities and hold duration were not sampled, so this is source-supported attribution rather than a measured contention interval. The second permission reader is inside Windows descriptor-relative security/parent verification at the boundary. These source paths are byte-identical to dev4b90, and the new owned capacity/history preview read has not been reached. The original 80x0.05 text-wait assertions still fail; no deadline, permission authority, caching or production code changed. Do not infer a trace-persistence refusal from teardown or hidden UI placeholders. Consider a later measured review of profile initialization serialization and repeated qualification/path checks, preserving effect-time guards and physical read ownership; further latency work remains paused. Receipts: pr3496-resend-failure-boundary-20261112-1 (first snapshot truncated to128 of601/603 tasks;2failed126.50s) and -2 (all tasks captured;2failed126.48s), resend-failure-probe.jsonl. No executor-starvation claim: the failure snapshot had idle pool threads and approximate queue size0, not a history of the interval.
+
+
+**FOLLOWUP-22 — superseded aggregate jobs can hold workflow concurrency (not implemented, 2026-11-12).** Queue front PR3491's current approved attempt43306757484 was pending with no jobs behind older-head run43284372195. All47 earlier jobs had completed; the sole unfinished job was unassigned aggregate131492216817. The cleanup workflow intentionally preserves any run containing an aggregate/queue tick to protect controller ownership. After independently verifying different old/current heads, exact branch/PR association, no active jobs and the queued aggregate identity, root cancelled only the obsolete run. It completed/cancelled, and the current run immediately left pending and created preflight131557062795. Consider a later narrowly guarded cleanup refinement that distinguishes obsolete inactive aggregates from live queue controllers and preserves needed current-head approval; no workflow/policy change is included in PR3496. Receipts: pr3496-front-obsolete-concurrency-release.json and pr3496-c429-front-concurrency-confirmation.json. General runner waiting remains after this specific concurrency blocker was removed.
+
+
+**FOLLOWUP-23 — reuse a verified source snapshot within diagnostic-boundary tests (not implemented, 2026-11-13).** The thirteen manifest/ledger controls took341.29s; three tests that rebuild the inventory took109.69/112.27/116.95s (whole test-call durations, not isolated build timings). A future fixture could build one immutable source snapshot and deep-copy it per mutant if source-frozen ownership and mutation isolation are proved. Preserve the canonical production source check and every drift/schema/digest negative. No cache or test weakening is selected for PR3496. Receipt: pr3496-26b2-manifest-ledger-fix-20261113-1.
+
+**FOLLOWUP-24 — reduce unrelated conflicts in append-only evidence documentation (not implemented, 2026-11-13).** Replaying seventeen reviewed commits onto dev26b2 produced no runtime conflict; independent additions to lessons-testing-evidence.md were the sole local rebase conflict and delayed publication of the combined source. The conflicting remote head had no new PR CI run; this does not attribute its absence to that file alone. Consider task-local evidence plus a maintained short lessons index or area-specific files, preserving discoverability and historical evidence. No documentation repartition, squash or merge-policy change is selected here. Receipt: pr3496-rebase-26b2-plan.md and the reviewed range-diff.

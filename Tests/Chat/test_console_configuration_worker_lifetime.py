@@ -109,7 +109,7 @@ class _OriginalConfigurationWorkspaceRead:
             return closed and self.lease not in storage._live_leases
 
 
-def _mounted_capture_provider(case):
+def _mounted_capture_provider(case, *, rag_top_k=None):
     from functools import partial
     from types import SimpleNamespace
 
@@ -122,12 +122,55 @@ def _mounted_capture_provider(case):
     owner._current_chat_store_accessor = lambda: case.store
     owner._chat_store_accessor = lambda: case.store
     owner._rag_source_types_accessor = lambda: ["notes"]
-    owner._rag_top_k_accessor = lambda: 17
+    owner._rag_top_k_accessor = (lambda: 17) if rag_top_k is None else rag_top_k
     screen = SimpleNamespace(
         _session=owner, app_instance=case.app, _console_runtime=lambda: case.runtime
     )
     owner._scratch_snapshot_provider = partial(_stock_console_scratch_snapshot, screen)
     return owner._build_console_turn_execution_context
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["stock", "custom"])
+async def test_mounted_rag_depth_keeps_the_reader_on_its_owner(
+    runtime_case, monkeypatch, route
+):
+    from tldw_chatbook.Library.library_rag_state import library_rag_profile_top_k
+    from tldw_chatbook.UI.Screens.chat_screen import _stock_received_rag_top_k
+
+    observed = []
+    monkeypatch.setenv("RAG_TOP_K", "37")
+
+    def custom_top_k():
+        observed.append(threading.current_thread())
+        return 17
+
+    def original_started(_code, _offset):
+        observed.append(threading.current_thread())
+
+    provider = _mounted_capture_provider(
+        runtime_case,
+        rag_top_k=_stock_received_rag_top_k if route == "stock" else custom_top_k,
+    )
+    monitoring = sys.monitoring
+    tool = next(index for index in range(6) if monitoring.get_tool(index) is None)
+    code = library_rag_profile_top_k.__code__
+    monitoring.use_tool_id(tool, "mounted-rag-depth")
+    try:
+        monitoring.register_callback(tool, monitoring.events.PY_START, original_started)
+        monitoring.set_local_events(tool, code, monitoring.events.PY_START)
+        result = await runtime_case.controller.capture_turn_configuration_snapshot(
+            runtime_case.session.id, context_provider=provider
+        )
+    finally:
+        monitoring.set_local_events(tool, code, 0)
+        monitoring.register_callback(tool, monitoring.events.PY_START, None)
+        monitoring.free_tool_id(tool)
+
+    assert result.rag_defaults["source_types"] == ("notes",)
+    assert result.rag_defaults["top_k"] == (37 if route == "stock" else 17)
+    assert len(observed) == 1
+    assert (observed[0] is threading.current_thread()) == (route == "custom")
 
 
 @pytest.mark.asyncio

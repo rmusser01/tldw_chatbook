@@ -1,14 +1,15 @@
 """TASK-35970: a collapsed Character section renders nothing while a send refreshes it.
 
-Every send ends with a Character refresh: the controller publishes REFRESHING
-(``loading=True``) and then the loaded result. ``ConsoleCharacterContext.
-sync_state`` recomposed the whole browser, search Input included, for each
+Send refreshes the Character scope. Stock idle checks can publish the loaded
+result directly; other refresh routes first publish REFRESHING.
+``ConsoleCharacterContext.sync_state`` recomposed the whole browser, search Input included, for each
 snapshot, whether or not the section was expanded. Textual answers the
 recompose's layout requests with a whole-screen reflow: two per send window,
 8.4-74 ms each, measured live on 2026-10-20 (160x45, a 36-turn chat).
 
-In the mounted harness the reads cannot open the ``:memory:`` database, so
-every Character check errors and publishes REFRESHING, then the error. Measured
+The original ``:memory:`` harness could not open the database, so each check
+published REFRESHING and then an error. The current file-backed harness can
+publish a successful IDLE result directly. Measured
 on dev 0d7e418db1 with the section collapsed: two recomposes per check, eight
 layout requests inside the section from Enter to the first chunk, sixteen over
 a 2.5 s held stream and twenty-four after the reply ended.
@@ -172,10 +173,19 @@ async def test_send_with_the_character_section_collapsed_renders_nothing_there(
             # The reply's end-of-run syncs check the Character scope again.
             await pilot.pause(1.0)
             renders.stop()
+            conversation_id = console._session._current_console_conversation_id()
+            assert conversation_id, "the send did not persist its conversation"
             assert any(
-                state.phase is ConsoleCharacterOperationPhase.REFRESHING
+                state.phase is ConsoleCharacterOperationPhase.IDLE
+                and not state.loading
+                and not state.error
+                and state.scope_fingerprint is not None
+                and state.scope_fingerprint.open_conversation_id == conversation_id
                 for state in published
-            ), "the send published no Character refresh; nothing was measured"
+            ), (
+                "the send published no loaded Character scope for its conversation; "
+                f"observed {[(state.phase.value, state.loading, state.error, state.scope_fingerprint) for state in published]}"
+            )
             assert renders.recomposes == [], (
                 f"{len(renders.recomposes)} Character recomposes while collapsed, "
                 f"phases {[state.phase.value for state in renders.recomposes]}"
@@ -226,8 +236,7 @@ def _row(revision: int, n: int) -> CharacterConversationRow:
 def _install_loading_controller(monkeypatch, revision: list[int]) -> None:
     """Give the next mounted Console a Character controller that loads groups.
 
-    The harness's own reads cannot open the ``:memory:`` database, so every
-    check errors. This controller loads one group whose rows follow
+    This controller supplies one group whose rows follow
     ``revision``: two chats at revision 7, three after it moves.
     """
     from Tests.UI.test_console_character_context import _controller, _Service

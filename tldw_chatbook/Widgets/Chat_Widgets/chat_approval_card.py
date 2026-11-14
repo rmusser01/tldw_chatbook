@@ -971,7 +971,9 @@ class ChatApprovalCard(Container):
         if self._draft:
             self._draft.restore(state.get("draft", {}))
             choices = self._draft.snapshot()["choices"]
-            for name, select in zip(self._batch_names, self._batch_selects):
+            for name, select in zip(
+                self._batch_names, self._batch_selects, strict=False
+            ):
                 select.value = choices[name]
         self._raw_reviewed = {
             index
@@ -1107,7 +1109,9 @@ class ChatApprovalCard(Container):
             else:
                 allowed = sum(
                     count
-                    for count, select in zip(self._batch_row_counts, self._batch_selects)
+                    for count, select in zip(
+                        self._batch_row_counts, self._batch_selects, strict=False
+                    )
                     if select.value != "deny"
                 )
                 scopes = " ".join(
@@ -2034,7 +2038,7 @@ class ChatApprovalCard(Container):
         if any(decision not in values for values in self._batch_legal_values):
             return
         for index, (name, select) in enumerate(
-            zip(self._batch_names, self._batch_selects)
+            zip(self._batch_names, self._batch_selects, strict=False)
         ):
             select.value = decision
             self._raw_reviewed.add(index)
@@ -2158,7 +2162,9 @@ class ChatApprovalCard(Container):
                 return
         if any(
             str(select.value) not in legal
-            for select, legal in zip(self._batch_selects, self._batch_legal_values)
+            for select, legal in zip(
+                self._batch_selects, self._batch_legal_values, strict=False
+            )
         ):
             return
         self._disable_batch_submit_controls()

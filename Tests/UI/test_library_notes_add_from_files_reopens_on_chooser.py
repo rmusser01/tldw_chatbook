@@ -243,7 +243,9 @@ async def test_add_from_files_reopens_on_the_chooser_after_activating_a_root(
             await _wait_for_condition(
                 pilot,
                 lambda: "3 applied · listed under Receipts" in _painted_text(host),
-                message=lambda: f"receipt line never painted: {controller.snapshot.status_line}",
+                message=lambda: (
+                    f"receipt line never painted: {controller.snapshot.status_line}"
+                ),
             )
             assert database.count_notes() == 5
 
@@ -267,17 +269,27 @@ async def test_add_from_files_reopens_on_the_chooser_after_activating_a_root(
             await _wait_for_condition(
                 pilot,
                 lambda: "3 applied · listed under Receipts" in _painted_text(host),
-                message=lambda: f"receipt line never painted: {controller.snapshot.status_line}",
+                message=lambda: (
+                    f"receipt line never painted: {controller.snapshot.status_line}"
+                ),
             )
             assert database.count_notes() == 8
-            manage = screen.query_one("#notes-sync-manage-roots", Button)
-            assert str(manage.label) == "Manage sync folders"
             await _wait_for_condition(
                 pilot,
-                lambda: "Manage sync folders" in _painted_widget_text(host, manage),
+                lambda: (
+                    "Manage sync folders"
+                    in _painted_widget_text(
+                        host, screen.query_one("#notes-sync-manage-roots", Button)
+                    )
+                ),
                 message="the receipt bar never painted Manage sync folders",
             )
-            manage.press()
+            # Receipt publications may replace the button across the paint await.
+            manage = screen.query_one("#notes-sync-manage-roots", Button)
+            assert str(manage.label) == "Manage sync folders"
+            # A painted node can already be pruning, making .press() a no-op.
+            # Route the single gesture through the live screen instead.
+            await pilot.click("#notes-sync-manage-roots")
             await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
             assert screen._notes_state.view == "lasting_roots"
             await _wait_for_condition(

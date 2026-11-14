@@ -3135,6 +3135,7 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch, caplog)
             assert controller._prepared_send_continuations == {}
             assert controller._shutdown_requested.is_set()
             assert gateway.provider_calls == 0
+            assert not submit.done()  # A closed loop cannot finish the pending task.
             assert not any(record.name == "asyncio" for record in caplog.records)
         finally:
             if not closed_loop.is_closed():
@@ -3146,10 +3147,15 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch, caplog)
                 closed_loop.run_until_complete(closed_loop.shutdown_asyncgens())
                 closed_loop.run_until_complete(closed_loop.shutdown_default_executor())
                 closed_loop.close()
+            if not submit.done():
+                # Fixture cleanup only: the retained Context now contains task
+                # attribution, so it roots submit until its scopes unwind. This
+                # is not production shutdown or implicit garbage-collection cleanup.
+                # The Task stays pending and must emit its genuine diagnostic.
+                submit_context.run(submit.get_coro().close)
+                assert not submit.done()
             del submit
-            # Collect this deliberate abandonment in its token-owning context.
-            # The default handler retains the genuine pending-task diagnostic;
-            # a custom handler would re-enter this Context on Python 3.12.
+            # A custom handler would re-enter this Context on Python 3.12.
             submit_context.run(gc.collect)
 
     assert submit_ref() is None

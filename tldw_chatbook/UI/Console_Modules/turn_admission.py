@@ -361,15 +361,16 @@ def select_configuration_values(self, session_id: str, *, scratch_owner):
     agent_runtime_enabled = console_live_runtime_enabled(
         getattr(self.app_instance, "app_config", None), console_config
     )
+    presentation_context = store.presentation_context(
+        session_id, _console_global_user_display_name(app_config)
+    )
+    rag_defaults = {"source_types": tuple(self._rag_source_types_accessor())}
+    if not stock_rag_depth_current(self):
+        rag_defaults["top_k"] = self._rag_top_k_accessor()
     return ConsoleTurnCaptureSelection(
         provider_selection=selection,
-        presentation_context=store.presentation_context(
-            session_id, _console_global_user_display_name(app_config)
-        ),
-        rag_defaults={
-            "source_types": tuple(self._rag_source_types_accessor()),
-            "top_k": self._rag_top_k_accessor(),
-        },
+        presentation_context=presentation_context,
+        rag_defaults=rag_defaults,
         tool_configuration={
             "session_ephemeral": bool(session.ephemeral),
             "agent_runtime_enabled": agent_runtime_enabled,
@@ -412,10 +413,31 @@ def select_configuration_values(self, session_id: str, *, scratch_owner):
     )
 
 
+def stock_rag_depth_current(owner) -> bool:
+    """Qualify the stock profile read for the existing configuration worker."""
+    from tldw_chatbook.Library import library_rag_state
+
+    from ..Screens import chat_screen
+
+    read_depth, code = chat_screen._CONSOLE_RAG_DEPTH_DELEGATE
+    return (
+        owner._rag_top_k_accessor is chat_screen._CONSOLE_RAG_DEPTH_READERS[0][0]
+        and chat_screen.library_rag_profile_top_k is read_depth
+        and library_rag_state.library_rag_profile_top_k is read_depth
+        and read_depth.__code__ is code
+        and all(
+            getattr(chat_screen, function.__name__, None) is function
+            and function.__code__ is code
+            for function, code in chat_screen._CONSOLE_RAG_DEPTH_READERS
+        )
+    )
+
+
 _CONSOLE_SELECTION_SOURCES = tuple(
     (name, callback, callback.__code__, callback.__defaults__, callback.__kwdefaults__)
     for name, callback in (
         ("select_configuration_values", select_configuration_values),
+        ("stock_rag_depth_current", stock_rag_depth_current),
         ("console_live_runtime_enabled", console_live_runtime_enabled),
         ("policy_producers_current", policy_producers_current),
     )

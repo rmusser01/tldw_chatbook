@@ -429,37 +429,54 @@ async def test_console_armed_unknown_tokenless_send_snapshots_before_skill_await
 ARMED = "/nosuchcommand"
 
 
-async def _speak_armed_send(monkeypatch, host, pilot, gateway, as_read_returns):
+async def _speak_armed_send(
+    monkeypatch,
+    host,
+    pilot,
+    gateway,
+    as_read_returns,
+    *,
+    exercise_background_reads: bool = False,
+):
     """Speak "Console, send." on an armed unknown command; wait for its ack.
 
-    "Console, send." calls ``handle_console_send_message`` with no pending
-    send token, so ``wiring.receive_console_visible_intent`` gets no captured
-    inputs. Sending an armed unknown command captures the draft, then awaits
-    the skill context: the window between a tokenless capture and that check.
-    ``as_read_returns(composer)`` runs as the held read returns, before
-    ``ChatScreen._on_console_composer_draft_changed`` can disarm the command
-    (one handled while the read is pending would). Hook review runs live;
-    with no hooks configured nothing is reviewed, so it does not re-check
-    the draft.
+    The tokenless send captures the draft, then awaits the skill context.
+    as_read_returns(composer) runs once in that spoken worker as the held
+    read returns, before the draft-change handler can disarm the command.
+    Other skill consumers receive the same valid empty context without
+    claiming the gate or editing the draft. Hook review remains live.
 
     Returns:
         The console, composer, store, session id, spoken acks and notices.
     """
+    from textual.worker import get_current_worker
+
+    from tldw_chatbook.UI.Console_Modules.hooks import in_worker_task
+
     console, composer = await ready_console(host, pilot, gateway)
     store = console._ensure_console_chat_store()
     session_id = store.active_session_id
-    composer.load_draft(ARMED)
-    store.set_session_draft(session_id, ARMED)
-    console._console_unknown_send_armed = ARMED
     entered, release = asyncio.Event(), asyncio.Event()
+    claimed, applied = [], []
 
     async def held_skill_context():
+        if entered.is_set() or not in_worker_task():
+            return {}
+        worker = get_current_worker()
+        if worker.group != "console-voice-send-test":
+            return {}
+        claimed.append(worker)
         entered.set()
         await release.wait()
         as_read_returns(composer)
-        return object()
+        applied.append(worker)
+        return {}
 
     async def no_blocked_match(_name, _summaries):
+        if exercise_background_reads:
+            # This is still the spoken worker, after its first read returned.
+            assert await held_skill_context() == {}
+            assert applied == claimed
         return False
 
     monkeypatch.setattr(
@@ -476,11 +493,31 @@ async def _speak_armed_send(monkeypatch, host, pilot, gateway, as_read_returns):
     notices = _record_notices(host)
     gateway.validation_release.set()
 
-    _speak_send(console, session_id)
-    await until(entered.is_set)
-    release.set()
-    await until(lambda: bool(spoken))
-    return console, composer, store, session_id, spoken, notices
+    try:
+        if exercise_background_reads:
+            draft_before = composer.draft_text()
+            background = console.run_worker(
+                console._skill._refresh_console_skill_candidates(),
+                group="console-skill-discovery",
+                exit_on_error=False,
+            )
+            await until(lambda: background.is_finished)
+            await background.wait()
+            assert not entered.is_set() and not claimed and not applied
+            assert composer.draft_text() == draft_before
+        composer.load_draft(ARMED)
+        store.set_session_draft(session_id, ARMED)
+        console._console_unknown_send_armed = ARMED
+        worker = _speak_send(console, session_id)
+        await until(entered.is_set)
+        # Eager workers can reach the read before _speak_send returns.
+        assert claimed == [worker]
+        release.set()
+        await until(lambda: bool(spoken))
+        assert applied == [worker]
+        return console, composer, store, session_id, spoken, notices
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio
@@ -498,15 +535,63 @@ async def test_spoken_send_sends_its_capture_and_keeps_text_typed_after_it(
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
-            console, composer, store, session_id, spoken, notices = (
-                await _speak_armed_send(
-                    monkeypatch, host, pilot, gateway, lambda c: c.insert_text("x")
-                )
+            (
+                console,
+                composer,
+                store,
+                session_id,
+                spoken,
+                notices,
+            ) = await _speak_armed_send(
+                monkeypatch, host, pilot, gateway, lambda c: c.insert_text("x")
             )
             assert spoken == ["Sent."], notices
-            await until(lambda: gateway.stream_calls == 1)
+            try:
+                await until(lambda: gateway.stream_calls == 1)
+            except AssertionError as error:
+                controller = console._ensure_console_chat_controller()
+                error.add_note(repr(controller.run_state_for(session_id)))
+                raise
             await _idle(host, console, pilot, session_id)
 
+            assert _sent_or_queued(console, session_id) == [ARMED]
+            assert gateway.stream_calls == 1
+            assert composer.draft_text() == "x"
+            assert store.session_draft(session_id) == "x"
+            assert "Draft changed; Send again." not in notices
+
+
+@pytest.mark.asyncio
+async def test_spoken_send_skill_read_ignores_background_and_repeated_fetches(
+    monkeypatch,
+):
+    """A popup refresh cannot claim the spoken edit or consume it twice."""
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            (
+                console,
+                composer,
+                store,
+                session_id,
+                spoken,
+                notices,
+            ) = await _speak_armed_send(
+                monkeypatch,
+                host,
+                pilot,
+                gateway,
+                lambda c: c.insert_text("x"),
+                exercise_background_reads=True,
+            )
+            assert spoken == ["Sent."], notices
+            try:
+                await until(lambda: gateway.stream_calls == 1)
+            except AssertionError as error:
+                controller = console._ensure_console_chat_controller()
+                error.add_note(repr(controller.run_state_for(session_id)))
+                raise
+            await _idle(host, console, pilot, session_id)
             assert _sent_or_queued(console, session_id) == [ARMED]
             assert gateway.stream_calls == 1
             assert composer.draft_text() == "x"
@@ -535,10 +620,15 @@ async def test_spoken_send_of_a_capture_another_send_took_is_not_sent_again(
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
-            console, composer, store, session_id, spoken, notices = (
-                await _speak_armed_send(
-                    monkeypatch, host, pilot, gateway, another_send_takes_it
-                )
+            (
+                console,
+                composer,
+                store,
+                session_id,
+                spoken,
+                notices,
+            ) = await _speak_armed_send(
+                monkeypatch, host, pilot, gateway, another_send_takes_it
             )
             assert spoken == ["Not sent."], notices
             await _idle(host, console, pilot, session_id)
@@ -551,9 +641,9 @@ async def test_spoken_send_of_a_capture_another_send_took_is_not_sent_again(
                 for message in store.messages_for_session(session_id)
                 if message.role.value == "system"
             ]
-            assert not any(
-                row.startswith("Unknown command") for row in system_rows
-            ), system_rows
+            assert not any(row.startswith("Unknown command") for row in system_rows), (
+                system_rows
+            )
 
 
 @pytest.mark.asyncio

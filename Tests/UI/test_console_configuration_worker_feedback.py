@@ -30,12 +30,17 @@ from Tests.UI.test_console_hook_review_send_freeze import (
 )
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Utils.text_selection_crash_guard import ThreadWorkerContextGuard
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
-class _VisibleNavigatedConsoleHarness(NavigatedConsoleHarness):
+class _VisibleNavigatedConsoleHarness(
+    ThreadWorkerContextGuard, NavigatedConsoleHarness
+):
+    # The mounted host must use production's executor and Windows timer setup;
+    # constructing its unmounted TldwCli app_instance does not dispatch Load.
     # The navigation harness omits app-tier CSS; actual Console geometry
     # requires the same boot bundle loaded by TldwCli.
     CSS_PATH = [str(BUNDLED_STYLESHEET)]  # noqa: RUF012 - Textual consumes this shared class stylesheet declaration.
@@ -147,6 +152,7 @@ async def test_actual_send_composes_new_input_while_configuration_reader_is_held
     registry = app.workspace_registry_service
     workspace_id = f"feedback-owned-{route}"
     registry.create_workspace(workspace_id=workspace_id, name=f"Feedback owned {route}")
+    registry.set_active_workspace(workspace_id)
     # Only the eventual network boundary is immediate; capture, admission and
     # native readers retain their production bodies even on a failing baseline.
     monkeypatch.setattr(
@@ -163,14 +169,23 @@ async def test_actual_send_composes_new_input_while_configuration_reader_is_held
             async with host.run_test(size=(120, 40)) as pilot:
                 assert await _until(
                     lambda: isinstance(host.screen, ChatScreen)
-                    and host.screen.is_mounted,
+                    and host.screen.is_mounted
+                    and host.screen._console_attach_reconciled
+                    and not host.screen._console_attach_reconcile_running,
                     10,
                 )
                 console = host.screen
+                assert await _until(
+                    lambda: getattr(console, "_console_emergency_stop_path", None)
+                    is not None,
+                    10,
+                )
                 runtime = console._console_runtime()
                 controller = console._ensure_console_chat_controller()
                 session = controller.store.ensure_session()
-                session.workspace_id = workspace_id
+                assert session.workspace_id == workspace_id
+                assert controller.store.active_session_id == session.id
+                assert console._console_visible_draft_session_id == session.id
                 composer = console._console_composer_or_none()
                 composer.load_draft("Native configuration")
                 composer.focus()

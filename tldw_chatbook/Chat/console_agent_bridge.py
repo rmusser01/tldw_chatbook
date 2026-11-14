@@ -48,6 +48,10 @@ if TYPE_CHECKING:
     )
 
 from loguru import logger
+from tldw_chatbook.Agents.plain_chat_tool_surface import (
+    AppToolKillSwitch as _PreviewAppToolKillSwitch,
+    tool_kill_switch_engaged as _preview_kill_reader,
+)
 
 from tldw_chatbook.app_services import read_mcp_service
 from tldw_chatbook.Agents.activation import guarded as agent_execution_guard
@@ -5752,43 +5756,25 @@ class ConsoleAgentBridge:
         session_id: str | None = None,
         messages: Sequence[Mapping[str, Any]] = (),
         turn_skill_bindings: tuple[str, ...] = (),
+        _prepared: Any = None,
     ) -> Any:
         """Estimate the selected request using current prompt and admitted skills.
 
-        Catalog/runtime capabilities come from the latest composed snapshot;
-        source changes remain an estimate until dispatch. This performs no
-        provider composition, I/O, or permission admission.
+        Catalog capabilities remain an estimate until dispatch. Compatibility
+        reads the live switch; owned preflight supplies a one-pass observation
+        without execution authority.
         """
         from tldw_chatbook.Chat.console_tool_surface_preview import (
-            light_surface_plan_inputs,
-            shared_registry_plan_inputs,
-            split_session_prompt,
+            preview_tool_surface,
         )
 
-        native = (
-            True
-            if self._native_tools_enabled is None
-            else bool(self._native_tools_enabled())
-        )
-        session_prompt, conversation = split_session_prompt(messages)
-        memory = self._surface_memory()
-        if self.light_surface_for(turn_skill_bindings, session_id=session_id):
-            inputs = light_surface_plan_inputs(
-                memory.light_sources(session_id),
-                local_tools_available=self.light_surface_local_tools_available(),
-                session_system_prompt=session_prompt,
-                previous_config=memory.light_config(session_id),
-            )
-        else:
-            inputs = memory.full_inputs(session_id) or shared_registry_plan_inputs(
-                self._registry, self._allowed_tools, console_run_budget()
-            )
-        return inputs.preview(
+        return preview_tool_surface(
+            self,
             resolution,
-            native_tools=native,
-            messages=conversation,
-            session_system_prompt=session_prompt,
+            session_id=session_id,
+            messages=messages,
             turn_skill_bindings=turn_skill_bindings,
+            _prepared=_prepared,
         )
 
     def preview_tool_schemas(
@@ -10007,7 +9993,7 @@ def _read_change_review_markers(
 
 
 # Direct defining callbacks for finite marker presentation.
-_CHANGE_REVIEW_MARKER_SOURCES = tuple(
+_CONSOLE_PRESENTATION_SOURCES = tuple(
     (
         name,
         vars(ConsoleAgentBridge)[name],
@@ -10021,22 +10007,40 @@ _CHANGE_REVIEW_MARKER_SOURCES = tuple(
             ),
         ),
     )
-    for name in ("change_review_marker_messages", "_change_review_marker_block")
+    for name in (
+        "change_review_marker_messages",
+        "_change_review_marker_block",
+        "preview_tool_surface",
+        "light_surface_local_tools_available",
+    )
     for descriptor in (vars(ConsoleAgentBridge)[name],)
     for function in (
         descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
     )
 )
-
-
-_CHANGE_REVIEW_MARKER_HELPER_SOURCE = (
-    _read_change_review_markers,
-    _read_change_review_markers.__code__,
-    _read_change_review_markers.__defaults__,
-    _read_change_review_markers.__kwdefaults__,
-    tuple(_read_change_review_markers.__kwdefaults__.items()),
+_CHANGE_REVIEW_MARKER_SOURCES = _CONSOLE_PRESENTATION_SOURCES[:2]
+_CONSOLE_TOOL_PREVIEW_METHODS = tuple(
+    (name, method, bindings[0][1])
+    for name, method, bindings in _CONSOLE_PRESENTATION_SOURCES[2:]
 )
 
 
 # Original collision view is part of ordinary catalog identity, not a new owner.
 _NATIVE_ORDINARY_COLLISION_PROVIDER = _CollisionFilteredMCPProvider
+_CONSOLE_PRESENTATION_HELPER_SOURCES = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+    )
+    for function in (
+        _read_change_review_markers,
+        _preview_kill_reader,
+        _PreviewAppToolKillSwitch.__call__,
+    )
+)
+_CHANGE_REVIEW_MARKER_HELPER_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[0]
+_CONSOLE_PREVIEW_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[1]
+_CONSOLE_PREVIEW_APP_KILL_SOURCE = _CONSOLE_PRESENTATION_HELPER_SOURCES[2]

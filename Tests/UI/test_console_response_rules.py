@@ -803,9 +803,17 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "sync",
-    ["recovery-and-resume", "full-ui", "full-ui-held", "coachmark", "coachmark-dismissed"],
+    [
+        "recovery-and-resume",
+        "full-ui",
+        "full-ui-held",
+        "coachmark",
+        "coachmark-dismissed",
+    ],
 )
-async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypatch, sync):
+async def test_console_syncs_never_wait_for_a_config_rebuild(
+    tmp_path, monkeypatch, sync
+):
     """TASK-35444, TASK-35645: display syncs never wait while a rebuild holds config.
 
     The phase test above failed in CI when a sync during Stop rebuilt the
@@ -834,17 +842,16 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         )
         region = case.console._console_transcript_region_or_none()
         assert region is not None and region.is_mounted
-        hold, held, release = threading.Event(), threading.Event(), threading.Event()
+        held, release = threading.Event(), threading.Event()
 
         def hold_rebuild():
-            hold.wait(_HOLD_SECONDS)
             with config._settings_rebuild_lock():
                 config._invalidate_config_caches()
                 held.set()
                 release.wait(_HOLD_SECONDS)
 
         def start_rebuild():
-            hold.set()
+            holder.start()
             assert held.wait(_STATE_SECONDS), "the holder never took the rebuild lock"
             started.append(time.monotonic())
             watch.start()
@@ -852,11 +859,12 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         holder = threading.Thread(target=hold_rebuild)
         watch = _UiLoopWatch(release.set)
         started = []  # when the hold began
-        holder.start()
         try:
             if sync.startswith("coachmark"):
                 await settle(case.console)
-                await case.console._sync_console_native_session_tabs()  # seeds the count
+                await (
+                    case.console._sync_console_native_session_tabs()
+                )  # seeds the count
                 assert len(case.chats.sessions()) == 1
                 case.chats.create_session(activate=False)
                 start_rebuild()
@@ -897,7 +905,9 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                     await transcript_sync(force=True)
 
                 monkeypatch.setattr(
-                    case.console, "_sync_native_console_transcript", rebuild_then_transcript
+                    case.console,
+                    "_sync_native_console_transcript",
+                    rebuild_then_transcript,
                 )
                 if sync == "full-ui-held":
                     await settle(case.console)
@@ -923,19 +933,25 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                 f"the {sync} sync ({elapsed:.3f}s into the hold)"
             )
         finally:
-            hold.set()
             watch.stop()
             release.set()
-            holder.join(3)
+            if holder.ident is not None:
+                holder.join(3)
         assert not holder.is_alive() and not watch.is_alive()
         banner = case.console.query_one("#console-fleet-coachmark")
         if sync == "coachmark-dismissed":
             await _until(
-                lambda: "_show_console_fleet_coachmark"
-                not in (getattr(case.console, "_console_config_retries", None) or {}),
+                lambda: (
+                    "_show_console_fleet_coachmark"
+                    not in (
+                        getattr(case.console, "_console_config_retries", None) or {}
+                    )
+                ),
                 "the deferred coach-mark show running after the release",
             )
-            assert banner.styles.display != "block", "the dismissed coach-mark reappeared"
+            assert banner.styles.display != "block", (
+                "the dismissed coach-mark reappeared"
+            )
         if sync == "coachmark":
             # Deferred, not dropped: the coach-mark shows once the hold ends.
             await _until(

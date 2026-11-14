@@ -1389,28 +1389,14 @@ _stock_received_rag_top_k = run_controls._stock_received_rag_top_k
 
 
 def _console_library_rag_profile_top_k() -> int:
-    """Return the ACTIVE RAG profile's result count (TASK-406/TASK-3170).
+    """Return the active RAG profile's result count (TASK-406/TASK-3170).
 
-    Both Library RAG entry points on the Console -- the RAG chip's manual
-    Run and the opt-in send-path auto-retrieve -- must honor the profile
-    the user configured, the same way task-5 made the Library service
-    honor its search mode -- a hardcoded count would silently ignore a
-    profile tuned for more (or fewer) results. This is the one place both
-    call sites read that count from, so they can never drift apart again.
-
-    TASK-15020/B3 gave the Library window the same behavior, and this is now
-    a DELEGATION to that seam (`library_rag_state.library_rag_profile_top_k`)
-    rather than a second copy of the resolution: the Console chip and the
-    Library window are two views of one retrieval stack, and a twin would be
-    free to drift the moment either side changed. The delegation is kept as
-    a named function because both Console call sites (and their tests) reach
-    the profile through this name.
+    The manual RAG chip and automatic retrieval share the Library profile
+    resolver (TASK-15020/B3).
 
     Returns:
-        The profile's ``search.default_top_k`` when it resolves to a
-        positive integer, else the shared Library RAG fallback -- a
-        broken/absent profile must degrade to retrieving, not to raising
-        inside a send.
+        The positive configured depth with the ``RAG_TOP_K`` override applied,
+        or the shared fallback when resolution fails.
     """
     return library_rag_profile_top_k()
 
@@ -24550,11 +24536,15 @@ _CONSOLE_RECEIVED_SCREEN_SELECTORS = tuple(
         "_console_setup_blocked_reason",
     )
 )
+_CONSOLE_RAG_DEPTH_READERS = (
+    (_stock_received_rag_top_k, _stock_received_rag_top_k.__code__),
+    (_console_library_rag_profile_top_k, _console_library_rag_profile_top_k.__code__),
+)
+_CONSOLE_RAG_DEPTH_DELEGATE = library_rag_profile_top_k, library_rag_profile_top_k.__code__
 _CONSOLE_RECEIVED_RAG_READERS = (
     (_stock_received_rag_sources, _stock_received_rag_sources.__code__),
-    (_stock_received_rag_top_k, _stock_received_rag_top_k.__code__),
     (_console_library_rag_source_scope, _console_library_rag_source_scope.__code__),
-    (_console_library_rag_profile_top_k, _console_library_rag_profile_top_k.__code__),
+    *_CONSOLE_RAG_DEPTH_READERS,
 )
 
 

@@ -3120,7 +3120,11 @@ class ConsoleCompactionPreflight:
         read_global_resolve_micro_escalation: Callable[[], Any],
         read_global_tagged_memory_message: Callable[[], Any],
         read_global_tagged_visual_memory_message: Callable[[], Any],
+        read_controller__preflight_tool_surface: Callable[[], Any] | None = None,
     ) -> None:
+        self.read_controller__preflight_tool_surface = (
+            read_controller__preflight_tool_surface
+        )
         self.read_controller__agent_bridge = read_controller__agent_bridge
         self.read_controller__agent_runtime_enabled = (
             read_controller__agent_runtime_enabled
@@ -3396,9 +3400,8 @@ class ConsoleCompactionPreflight:
 
         repository = self.read_controller__context_repository()
         service = self.read_controller__compaction_service()
-        prepare = getattr(
-            self.read_controller_provider_gateway(), "prepare_chat_request", None
-        )
+        gateway = self.read_controller_provider_gateway()
+        prepare = getattr(gateway, "prepare_chat_request", None)
         owner = next(
             (
                 item
@@ -3426,7 +3429,25 @@ class ConsoleCompactionPreflight:
                 # TASK-34350: a durable chat's first message is assessed for
                 # capacity alone (nothing to compact yet), so a request that
                 # cannot fit is refused before commit, like a later one.
-                self.read_controller__assess_request_capacity_only()(
+                assessor = self.read_controller__assess_request_capacity_only()
+                prepared = {}
+                surface = await self._preflight_tool_surface(
+                    resolution,
+                    session_id=session_id,
+                    messages=provider_messages,
+                    agent_tools_enabled=agent_tools_enabled,
+                    turn_skill_bindings=turn_skill_bindings,
+                    _capacity_assessor=assessor,
+                    _gateway=gateway,
+                    _prepare=prepare,
+                )
+                if surface is not None:
+                    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                    if self.read_controller__assess_request_capacity_only() != assessor:
+                        raise RecoveryRequired("console_snapshot_owner_changed")
+                    prepared["_prepared_surface"] = surface
+                assessor(
                     session_id=session_id,
                     owner=owner,
                     resolution=resolution,
@@ -3435,6 +3456,7 @@ class ConsoleCompactionPreflight:
                     agent_tools_enabled=agent_tools_enabled,
                     turn_skill_bindings=turn_skill_bindings,
                     assessment_sink=assessment_sink,
+                    **prepared,
                 )
             return provider_messages, None
         conversation_id = owner.persisted_conversation_id
@@ -3450,20 +3472,21 @@ class ConsoleCompactionPreflight:
         retained_messages = list(projection.rows)
         memory_rows = projection.memory
 
-        from tldw_chatbook.Chat.console_tool_surface_preview import preflight_tool_surface
-
         # TASK-34100.5.3 review round 2: the tools the send plans for THIS request.
-        surface = preflight_tool_surface(
-            self.read_controller__agent_bridge() if agent_tools_enabled else None,
+        surface = await self._preflight_tool_surface(
             resolution,
             session_id=session_id,
             messages=[*retained_messages, *memory_rows],
             turn_skill_bindings=turn_skill_bindings,
+            agent_tools_enabled=agent_tools_enabled,
+            _gateway=gateway,
+            _prepare=prepare,
         )
 
         def flatten_preflight_messages(request):
             return surface.restore_session_prompt(
-                self.read_global__flatten_preflight_messages()(request), provider_messages
+                self.read_global__flatten_preflight_messages()(request),
+                provider_messages,
             )
 
         prepared_before = prepare(
@@ -3728,9 +3751,7 @@ class ConsoleCompactionPreflight:
                     visual_fallback_reason = "local_visual_render_failed"
             if visual_plan is not None and visual_plan.plan is not None:
                 self.read_global_logger().info("console_visual_compaction_prepared")
-                return flatten_preflight_messages(
-                    visual_plan.plan.semantic
-                ), None
+                return flatten_preflight_messages(visual_plan.plan.semantic), None
             effective_representation = (
                 self.read_global_ContextCompactionRepresentation().TEXT_SUMMARY
             )
@@ -4086,6 +4107,48 @@ class ConsoleCompactionPreflight:
             hold if decision is self.read_global_CompactionDecision().ASK else None
         ), alert
 
+    def _compaction_mode_for(self, session):
+        """Resolve the controller's effective mode through its live readers."""
+        try:
+            global_overrides = self.read_controller__global_context_policy_overrides()()
+        except Exception:
+            global_overrides = None
+        return self.read_global_merge_context_policy()(
+            global_overrides=global_overrides,
+            conversation_overrides=session.context_policy_overrides,
+        ).compaction_mode
+
+    async def _preflight_tool_surface(
+        self,
+        resolution,
+        *,
+        agent_tools_enabled,
+        _capacity_assessor=None,
+        _gateway=None,
+        _prepare=None,
+        **kwargs,
+    ):
+        reader = self.read_controller__preflight_tool_surface
+        callback = reader() if reader is not None else None
+        if callable(callback):
+            return await callback(
+                resolution,
+                agent_tools_enabled=agent_tools_enabled,
+                _capacity_assessor=_capacity_assessor,
+                _gateway=_gateway,
+                _prepare=_prepare,
+                **kwargs,
+            )
+        if _capacity_assessor is not None:
+            return None
+        from .console_tool_surface_preview import preflight_tool_surface
+
+        return preflight_tool_surface(
+            self.read_controller__agent_bridge() if agent_tools_enabled else None,
+            resolution,
+            **kwargs,
+        )
+
     def _assess_request_capacity_only(
         self,
         *,
@@ -4097,68 +4160,22 @@ class ConsoleCompactionPreflight:
         agent_tools_enabled: bool,
         assessment_sink: Callable[..., None],
         turn_skill_bindings: tuple[str, ...] = (),
+        _prepared_surface: Any = None,
     ) -> None:
         """Report a request's capacity verdict when there is no history yet."""
+        from .console_tool_surface_preview import assess_request_capacity_only
 
-        from tldw_chatbook.Chat.console_tool_surface_preview import preflight_tool_surface
-
-        surface = preflight_tool_surface(
-            self.read_controller__agent_bridge() if agent_tools_enabled else None,
-            resolution,
+        return assess_request_capacity_only(
+            self,
             session_id=session_id,
-            messages=provider_messages,
+            owner=owner,
+            resolution=resolution,
+            provider_messages=provider_messages,
+            prepare=prepare,
+            agent_tools_enabled=agent_tools_enabled,
+            assessment_sink=assessment_sink,
             turn_skill_bindings=turn_skill_bindings,
-        )
-        prepared = prepare(
-            resolution,
-            surface.request_messages(provider_messages),
-            tools=list(surface.tools),
-            apply_safety_window=False,
-        )
-        capacity = prepared.capacity
-        try:
-            global_overrides = self.read_controller__global_context_policy_overrides()()
-        except Exception:
-            global_overrides = None
-        resolved = self.read_global_resolve_context_policy()(
-            capacity=self.read_global_ConsoleContextCapacity()(
-                model_context_window_tokens=capacity.context_window_tokens,
-                model_window_verified=capacity.safety_verified,
-                provider_input_cap_tokens=capacity.provider_input_cap_tokens,
-                response_reservation_tokens=capacity.effective_response_tokens,
-                safety_margin_tokens=capacity.safety_margin_tokens,
-                mandatory_input_tokens=(
-                    prepared.accounting.non_compactable_tokens
-                    - prepared.accounting.memory_tokens
-                ),
-            ),
-            global_overrides=global_overrides,
-            conversation_overrides=owner.context_policy_overrides,
-        )
-        decision = self.read_global_decide_compaction()(
-            resolved,
-            conversation_tokens=(
-                prepared.accounting.memory_tokens
-                + prepared.accounting.compactable_tokens
-            ),
-            compactable_units=0,
-        )
-        budget = resolved.effective_conversation_budget_tokens or 0
-        assessment_sink(
-            self.read_global_ContextCompactionHold()(
-                session_id=session_id,
-                used_tokens=(
-                    prepared.accounting.memory_tokens
-                    + prepared.accounting.compactable_tokens
-                ),
-                trigger_tokens=int(budget * resolved.policy.trigger_ratio),
-                budget_tokens=budget,
-                estimated=False,
-            ),
-            decision,
-            self.read_controller__context_overflow_alert()(
-                decision, resolved, capacity, prepared, resolution
-            ),
+            surface=_prepared_surface,
         )
 
     def _context_overflow_alert(
@@ -4169,49 +4186,9 @@ class ConsoleCompactionPreflight:
         prepared_before: Any,
         resolution: ConsoleProviderResolution,
     ) -> str | None:
-        """Alert copy for a request compacting cannot make fit, else None.
+        """Use the shared capacity copy with this delegate's live readers."""
+        from .console_tool_surface_preview import context_overflow_alert
 
-        Shared by the stream preflight and the pre-commit assessment so the
-        two cannot disagree (TASK-34350).
-        """
-
-        if decision not in {
-            self.read_global_CompactionDecision().UNKNOWN_WINDOW,
-            self.read_global_CompactionDecision().NON_COMPACTABLE,
-        }:
-            return None
-        if not prepared_before.known_overflow:
-            return None
-        if (
-            resolved.policy.failure_behavior
-            is self.read_global_CompactionFailureBehavior().OMIT_OLDER_CONTEXT
-        ):
-            return None
-        # Lazy (ADR-097 UI-ready census): needed only when a send cannot fit.
-        from tldw_chatbook.Chat.console_context_budget_copy import (
-            MODEL_WINDOW_SETTING,
-            context_overflow_alert_copy,
-        )
-
-        cause = self.read_global__context_overflow_cause()(decision, resolved, capacity)
-        if cause is not None:
-            return context_overflow_alert_copy(
-                cause,
-                model=resolution.model or "the selected model",
-                window_tokens=capacity.context_window_tokens,
-                window_estimated=capacity.limit_source == "estimated",
-                response_tokens=capacity.effective_response_tokens,
-                input_ceiling_tokens=capacity.effective_input_ceiling_tokens,
-            )
-        limiting_reason = (
-            resolved.validation_errors[0]
-            if resolved.validation_errors
-            else "The effective model input ceiling is unavailable."
-        )
-        return (
-            "This request cannot fit the selected model. "
-            f"{limiting_reason} Summarizing older turns cannot make "
-            "enough room. Set the model's context window in "
-            f"{MODEL_WINDOW_SETTING}, or reduce mandatory context or "
-            "the response maximum."
+        return context_overflow_alert(
+            self, decision, resolved, capacity, prepared_before, resolution
         )

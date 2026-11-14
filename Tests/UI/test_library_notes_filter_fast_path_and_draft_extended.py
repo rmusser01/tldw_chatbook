@@ -140,7 +140,11 @@ async def test_the_way_back_to_a_deleted_origin_warns_and_writes_nothing(
             and screen._notes_state.view == "list",
             lambda: f"the missing-origin warning and the list (toasts {toasts!r})",
         )
-        await pilot.pause(0.3)
+        await _wait(
+            pilot,
+            lambda: screen.focused is not None and screen.focused.is_attached,
+            "the returned list to restore focus to an attached control",
+        )
         assert _notes_rows(db) == before, "following the way back wrote to the notes table"
         assert screen.focused is not None and screen.focused.is_attached
 

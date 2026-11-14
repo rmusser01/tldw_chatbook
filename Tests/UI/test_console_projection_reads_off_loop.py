@@ -255,9 +255,9 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
             console._sync_native_console_transcript = slow_transcript
             console._console_control_bar_replay_whole_sync = False
             result = await console._sync_native_console_chat_ui()
-            assert result is True and not console._console_control_bar_replay_whole_sync, (
-                "a FULL sync whose awaits outlived the display replayed itself"
-            )
+            assert (
+                result is True and not console._console_control_bar_replay_whole_sync
+            ), "a FULL sync whose awaits outlived the display replayed itself"
 
             # A display still live at the rail step is not read again: with
             # config unparseable each read is a rebuild under the config locks.
@@ -294,7 +294,9 @@ async def test_a_full_sync_slower_than_the_display_life_does_not_replay_itself(
                 at_rail.append(len(reads))
                 return rail(screen)
 
-            monkeypatch.setattr(config_sync, "sync_console_rail_visibility", counting_rail)
+            monkeypatch.setattr(
+                config_sync, "sync_console_rail_visibility", counting_rail
+            )
             stretch["share"] = 1.2
             await console._sync_native_console_chat_ui()
             assert at_rail and at_rail[-1] == after_transcript[-1], (
@@ -317,9 +319,11 @@ async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_ti
             controller = console._ensure_console_chat_controller()
             session_id = console._ensure_console_chat_store().active_session_id
             await until(
-                lambda: snapshot.inputs(controller, session_id) is not None
-                and snapshot.value is not None
-                and snapshot.pending_key is None,
+                lambda: (
+                    snapshot.inputs(controller, session_id) is not None
+                    and snapshot.value is not None
+                    and snapshot.pending_key is None
+                ),
                 timeout=30,
             )
             # Run work is live: the poll's timer exists (held, so this test
@@ -400,8 +404,8 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
 ):
     """AC#3 (coalescing) and AC#5 (freshness: one poll interval at most).
 
-    The run is held at provider validation (its run start) and its poll's
-    timer is held too, so this test decides when it ticks; the backstop's
+    The run is held at provider validation. Once its natural projection settles,
+    its poll timer is held so this test decides when it ticks; the backstop's
     clock stands still unless the test moves it. Projections are counted in
     the test's own task only.
     """
@@ -414,26 +418,39 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
             console = await _held_run(host, pilot, gateway)
             timer = console._console_transcript_sync_timer
             assert timer is not None, "the run start started no poll"
+            cadence = config_sync._cadence(console)
+
+            def sync_settled() -> bool:
+                return not console._console_sync_in_progress and not _replay_pending(
+                    console
+                )
+
+            def run_start_projected() -> bool:
+                if not sync_settled() or cadence.at != clock.now:
+                    return False
+                _objects, values = config_sync._projection_inputs(console)
+                return cadence.values == values
+
+            # Let the natural poll serve startup work before measuring coalescing.
+            await until(run_start_projected, timeout=30)
+            assert console._console_run_active(), "the held run ended during setup"
             timer.pause()
             owner = asyncio.current_task()
             calls: list[bool] = []
+            projected_requests: list[int] = []
             real_project = console._sync_console_rail_and_controls
 
             def counting_project():
+                requested = config_sync._cadence(console).requested
                 result = real_project()
                 if asyncio.current_task() is owner:
                     calls.append(result)
+                    projected_requests.append(requested)
                 return result
 
             monkeypatch.setattr(
                 console, "_sync_console_rail_and_controls", counting_project
             )
-
-            def sync_settled() -> bool:
-                return (
-                    not console._console_sync_in_progress
-                    and not _replay_pending(console)
-                )
 
             async def settled_sync() -> None:
                 await until(sync_settled, timeout=30)
@@ -444,9 +461,8 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 await timer._callback()
 
             try:
-                await tick()  # The run start's own tick projects.
-                await until(lambda: True in calls, timeout=30)
-                cadence = config_sync._cadence(console)
+                # A poll may skip work already served by the natural startup poll.
+                await tick()
                 before = len(calls)
 
                 # Three syncs requested within the poll interval: none projects.
@@ -461,7 +477,9 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 # The next tick projects them, once.
                 await tick()
                 assert len(calls) == before + 1
-                assert cadence.requested == cadence.served
+                # FULL can receive newer requests after its synchronous projection.
+                assert calls[-1] is True
+                assert cadence.served >= projected_requests[-1]
 
                 # Freshness: a request with no projection for a poll interval
                 # projects at once, and so does one left waiting that long.
@@ -471,9 +489,33 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 await settled_sync()  # Within the interval again: it waits...
                 assert len(calls) == before + 2
                 clock.now += config_sync.RUN_COALESCE_SECONDS
-                await settled_sync()  # ...a poll interval at most.
+                real_transcript = console._sync_native_console_transcript
+                late_requests: list[tuple[int, int]] = []
+
+                async def transcript_with_late_request(*args, **kwargs):
+                    result = await real_transcript(*args, **kwargs)
+                    if asyncio.current_task() is owner:
+                        requested = cadence.requested
+                        await asyncio.create_task(
+                            console._sync_native_console_chat_ui()
+                        )
+                        late_requests.append((requested, cadence.requested))
+                    return result
+
+                # A real overlapping FULL arrives after this projection. It is
+                # owed to a later tick, not retroactively to the completed one.
+                with monkeypatch.context() as patch:
+                    patch.setattr(
+                        console,
+                        "_sync_native_console_transcript",
+                        transcript_with_late_request,
+                    )
+                    await settled_sync()  # ...a poll interval at most.
+                assert late_requests and late_requests[-1][1] > late_requests[-1][0]
                 assert len(calls) == before + 3
-                assert cadence.requested == cadence.served
+                # FULL can receive newer requests after its synchronous projection.
+                assert calls[-1] is True
+                assert cadence.served >= projected_requests[-1]
             finally:
                 gateway.validation_release.set()
                 timer.resume()
@@ -550,7 +592,9 @@ async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypat
         ConsoleRunStatus,
     )
     from tldw_chatbook.UI.Console_Modules import composer_run_controls
-    from tldw_chatbook.UI.Console_Modules.transcript import ConsoleChangeReviewProjection
+    from tldw_chatbook.UI.Console_Modules.transcript import (
+        ConsoleChangeReviewProjection,
+    )
 
     _install_clock(monkeypatch)
     host, gateway, _timeline = build()
@@ -680,7 +724,7 @@ def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
 
             def worker_read():  # A worker's checked read starts mid-push.
                 got = [lock.acquire(blocking=False) for lock in locks]
-                for lock, ok in zip(locks, got):
+                for lock, ok in zip(locks, got, strict=False):
                     if ok:
                         lock.release()
                 taken_mid_push.append(any(got))
@@ -740,9 +784,7 @@ class _CorePushScreen:
     def __init__(self):
         from types import SimpleNamespace
 
-        self.app_instance = self.app = SimpleNamespace(
-            app_config={"disk-loaded": True}
-        )
+        self.app_instance = self.app = SimpleNamespace(app_config={"disk-loaded": True})
         self.pushes, self.replays = 0, []
 
     def _console_config_snapshot_is_disk_loaded(self, value):
@@ -959,7 +1001,9 @@ def test_a_warm_load_no_owner_saw_still_ends_the_cold_episode(monkeypatch):
     )
     assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [True] * 3
     # An unparseable config.toml installs nothing, so the episode holds.
-    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [False] * 3
+    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [
+        False
+    ] * 3
 
     # The file is fixed and another path (the readiness projection's off-loop
     # read, a Settings save) loads it warm; no owner runs meanwhile.
@@ -970,7 +1014,9 @@ def test_a_warm_load_no_owner_saw_still_ends_the_cold_episode(monkeypatch):
     assert deferred == [True] * 3, (
         f"an owner read cold config live on its first call of a new episode: {deferred}"
     )
-    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [False] * 3
+    assert [spend.defer_cold_live_read(screen, owner) for owner in owners] == [
+        False
+    ] * 3
 
 
 @pytest.mark.asyncio
@@ -1301,16 +1347,19 @@ async def test_a_finite_checked_reader_leaves_a_core_push_release_window(request
                     sink = logger.add(
                         hold_one_reader,
                         level="ERROR",
-                        filter=lambda record: record["name"] == "tldw_chatbook.config"
-                        and record["function"] == "_load_cli_config_bootstrap_unlocked",
+                        filter=lambda record: (
+                            record["name"] == "tldw_chatbook.config"
+                            and record["function"]
+                            == "_load_cli_config_bootstrap_unlocked"
+                        ),
                         backtrace=False,
                         diagnose=False,
                     )
                     projection.run(lambda: None)
                     await until(entered.is_set, timeout=30)
-                    assert (
-                        projection.pending
-                    ), "gate did not hold an actual pending read"
+                    assert projection.pending, (
+                        "gate did not hold an actual pending read"
+                    )
                     rebuild = config._settings_rebuild_lock()
                     acquired = rebuild.acquire(blocking=False)
                     if acquired:
@@ -1330,9 +1379,9 @@ async def test_a_finite_checked_reader_leaves_a_core_push_release_window(request
                     await asyncio.wait_for(worker.wait(), timeout=5)
                     release.set()
                     await until(lambda: not projection.pending, timeout=30)
-                    assert (
-                        not expired.is_set()
-                    ), "finite reader gate expired before release"
+                    assert not expired.is_set(), (
+                        "finite reader gate expired before release"
+                    )
                     assert not gate_errors, gate_errors
                     first = starts.take()
                     deadline = asyncio.get_running_loop().time() + 10.0
@@ -1352,15 +1401,15 @@ async def test_a_finite_checked_reader_leaves_a_core_push_release_window(request
                         logger.remove(sink)
                     path.write_bytes(original)
                     await asyncio.to_thread(config.load_settings, True)
-    assert (
-        later["full_sync"] <= idle["full_sync"] + 1
-    ), f"finite reader left replaying: idle {idle}, later {later}"
-    assert (
-        first["core_push"] >= 1
-    ), f"finite reader released but push never ran: {first}"
-    assert (
-        first["identity"] >= 1
-    ), f"finite reader released but identity never ran: {first}"
+    assert later["full_sync"] <= idle["full_sync"] + 1, (
+        f"finite reader left replaying: idle {idle}, later {later}"
+    )
+    assert first["core_push"] >= 1, (
+        f"finite reader released but push never ran: {first}"
+    )
+    assert first["identity"] >= 1, (
+        f"finite reader released but identity never ran: {first}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1398,7 +1447,10 @@ async def test_refused_core_pushes_stop_replaying_an_unreadable_config_and_say_s
             real_push = console._sync_console_chat_core_state
 
             def push():
-                if sys._getframe(1).f_code is config_sync.sync_console_core_state.__code__:
+                if (
+                    sys._getframe(1).f_code
+                    is config_sync.sync_console_core_state.__code__
+                ):
                     pushes.append(1)
                 return real_push()
 
@@ -1550,7 +1602,9 @@ async def _fresh_backoff(armed, minimum):
     loop = asyncio.get_running_loop()
 
     def fresh():
-        return bool(armed) and armed[-1][1] >= minimum and loop.time() - armed[-1][0] < 0.3
+        return (
+            bool(armed) and armed[-1][1] >= minimum and loop.time() - armed[-1][0] < 0.3
+        )
 
     await until(fresh, timeout=20)
     return armed[-1]
@@ -1602,7 +1656,9 @@ async def test_a_refused_full_sync_backs_off_and_renders_once_the_refusal_clears
                 exclusive=True,
                 group="console-sync",
             )
-            await until(lambda: any(ok for when, ok in fulls if when >= asked), timeout=30)
+            await until(
+                lambda: any(ok for when, ok in fulls if when >= asked), timeout=30
+            )
             rendered = next(when for when, ok in fulls if ok and when >= asked)
             assert rendered < armed_at + delay, (
                 f"the cleared refusal rendered {rendered - asked:.2f} s after it "
@@ -1653,7 +1709,9 @@ async def test_a_successful_readiness_read_during_a_backoff_renders_at_once(
             projection.key = None  # The read lands as a change, so it publishes.
             asked = loop.time()
             projection.run(lambda: None)  # The projection's own read starts.
-            await until(lambda: any(ok for when, ok in fulls if when >= asked), timeout=30)
+            await until(
+                lambda: any(ok for when, ok in fulls if when >= asked), timeout=30
+            )
             rendered = next(when for when, ok in fulls if ok and when >= asked)
             assert rendered < armed_at + delay, (
                 f"the published read rendered {rendered - asked:.2f} s after it "

@@ -14181,9 +14181,20 @@ and owner and require no public diagnostic. Test an already-closed-loop
 emergency separately: require fail-closed ownership cleanup and no dispatch,
 capture the expected destroyed-pending diagnostic through the loop's public
 exception handler, and assert warning capture contains no unhandled
-never-awaited coroutine. Never mutate private Task warning flags or manually
-close its coroutine; those operations change the behavior the test is meant to
-observe.
+never-awaited coroutine. Never mutate private Task warning flags or manually close its coroutine as
+proof that production shutdown or implicit garbage collection cleaned it up.
+Those operations change the behavior under observation.
+
+**Follow-up (PR3496, 2026-11-12).** The same emergency test's retained Context
+started rooting its Task through hook/agent attribution. Registry detachment
+and no-dispatch assertions passed, but `context.run(gc.collect)` could not
+collect that externally rooted cycle. The fixture now checks detachment and
+that the Task is still pending first, then explicitly unwinds the coroutine in
+its owning Context as test teardown. It still requires the genuine pending-Task
+diagnostic and restored context scopes, with no warning suppression. The focused
+closed/live-loop controls passed on Windows. This qualifies emergency detachment
+and fixture teardown only; it deliberately makes no implicit-GC or production
+shutdown-clean claim. Keep those evidence boundaries separate.
 
 ## An isolated recovery widget does not prove one mounted action owner (TASK-19900.3, 2026-08-23)
 
@@ -25313,3 +25324,88 @@ minutes:
 **Incident.** TASK-36948.3 added one public method to ChatScreen and raised its `test_screen_size_ratchet.py` row by the measured +38 lines and +1 method, as a dated waiver. The brief called that a one-line fix. The serial `Tests/Architecture` run (26 min) then failed two tests that only that full run reaches: `test_console_review_selection_controller_boundary.py` (`LIVE_RATCHET_ROW`) and `test_console_wave6_closeout_inventory.py` (`LIVE_RATCHET_BUDGET`). TASK-38988 put both pins there on purpose, to catch any raise of the row.
 
 **What to do.** When you raise or lower ChatScreen's row, run `grep -rn "LIVE_RATCHET" Tests/Architecture` and re-pin every match to the new row in the same commit.
+
+## Observe loop turns without generating ready work (PR3496, 2026-11-12)
+
+**Incident.** UI lane 2 job 131012505672 missed the idle-heap test's 15-second provider-ready wait; clean dev e10ce63 also failed that assertion. Its BusySampler appended a sample and awaited asyncio.sleep(0) forever, so the observer itself kept ready work queued. A passive observer at each actual loop-turn entry retained the immediate sample, a one-turn-gap negative control and every mounted assertion. Two baseline controls and all 16 integrated tests passed with the original deadlines. Cleanup must be idempotent: the mounted test stops sampling at the provider and again in its finally block.
+
+**What to do.** An observer of event-loop progress should not create the progress it observes. Preserve the gap-detection negative control and restore any test-local loop override exactly. These were loaded-host functional controls, not production latency qualification or proof of a particular GIL convoy. The Windows failure stack showed hook snapshot/config-lock and storage-acquisition contention; it did not implicate the later preview read or establish a one-time startup defect. Receipts are under claude-watch-final-gate-review/baseline-e10ce-heap-* and pr3496-heap-passive-integrated-20261112-1.
+## Match headless adapters to the runtime API (PR3496, 2026-11-12)
+
+**Incident.** UI33 passed the real FULL replay's async callable to a fixture scheduler that accepted only coroutine objects. The resulting TypeError also reproduced on dev and PR3495. A broader 65-case check exposed an omitted idle-sync flag and a constructor-free modal accidentally querying a DOM/runtime it did not own; dev reproduced all three failures. The fixture scheduler now accepts both async forms, the namespace declares the real idle default, and the modal explicitly supplies absent composer/launch inputs. All 65 cases pass without changing production, assertions or deadlines.
+
+**What to do.** Give a headless adapter the specific inputs and callable forms that the real owner contract requires. Do not add production fallbacks or weaken assertions to accommodate an incomplete fixture. Retain the failing baseline and the complete consumer check; the original replay error alone did not reveal the other missing inputs. Receipts are under claude-watch-final-gate-review/baseline-e10ce-ui33-* and pr3496-ui33-shared-worker-integrated-20261112-2.
+
+
+## Observe the request batch a projection actually serves (PR3496, 2026-11-12)
+
+**Incident.** UI9 on 62285faa passed the two prior repairs but failed the adjacent cadence test's final global requested==served assertion (19/17). Unchanged dev passed an isolated run. A controlled real FULL request during its post-projection transcript await reproduced the flaw: the final render succeeded with requested=served=35, then the overlapping request and its eager rearm moved requested to 37 while served correctly stayed 35. The CI log did not record the render result, so this establishes a valid interleaving, not the exact historical cause.
+
+**What to do.** Capture the requests present at the synchronous render, require that render to succeed and that its batch was served, and keep later requests distinct. Preserve the original projection counts, clock advances and deadlines; do not wait for global equality or suppress competing work. The corrected test exercises a real later FULL deterministically. Receipts are under claude-watch-final-gate-review/baseline-e10ce-cadence-tail-{20261112-1,injected-20261112-1} and pr3496-cadence-batch-integrated-20261112-1.
+
+## Shared reader stubs must satisfy background callers (PR3496, 2026-11-12)
+
+**Incident.** The spoken Send fixture returned object() from its skill-context stub. Real background discovery called .get on that value and terminated the mounted host before the Send acknowledgement. The same stub also repeated its draft edit for later reads. A valid mapping for every caller plus an exact, one-shot spoken-worker claim fixed the demonstrated defect; a real background/repeated-read control and both original Send controls passed after rebasing onto dev4a9. This earlier failure does not establish the cause of the separate hosted turn_refused.
+
+**What to do.** Preserve a shared reader's return contract for all callers, and scope injected side effects to the actual operation owner. Test background and repeated calls without disabling them. Receipts: pr3496-send-refusal-diagnostic-20261112-1 and pr3496-rebased-ui-fixes-20261112-1 under claude-watch-final-gate-review.
+## Do not wait for a render the measuring task need not perform (PR3496, 2026-11-12)
+
+**Incident.** The cadence test paused its timer, called it once and then waited for a successful render in a list that recorded only its own task. A controlled real background poll on unchanged dev rendered and served19/19; the manual poll correctly skipped unchanged state, leaving that list empty forever. The original30-second assertion failed. Qualifying the natural current-run projection before pausing let the initial manual poll skip while preserving all later exact coalescing and freshness assertions. This establishes a valid failing interleaving, not the exact historical CI branch.
+
+**What to do.** Establish the real state that measurement requires, and wait only for outcomes the observed owner can still produce. Do not repeat callbacks until a counter turns green. Receipts: baseline-4a9-ui9-first-tick-injected-20261112-1 and pr3496-ui9-first-tick-corrected-20261112-1.
+
+## Re-query a control after waiting through its redraw (PR3496, 2026-11-12)
+
+**Incident.** The Library fixture captured Manage, awaited its painted label, then pressed the captured object. With the existing real receipt-widget host, same-receipt recomposition closed and detached that button: its press posted zero events, while a current painted button posted one. The full root-activation case cannot reach this boundary on Windows because writable sync roots are unsupported there; the widget control proves the reference hazard without claiming the historical CI cause.
+
+**What to do.** Resolve the current widget inside the bounded observation and again immediately before the original press, with no intervening await. Retain the actual message path, navigation assertions and timeout. Receipt: pr3496-notes-recompose-control-20261112-1.
+### Painted and freshly queried does not mean pressable (PR3496, 2026-11-12)
+
+The next published UI13 run still failed Manage navigation after the fresh-query correction. A controlled original Prune dispatch showed the current registered, attached button still had painted text but `display=False`: Textual includes its pruning state in that public property. `Button.press()` therefore returned without posting anything. One original Pilot click at the same boundary instead reached the replacement and delivered exactly one ManageRootsRequested. Its return was False because Pilot retained the old target identity; the actual typed event and navigation remain the behavioral oracle. The first control's requirement that a pruning button also have display=True was impossible and is retained as invalid evidence, not a product failure.
+
+Use the supported mouse gesture for this mounted navigation journey, retain its label and real navigation/root-count assertions, and do not retry gestures until they pass. The controlled failure establishes a fixture hazard, not the unrecorded historical CI interleaving. Full filesystem activation remains unsupported on this Windows host. Receipts: pr3496-pruning-controls-20261112-{1,2} and pr3496-notes-click-control-20261112-1 under claude-watch-final-gate-review.
+### Start a test's lock holder only at its requested boundary (PR3496, 2026-11-12)
+
+A baseline held-config control timed out during startup, before it asked for a rebuild. Passive observation found hold=False but held=True: the thread had ignored the False result of hold.wait(5) and acquired the config lock anyway. Start that holder at start_rebuild, and join only a started thread during cleanup. Preserve the original bounds. The corrected three arms still missed startup settlement on Windows; removing this demonstrated interference does not prove every startup delay or the separate hosted watchdog failure was fixed. Receipt: baseline-457-full-sync-diagnostic-20261112-2.
+
+### Observe loaded scope rather than an optional intermediate phase (PR3496, 2026-11-12)
+
+The collapsed Character test required REFRESHING after Send, although stock idle revision checks can publish the loaded IDLE snapshot directly. Real SQLite controls distinguished a known-conversation refresh (REFRESHING then IDLE), an active cadence skip, and the post-run idle check (IDLE only, original native validation and physical retirement). Only the last control demonstrated the obsolete oracle's failure. Require the successful current-conversation publication while retaining zero-render and reveal assertions; do not lengthen its measurement window or treat an unmeasured mounted run as passing. Receipts: baseline-457-character-{oracles,revision-oracles,idle-oracles}-20261112-1.
+
+## Hidden placeholders and teardown exception chains are not failure-cause evidence (PR3496, 2026-11-12)
+
+The Windows resend failure dump included "Trace capture could not be saved", initially misclassified as the cause. Its `_visible_text` helper checked child `display` flags but not hidden ancestors; the trace-recovery placeholder is always mounted and hides its parent when no recovery exists. The diagnostic logger also reports the deepest exception type but labels status from the outer exception: teardown cancellation carrying RecoveryRequired is not evidence that RecoveryRequired caused the earlier wait failure. Current-dev and candidate receipts prove a missing initial failed-stream text assertion, not a trace-write refusal or identical root cause. Check ancestor visibility or structured recovery state and separate call-stage evidence from teardown before attributing failure. The correction retains all raw failures, timestamps and passing controls.
+
+
+## Loading markers need not imply a mounted workbench (PR3496, 2026-11-13)
+
+UI22's Workflows geometry fixture observed the Console loading marker and immediately required panes. The marker also exists in the initial unavailable shell, before asynchronous authoring initialization creates those panes; the original case reproduced NoMatches. Merely waiting for panes then exceeded the original two-second observation bound during native setup. A real-harness held-authoring-return control proved the marker/panes gap and passed after releasing the original initialization.
+
+For geometry while secondary context loads, explicitly establish the real authoring owner as fixture setup and observe the actual workbench, keeping secondary refresh held and all original bounds/assertions. Both Workflows and Schedules controls pass. State the changed coverage boundary: this fixture does not qualify first-entry authoring creation or startup timing. Receipts: pr3496-workflows-geometry-{ci-audit-20261113-1,fix-20261113-1,fix-20261113-2} and pr3496-workflows-readiness-control-20261113-1 under claude-watch-final-gate-review.
+
+
+## A warm-up can decline after publishing a newer display (PR3496, 2026-11-13)
+
+UI26's pending-owner fixture asserted every original warm() call was True, although the API deliberately declines a changed captured key. Both original owner tests failed there on integration; the exact CI case also failed on clean dev4b90. A one-shot supported config save at original key capture reproduced a valid interleaving: generation4 became5, a fresh current mapping was published, and warm() correctly declined its stale captured key. The original fixture failed before its owner controls. The exact historical refusal predicate remains unproven.
+
+Treat acceptance of warm-up and a rendered rail as the setup condition under the existing retry deadline, then retain every real owner/refusal assertion. The controlled False-to-True case, both original tests and the one shared model-construction consumer pass. Do not describe this retry deadline as a hard timeout on warm(): it is checked between unsuccessful attempts. No production return, reader, clock or threshold was changed. Receipts: pr3496-pending-owner-generation-{red,fix}-20261113-1, pr3496-pending-owner-fixed-originals-20261113-1 and pr3496-pending-model-consumer-20261113-1 under claude-watch-final-gate-review.
+
+
+## Verify the actual base branch before declaring a PR current (PR3496, 2026-11-13)
+
+Nine architecture PRs advanced dev from4b90 to26b2 at01:32UTC. PR3496's GraphQL baseRefOid and REST base.sha still reported4b90 afterward, while refs/heads/dev reported26b2 and the PR was conflicting. No new-head CI run materialized. Read the actual branch ref (git ls-remote or the GitHub git/ref endpoint), then compare local ancestry; a PR's cached base field is not a current-branch proof. Auto-merge was disabled before the local rebase, and no armed PR was manually updated.
+
+## A correct manifest hash does not reconcile an obsolete semantic oracle (PR3496, 2026-11-13)
+
+The canonical diagnostic inventory reproduced from source, but the original boundary fixture still referred to deleted Local_Summarization_Lib and pre-refreeze deletion totals. Repinning its normalized hash exposed a KeyError rather than qualifying the boundary. TASK35553 had already recorded this residual failure; TASK34895 documented the approved258-site ledger re-freeze. Retain that ledger and its historical projection, restrict owner exceptions to the actual live modules, reconcile live counts to retained sites, and run original drift/schema/digest mutants against a live owner. The corrected13 controls pass; none of the258 site records changed. Source-derived inventory success and boundary-fixture success are distinct evidence.
+
+
+## Allocation idle does not mean startup publication has settled (PR3496, 2026-11-13)
+
+The resize fixture counted six reconciles against its two/three-pass bound; clean dev counted five against two. Passive observation showed both pre-resize allocation-idle samples still had pending configuration reads and running sync/discovery workers. A settings publication took the first measured pass before the resize handler applied the new height; later context publications added more passes. No avatar replacement occurred. Even an instant with no workers was followed by an already requested FULL sync, so worker absence alone was insufficient.
+
+For this settled-startup geometry test, wait for real readiness publication, same-screen worker retirement and cleared sync/replay/scheduled flags using the original bounded refresh helper before installing counters. Keep every resize assertion and bound. The uninstrumented original then passed; the fixture does not qualify resize concurrent with arbitrary background publication. Receipt: pr3496-26b2-resize-passive-20261113-1 and pr3496-26b2-resize-ready-20261113-1.
+
+## Queued workflow status does not prove its jobs are inactive (PR3496, 2026-11-13)
+
+While the merge queue waited for runners, GitHub's repository API reported zero in-progress workflows and165 queued workflows. A rolling job-level census over those165 runs found40 allocated/in-progress test jobs across eight queued Derived runs, with new allocations and completions during the check. The count is not an atomic capacity-limit measurement, and no billing/quota cause was established. Inspect individual jobs and exact head/PR ownership before attributing a runner outage or cancelling an allegedly inactive workflow. Receipt: pr3496-capacity-census-jobs-full.json.

@@ -2474,32 +2474,12 @@ def _context_overflow_cause(
     resolved: Any,
     capacity: Any,
 ) -> "ContextOverflowCause | None":
-    """Name why compacting cannot make an over-limit send fit (TASK-34350).
+    """Name overflow using this owner's live decision token (TASK-34350)."""
+    from .console_tool_surface_preview import context_overflow_cause
 
-    Args:
-        decision: The preflight's compaction decision.
-        resolved: The request's ``ResolvedConsoleContextPolicy``.
-        capacity: The prepared request's ``ConsoleRequestCapacity``.
-
-    Returns:
-        The cause, or ``None`` when the window itself is unknown.
-    """
-
-    # Lazy (ADR-097 UI-ready census): needed only when a send cannot fit.
-    from tldw_chatbook.Chat.console_context_budget_copy import ContextOverflowCause
-
-    window = capacity.context_window_tokens
-    if (
-        window is not None
-        and window - capacity.effective_response_tokens - capacity.safety_margin_tokens
-        <= 0
-    ):
-        return ContextOverflowCause.NO_INPUT_CAPACITY
-    if resolved.available_conversation_capacity_tokens == 0:
-        return ContextOverflowCause.MANDATORY_EXCEEDS
-    if decision is CompactionDecision.NON_COMPACTABLE:
-        return ContextOverflowCause.NOTHING_TO_COMPACT
-    return None
+    return context_overflow_cause(
+        decision, resolved, capacity, non_compactable=CompactionDecision.NON_COMPACTABLE
+    )
 
 
 def _flatten_preflight_messages(
@@ -4796,6 +4776,9 @@ class ConsoleChatController:
 
         self._compaction_preflight = ConsoleCompactionPreflight(
             read_controller__agent_bridge=lambda: self._agent_bridge,
+            read_controller__preflight_tool_surface=lambda: (
+                self._preflight_tool_surface
+            ),
             read_controller__agent_runtime_enabled=lambda: self._agent_runtime_enabled,
             read_controller__append_failure_system_row=lambda: (
                 self._append_failure_system_row
@@ -24133,6 +24116,11 @@ class ConsoleChatController:
             decision, resolved, capacity, prepared_before, resolution
         ))
 
+    async def _preflight_tool_surface(self, resolution, **kwargs):
+        from .console_tool_surface_preview import owned_preflight_tool_surface
+
+        return await owned_preflight_tool_surface(self, resolution, **kwargs)
+
     def _assess_request_capacity_only(
         self,
         *,
@@ -24144,6 +24132,7 @@ class ConsoleChatController:
         agent_tools_enabled: bool,
         assessment_sink: Callable[..., None],
         turn_skill_bindings: tuple[str, ...] = (),
+        _prepared_surface: Any = None,
     ) -> None:
         """Forward to the documented compaction preflight implementation."""
         return self._compaction_preflight._assess_request_capacity_only(
@@ -24155,6 +24144,7 @@ class ConsoleChatController:
             agent_tools_enabled=agent_tools_enabled,
             assessment_sink=assessment_sink,
             turn_skill_bindings=turn_skill_bindings,
+            _prepared_surface=_prepared_surface,
         )
 
     async def _compaction_admission_check(
@@ -24247,15 +24237,7 @@ class ConsoleChatController:
 
     def _compaction_mode_for(self, session: Any) -> ContextCompactionMode:
         """This session's effective compaction mode (Off skips the checks)."""
-
-        try:
-            global_overrides = self._global_context_policy_overrides()
-        except Exception:
-            global_overrides = None
-        return merge_context_policy(
-            global_overrides=global_overrides,
-            conversation_overrides=session.context_policy_overrides,
-        ).compaction_mode
+        return self._compaction_preflight._compaction_mode_for(session)
 
     async def _assess_context_compaction(
         self,
@@ -28634,14 +28616,27 @@ _CONSOLE_TOOL_COMPOSITION_METHODS = tuple(
 )
 
 
-_CONTEXT_DISPLAY_CALLBACKS = tuple(
-    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__,
-     isinstance(vars(ConsoleChatController)[name], staticmethod))
-    for name in ("context_control_inputs", "_global_context_policy_overrides",
-                 "_durable_context_snapshots", "_applicable_branch_memory_state",
-                 "_held_send_echo_id")
+_CONTEXT_SOURCE_CALLBACKS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        isinstance(vars(ConsoleChatController)[name], staticmethod),
+    )
+    for name in (
+        "context_control_inputs",
+        "_global_context_policy_overrides",
+        "_durable_context_snapshots",
+        "_applicable_branch_memory_state",
+        "_held_send_echo_id",
+        "_assess_request_capacity_only",
+    )
     for function in (getattr(ConsoleChatController, name),)
 )
+_CONTEXT_DISPLAY_CALLBACKS = _CONTEXT_SOURCE_CALLBACKS[:-1]
+_CONTEXT_CAPACITY_CALLBACKS = _CONTEXT_SOURCE_CALLBACKS[-1:]
 
 
 # Definition-time inputs for optional in-memory pending display.

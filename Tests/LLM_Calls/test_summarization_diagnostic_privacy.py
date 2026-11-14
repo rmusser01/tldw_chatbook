@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import builtins
 import copy
 import hashlib
 import importlib
@@ -16,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterator
+from typing import Callable, Iterator
 
 import pytest
 from loguru import logger as loguru_logger
@@ -1687,7 +1686,7 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     owned_paths = {
         entry["path"] for entry in expected_owned_entries if isinstance(entry, dict)
     }
-    assert owned_paths == set(MODULE_COUNTS)
+    assert owned_paths == set(LIVE_SCAN_MODULES)
 
     checked_inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
     generated_inventory = diagnostic_inventory.build_inventory()
@@ -1706,7 +1705,7 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
         assert (
             _canonical_sha256(_normalized_inventory_projection(inventory, owned_paths))
             == expected_sha256
-        ), f"{name} inventory changed outside the two summarization owners"
+        ), f"{name} inventory changed outside the live summarization owners"
 
         owners = inventory["owners"]
         assert isinstance(owners, list)
@@ -1760,20 +1759,18 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
     deleted_by_module = Counter(
         site["module"] for site in sites if site["outcome"] == "deleted"
     )
+    # TASK-34895 retained all private deletions in its approved ledger re-freeze;
+    # TASK-35553 subsequently removed the obsolete Local module and owner row.
     assert deleted_by_module == {
-        "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 13,
-        # TASK-32853 groq + anthropic migrations: the non-200 status log
-        # site and the per-attempt network log site joined the deleted
-        # ledger (10 -> 12). deepseek/mistral keep their frozen status
-        # logs verbatim (bound to the typed error) per the freeze.
-        # TASK-34650 review-B B26 removed the per-chunk "Content received"
-        # INFO log (12 -> 13); stream completion stays frozen.
-        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 13,
+        "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": 100,
+        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 85,
     }
-    for path, starting_count in MODULE_COUNTS.items():
-        assert owner_maps["generated"][path]["call_count"] == (
-            starting_count - deleted_by_module[path]
-        )
+    retained_by_module = Counter(
+        site["module"] for site in sites if site["outcome"] != "deleted"
+    )
+    assert set(retained_by_module) == owned_paths
+    for path, retained_count in retained_by_module.items():
+        assert owner_maps["generated"][path]["call_count"] == retained_count
 
 
 def _run_manifest_boundary_mutant(
@@ -1798,7 +1795,7 @@ def test_manifest_boundary_rejects_unknown_top_level_sections(
     inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
     inventory["unreviewed_section"] = {"private_value": "must-not-be-ignored"}
 
-    with pytest.raises(AssertionError, match="outside the two summarization owners"):
+    with pytest.raises(AssertionError, match="outside the live summarization owners"):
         _run_manifest_boundary_mutant(monkeypatch, tmp_path, inventory)
 
 
@@ -1825,7 +1822,7 @@ def test_manifest_boundary_rejects_new_generated_origin_dev_drift(
         lambda: copy.deepcopy(generated_inventory),
     )
 
-    with pytest.raises(AssertionError, match="outside the two summarization owners"):
+    with pytest.raises(AssertionError, match="outside the live summarization owners"):
         test_manifest_boundary_changes_only_summarization_owner_diagnostics()
 
 
@@ -1836,7 +1833,7 @@ def test_manifest_boundary_rejects_owned_digest_schema_changes(
     owned_entry = next(
         owner
         for owner in inventory["owners"]
-        if owner["path"] == "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py"
+        if owner["path"] == "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py"
     )
     owned_entry["diagnostic_digest"] = 123
 
@@ -1851,7 +1848,7 @@ def test_manifest_boundary_rejects_unreconciled_owned_digest(
     owned_entry = next(
         owner
         for owner in checked_inventory["owners"]
-        if owner["path"] == "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py"
+        if owner["path"] == "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py"
     )
     owned_entry["diagnostic_digest"] = "0" * 20
     inventory_path = tmp_path / "production-diagnostic-inventory.json"
@@ -2255,7 +2252,6 @@ def test_general_tail_complete_ledger_reconciles_without_private_sites() -> None
     assert sum(site["outcome"] in {"metadata", "deleted"} for site in sites) == 200
     assert not [site for site in sites if site["outcome"] == "pending"]
 
-    deleted_count = sum(site["outcome"] == "deleted" for site in sites)
     discovered = []
     for module in LIVE_SCAN_MODULES:
         source = (REPO_ROOT / module).read_text(encoding="utf-8")

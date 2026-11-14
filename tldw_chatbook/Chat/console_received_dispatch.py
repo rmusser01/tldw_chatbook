@@ -288,7 +288,12 @@ async def _run_received_intent_bound(runtime, record, source):
             # ADR-230 decision 3: the same snapshot() read, also keeping the
             # targets it published, so this attempt's later preparation can
             # share it instead of repeating the full read.
-            return owner.authority_read()
+            read = owner.authority_read()
+            if read.snapshot.ready:
+                from .console_runtime import _prepare_legacy_hook_import
+
+                _prepare_legacy_hook_import(runtime)
+            return read
         return owner.snapshot()
 
     async def read_snapshot():
