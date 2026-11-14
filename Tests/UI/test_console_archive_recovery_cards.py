@@ -4,6 +4,7 @@ import time
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widget import Widget
 from textual.widgets import Button, Select
 
 from tldw_chatbook.Chat.archive_recovery.contracts import (
@@ -14,9 +15,21 @@ from tldw_chatbook.Chat.archive_recovery.contracts import (
 from tldw_chatbook.Widgets.Chat_Widgets.archive_recovery_cards import (
     ArchiveRecoveryConfirmCard,
 )
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 # UI autouse fixtures import the app, whose config participant binds at collection.
 pytestmark = pytest.mark.bootstrap_profile
+
+
+class RecoveryTranscript(ConsoleTranscript):
+    """Mount the native transcript lookup with only the recovery test children."""
+
+    def __init__(self, *children: Widget):
+        super().__init__(id="console-native-transcript")
+        self.recovery_children = children
+
+    def compose(self) -> ComposeResult:
+        yield from self.recovery_children
 
 
 class RecoveryCardApp(App):
@@ -163,8 +176,12 @@ async def test_queryable_retiring_confirmation_clears_without_children():
     class RetiringCardApp(RecoveryCardApp):
         def compose(self):
             self.view = ConsoleArchiveRecoveryView(self.screen)
-            with Vertical(id="console-archive-recovery-controls"):
-                yield RetiringCard(self.confirmation)
+            yield RecoveryTranscript(
+                Vertical(
+                    RetiringCard(self.confirmation),
+                    id="console-archive-recovery-controls",
+                )
+            )
 
     app = RetiringCardApp(confirmation())
     async with app.run_test():
@@ -201,8 +218,12 @@ async def test_partial_controls_cannot_acknowledge_or_answer_replacement(boundar
             )
             self.screen._console_runtime = lambda: SimpleNamespace(view=self.screen)
             self.view = ConsoleArchiveRecoveryView(self.screen)
-            with Vertical(id="console-archive-recovery-controls"):
-                yield ArchiveRecoveryConfirmCard(first)
+            yield RecoveryTranscript(
+                Vertical(
+                    ArchiveRecoveryConfirmCard(first),
+                    id="console-archive-recovery-controls",
+                )
+            )
 
     def check_replacement():
         assert app.view.is_answerable("source")
@@ -496,15 +517,17 @@ async def test_sync_waits_for_recovery_root_mount_then_initializes_controls(
             )
             self.screen._console_chat_store = store
             self.screen._console_runtime = lambda: SimpleNamespace(
-                ensure_archive_recovery=lambda: runtime
+                view=self.screen, ensure_archive_recovery=lambda: runtime
             )
             self.view = ConsoleArchiveRecoveryView(self.screen)
-            yield RecoveryRoot(id="console-archive-recovery")
+            yield RecoveryTranscript(RecoveryRoot(id="console-archive-recovery"))
 
     app = MountApp()
     async with app.run_test():
         assert app.checked_pending_mount
         assert app.query_one("#console-archive-recovery").is_mounted
+        await app.view.sync()
+        assert not app.query(ArchiveRecoveryConfirmCard)
         if concurrent:
             root = app.query_one("#console-archive-recovery")
             mount = root.mount
@@ -518,9 +541,9 @@ async def test_sync_waits_for_recovery_root_mount_then_initializes_controls(
                 await mount(*args, **kwargs)
 
             monkeypatch.setattr(root, "mount", blocked_mount)
-            first = asyncio.create_task(app.view.sync())
+            first = asyncio.create_task(app.view.sync(prepare=True))
             await asyncio.wait_for(entered.wait(), 2)
-            second = asyncio.create_task(app.view.sync())
+            second = asyncio.create_task(app.view.sync(prepare=True))
             try:
                 await asyncio.sleep(0)
                 assert len(mount_calls) == 1
@@ -528,10 +551,10 @@ async def test_sync_waits_for_recovery_root_mount_then_initializes_controls(
                 release.set()
                 await asyncio.gather(first, second)
         else:
-            await app.view.sync()
+            await app.view.sync(prepare=True)
         assert len(app.query(ArchiveRecoveryConfirmCard)) == 1
         assert app.query_one(ArchiveRecoveryConfirmCard).is_mounted
-        assert app.view._session_id == "source"
+        assert app.view.is_answerable("source")
 
 
 @pytest.mark.asyncio
@@ -544,7 +567,7 @@ async def test_sync_ignores_recovery_root_during_app_exit():
 
     class MountApp(App):
         def compose(self):
-            yield Vertical(id="console-archive-recovery")
+            yield RecoveryTranscript(Vertical(id="console-archive-recovery"))
 
     app = MountApp()
     async with app.run_test():
@@ -586,7 +609,7 @@ async def test_recovery_controls_are_inert_when_app_exits(
                 view=self.screen, ensure_archive_recovery=lambda: runtime
             )
             self.view = ConsoleArchiveRecoveryView(self.screen)
-            yield Vertical(id="console-archive-recovery")
+            yield RecoveryTranscript(Vertical(id="console-archive-recovery"))
 
     app = MountApp()
     async with app.run_test():
@@ -600,7 +623,7 @@ async def test_recovery_controls_are_inert_when_app_exits(
         if exit_during_mount:
             monkeypatch.setattr(root, "mount", mount_then_exit)
         try:
-            await app.view.sync()
+            await app.view.sync(prepare=True)
             if exit_during_mount:
                 assert not app.query(ArchiveRecoveryConfirmCard)
             else:
@@ -645,8 +668,12 @@ async def test_receipt_only_retires_its_own_mounted_confirmation(status, own_ope
                 view=self.screen, ensure_archive_recovery=lambda: runtime
             )
             self.view = ConsoleArchiveRecoveryView(self.screen)
-            with Vertical(id="console-archive-recovery"):
-                yield Button("Refresh", id="recovery-refresh")
+            yield RecoveryTranscript(
+                Vertical(
+                    Button("Refresh", id="recovery-refresh"),
+                    id="console-archive-recovery",
+                )
+            )
 
     app = ReceiptApp()
     async with app.run_test(size=(80, 30)) as pilot:
@@ -742,7 +769,7 @@ async def test_sync_stops_when_its_chat_is_replaced_mid_sync(monkeypatch, during
                 view=self.screen, ensure_archive_recovery=lambda: runtime
             )
             self.view = ConsoleArchiveRecoveryView(self.screen)
-            yield Vertical(id="console-archive-recovery")
+            yield RecoveryTranscript(Vertical(id="console-archive-recovery"))
 
     app = HandoffApp()
     mount = ConsoleArchiveRecoverySurface.mount
@@ -758,7 +785,7 @@ async def test_sync_stops_when_its_chat_is_replaced_mid_sync(monkeypatch, during
 
     monkeypatch.setattr(ConsoleArchiveRecoverySurface, "mount", mount_then_hand_off)
     async with app.run_test(size=(80, 30)):
-        await app.view.sync()
+        await app.view.sync(prepare=during == "controls")
         assert store.active_session_id == handoff.id
         if during == "imported":
             assert app.query_one(ArchiveRecoveryConfirmCard).confirmation is pending
@@ -837,14 +864,16 @@ async def test_sync_answers_imported_recovery_without_copying_the_transcript(
                 view=self.screen, ensure_archive_recovery=lambda: runtime
             )
             self.view = ConsoleArchiveRecoveryView(self.screen)
-            yield Vertical(id="console-archive-recovery")
+            yield RecoveryTranscript(Vertical(id="console-archive-recovery"))
 
     app = SyncApp()
     async with app.run_test(size=(80, 30)):
         monkeypatch.setattr(
             ConsoleChatStore, "messages_for_session", counted_messages_for_session
         )
-        monkeypatch.setattr(ConsoleChatStore, "_snapshot", staticmethod(counted_snapshot))
+        monkeypatch.setattr(
+            ConsoleChatStore, "_snapshot", staticmethod(counted_snapshot)
+        )
         await app.view.sync()
         await app.view.sync()  # A settled second sync copies nothing either.
         monkeypatch.undo()
@@ -890,17 +919,19 @@ async def test_sync_whose_runtime_is_disposed_in_flight_stops_without_crashing()
             self.screen._console_chat_store = store
             self.screen._console_runtime = lambda: runtime
             self.view = ConsoleArchiveRecoveryView(self.screen)
-            yield DisposingRoot(id="console-archive-recovery")
+            yield RecoveryTranscript(DisposingRoot(id="console-archive-recovery"))
 
     app = DisposeApp()
     crashes = []
     async with app.run_test(size=(80, 30)):
         try:
-            await app.view.sync()
+            await app.view.sync(prepare=True)
         except Exception as exc:  # noqa: BLE001 - the crash is what is measured.
             crashes.append(exc)
-        assert runtime._disposed and runtime.ensure_archive_recovery() is None
-        assert not crashes, f"the sync crashed after the runtime was disposed: {crashes!r}"
+        assert runtime._disposed
+        assert not crashes, (
+            f"the sync crashed after the runtime was disposed: {crashes!r}"
+        )
         assert not app.query(ArchiveRecoveryConfirmCard)
 
 

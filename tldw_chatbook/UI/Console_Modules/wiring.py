@@ -3857,7 +3857,7 @@ def console_view_hooks(self) -> dict[str, Any]:
     skill = getattr(self, "_skill", None)
     return {
         "response_rules_changed": partial(refresh_rule_controls, self),
-        "prepare_view": lambda: self._archive_recovery_view().sync(),
+        "prepare_view": lambda: self._archive_recovery_view().sync(prepare=True),
         "present_results": lambda record: self._archive_recovery_view().show_results(record),
         "present_confirmation": lambda card: self._archive_recovery_view().show_confirmation(card),
         "is_answerable": lambda session_id: self._archive_recovery_view().is_answerable(session_id),

@@ -5,12 +5,6 @@ import threading
 from typing import Any
 
 
-def capture_chat_borrower(notes_service: Any) -> tuple[Any, sqlite3.Connection | None]:
-    """Read the exact injected cache before app composition can replace it."""
-    owner = getattr(notes_service, "db", None)
-    return owner, getattr(getattr(owner, "_local", None), "conn", None)
-
-
 async def retire_app_sqlite_handles(app: Any) -> None:
     """Retire settled app caches, preserving native borrowers (ADR225)."""
     from tldw_chatbook.Backup_Recovery import storage_admission as storage

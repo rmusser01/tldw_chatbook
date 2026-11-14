@@ -25,7 +25,9 @@ from tldw_chatbook.Widgets.Chat_Widgets.archive_recovery_cards import (
     RecoveryActionButton,
     safe_text,
 )
-from tldw_chatbook.Widgets.Console.console_background_effect import active_console_transcript
+from tldw_chatbook.Widgets.Console.console_background_effect import (
+    active_console_transcript,
+)
 
 
 class ConsoleArchiveRecoverySurface(Vertical):
@@ -80,7 +82,11 @@ class ConsoleArchiveRecoveryView:
         return self.screen._console_runtime().ensure_archive_recovery()
 
     def _surface(self) -> ConsoleArchiveRecoverySurface | None:
-        transcript = active_console_transcript(self.screen) if hasattr(self.screen, "_nodes") else None
+        transcript = (
+            active_console_transcript(self.screen)
+            if hasattr(self.screen, "_nodes")
+            else None
+        )
         if transcript is None:
             return None
         matches = transcript.query("#console-archive-recovery-controls")
@@ -119,8 +125,8 @@ class ConsoleArchiveRecoveryView:
             )
         )
 
-    async def sync(self) -> None:
-        """Remount only runtime custody, never persisted transcript dictionaries."""
+    async def sync(self, *, prepare: bool = False) -> None:
+        """Project recovery or prepare its mounted controls for turn admission."""
         async with self._sync_lock:
             if not hasattr(self.screen, "_nodes"):
                 return
@@ -133,13 +139,6 @@ class ConsoleArchiveRecoveryView:
             root = roots.first()
             if not root.is_mounted or not root.is_attached:
                 return
-            surface = self._surface()
-            if surface is None:
-                surface = ConsoleArchiveRecoverySurface(self)
-                await root.mount(surface)
-            if not root.is_attached or not surface.is_attached:
-                return
-            root.display = True
             store = self.screen._console_chat_store
             if not store:
                 return
@@ -149,14 +148,37 @@ class ConsoleArchiveRecoveryView:
             if runtime is None or not session_id:
                 return
 
+            surface = self._surface()
+
             def current() -> bool:
                 # An await can let Console switch or close this chat; the next
                 # sync renders whichever chat is active then (TASK-38652).
                 return (
-                    surface.is_attached
-                    and active_console_transcript(self.screen) is transcript
+                    active_console_transcript(self.screen) is transcript
+                    and not getattr(self.screen._console_runtime(), "_disposed", False)
+                    and self.screen._console_chat_store is store
                     and store.active_session_id == session_id
                 )
+
+            if surface is None and not prepare:
+                snapshot = runtime.coordinator.snapshot(session_id)
+                if not (
+                    runtime.presentations(session_id)
+                    or runtime.coordinator.receipts(session_id)
+                    or (snapshot and snapshot.confirmation)
+                    or any(
+                        "result_set_id" in text and "result_ref" in text
+                        for text in visible_message_texts(store, session_id)
+                    )
+                ):
+                    return
+            if surface is None:
+                surface = ConsoleArchiveRecoverySurface(self)
+                surface.display = False
+                await root.mount(surface)
+            if not current() or not surface.is_attached:
+                return
+            root.display = True
 
             if self._session_id != session_id or self._confirmation() is None:
                 self._render_generation += 1
@@ -168,6 +190,8 @@ class ConsoleArchiveRecoveryView:
                 self._receipt_actions.clear()
                 self._session_id = session_id
                 await surface.mount(ArchiveRecoveryConfirmCard())
+                if not current() or not surface.is_attached:
+                    return
             presentations = runtime.presentations(session_id)
             live_sets = {record.projection["result_set_id"] for record in presentations}
             for card in list(surface.query(ArchiveRecoveryResultsCard)):
@@ -176,7 +200,7 @@ class ConsoleArchiveRecoveryView:
             self._rendered_sets.intersection_update(live_sets)
             for record in presentations:
                 await self._mount_results(record)
-            if not current():
+            if not current() or not surface.is_attached:
                 return
             imported = not presentations and any(  # No copy: TASK-38688.
                 "result_set_id" in text and "result_ref" in text
@@ -198,7 +222,7 @@ class ConsoleArchiveRecoveryView:
                         classes="archive-recovery-card",
                     )
                 )
-                if not current():
+                if not current() or not surface.is_attached:
                     return
             snapshot = runtime.coordinator.snapshot(session_id)
             self.show_confirmation(snapshot.confirmation if snapshot else None)
